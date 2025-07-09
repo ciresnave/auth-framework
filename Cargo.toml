@@ -1,0 +1,82 @@
+[package]
+name = "auth-framework"
+version = "0.1.1"
+edition = "2021"
+authors = ["Eric Evans <ciresnave@gmail.com>"]
+description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ciresnave/auth-framework"
+keywords = ["auth", "authentication", "authorization", "oauth", "jwt"]
+categories = ["authentication", "web-programming"]
+readme = "README.md"
+documentation = "https://docs.rs/auth-framework"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# JWT handling
+jsonwebtoken = "9.2"
+
+# HTTP client for OAuth flows
+reqwest = { version = "0.11", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Async trait support
+async-trait = "0.1"
+
+# Cryptography
+ring = "0.17"
+rand = "0.8"
+
+# Time handling
+time = { version = "0.3", features = ["serde", "parsing", "formatting"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Unique identifiers
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# URL handling
+url = "2.4"
+
+# Base64 encoding
+base64 = "0.21"
+
+# Hex encoding
+hex = "0.4"
+
+# Password hashing
+argon2 = "0.5"
+bcrypt = "0.15"
+
+# Optional Redis support
+redis = { version = "0.24", optional = true, features = ["aio", "tokio-comp"] }
+
+# Rate limiting
+governor = "0.6"
+nonzero_ext = "0.3"
+
+# Secret management
+secrecy = { version = "0.8", features = ["serde"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockito = "1.2"
+test-log = "0.2"
+
+[features]
+default = ["redis-storage"]
+redis-storage = ["redis"]
+postgres-storage = []
+mysql-storage = []
