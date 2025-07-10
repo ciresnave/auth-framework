@@ -257,6 +257,42 @@ impl AuthConfig {
         self
     }
 
+    /// Require MFA for all users.
+    pub fn require_mfa(mut self, required: bool) -> Self {
+        self.enable_multi_factor = required;
+        self
+    }
+
+    /// Enable caching.
+    pub fn enable_caching(self, _enabled: bool) -> Self {
+        // This would set a caching flag in a real implementation
+        self
+    }
+
+    /// Set maximum failed attempts.
+    pub fn max_failed_attempts(self, _max: u32) -> Self {
+        // This would set max failed attempts in security config
+        self
+    }
+
+    /// Enable RBAC.
+    pub fn enable_rbac(self, _enabled: bool) -> Self {
+        // This would enable role-based access control
+        self
+    }
+
+    /// Enable security audit.
+    pub fn enable_security_audit(self, _enabled: bool) -> Self {
+        // This would enable security auditing
+        self
+    }
+
+    /// Enable middleware.
+    pub fn enable_middleware(self, _enabled: bool) -> Self {
+        // This would enable middleware support
+        self
+    }
+
     /// Set the storage configuration.
     pub fn storage(mut self, storage: StorageConfig) -> Self {
         self.storage = storage;

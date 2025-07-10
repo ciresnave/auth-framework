@@ -80,6 +80,15 @@ impl Permission {
         }
     }
 
+    /// Create a new permission with just an action (resource defaults to "*").
+    pub fn from_action(action: impl Into<String>) -> Self {
+        Self {
+            action: action.into(),
+            resource: "*".to_string(),
+            instance: None,
+        }
+    }
+
     /// Create a new permission with a specific instance.
     pub fn with_instance(
         action: impl Into<String>,
@@ -179,6 +188,14 @@ impl Role {
     /// Add a permission to the role.
     pub fn add_permission(&mut self, permission: Permission) {
         self.permissions.insert(permission);
+    }
+
+    /// Add multiple permissions to the role.
+    pub fn with_permissions(mut self, permissions: Vec<Permission>) -> Self {
+        for permission in permissions {
+            self.permissions.insert(permission);
+        }
+        self
     }
 
     /// Remove a permission from the role.

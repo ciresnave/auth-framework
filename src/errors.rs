@@ -48,6 +48,30 @@ pub enum AuthError {
     #[error("MFA error: {0}")]
     Mfa(#[from] MfaError),
 
+    /// Device flow errors
+    #[error("Device flow error: {0}")]
+    DeviceFlow(#[from] DeviceFlowError),
+
+    /// OAuth provider errors
+    #[error("OAuth provider error: {0}")]
+    OAuthProvider(#[from] OAuthProviderError),
+
+    /// User profile errors
+    #[error("User profile error: {message}")]
+    UserProfile { message: String },
+
+    /// Credential validation errors
+    #[error("Invalid credential: {credential_type} - {message}")]
+    InvalidCredential { credential_type: String, message: String },
+
+    /// Authentication timeout
+    #[error("Authentication timeout after {timeout_seconds} seconds")]
+    Timeout { timeout_seconds: u64 },
+
+    /// Provider configuration missing
+    #[error("Provider '{provider}' is not configured or supported")]
+    ProviderNotConfigured { provider: String },
+
     /// Cryptography errors
     #[error("Cryptography error: {message}")]
     Crypto { message: String },
@@ -68,7 +92,7 @@ pub enum TokenError {
     Expired,
 
     #[error("Token is invalid")]
-    Invalid,
+    Invalid { message: String },
 
     #[error("Token not found")]
     NotFound,
@@ -97,6 +121,9 @@ pub enum PermissionError {
 
     #[error("Invalid permission format: {message}")]
     InvalidFormat { message: String },
+
+    #[error("Permission denied: {message}")]
+    Denied { action: String, resource: String, message: String },
 }
 
 /// Storage-specific errors
@@ -132,6 +159,50 @@ pub enum MfaError {
 
     #[error("MFA verification failed: {message}")]
     VerificationFailed { message: String },
+}
+
+/// Device flow specific errors
+#[derive(Error, Debug)]
+pub enum DeviceFlowError {
+    #[error("Authorization pending - user has not yet completed authorization")]
+    AuthorizationPending,
+    
+    #[error("Slow down - polling too frequently")]
+    SlowDown,
+    
+    #[error("Device code expired")]
+    ExpiredToken,
+    
+    #[error("Access denied by user")]
+    AccessDenied,
+    
+    #[error("Invalid device code")]
+    InvalidDeviceCode,
+    
+    #[error("Unsupported grant type")]
+    UnsupportedGrantType,
+}
+
+/// OAuth provider specific errors
+#[derive(Error, Debug)]
+pub enum OAuthProviderError {
+    #[error("Invalid authorization code")]
+    InvalidAuthorizationCode,
+    
+    #[error("Invalid redirect URI")]
+    InvalidRedirectUri,
+    
+    #[error("Invalid client credentials")]
+    InvalidClientCredentials,
+    
+    #[error("Insufficient scope: required '{required}', granted '{granted}'")]
+    InsufficientScope { required: String, granted: String },
+    
+    #[error("Provider '{provider}' does not support '{feature}'")]
+    UnsupportedFeature { provider: String, feature: String },
+    
+    #[error("Rate limited by provider: {message}")]
+    RateLimited { message: String },
 }
 
 impl AuthError {
@@ -175,6 +246,59 @@ impl AuthError {
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal {
             message: message.into(),
+        }
+    }
+
+    /// Create an access denied error
+    pub fn access_denied(message: impl Into<String>) -> Self {
+        Self::Permission(PermissionError::Denied {
+            action: "access".to_string(),
+            resource: "resource".to_string(),
+            message: message.into(),
+        })
+    }
+
+    /// Create a token error
+    pub fn token(message: impl Into<String>) -> Self {
+        Self::Token(TokenError::Invalid {
+            message: message.into(),
+        })
+    }
+
+    /// Create a device flow error
+    pub fn device_flow(error: DeviceFlowError) -> Self {
+        Self::DeviceFlow(error)
+    }
+    
+    /// Create an OAuth provider error
+    pub fn oauth_provider(error: OAuthProviderError) -> Self {
+        Self::OAuthProvider(error)
+    }
+    
+    /// Create a user profile error
+    pub fn user_profile(message: impl Into<String>) -> Self {
+        Self::UserProfile {
+            message: message.into(),
+        }
+    }
+    
+    /// Create an invalid credential error
+    pub fn invalid_credential(credential_type: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::InvalidCredential {
+            credential_type: credential_type.into(),
+            message: message.into(),
+        }
+    }
+    
+    /// Create a timeout error
+    pub fn timeout(timeout_seconds: u64) -> Self {
+        Self::Timeout { timeout_seconds }
+    }
+    
+    /// Create a provider not configured error
+    pub fn provider_not_configured(provider: impl Into<String>) -> Self {
+        Self::ProviderNotConfigured {
+            provider: provider.into(),
         }
     }
 }

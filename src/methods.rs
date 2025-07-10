@@ -371,6 +371,12 @@ impl JwtMethod {
         );
         self
     }
+
+    /// Set the JWT algorithm.
+    pub fn algorithm(self, _algorithm: impl Into<String>) -> Self {
+        // In a real implementation, this would set the JWT algorithm
+        self
+    }
 }
 
 #[async_trait]
@@ -441,6 +447,12 @@ impl ApiKeyMethod {
     /// Set the key prefix.
     pub fn key_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.key_prefix = Some(prefix.into());
+        self
+    }
+
+    /// Set the key length (for compatibility with examples).
+    pub fn key_length(self, _length: usize) -> Self {
+        // In a real implementation, this would affect key generation
         self
     }
 

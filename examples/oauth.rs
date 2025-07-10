@@ -91,11 +91,13 @@ async fn setup_custom_oauth(auth: &mut AuthFramework) -> Result<(), Box<dyn std:
     let custom_config = auth_framework::providers::OAuthProviderConfig {
         authorization_url: "https://auth.example.com/oauth/authorize".to_string(),
         token_url: "https://auth.example.com/oauth/token".to_string(),
+        device_authorization_url: Some("https://auth.example.com/oauth/device".to_string()),
         userinfo_url: Some("https://api.example.com/user".to_string()),
         revocation_url: Some("https://auth.example.com/oauth/revoke".to_string()),
         default_scopes: vec!["profile".to_string(), "email".to_string()],
         supports_pkce: true,
         supports_refresh: true,
+        supports_device_flow: true,
         additional_params: std::collections::HashMap::new(),
     };
 

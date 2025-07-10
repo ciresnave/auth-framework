@@ -79,6 +79,12 @@ pub enum Credential {
         access_token: Option<String>,
         refresh_token: Option<String>,
     },
+
+    /// Device flow credentials (device code polling)
+    DeviceCode {
+        device_code: String,
+        client_id: String,
+    },
 }
 
 impl Credential {
@@ -117,6 +123,14 @@ impl Credential {
     pub fn oauth_refresh(refresh_token: impl Into<String>) -> Self {
         Self::OAuthRefresh {
             refresh_token: refresh_token.into(),
+        }
+    }
+
+    /// Create device code credentials for device flow
+    pub fn device_code(device_code: impl Into<String>, client_id: impl Into<String>) -> Self {
+        Self::DeviceCode {
+            device_code: device_code.into(),
+            client_id: client_id.into(),
         }
     }
 
@@ -217,6 +231,7 @@ impl Credential {
             Self::Certificate { .. } => "certificate",
             Self::Saml { .. } => "saml",
             Self::OpenIdConnect { .. } => "openid_connect",
+            Self::DeviceCode { .. } => "device_code",
         }
     }
 
@@ -261,6 +276,7 @@ impl Credential {
             Self::Certificate { .. } => "Certificate(****)".to_string(),
             Self::Saml { .. } => "Saml(assertion)".to_string(),
             Self::OpenIdConnect { .. } => "OpenIdConnect(id_token)".to_string(),
+            Self::DeviceCode { .. } => "DeviceCode(****)".to_string(),
         }
     }
 }

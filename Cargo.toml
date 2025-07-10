@@ -1,6 +1,6 @@
 [package]
 name = "auth-framework"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
@@ -80,3 +80,4 @@ default = ["redis-storage"]
 redis-storage = ["redis"]
 postgres-storage = []
 mysql-storage = []
+testing = []

@@ -94,11 +94,15 @@ pub mod storage;
 pub mod tokens;
 pub mod utils;
 
+// Testing utilities (behind feature flag)
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 // Re-export main types for convenience
 pub use auth::{AuthFramework, AuthResult};
 pub use config::AuthConfig;
 pub use credentials::Credential;
-pub use errors::{AuthError, Result};
+pub use errors::{AuthError, Result, DeviceFlowError, OAuthProviderError};
 pub use tokens::{AuthToken, TokenInfo};
 
 // Re-export method types
@@ -108,7 +112,11 @@ pub use methods::{
 };
 
 // Re-export provider types
-pub use providers::OAuthProvider;
+pub use providers::{OAuthProvider, UserProfile, DeviceAuthorizationResponse};
 
 // Re-export permission types
 pub use permissions::{Permission, Role, PermissionChecker};
+
+// Re-export testing utilities when available
+#[cfg(any(test, feature = "testing"))]
+pub use testing::{MockAuthMethod, MockStorage, helpers};

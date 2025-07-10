@@ -362,7 +362,9 @@ impl TokenManager {
         let token_data = decode::<JwtClaims>(token, &self.decoding_key, &validation)
             .map_err(|e| match e.kind() {
                 jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::Token(TokenError::Expired),
-                _ => AuthError::Token(TokenError::Invalid),
+                _ => AuthError::Token(TokenError::Invalid {
+                    message: "Invalid token format".to_string(),
+                }),
             })?;
 
         Ok(token_data.claims)
@@ -396,7 +398,9 @@ impl TokenManager {
 
         // Check if token is revoked
         if token.is_revoked() {
-            return Err(TokenError::Invalid.into());
+            return Err(TokenError::Invalid {
+                message: "Token has been revoked".to_string(),
+            }.into());
         }
 
         // Validate JWT if it's a JWT token
@@ -414,7 +418,9 @@ impl TokenManager {
         }
 
         if token.is_revoked() {
-            return Err(TokenError::Invalid.into());
+            return Err(TokenError::Invalid {
+                message: "Cannot refresh revoked token".to_string(),
+            }.into());
         }
 
         // Create a new token with the same properties but new expiry
