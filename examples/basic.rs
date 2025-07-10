@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔑 Created API key: {}...", &api_key[0..16]);
 
     // Refresh token
-    let refreshed_token = auth.refresh_token(&token).await?;
+    let _refreshed_token = auth.refresh_token(&token).await?;
     println!("🔄 Token refreshed successfully");
 
     // Create session

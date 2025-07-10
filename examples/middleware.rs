@@ -1,10 +1,115 @@
-use auth_framework::{AuthFramework, AuthConfig, AuthResult, AuthError};
-use auth_framework::methods::JwtMethod;
-use auth_framework::storage::MemoryStorage;
-use auth_framework::middleware::{AuthMiddleware, AuthContext};
-use std::sync::Arc;
+use auth_framework::{AuthFramework, AuthConfig, AuthError};
+use auth_framework::methods::{JwtMethod, ApiKeyMethod};
+use auth_framework::tokens::AuthToken;
 use std::time::Duration;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+// Simulated middleware types for demonstration
+#[derive(Debug)]
+pub struct AuthRequest {
+    pub headers: HashMap<String, String>,
+    pub method: String,
+    pub path: String,
+}
+
+#[derive(Debug)]
+pub struct AuthResponse {
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+    pub body: String,
+}
+
+#[derive(Debug)]
+pub struct UserInfo {
+    pub id: String,
+    pub roles: Vec<String>,
+    pub permissions: Vec<String>,
+}
+
+/// Middleware function that extracts and validates authentication tokens
+pub async fn auth_middleware(
+    auth: &AuthFramework,
+    request: &AuthRequest,
+) -> Result<UserInfo, AuthError> {
+    // Check for JWT token in Authorization header
+    if let Some(auth_header) = request.headers.get("Authorization") {
+        if let Some(token) = auth_header.strip_prefix("Bearer ") {
+            // Parse token - in real implementation, you'd parse the JWT
+            // For demo purposes, we'll simulate token validation
+            if let Ok(token_obj) = parse_token(token) {
+                if auth.validate_token(&token_obj).await? {
+                    // Extract user info from token
+                    let user_info = extract_user_info(&token_obj);
+                    return Ok(user_info);
+                }
+            }
+        }
+    }
+    
+    // Check for API key in X-API-Key header
+    if let Some(api_key) = request.headers.get("X-API-Key") {
+        // In a real implementation, you'd validate the API key
+        // For demo purposes, we'll simulate validation
+        if let Ok(user_id) = validate_api_key(api_key) {
+            return Ok(UserInfo {
+                id: user_id,
+                roles: vec!["api_client".to_string()],
+                permissions: vec!["api:read".to_string()],
+            });
+        }
+    }
+    
+    Err(AuthError::access_denied("No valid authentication found"))
+}
+
+/// Permission checking middleware
+pub async fn permission_middleware(
+    auth: &AuthFramework,
+    _user_info: &UserInfo,
+    required_permission: &str,
+) -> Result<bool, AuthError> {
+    // Create a mock token for permission checking
+    // In real implementation, you'd use the actual token
+    let mock_token = AuthToken::new(
+        "mock_user".to_string(),
+        "mock_token".to_string(),
+        Duration::from_secs(3600),
+        "jwt".to_string(),
+    );
+    
+    // Check if user has required permission
+    auth.check_permission(&mock_token, required_permission, "api").await
+}
+
+/// Rate limiting middleware
+pub async fn rate_limit_middleware(
+    user_id: &str,
+    rate_limiter: &Arc<RwLock<HashMap<String, (u64, std::time::Instant)>>>,
+    max_requests: u64,
+    window_seconds: u64,
+) -> Result<(), AuthError> {
+    let mut limiter = rate_limiter.write().await;
+    let now = std::time::Instant::now();
+    
+    let (count, last_reset) = limiter.get(user_id).cloned().unwrap_or((0, now));
+    
+    // Reset counter if window has passed
+    if now.duration_since(last_reset).as_secs() >= window_seconds {
+        limiter.insert(user_id.to_string(), (1, now));
+        return Ok(());
+    }
+    
+    // Check if limit exceeded
+    if count >= max_requests {
+        return Err(AuthError::rate_limit("Rate limit exceeded"));
+    }
+    
+    // Increment counter
+    limiter.insert(user_id.to_string(), (count + 1, last_reset));
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,728 +122,252 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set up the auth framework
     let config = AuthConfig::new()
         .token_lifetime(Duration::from_secs(3600))
-        .enable_middleware(true);
+        .enable_rbac(true);
 
-    let storage = Arc::new(MemoryStorage::new());
-    let mut auth = AuthFramework::new(config).with_storage(storage);
+    let mut auth = AuthFramework::new(config);
 
+    // Register authentication methods
     let jwt_method = JwtMethod::new()
         .secret_key("middleware-demo-secret-key")
         .issuer("middleware-demo")
         .audience("api-service");
 
     auth.register_method("jwt", Box::new(jwt_method));
+
+    let api_key_method = ApiKeyMethod::new()
+        .key_prefix("mw_")
+        .key_length(32);
+
+    auth.register_method("api_key", Box::new(api_key_method));
+
     auth.initialize().await?;
     println!("✅ Auth framework initialized");
 
-    // Demonstrate different middleware integrations
-    demonstrate_axum_integration(&auth).await?;
-    demonstrate_warp_integration(&auth).await?;
-    demonstrate_actix_integration(&auth).await?;
-    demonstrate_custom_middleware(&auth).await?;
-    demonstrate_middleware_chain(&auth).await?;
-    demonstrate_conditional_auth(&auth).await?;
+    // Create test API key
+    let api_key = auth.create_api_key("warp_service_client", None).await?;
+    println!("✅ Created API key: {}", api_key);
 
-    println!("\n🎉 Middleware example completed successfully!");
-    println!("Integration examples shown for:");
-    println!("- Axum web framework");
-    println!("- Warp web framework"); 
-    println!("- Actix-web framework");
-    println!("- Custom middleware patterns");
+    // Set up rate limiter
+    let rate_limiter = Arc::new(RwLock::new(HashMap::new()));
 
+    // Demonstrate middleware usage
+    demonstrate_auth_middleware(&auth).await?;
+    demonstrate_permission_middleware(&auth).await?;
+    demonstrate_rate_limiting(&rate_limiter).await?;
+    demonstrate_middleware_pipeline(&auth, &rate_limiter).await?;
+
+    println!("\n🎉 Middleware integration example completed successfully!");
     Ok(())
 }
 
-async fn demonstrate_axum_integration(auth: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🚀 Axum Integration:");
-    println!("===================");
+async fn demonstrate_auth_middleware(auth: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n🔐 Authentication Middleware Demo");
+    println!("=================================");
 
-    // Create a test token for demonstration
-    let test_token = auth.create_auth_token(
-        "axum_user_123",
-        vec!["api:read".to_string(), "api:write".to_string()],
-        "jwt",
-        Some(Duration::from_secs(3600)),
-    ).await?;
-
-    println!("🔑 Created test token: {}", test_token.access_token);
-
-    // Simulate Axum middleware usage
-    println!("\n📡 Simulating Axum HTTP requests:");
-
-    // Example 1: Public endpoint (no auth required)
-    simulate_request(
-        "GET /api/health",
-        None,
-        &["public"],
-        "Health check endpoint - no auth required"
-    ).await;
-
-    // Example 2: Protected endpoint with valid token
-    simulate_request(
-        "GET /api/users",
-        Some(&test_token.access_token),
-        &["api:read"],
-        "Protected endpoint with valid token"
-    ).await;
-
-    // Example 3: Protected endpoint with invalid token
-    simulate_request(
-        "POST /api/users",
-        Some("invalid_token_12345"),
-        &["api:write"],
-        "Protected endpoint with invalid token"
-    ).await;
-
-    // Example 4: Admin endpoint requiring higher privileges
-    simulate_request(
-        "DELETE /api/users/123",
-        Some(&test_token.access_token),
-        &["admin:delete"],
-        "Admin endpoint requiring higher privileges"
-    ).await;
-
-    // Show Axum middleware code example
-    print_axum_middleware_example();
-
-    Ok(())
-}
-
-async fn demonstrate_warp_integration(auth: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🌊 Warp Integration:");
-    println!("===================");
-
-    // Create API key for Warp example
-    let api_key = auth.create_api_key(
-        "warp_service_client",
-        vec!["api:read".to_string(), "webhooks:receive".to_string()],
-        Some(Duration::from_secs(7200)),
-    ).await?;
-
-    println!("🔑 Created API key for Warp demo: {}", api_key);
-
-    // Simulate Warp filter usage
-    println!("\n📡 Simulating Warp filter chain:");
-
-    let routes = vec![
-        ("GET /api/status", None, vec![], "Public status endpoint"),
-        ("GET /api/data", Some(&api_key), vec!["api:read"], "API key protected data"),
-        ("POST /webhooks/github", Some(&api_key), vec!["webhooks:receive"], "Webhook endpoint"),
-        ("GET /admin/metrics", Some(&api_key), vec!["admin:view"], "Admin metrics (insufficient permissions)"),
-    ];
-
-    for (route, auth_header, required_perms, description) in routes {
-        println!("\n🔗 Route: {} - {}", route, description);
-        
-        if let Some(key) = auth_header {
-            match auth.validate_api_key(key).await {
-                Ok(user_info) => {
-                    println!("   ✅ API key valid for user: {}", user_info.id);
-                    
-                    if required_perms.is_empty() {
-                        println!("   ✅ No permissions required");
-                    } else {
-                        for perm in required_perms {
-                            let has_perm = auth.check_permission(&user_info.id, &perm, "api").await?;
-                            if has_perm {
-                                println!("   ✅ Permission '{}' granted", perm);
-                            } else {
-                                println!("   ❌ Permission '{}' denied", perm);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    println!("   ❌ API key validation failed: {}", e);
-                }
-            }
-        } else {
-            println!("   ℹ️  Public endpoint - no authentication required");
-        }
-    }
-
-    print_warp_middleware_example();
-
-    Ok(())
-}
-
-async fn demonstrate_actix_integration(auth: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🎭 Actix-web Integration:");
-    println!("========================");
-
-    // Create JWT token for Actix example
-    let jwt_token = auth.create_auth_token(
-        "actix_user_789",
-        vec!["profile:read".to_string(), "profile:write".to_string()],
-        "jwt",
-        Some(Duration::from_secs(1800)), // 30 minutes
-    ).await?;
-
-    println!("🎫 Created JWT token: {}", jwt_token.access_token);
-
-    // Simulate Actix middleware processing
-    println!("\n📡 Simulating Actix-web middleware:");
-
-    let requests = vec![
-        Request {
-            method: "GET",
-            path: "/api/profile",
-            headers: vec![("Authorization", &format!("Bearer {}", jwt_token.access_token))],
-            body: None,
+    // Simulate requests with different authentication methods
+    let test_requests = vec![
+        AuthRequest {
+            headers: {
+                let mut headers = HashMap::new();
+                headers.insert("Authorization".to_string(), "Bearer valid_jwt_token".to_string());
+                headers
+            },
+            method: "GET".to_string(),
+            path: "/api/users".to_string(),
         },
-        Request {
-            method: "PUT", 
-            path: "/api/profile",
-            headers: vec![("Authorization", &format!("Bearer {}", jwt_token.access_token))],
-            body: Some("Profile update data"),
+        AuthRequest {
+            headers: {
+                let mut headers = HashMap::new();
+                headers.insert("X-API-Key".to_string(), "mw_valid_api_key".to_string());
+                headers
+            },
+            method: "POST".to_string(),
+            path: "/api/webhooks".to_string(),
         },
-        Request {
-            method: "DELETE",
-            path: "/api/profile",
-            headers: vec![("Authorization", "Bearer invalid_jwt_token")],
-            body: None,
-        },
-        Request {
-            method: "GET",
-            path: "/api/admin/users",
-            headers: vec![("Authorization", &format!("Bearer {}", jwt_token.access_token))],
-            body: None,
+        AuthRequest {
+            headers: HashMap::new(),
+            method: "GET".to_string(),
+            path: "/api/protected".to_string(),
         },
     ];
 
-    for request in requests {
-        println!("\n🌐 {} {} - Processing request", request.method, request.path);
+    for (i, request) in test_requests.iter().enumerate() {
+        println!("\n📨 Request {}: {} {}", i + 1, request.method, request.path);
         
-        // Extract and validate authorization header
-        if let Some(auth_header) = request.headers.iter()
-            .find(|(name, _)| name.to_lowercase() == "authorization")
-            .map(|(_, value)| value) {
-            
-            if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                match auth.validate_token(token).await {
-                    Ok(user_info) => {
-                        println!("   ✅ JWT token valid for user: {}", user_info.id);
-                        
-                        // Check route-specific permissions
-                        let required_permission = match (request.method, request.path) {
-                            ("GET", "/api/profile") => Some("profile:read"),
-                            ("PUT", "/api/profile") => Some("profile:write"),
-                            ("DELETE", "/api/profile") => Some("profile:delete"),
-                            ("GET", "/api/admin/users") => Some("admin:users:view"),
-                            _ => None,
-                        };
-
-                        if let Some(perm) = required_permission {
-                            let has_perm = auth.check_permission(&user_info.id, perm, "api").await?;
-                            if has_perm {
-                                println!("   ✅ Permission '{}' granted - request allowed", perm);
-                            } else {
-                                println!("   ❌ Permission '{}' denied - request blocked", perm);
-                            }
-                        } else {
-                            println!("   ✅ No specific permissions required");
-                        }
-                    }
-                    Err(e) => {
-                        println!("   ❌ JWT validation failed: {} - request blocked", e);
-                    }
-                }
-            } else {
-                println!("   ❌ Invalid authorization header format");
+        match auth_middleware(auth, request).await {
+            Ok(user_info) => {
+                println!("   ✅ Authentication successful");
+                println!("   👤 User: {}", user_info.id);
+                println!("   🏷️  Roles: {:?}", user_info.roles);
+                println!("   🔑 Permissions: {:?}", user_info.permissions);
             }
-        } else {
-            println!("   ❌ No authorization header found - request blocked");
+            Err(e) => {
+                println!("   ❌ Authentication failed: {}", e);
+            }
         }
     }
-
-    print_actix_middleware_example();
 
     Ok(())
 }
 
-async fn demonstrate_custom_middleware(auth: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🛠️  Custom Middleware Pattern:");
+async fn demonstrate_permission_middleware(_auth: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n🔒 Permission Middleware Demo");
     println!("=============================");
 
-    // Create a custom middleware that implements specific business logic
-    let custom_middleware = CustomAuthMiddleware::new(auth.clone());
-
-    // Test different scenarios
-    let scenarios = vec![
-        Scenario {
-            name: "API rate limiting",
-            user_id: "rate_test_user",
-            endpoint: "/api/data",
-            rate_limit_key: Some("api_calls"),
-            expected_calls: 5,
+    let test_users = vec![
+        UserInfo {
+            id: "admin_user".to_string(),
+            roles: vec!["admin".to_string()],
+            permissions: vec!["read".to_string(), "write".to_string(), "delete".to_string()],
         },
-        Scenario {
-            name: "IP allowlist check",
-            user_id: "ip_test_user", 
-            endpoint: "/admin/sensitive",
-            rate_limit_key: None,
-            expected_calls: 1,
+        UserInfo {
+            id: "api_client".to_string(),
+            roles: vec!["client".to_string()],
+            permissions: vec!["read".to_string()],
         },
-        Scenario {
-            name: "Time-based access",
-            user_id: "time_test_user",
-            endpoint: "/api/reports",
-            rate_limit_key: None,
-            expected_calls: 1,
+        UserInfo {
+            id: "guest_user".to_string(),
+            roles: vec!["guest".to_string()],
+            permissions: vec![],
         },
     ];
 
-    for scenario in scenarios {
-        println!("\n🧪 Testing scenario: {}", scenario.name);
+    let required_permissions = vec!["read", "write", "delete"];
+
+    for user in &test_users {
+        println!("\n👤 User: {}", user.id);
         
-        for call_num in 1..=scenario.expected_calls + 2 {
-            let context = AuthContext {
-                user_id: scenario.user_id.to_string(),
-                endpoint: scenario.endpoint.to_string(),
-                ip_address: "192.168.1.100".to_string(),
-                user_agent: "test-client/1.0".to_string(),
-                timestamp: chrono::Utc::now(),
-                headers: HashMap::new(),
-            };
-
-            let result = custom_middleware.process_request(&context).await;
-            
-            match result {
-                Ok(()) => {
-                    println!("   Call {}: ✅ Request allowed", call_num);
-                }
-                Err(e) => {
-                    println!("   Call {}: ❌ Request blocked - {}", call_num, e);
-                }
-            }
-
-            // Small delay between calls for rate limiting demo
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        for perm in &required_permissions {
+            // For demonstration, we'll just check if user has the permission in their list
+            let has_permission = user.permissions.contains(&perm.to_string());
+            let status = if has_permission { "✅ Allowed" } else { "❌ Denied" };
+            println!("   {} permission: {}", perm, status);
         }
     }
-
-    print_custom_middleware_example();
 
     Ok(())
 }
 
-async fn demonstrate_middleware_chain(auth: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🔗 Middleware Chain Processing:");
-    println!("==============================");
+async fn demonstrate_rate_limiting(rate_limiter: &Arc<RwLock<HashMap<String, (u64, std::time::Instant)>>>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n⚡ Rate Limiting Middleware Demo");
+    println!("===============================");
 
-    // Simulate a chain of middleware components
-    let middleware_chain = vec![
-        "CORS Handler",
-        "Rate Limiter", 
-        "Authentication",
-        "Authorization",
-        "Audit Logger",
-        "Request Handler",
-    ];
+    let user_id = "test_user";
+    let max_requests = 5;
+    let window_seconds = 60;
 
-    let test_request = AuthContext {
-        user_id: "chain_test_user".to_string(),
-        endpoint: "/api/secure-data".to_string(),
-        ip_address: "203.0.113.45".to_string(),
-        user_agent: "MyApp/2.1".to_string(),
-        timestamp: chrono::Utc::now(),
+    println!("📊 Rate limit: {} requests per {} seconds", max_requests, window_seconds);
+    println!("🧪 Testing with user: {}", user_id);
+
+    // Simulate multiple requests
+    for i in 1..=7 {
+        match rate_limit_middleware(user_id, rate_limiter, max_requests, window_seconds).await {
+            Ok(()) => {
+                println!("   Request {}: ✅ Allowed", i);
+            }
+            Err(e) => {
+                println!("   Request {}: ❌ Denied - {}", i, e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn demonstrate_middleware_pipeline(
+    auth: &AuthFramework,
+    rate_limiter: &Arc<RwLock<HashMap<String, (u64, std::time::Instant)>>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n🔄 Complete Middleware Pipeline Demo");
+    println!("===================================");
+
+    let request = AuthRequest {
         headers: {
             let mut headers = HashMap::new();
             headers.insert("Authorization".to_string(), "Bearer valid_jwt_token".to_string());
-            headers.insert("Content-Type".to_string(), "application/json".to_string());
             headers
         },
+        method: "POST".to_string(),
+        path: "/api/sensitive-operation".to_string(),
     };
 
-    println!("🌐 Processing request: {} {}", "GET", test_request.endpoint);
-    println!("👤 User: {} from IP: {}", test_request.user_id, test_request.ip_address);
+    println!("📨 Processing request: {} {}", request.method, request.path);
 
-    let mut should_continue = true;
-
-    for (step, middleware_name) in middleware_chain.iter().enumerate() {
-        if !should_continue {
-            println!("   {}. {} - ⏭️  SKIPPED (previous middleware blocked)", 
-                    step + 1, middleware_name);
-            continue;
+    // Step 1: Authentication
+    println!("\n1️⃣ Authentication middleware...");
+    let user_info = match auth_middleware(auth, &request).await {
+        Ok(user) => {
+            println!("   ✅ Authentication successful for user: {}", user.id);
+            user
         }
+        Err(e) => {
+            println!("   ❌ Authentication failed: {}", e);
+            return Ok(());
+        }
+    };
 
-        println!("   {}. {} - 🔄 Processing...", step + 1, middleware_name);
-        
-        let success = match middleware_name {
-            &"CORS Handler" => {
-                // CORS check always passes in this demo
-                println!("      ✅ CORS headers validated");
-                true
-            }
-            &"Rate Limiter" => {
-                // Simple rate limit check
-                let within_limits = true; // Simulate rate limit check
-                if within_limits {
-                    println!("      ✅ Request within rate limits");
-                    true
-                } else {
-                    println!("      ❌ Rate limit exceeded");
-                    false
-                }
-            }
-            &"Authentication" => {
-                // Token validation
-                if test_request.headers.contains_key("Authorization") {
-                    println!("      ✅ Valid authentication token");
-                    true
-                } else {
-                    println!("      ❌ Missing or invalid authentication");
-                    false
-                }
-            }
-            &"Authorization" => {
-                // Permission check
-                let has_permission = true; // Simulate permission check
-                if has_permission {
-                    println!("      ✅ User authorized for this resource");
-                    true
-                } else {
-                    println!("      ❌ Insufficient permissions");
-                    false
-                }
-            }
-            &"Audit Logger" => {
-                // Audit logging always succeeds
-                println!("      📝 Request logged for audit");
-                true
-            }
-            &"Request Handler" => {
-                // Final request processing
-                println!("      🎯 Request processed successfully");
-                true
-            }
-            _ => true,
-        };
-
-        if !success {
-            should_continue = false;
-            println!("      🛑 Middleware chain stopped");
+    // Step 2: Rate limiting
+    println!("\n2️⃣ Rate limiting middleware...");
+    match rate_limit_middleware(&user_info.id, rate_limiter, 10, 60).await {
+        Ok(()) => {
+            println!("   ✅ Rate limit check passed");
+        }
+        Err(e) => {
+            println!("   ❌ Rate limit exceeded: {}", e);
+            return Ok(());
         }
     }
 
-    if should_continue {
-        println!("\n🎉 Request completed successfully through entire middleware chain");
+    // Step 3: Permission checking
+    println!("\n3️⃣ Permission middleware...");
+    let has_permission = user_info.permissions.contains(&"write".to_string());
+    if has_permission {
+        println!("   ✅ Permission check passed");
     } else {
-        println!("\n🚫 Request blocked by middleware chain");
+        println!("   ❌ Insufficient permissions");
+        return Ok(());
     }
+
+    // Step 4: Process request
+    println!("\n4️⃣ Processing request...");
+    println!("   ✅ Request processed successfully");
+    println!("   📝 Result: Sensitive operation completed");
 
     Ok(())
 }
 
-async fn demonstrate_conditional_auth(auth: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🔀 Conditional Authentication:");
-    println!("=============================");
-
-    // Different endpoints with different auth requirements
-    let endpoints = vec![
-        EndpointConfig {
-            path: "/api/public/status",
-            auth_required: false,
-            permissions: vec![],
-            description: "Public health check",
-        },
-        EndpointConfig {
-            path: "/api/user/profile", 
-            auth_required: true,
-            permissions: vec!["profile:read".to_string()],
-            description: "User profile (requires auth)",
-        },
-        EndpointConfig {
-            path: "/api/admin/users",
-            auth_required: true,
-            permissions: vec!["admin:users:view".to_string()],
-            description: "Admin endpoint (requires auth + admin role)",
-        },
-        EndpointConfig {
-            path: "/api/debug/logs",
-            auth_required: true,
-            permissions: vec!["debug:view".to_string(), "logs:read".to_string()],
-            description: "Debug endpoint (requires multiple permissions)",
-        },
-    ];
-
-    // Test different user types
-    let test_users = vec![
-        ("anonymous", None),
-        ("regular_user", Some("regular_user_token")),
-        ("admin_user", Some("admin_user_token")),
-    ];
-
-    for (user_type, token) in test_users {
-        println!("\n👤 Testing as: {}", user_type);
-        
-        for endpoint in &endpoints {
-            print!("   {} {} - ", "GET", endpoint.path);
-            
-            if !endpoint.auth_required {
-                println!("✅ ALLOWED (public endpoint)");
-                continue;
-            }
-
-            if token.is_none() {
-                println!("❌ DENIED (authentication required)");
-                continue;
-            }
-
-            // Simulate token validation
-            let is_admin = user_type == "admin_user";
-            let user_permissions = if is_admin {
-                vec!["profile:read", "admin:users:view", "debug:view", "logs:read"]
-            } else {
-                vec!["profile:read"]
-            };
-
-            let has_all_permissions = endpoint.permissions.iter()
-                .all(|perm| user_permissions.iter()
-                    .any(|user_perm| user_perm == perm));
-
-            if has_all_permissions {
-                println!("✅ ALLOWED ({})", endpoint.description);
-            } else {
-                println!("❌ DENIED (insufficient permissions)");
-            }
-        }
-    }
-
-    Ok(())
-}
-
-// Helper structures
-#[derive(Debug)]
-struct Request<'a> {
-    method: &'a str,
-    path: &'a str,
-    headers: Vec<(&'a str, &'a str)>,
-    body: Option<&'a str>,
-}
-
-#[derive(Debug)]
-struct Scenario<'a> {
-    name: &'a str,
-    user_id: &'a str,
-    endpoint: &'a str,
-    rate_limit_key: Option<&'a str>,
-    expected_calls: usize,
-}
-
-#[derive(Debug)]
-struct EndpointConfig {
-    path: &'static str,
-    auth_required: bool,
-    permissions: Vec<String>,
-    description: &'static str,
-}
-
-// Custom middleware implementation
-#[derive(Clone)]
-struct CustomAuthMiddleware {
-    auth: AuthFramework,
-}
-
-impl CustomAuthMiddleware {
-    fn new(auth: AuthFramework) -> Self {
-        Self { auth }
-    }
-
-    async fn process_request(&self, context: &AuthContext) -> Result<(), AuthError> {
-        // IP allowlist check for admin endpoints
-        if context.endpoint.starts_with("/admin/") {
-            let allowed_ips = vec!["192.168.1.0/24", "10.0.0.0/8"];
-            let is_allowed_ip = allowed_ips.iter()
-                .any(|range| context.ip_address.starts_with("192.168.1.") || 
-                           context.ip_address.starts_with("10."));
-            
-            if !is_allowed_ip {
-                return Err(AuthError::access_denied("IP not in allowlist for admin endpoints"));
-            }
-        }
-
-        // Time-based access for reports
-        if context.endpoint.contains("/reports") {
-            let current_hour = context.timestamp.hour();
-            if current_hour < 6 || current_hour > 22 {
-                return Err(AuthError::access_denied("Reports only available 6 AM - 10 PM"));
-            }
-        }
-
-        Ok(())
-    }
-}
-
-async fn simulate_request(route: &str, auth_header: Option<&str>, required_permissions: &[&str], description: &str) {
-    println!("\n🌐 {} - {}", route, description);
-    
-    if let Some(token) = auth_header {
-        println!("   🔑 Authorization: Bearer {}", token);
-        if token.starts_with("invalid") {
-            println!("   ❌ Invalid token format - request blocked");
-        } else {
-            println!("   ✅ Valid token found");
-            for perm in required_permissions {
-                println!("   🔍 Checking permission: {}", perm);
-                // Simulate permission check
-                if perm.starts_with("admin") {
-                    println!("   ❌ Admin permission required but not granted");
-                } else {
-                    println!("   ✅ Permission granted");
-                }
-            }
-        }
+// Helper functions for demonstration
+fn parse_token(token: &str) -> Result<AuthToken, AuthError> {
+    // In real implementation, you'd parse and validate the JWT
+    // For demo purposes, we'll just create a mock token
+    if token == "valid_jwt_token" {
+        Ok(AuthToken::new(
+            "user_123".to_string(),
+            "token_123".to_string(),
+            Duration::from_secs(3600),
+            "jwt".to_string(),
+        ))
     } else {
-        if required_permissions.is_empty() {
-            println!("   ✅ Public endpoint - no auth required");
-        } else {
-            println!("   ❌ Auth required but no token provided");
-        }
+        Err(AuthError::token("Invalid token"))
     }
 }
 
-fn print_axum_middleware_example() {
-    println!("\n📝 Axum Middleware Code Example:");
-    println!(r#"
-```rust
-use axum::{{
-    extract::State,
-    http::{{Request, StatusCode}},
-    middleware::Next,
-    response::Response,
-}};
-
-async fn auth_middleware<B>(
-    State(auth): State<AuthFramework>,
-    mut req: Request<B>,
-    next: Next<B>,
-) -> Result<Response, StatusCode> {{
-    let auth_header = req.headers()
-        .get("authorization")
-        .and_then(|h| h.to_str().ok());
-    
-    if let Some(token) = auth_header.and_then(|h| h.strip_prefix("Bearer ")) {{
-        match auth.validate_token(token).await {{
-            Ok(user_info) => {{
-                req.extensions_mut().insert(user_info);
-                Ok(next.run(req).await)
-            }}
-            Err(_) => Err(StatusCode::UNAUTHORIZED),
-        }}
-    }} else {{
-        Err(StatusCode::UNAUTHORIZED)
-    }}
-}}
-```"#);
+fn extract_user_info(_token: &AuthToken) -> UserInfo {
+    // In real implementation, you'd extract user info from the token
+    // For demo purposes, we'll return mock data
+    UserInfo {
+        id: "user_123".to_string(),
+        roles: vec!["user".to_string()],
+        permissions: vec!["read".to_string(), "write".to_string()],
+    }
 }
 
-fn print_warp_middleware_example() {
-    println!("\n📝 Warp Filter Code Example:");
-    println!(r#"
-```rust
-use warp::Filter;
-
-fn with_auth(auth: AuthFramework) -> impl Filter<Extract = (UserInfo,), Error = warp::Rejection> + Clone {{
-    warp::header::<String>("authorization")
-        .and_then(move |auth_header: String| {{
-            let auth = auth.clone();
-            async move {{
-                if let Some(token) = auth_header.strip_prefix("Bearer ") {{
-                    auth.validate_token(token).await
-                        .map_err(|_| warp::reject::custom(AuthError))
-                }} else {{
-                    Err(warp::reject::custom(AuthError))
-                }}
-            }}
-        }})
-}}
-
-let protected_route = warp::path("api")
-    .and(warp::path("users"))
-    .and(with_auth(auth_framework))
-    .and_then(|user_info: UserInfo| async move {{
-        // Handle authenticated request
-        Ok::<_, warp::Rejection>(warp::reply::json(&user_info))
-    }});
-```"#);
-}
-
-fn print_actix_middleware_example() {
-    println!("\n📝 Actix-web Middleware Code Example:");
-    println!(r#"
-```rust
-use actix_web::{{
-    dev::{{ServiceRequest, ServiceResponse}},
-    Error, HttpMessage,
-}};
-
-pub struct AuthMiddleware {{
-    auth: AuthFramework,
-}}
-
-impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-{{
-    fn new_transform(&self, service: S) -> Self::Future {{
-        let auth = self.auth.clone();
-        ready(Ok(AuthMiddlewareService {{ service, auth }}))
-    }}
-}}
-
-impl<S, B> Service<ServiceRequest> for AuthMiddlewareService<S>
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-{{
-    async fn call(&self, req: ServiceRequest) -> Result<Self::Response, Self::Error> {{
-        if let Some(auth_header) = req.headers().get("Authorization") {{
-            if let Ok(auth_str) = auth_header.to_str() {{
-                if let Some(token) = auth_str.strip_prefix("Bearer ") {{
-                    match self.auth.validate_token(token).await {{
-                        Ok(user_info) => {{
-                            req.extensions_mut().insert(user_info);
-                            return self.service.call(req).await;
-                        }}
-                        Err(_) => return Ok(req.error_response(StatusCode::UNAUTHORIZED)),
-                    }}
-                }}
-            }}
-        }}
-        Ok(req.error_response(StatusCode::UNAUTHORIZED))
-    }}
-}}
-```"#);
-}
-
-fn print_custom_middleware_example() {
-    println!("\n📝 Custom Middleware Pattern:");
-    println!(r#"
-```rust
-#[async_trait]
-pub trait AuthMiddleware: Send + Sync {{
-    async fn process_request(&self, context: &AuthContext) -> Result<(), AuthError>;
-}}
-
-pub struct AuthContext {{
-    pub user_id: String,
-    pub endpoint: String,
-    pub ip_address: String,
-    pub user_agent: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub headers: HashMap<String, String>,
-}}
-
-// Usage in your web framework:
-async fn middleware_handler(req: Request) -> Result<Response, Error> {{
-    let context = AuthContext::from_request(&req);
-    
-    for middleware in &middleware_chain {{
-        middleware.process_request(&context).await?;
-    }}
-    
-    // Continue to next handler
-    next_handler(req).await
-}}
-```"#);
+fn validate_api_key(api_key: &str) -> Result<String, AuthError> {
+    // In real implementation, you'd validate the API key against your database
+    // For demo purposes, we'll just check a mock key
+    if api_key == "mw_valid_api_key" {
+        Ok("api_client_123".to_string())
+    } else {
+        Err(AuthError::token("Invalid API key"))
+    }
 }
