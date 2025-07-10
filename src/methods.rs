@@ -1,5 +1,17 @@
 //! Authentication method implementations.
 
+// Enhanced device flow support (optional)
+#[cfg(feature = "enhanced-device-flow")]
+pub mod enhanced_device;
+
+#[cfg(feature = "enhanced-device-flow")]
+pub use enhanced_device::{EnhancedDeviceFlowMethod, DeviceFlowInstructions};
+
+// Enhanced device flow comprehensive tests
+#[cfg(test)]
+#[cfg(feature = "enhanced-device-flow")]
+mod enhanced_device_tests;
+
 use crate::credentials::{Credential, CredentialMetadata};
 use crate::errors::{AuthError, Result};
 use crate::providers::{OAuthProvider, generate_state, generate_pkce};

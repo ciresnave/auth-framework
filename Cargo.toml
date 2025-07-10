@@ -70,6 +70,9 @@ nonzero_ext = "0.3"
 # Secret management
 secrecy = { version = "0.8", features = ["serde"] }
 
+# OAuth device flows (optional enhanced device flow support)
+oauth-device-flows = { version = "0.1", optional = true }
+
 [dev-dependencies]
 tokio-test = "0.4"
 mockito = "1.2"
@@ -81,3 +84,4 @@ redis-storage = ["redis"]
 postgres-storage = []
 mysql-storage = []
 testing = []
+enhanced-device-flow = ["oauth-device-flows"]

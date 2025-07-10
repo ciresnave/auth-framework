@@ -21,6 +21,7 @@ Based on community feedback, v0.2.0 introduces significant improvements:
 ## Features
 
 - **Multiple Authentication Methods**: OAuth, JWT, API keys, password-based authentication
+- **Enhanced Device Flow**: Optional integration with [`oauth-device-flows`](https://crates.io/crates/oauth-device-flows) for robust CLI and IoT authentication
 - **Token Management**: Issuance, validation, refresh, and revocation
 - **Permission System**: Role-based access control with fine-grained permissions
 - **Multi-Factor Authentication**: Support for TOTP, SMS, email, and hardware keys
@@ -30,6 +31,24 @@ Based on community feedback, v0.2.0 introduces significant improvements:
 - **Storage Backends**: In-memory, Redis, PostgreSQL, MySQL support
 - **Middleware**: Easy integration with web frameworks
 - **Distributed**: Cross-node authentication validation
+
+### 🆕 Enhanced Device Flow (Optional)
+
+For advanced device flow authentication, enable the `enhanced-device-flow` feature to leverage the specialized [`oauth-device-flows`](https://crates.io/crates/oauth-device-flows) crate:
+
+```toml
+[dependencies]
+auth-framework = { version = "0.2.0", features = ["enhanced-device-flow"] }
+```
+
+This provides:
+- ✅ **QR code generation** for mobile authentication
+- ✅ **Robust polling** with exponential backoff
+- ✅ **Automatic token refresh** and lifecycle management
+- ✅ **Multiple OAuth providers** (GitHub, Google, Microsoft, GitLab)
+- ✅ **Minimal dependencies** suitable for embedded use
+
+See [`OAUTH_DEVICE_FLOWS_INTEGRATION.md`](OAUTH_DEVICE_FLOWS_INTEGRATION.md) for detailed integration guide.
 
 ## Quick Start
 

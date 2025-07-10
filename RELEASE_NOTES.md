@@ -49,6 +49,16 @@ This release addresses key feedback from the community and implements highly req
 - **Token persistence helpers** for CLI applications
 - **Configuration management** for CLI authentication flows
 
+### 🔥 Enhanced Device Flow Integration (NEW)
+- **oauth-device-flows integration** - Optional integration with the specialized `oauth-device-flows` crate for production-ready device authentication
+- **QR code generation** - Automatic QR code generation for mobile device authentication
+- **Advanced polling strategies** - Exponential backoff and robust error handling
+- **Multiple provider support** - Built-in support for GitHub, Google, Microsoft, GitLab, and custom providers
+- **Token lifecycle management** - Automatic token refresh and secure token handling
+- **Enhanced security** - Built on the `secrecy` crate with no sensitive data logging
+- **Minimal dependencies** - Optimized for embedded and CLI usage scenarios
+- **Feature flag controlled** - Enable with `enhanced-device-flow` feature flag
+
 ### 📚 Enhanced Documentation & API Clarity  
 - **Comprehensive examples** for all authentication methods
 - **Clear credential-to-method relationship** documentation
