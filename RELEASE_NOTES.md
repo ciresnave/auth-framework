@@ -1,14 +1,27 @@
-# Auth Framework v0.2.0 Release Notes
+# Auth Framework v0.3.0 Release Notes
 
 Released: July 10, 2025
 
 ## 🎉 Major Features & Improvements
 
-### 📋 Community-Driven Enhancements
+### � Enhanced Device Flow Support
 
-This release addresses key feedback from the community and implements highly requested features:
+This release introduces comprehensive OAuth device flow support through integration with the `oauth-device-flows` crate:
 
 ## 🆕 New Features
+
+### 🔧 Enhanced Device Flow Integration
+- **`oauth-device-flows` Integration** - Optional dependency providing advanced device flow capabilities
+- **EnhancedDeviceFlowMethod** - Production-ready device flow implementation with all major OAuth providers
+- **QR Code Support** - Automatic QR code generation for mobile device authentication
+- **Advanced Polling** - Intelligent polling with exponential backoff and proper error handling
+- **CLI Integration** - Comprehensive CLI helpers with cross-platform browser opening and progress indicators
+- **Robust Error Handling** - Complete mapping of all OAuth device flow error scenarios
+- **Provider Support** - GitHub, Google, Microsoft, GitLab, and generic OAuth providers
+- **Timeout & Cancellation** - Proper async cancellation and timeout support
+- **Feature Flag** - Optional `enhanced-device-flow` feature for seamless integration
+
+### 📋 Previous v0.2.0 Features (Maintained)
 
 ### 🔧 Device Flow Support
 - **Dedicated Device Flow Authentication** - Complete implementation for CLI apps, IoT devices, and scenarios where the user authenticates on a different device
