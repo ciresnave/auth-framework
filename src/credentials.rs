@@ -9,10 +9,7 @@ use std::collections::HashMap;
 #[serde(tag = "type", content = "data")]
 pub enum Credential {
     /// Username and password credentials
-    Password {
-        username: String,
-        password: String,
-    },
+    Password { username: String, password: String },
 
     /// OAuth authorization code flow
     OAuth {
@@ -23,29 +20,19 @@ pub enum Credential {
     },
 
     /// OAuth refresh token
-    OAuthRefresh {
-        refresh_token: String,
-    },
+    OAuthRefresh { refresh_token: String },
 
     /// API key authentication
-    ApiKey {
-        key: String,
-    },
+    ApiKey { key: String },
 
     /// JSON Web Token
-    Jwt {
-        token: String,
-    },
+    Jwt { token: String },
 
     /// Bearer token (generic)
-    Bearer {
-        token: String,
-    },
+    Bearer { token: String },
 
     /// Basic authentication (username:password base64 encoded)
-    Basic {
-        credentials: String,
-    },
+    Basic { credentials: String },
 
     /// Custom authentication with flexible key-value pairs
     Custom {
@@ -67,11 +54,9 @@ pub enum Credential {
         passphrase: Option<String>,
     },
 
-    /// SAML assertion
-    Saml {
-        assertion: String,
-        relay_state: Option<String>,
-    },
+    /// SAML assertion with secure XML signature validation
+    #[cfg(feature = "saml")]
+    Saml { assertion: String },
 
     /// OpenID Connect ID token
     OpenIdConnect {
@@ -84,6 +69,31 @@ pub enum Credential {
     DeviceCode {
         device_code: String,
         client_id: String,
+        user_code: Option<String>,
+        verification_uri: Option<String>,
+        verification_uri_complete: Option<String>,
+        expires_in: Option<u64>,
+        interval: Option<u64>,
+    },
+
+    /// Enhanced device flow credentials with full OAuth device flow support
+    EnhancedDeviceFlow {
+        device_code: String,
+        user_code: String,
+        verification_uri: String,
+        verification_uri_complete: Option<String>,
+        expires_in: u64,
+        interval: u64,
+        client_id: String,
+        client_secret: Option<String>,
+        scopes: Vec<String>,
+    },
+
+    /// WebAuthn/FIDO2 Passkey authentication using pure Rust implementation
+    #[cfg(feature = "passkeys")]
+    Passkey {
+        credential_id: Vec<u8>,
+        assertion_response: String, // JSON-serialized AuthenticatorAssertionResponse
     },
 }
 
@@ -131,14 +141,17 @@ impl Credential {
         Self::DeviceCode {
             device_code: device_code.into(),
             client_id: client_id.into(),
+            user_code: None,
+            verification_uri: None,
+            verification_uri_complete: None,
+            expires_in: None,
+            interval: None,
         }
     }
 
     /// Create API key credentials
     pub fn api_key(key: impl Into<String>) -> Self {
-        Self::ApiKey {
-            key: key.into(),
-        }
+        Self::ApiKey { key: key.into() }
     }
 
     /// Create JWT credentials
@@ -159,7 +172,7 @@ impl Credential {
     pub fn basic(username: impl Into<String>, password: impl Into<String>) -> Self {
         let credentials = format!("{}:{}", username.into(), password.into());
         let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
-        
+
         Self::Basic {
             credentials: encoded,
         }
@@ -199,20 +212,23 @@ impl Credential {
         }
     }
 
-    /// Create SAML assertion credentials
-    pub fn saml(assertion: impl Into<String>) -> Self {
-        Self::Saml {
-            assertion: assertion.into(),
-            relay_state: None,
-        }
-    }
-
+    /// Create SAML assertion credentials - REMOVED for security
+    ///
     /// Create OpenID Connect credentials
     pub fn openid_connect(id_token: impl Into<String>) -> Self {
         Self::OpenIdConnect {
             id_token: id_token.into(),
             access_token: None,
             refresh_token: None,
+        }
+    }
+
+    /// Create passkey credentials (WebAuthn/FIDO2)
+    #[cfg(feature = "passkeys")]
+    pub fn passkey(credential_id: Vec<u8>, assertion_response: impl Into<String>) -> Self {
+        Self::Passkey {
+            credential_id,
+            assertion_response: assertion_response.into(),
         }
     }
 
@@ -229,9 +245,13 @@ impl Credential {
             Self::Custom { method, .. } => method.as_str(),
             Self::Mfa { .. } => "mfa",
             Self::Certificate { .. } => "certificate",
+            #[cfg(feature = "saml")]
             Self::Saml { .. } => "saml",
             Self::OpenIdConnect { .. } => "openid_connect",
             Self::DeviceCode { .. } => "device_code",
+            Self::EnhancedDeviceFlow { .. } => "enhanced_device_flow",
+            #[cfg(feature = "passkeys")]
+            Self::Passkey { .. } => "passkey",
         }
     }
 
@@ -254,7 +274,16 @@ impl Credential {
 
     /// Check if this credential is sensitive and should be masked in logs
     pub fn is_sensitive(&self) -> bool {
-        matches!(self, Self::Password { .. } | Self::ApiKey { .. } | Self::Jwt { .. } | Self::Bearer { .. } | Self::Basic { .. } | Self::Certificate { .. } | Self::Mfa { .. })
+        matches!(
+            self,
+            Self::Password { .. }
+                | Self::ApiKey { .. }
+                | Self::Jwt { .. }
+                | Self::Bearer { .. }
+                | Self::Basic { .. }
+                | Self::Certificate { .. }
+                | Self::Mfa { .. }
+        )
     }
 
     /// Get a safe representation for logging (masks sensitive data)
@@ -274,9 +303,13 @@ impl Credential {
                 format!("Mfa(challenge_id: {challenge_id})")
             }
             Self::Certificate { .. } => "Certificate(****)".to_string(),
-            Self::Saml { .. } => "Saml(assertion)".to_string(),
+            #[cfg(feature = "saml")]
+            Self::Saml { .. } => "Saml(****)".to_string(),
             Self::OpenIdConnect { .. } => "OpenIdConnect(id_token)".to_string(),
             Self::DeviceCode { .. } => "DeviceCode(****)".to_string(),
+            Self::EnhancedDeviceFlow { .. } => "EnhancedDeviceFlow(****)".to_string(),
+            #[cfg(feature = "passkeys")]
+            Self::Passkey { .. } => "Passkey(****)".to_string(),
         }
     }
 }
@@ -286,16 +319,16 @@ impl Credential {
 pub struct CredentialMetadata {
     /// Client identifier (for OAuth flows)
     pub client_id: Option<String>,
-    
+
     /// Requested scopes
     pub scopes: Vec<String>,
-    
+
     /// User agent string
     pub user_agent: Option<String>,
-    
+
     /// IP address of the client
     pub client_ip: Option<String>,
-    
+
     /// Additional custom metadata
     pub custom: HashMap<String, String>,
 }
@@ -348,10 +381,10 @@ impl CredentialMetadata {
 pub struct AuthRequest {
     /// The credentials to authenticate with
     pub credential: Credential,
-    
+
     /// Additional metadata
     pub metadata: CredentialMetadata,
-    
+
     /// Timestamp of the request
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }

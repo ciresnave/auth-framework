@@ -1,0 +1,48 @@
+# JWT Method Configuration
+# JWT-specific authentication method settings
+
+[methods.jwt]
+# Default JWT settings
+default_algorithm = "HS256"
+allow_algorithm_none = false
+require_exp = true
+require_iat = true
+require_nbf = false
+clock_skew_seconds = 300     # 5 minutes
+
+# Issuer validation
+validate_issuer = true
+valid_issuers = ["auth-framework", "myapp"]
+
+# Audience validation
+validate_audience = true
+valid_audiences = ["api", "web", "mobile"]
+
+# Custom claims validation
+[methods.jwt.custom_claims]
+# Define custom claims that should be validated
+role = { required = false, values = ["user", "admin", "moderator"] }
+permissions = { required = false, type = "array" }
+tenant_id = { required = false, type = "string" }
+
+[methods.jwt.signing_keys]
+# JWT signing key configuration
+# Keys can be loaded from environment variables, files, or external services
+
+# HMAC keys (for HS256, HS384, HS512)
+hmac_secret = "${JWT_SECRET}" # Set via environment variable
+
+# RSA keys (for RS256, RS384, RS512)
+# rsa_private_key_file = "keys/jwt-private.pem"
+# rsa_public_key_file = "keys/jwt-public.pem"
+
+# ECDSA keys (for ES256, ES384, ES512)
+# ecdsa_private_key_file = "keys/jwt-ec-private.pem"
+# ecdsa_public_key_file = "keys/jwt-ec-public.pem"
+
+[methods.jwt.token_validation]
+# Additional token validation rules
+max_token_age = "24h"          # Maximum age for tokens
+allow_refresh_tokens = true
+refresh_token_max_uses = 10    # Max times a refresh token can be used
+blacklist_check_enabled = true

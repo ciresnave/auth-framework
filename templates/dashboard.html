@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Auth Framework Admin{% endblock %}
+
+{% block header %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1>
+    <i class="bi bi-speedometer2 me-2"></i>
+    Dashboard
+  </h1>
+  <div class="status-badge">
+    <span class="status-dot status-{{ health_status | lower }}"></span>
+    <span class="text-{{ health_status | lower }}">{{ health_status }}</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Quick Stats Row -->
+<div class="row mb-4">
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3">
+            <i class="bi bi-people-fill text-primary fs-2"></i>
+          </div>
+          <div>
+            <h5 class="card-title mb-0">{{ stats.active_users }}</h5>
+            <p class="card-text text-muted small">Active Users</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3">
+            <i class="bi bi-activity text-success fs-2"></i>
+          </div>
+          <div>
+            <h5 class="card-title mb-0">{{ stats.active_sessions }}</h5>
+            <p class="card-text text-muted small">Active Sessions</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3">
+            <i class="bi bi-shield-check text-info fs-2"></i>
+          </div>
+          <div>
+            <h5 class="card-title mb-0">{{ stats.security_events }}</h5>
+            <p class="card-text text-muted small">Security Events (24h)</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3">
+            <i class="bi bi-cpu text-warning fs-2"></i>
+          </div>
+          <div>
+            <h5 class="card-title mb-0">{{ stats.uptime }}</h5>
+            <p class="card-text text-muted small">Uptime</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- System Status -->
+<div class="row mb-4">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="bi bi-graph-up me-2"></i>
+          System Status
+        </h6>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <h6>Web Server</h6>
+            <div class="d-flex align-items-center mb-3">
+              <span
+                class="status-dot status-{% if server_status.web_server_running %}healthy{% else %}critical{% endif %} me-2"></span>
+              <span>{% if server_status.web_server_running %}Running{% else %}Stopped{% endif %}</span>
+              {% if server_status.web_server_port %}
+              <span class="text-muted ms-2">:{{ server_status.web_server_port }}</span>
+              {% endif %}
+            </div>
+
+            <h6>Configuration</h6>
+            <div class="d-flex align-items-center mb-3">
+              <span class="status-dot status-healthy me-2"></span>
+              <span>Loaded</span>
+              {% if server_status.last_config_update %}
+              <span class="text-muted ms-2">{{ server_status.last_config_update }}</span>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="col-md-6">
+            <h6>Database</h6>
+            <div class="d-flex align-items-center mb-3">
+              <span class="status-dot status-healthy me-2"></span>
+              <span>Connected</span>
+            </div>
+
+            <h6>Authentication</h6>
+            <div class="d-flex align-items-center mb-3">
+              <span class="status-dot status-healthy me-2"></span>
+              <span>Active</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="bi bi-clock-history me-2"></i>
+          Recent Activity
+        </h6>
+      </div>
+      <div class="card-body">
+        <div class="list-group list-group-flush">
+          {% if recent_events.is_empty() %}
+          <div class="text-muted text-center py-3">
+            <i class="bi bi-info-circle me-1"></i>
+            No recent activity
+          </div>
+          {% else %}
+          {% for event in recent_events %}
+          <div class="list-group-item px-0 py-2 border-0">
+            <div class="d-flex align-items-start">
+              <i class="bi bi-{{ event.icon }} text-{{ event.type }} me-2 mt-1"></i>
+              <div class="flex-grow-1">
+                <div class="small fw-medium">{{ event.message }}</div>
+                <div class="text-muted small">{{ event.timestamp }}</div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Configuration Summary -->
+<div class="row">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="bi bi-gear me-2"></i>
+          Current Configuration
+        </h6>
+      </div>
+      <div class="card-body">
+        <table class="table table-sm">
+          <tbody>
+            <tr>
+              <td>JWT Issuer</td>
+              <td><code>{{ config.jwt_issuer | default:"Not Set" }}</code></td>
+            </tr>
+            <tr>
+              <td>Session Timeout</td>
+              <td>{{ config.session_timeout | default:"30 minutes" }}</td>
+            </tr>
+            <tr>
+              <td>MFA Enabled</td>
+              <td>
+                {% if config.mfa_enabled %}
+                <span class="badge bg-success">Yes</span>
+                {% else %}
+                <span class="badge bg-warning">No</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr>
+              <td>Rate Limiting</td>
+              <td>
+                {% if config.rate_limiting_enabled %}
+                <span class="badge bg-success">Enabled</span>
+                {% else %}
+                <span class="badge bg-danger">Disabled</span>
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="bi bi-exclamation-triangle me-2"></i>
+          Security Alerts
+        </h6>
+      </div>
+      <div class="card-body">
+        {% if security_alerts.is_empty() %}
+        <div class="text-success text-center py-3">
+          <i class="bi bi-shield-check fs-2 d-block mb-2"></i>
+          <p class="mb-0">All security checks passed</p>
+        </div>
+        {% else %}
+        {% for alert in security_alerts %}
+        <div class="alert alert-{{ alert.severity }} alert-dismissible fade show" role="alert">
+          <strong>{{ alert.title }}</strong>
+          {{ alert.message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% empty %}
+        <div class="text-success text-center py-3">
+          <i class="bi bi-shield-check fs-2 d-block mb-2"></i>
+          All security checks passed
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Dashboard-specific JavaScript
+  document.addEventListener('DOMContentLoaded', function () {
+    // Setup real-time updates for dashboard
+    const ws = new WebSocket('ws://localhost:{{ server_status.web_server_port | default:"8080" }}/ws');
+
+    ws.onmessage = function (event) {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'stats_update') {
+        updateStats(data.stats);
+      } else if (data.type === 'status_update') {
+        updateStatus(data.status);
+      }
+    };
+
+    function updateStats(stats) {
+      // Update stat cards
+      document.querySelector('.active-users').textContent = stats.active_users;
+      document.querySelector('.active-sessions').textContent = stats.active_sessions;
+      document.querySelector('.security-events').textContent = stats.security_events;
+    }
+
+    function updateStatus(status) {
+      // Update status indicators
+      const healthStatus = document.querySelector('.status-badge');
+      healthStatus.className = `status-badge status-${status.health.toLowerCase()}`;
+    }
+  });
+</script>
+{% endblock %}

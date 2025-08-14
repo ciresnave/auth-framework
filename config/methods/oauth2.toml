@@ -1,0 +1,45 @@
+# OAuth2 Method Configuration
+# This demonstrates how method-specific configurations can be modularized
+
+[methods.oauth2]
+# Default OAuth2 settings
+default_scope = ["read", "profile"]
+require_pkce = true
+authorization_code_lifetime = "10m"
+access_token_lifetime = "1h"
+refresh_token_lifetime = "30d"
+
+# OAuth2 provider configurations
+[methods.oauth2.providers.google]
+enabled = true
+client_id = "${GOOGLE_CLIENT_ID}"                                  # Set via environment variable
+client_secret = "${GOOGLE_CLIENT_SECRET}"
+authorization_url = "https://accounts.google.com/o/oauth2/v2/auth"
+token_url = "https://oauth2.googleapis.com/token"
+userinfo_url = "https://openidconnect.googleapis.com/v1/userinfo"
+scopes = ["openid", "email", "profile"]
+supports_pkce = true
+supports_refresh = true
+
+[methods.oauth2.providers.github]
+enabled = false                                                # Disabled by default
+client_id = "${GITHUB_CLIENT_ID}"
+client_secret = "${GITHUB_CLIENT_SECRET}"
+authorization_url = "https://github.com/login/oauth/authorize"
+token_url = "https://github.com/login/oauth/access_token"
+userinfo_url = "https://api.github.com/user"
+scopes = ["user:email"]
+supports_pkce = false
+supports_refresh = false
+
+[methods.oauth2.providers.microsoft]
+enabled = false
+client_id = "${MICROSOFT_CLIENT_ID}"
+client_secret = "${MICROSOFT_CLIENT_SECRET}"
+authorization_url = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+userinfo_url = "https://graph.microsoft.com/v1.0/me"
+scopes = ["openid", "email", "profile"]
+supports_pkce = true
+supports_refresh = true
+tenant_id = "common"                                                                 # Can be overridden for specific tenants

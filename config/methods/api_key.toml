@@ -1,0 +1,91 @@
+# API Key Authentication Configuration
+# Configuration for API key-based authentication methods
+
+[methods.api_key]
+enabled = true
+allow_multiple_keys = true      # Allow users to have multiple API keys
+default_expiry = "30d"          # Default expiry for new keys
+max_keys_per_user = 5
+
+# API key generation settings
+[methods.api_key.generation]
+key_length = 64                 # Length of generated API keys
+include_prefix = true           # Include service prefix (ak_...)
+prefix = "ak"                   # Prefix for API keys
+entropy_source = "crypto_random"  # crypto_random or system_random
+
+# Key validation settings
+[methods.api_key.validation]
+hash_algorithm = "argon2"       # argon2, bcrypt, scrypt
+case_sensitive = true
+min_length = 32
+max_length = 128
+
+# Rate limiting for API key usage
+[methods.api_key.rate_limit]
+enabled = true
+requests_per_minute = 1000
+requests_per_hour = 50000
+burst_limit = 100
+
+# API key scopes and permissions
+[methods.api_key.permissions]
+# Default scopes for new API keys
+default_scopes = ["read"]
+available_scopes = [
+    "read",           # Read access to resources
+    "write",          # Write access to resources
+    "admin",          # Administrative access
+    "user:profile",   # Access to user profile
+    "user:sessions",  # Manage user sessions
+]
+
+# Scope inheritance rules
+scope_inheritance = true        # Child scopes inherit parent permissions
+admin_scope_required_for_creation = true
+
+# API key headers and authentication
+[methods.api_key.headers]
+# Supported header names for API key authentication
+header_names = [
+    "X-API-Key",
+    "Authorization",  # Expects "Bearer <key>" or "ApiKey <key>"
+    "X-Auth-Token"
+]
+
+# Query parameter support
+allow_query_param = false       # For development only - not recommended for production
+query_param_name = "api_key"
+
+[methods.api_key.security]
+# Security settings for API key storage and handling
+store_hash_only = true          # Store hashed keys instead of plain text
+require_https = true            # Only accept API keys over HTTPS
+log_usage = true               # Log API key usage for auditing
+
+# Automatic key rotation
+auto_rotation_enabled = false
+rotation_interval = "90d"       # Rotate keys every 90 days
+rotation_warning_days = 7       # Warn users 7 days before rotation
+
+[methods.api_key.monitoring]
+# API key usage monitoring and alerting
+track_usage = true
+alert_on_suspicious_usage = true
+suspicious_threshold_multiplier = 5.0  # Alert if usage is 5x normal
+
+# Geolocation tracking
+track_ip_geolocation = false    # Requires threat intelligence integration
+alert_on_new_countries = false  # Alert when key is used from new country
+
+# Failed authentication tracking
+track_failed_attempts = true
+max_failed_attempts = 10        # Lock key after 10 failed attempts
+lockout_duration = "1h"         # Lock for 1 hour
+
+[methods.api_key.cleanup]
+# Automatic cleanup of expired or unused keys
+auto_cleanup_enabled = true
+cleanup_interval = "1d"         # Run cleanup daily
+remove_unused_after = "180d"    # Remove keys unused for 180 days
+remove_expired_after = "30d"    # Remove expired keys after 30 days

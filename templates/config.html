@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration - Auth Framework Admin{% endblock %}
+
+{% block header %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1>
+    <i class="bi bi-gear me-2"></i>
+    Configuration
+  </h1>
+  <div class="btn-group">
+    <button type="button" class="btn btn-outline-primary" onclick="reloadConfig()">
+      <i class="bi bi-arrow-clockwise me-1"></i>
+      Reload
+    </button>
+    <button type="button" class="btn btn-outline-success" onclick="validateConfig()">
+      <i class="bi bi-check-circle me-1"></i>
+      Validate
+    </button>
+    <button type="button" class="btn btn-primary" onclick="saveConfig()">
+      <i class="bi bi-save me-1"></i>
+      Save Changes
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-md-3">
+    <!-- Configuration Sections -->
+    <div class="card">
+      <div class="card-header">
+        <h6 class="mb-0">Configuration Sections</h6>
+      </div>
+      <div class="list-group list-group-flush">
+        <a href="#server" class="list-group-item list-group-item-action" data-section="server">
+          <i class="bi bi-server me-2"></i>
+          Server Settings
+        </a>
+        <a href="#auth" class="list-group-item list-group-item-action" data-section="auth">
+          <i class="bi bi-shield-lock me-2"></i>
+          Authentication
+        </a>
+        <a href="#database" class="list-group-item list-group-item-action" data-section="database">
+          <i class="bi bi-database me-2"></i>
+          Database
+        </a>
+        <a href="#security" class="list-group-item list-group-item-action active" data-section="security">
+          <i class="bi bi-shield-check me-2"></i>
+          Security
+        </a>
+        <a href="#oauth" class="list-group-item list-group-item-action" data-section="oauth">
+          <i class="bi bi-key me-2"></i>
+          OAuth Providers
+        </a>
+        <a href="#logging" class="list-group-item list-group-item-action" data-section="logging">
+          <i class="bi bi-journal-text me-2"></i>
+          Logging
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-9">
+    <!-- Server Settings Section -->
+    <div class="card config-section" id="server-section">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="bi bi-server me-2"></i>
+          Server Settings
+        </h6>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <div class="mb-3">
+              <label for="server-host" class="form-label">Host</label>
+              <input type="text" class="form-control" id="server-host" value="{{ config.server.host }}">
+            </div>
+            <div class="mb-3">
+              <label for="server-port" class="form-label">Port</label>
+              <input type="number" class="form-control" id="server-port" value="{{ config.server.port }}">
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="mb-3">
+              <label for="server-workers" class="form-label">Worker Threads</label>
+              <input type="number" class="form-control" id="server-workers"
+                value="{{ config.server.workers | default:'4' }}">
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="server-tls-enabled" {{ config.server.tls_enabled |
+                  yesno:"checked," }}>
+                <label class="form-check-label" for="server-tls-enabled">
+                  Enable TLS
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Authentication Section -->
+    <div class="card config-section d-none" id="auth-section">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="bi bi-shield-lock me-2"></i>
+          Authentication Settings
+        </h6>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <div class="mb-3">
+              <label for="jwt-issuer" class="form-label">JWT Issuer</label>
+              <input type="text" class="form-control" id="jwt-issuer" value="{{ config.jwt.issuer }}">
+            </div>
+            <div class="mb-3">
+              <label for="jwt-expiry" class="form-label">JWT Expiry (seconds)</label>
+              <input type="number" class="form-control" id="jwt-expiry"
+                value="{{ config.jwt.expiry | default:'3600' }}">
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="mb-3">
+              <label for="session-timeout" class="form-label">Session Timeout (minutes)</label>
+              <input type="number" class="form-control" id="session-timeout"
+                value="{{ config.session.timeout | default:'30' }}">
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="mfa-enabled" {{ config.mfa.enabled |
+                  yesno:"checked," }}>
+                <label class="form-check-label" for="mfa-enabled">
+                  Enable Multi-Factor Authentication
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security Section -->
+    <div class="card config-section" id="security-section">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="bi bi-shield-check me-2"></i>
+          Security Settings
+        </h6>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="rate-limiting-enabled" {{
+                  config.security.rate_limiting.enabled | yesno:"checked," }}>
+                <label class="form-check-label" for="rate-limiting-enabled">
+                  Enable Rate Limiting
+                </label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label for="max-requests" class="form-label">Max Requests per Window</label>
+              <input type="number" class="form-control" id="max-requests"
+                value="{{ config.security.rate_limiting.max_requests | default:'100' }}">
+            </div>
+            <div class="mb-3">
+              <label for="window-duration" class="form-label">Window Duration (seconds)</label>
+              <input type="number" class="form-control" id="window-duration"
+                value="{{ config.security.rate_limiting.window_duration | default:'60' }}">
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="csrf-protection" {{ config.security.csrf_protection
+                  | yesno:"checked," }}>
+                <label class="form-check-label" for="csrf-protection">
+                  Enable CSRF Protection
+                </label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="cors-enabled" {{ config.security.cors.enabled |
+                  yesno:"checked," }}>
+                <label class="form-check-label" for="cors-enabled">
+                  Enable CORS
+                </label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label for="allowed-origins" class="form-label">Allowed Origins</label>
+              <textarea class="form-control" id="allowed-origins"
+                rows="3">{% for origin in config.security.cors.allowed_origins %}{{ origin }}{% if not forloop.last %}&#10;{% endif %}{% endfor %}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Database Section -->
+    <div class="card config-section d-none" id="database-section">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="bi bi-database me-2"></i>
+          Database Settings
+        </h6>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <div class="mb-3">
+              <label for="db-url" class="form-label">Database URL</label>
+              <input type="text" class="form-control" id="db-url" value="{{ config.database.url }}">
+              <div class="form-text">Connection string for your database</div>
+            </div>
+            <div class="mb-3">
+              <label for="db-pool-size" class="form-label">Connection Pool Size</label>
+              <input type="number" class="form-control" id="db-pool-size"
+                value="{{ config.database.pool_size | default:'10' }}">
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="mb-3">
+              <label for="db-timeout" class="form-label">Connection Timeout (seconds)</label>
+              <input type="number" class="form-control" id="db-timeout"
+                value="{{ config.database.timeout | default:'30' }}">
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="db-migrations" {{ config.database.auto_migrate |
+                  yesno:"checked," }}>
+                <label class="form-check-label" for="db-migrations">
+                  Auto-run Migrations
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Raw Configuration Viewer -->
+    <div class="card mt-3">
+      <div class="card-header">
+        <div class="d-flex justify-content-between align-items-center">
+          <h6 class="mb-0">
+            <i class="bi bi-code me-2"></i>
+            Raw Configuration
+          </h6>
+          <div class="btn-group btn-group-sm">
+            <input type="radio" class="btn-check" name="format" id="toml-format" autocomplete="off" checked>
+            <label class="btn btn-outline-secondary" for="toml-format">TOML</label>
+
+            <input type="radio" class="btn-check" name="format" id="json-format" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="json-format">JSON</label>
+
+            <input type="radio" class="btn-check" name="format" id="yaml-format" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="yaml-format">YAML</label>
+          </div>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <textarea class="form-control border-0" id="raw-config" rows="20"
+          style="font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;">{{ raw_config }}</textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Configuration Validation Modal -->
+<div class="modal fade" id="validationModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Configuration Validation</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="validation-results"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let configChanged = false;
+
+  // Track configuration changes
+  document.addEventListener('input', function (e) {
+    if (e.target.matches('input, textarea, select')) {
+      configChanged = true;
+      updateSaveButton();
+    }
+  });
+
+  // Section navigation
+  document.querySelectorAll('[data-section]').forEach(link => {
+    link.addEventListener('click', function (e) {
+      e.preventDefault();
+
+      // Update active link
+      document.querySelectorAll('[data-section]').forEach(l => l.classList.remove('active'));
+      this.classList.add('active');
+
+      // Show corresponding section
+      const section = this.dataset.section;
+      document.querySelectorAll('.config-section').forEach(s => s.classList.add('d-none'));
+      document.getElementById(section + '-section').classList.remove('d-none');
+    });
+  });
+
+  // Configuration actions
+  async function reloadConfig() {
+    try {
+      const config = await apiCall('/config/reload', 'POST');
+      window.location.reload();
+    } catch (error) {
+      alert('Failed to reload configuration: ' + error.message);
+    }
+  }
+
+  async function validateConfig() {
+    try {
+      const result = await apiCall('/config/validate', 'POST');
+      showValidationResults(result);
+    } catch (error) {
+      showValidationResults({ valid: false, errors: [error.message] });
+    }
+  }
+
+  async function saveConfig() {
+    try {
+      const configData = collectConfigData();
+      await apiCall('/config/update', 'POST', configData);
+      configChanged = false;
+      updateSaveButton();
+
+      // Show success message
+      const alert = document.createElement('div');
+      alert.className = 'alert alert-success alert-dismissible fade show';
+      alert.innerHTML = `
+                <strong>Success!</strong> Configuration saved successfully.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+      document.querySelector('.content-wrapper').prepend(alert);
+
+      // Auto-dismiss after 3 seconds
+      setTimeout(() => {
+        alert.classList.remove('show');
+        setTimeout(() => alert.remove(), 150);
+      }, 3000);
+    } catch (error) {
+      alert('Failed to save configuration: ' + error.message);
+    }
+  }
+
+  function collectConfigData() {
+    const config = {};
+
+    // Collect all form inputs
+    document.querySelectorAll('input, textarea, select').forEach(input => {
+      const id = input.id;
+      if (id && !id.includes('-')) return;
+
+      const [section, key] = id.split('-', 2);
+      if (!config[section]) config[section] = {};
+
+      if (input.type === 'checkbox') {
+        config[section][key] = input.checked;
+      } else if (input.type === 'number') {
+        config[section][key] = parseInt(input.value);
+      } else {
+        config[section][key] = input.value;
+      }
+    });
+
+    return config;
+  }
+
+  function updateSaveButton() {
+    const saveBtn = document.querySelector('button[onclick="saveConfig()"]');
+    if (configChanged) {
+      saveBtn.classList.remove('btn-primary');
+      saveBtn.classList.add('btn-warning');
+      saveBtn.innerHTML = '<i class="bi bi-save me-1"></i> Save Changes *';
+    } else {
+      saveBtn.classList.remove('btn-warning');
+      saveBtn.classList.add('btn-primary');
+      saveBtn.innerHTML = '<i class="bi bi-save me-1"></i> Save Changes';
+    }
+  }
+
+  function showValidationResults(result) {
+    const resultsDiv = document.getElementById('validation-results');
+
+    if (result.valid) {
+      resultsDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Configuration is valid!
+                </div>
+            `;
+    } else {
+      const errors = result.errors.map(error => `<li>${error}</li>`).join('');
+      resultsDiv.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Configuration has errors:</strong>
+                    <ul class="mb-0 mt-2">${errors}</ul>
+                </div>
+            `;
+    }
+
+    new bootstrap.Modal(document.getElementById('validationModal')).show();
+  }
+
+  // Format switcher for raw config
+  document.querySelectorAll('input[name="format"]').forEach(radio => {
+    radio.addEventListener('change', async function () {
+      const format = this.id.replace('-format', '');
+      try {
+        const response = await apiCall(`/config/export?format=${format}`);
+        document.getElementById('raw-config').value = response.config;
+      } catch (error) {
+        console.error('Failed to load config in format:', format, error);
+      }
+    });
+  });
+
+  // Warn about unsaved changes
+  window.addEventListener('beforeunload', function (e) {
+    if (configChanged) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+</script>
+{% endblock %}

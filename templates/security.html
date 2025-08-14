@@ -1,0 +1,631 @@
+{% extends "base.html" %}
+
+{% block title %}Security - Auth Framework Admin{% endblock %}
+
+{% block header %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1>
+    <i class="bi bi-shield-lock me-2"></i>
+    Security Center
+  </h1>
+  <div class="btn-group">
+    <button type="button" class="btn btn-outline-primary" onclick="refreshSecurityData()">
+      <i class="bi bi-arrow-clockwise me-1"></i>
+      Refresh
+    </button>
+    <button type="button" class="btn btn-primary" onclick="runSecurityAudit()">
+      <i class="bi bi-search me-1"></i>
+      Run Audit
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Security Overview -->
+<div class="row mb-4">
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3">
+            <i class="bi bi-shield-check text-success fs-2"></i>
+          </div>
+          <div>
+            <h5 class="card-title mb-0">{{ security_score }}/100</h5>
+            <p class="card-text text-muted small">Security Score</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3">
+            <i class="bi bi-exclamation-triangle text-warning fs-2"></i>
+          </div>
+          <div>
+            <h5 class="card-title mb-0">{{ threat_count }}</h5>
+            <p class="card-text text-muted small">Active Threats</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3">
+            <i class="bi bi-activity text-info fs-2"></i>
+          </div>
+          <div>
+            <h5 class="card-title mb-0">{{ failed_attempts_24h }}</h5>
+            <p class="card-text text-muted small">Failed Logins (24h)</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3">
+            <i class="bi bi-geo-alt text-primary fs-2"></i>
+          </div>
+          <div>
+            <h5 class="card-title mb-0">{{ blocked_ips }}</h5>
+            <p class="card-text text-muted small">Blocked IPs</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Security Tabs -->
+<ul class="nav nav-tabs" id="securityTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="threats-tab" data-bs-toggle="tab" data-bs-target="#threats" type="button"
+      role="tab">
+      <i class="bi bi-shield-exclamation me-1"></i>
+      Threat Detection
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="audit-tab" data-bs-toggle="tab" data-bs-target="#audit" type="button" role="tab">
+      <i class="bi bi-journal-check me-1"></i>
+      Audit Log
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="sessions-tab" data-bs-toggle="tab" data-bs-target="#sessions" type="button" role="tab">
+      <i class="bi bi-people me-1"></i>
+      Active Sessions
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="blocked-tab" data-bs-toggle="tab" data-bs-target="#blocked" type="button" role="tab">
+      <i class="bi bi-slash-circle me-1"></i>
+      Blocked IPs
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="securityTabContent">
+  <!-- Threat Detection Tab -->
+  <div class="tab-pane fade show active" id="threats" role="tabpanel">
+    <div class="card">
+      <div class="card-header">
+        <div class="d-flex justify-content-between align-items-center">
+          <h6 class="mb-0">Threat Intelligence</h6>
+          <small class="text-muted">Last updated: {{ threat_intel_updated | timeago }}</small>
+        </div>
+      </div>
+      <div class="card-body">
+        <!-- Threat Alerts -->
+        <div class="row mb-4">
+          <div class="col-12">
+            {% for threat in active_threats %}
+            <div class="alert alert-{{ threat.severity }} alert-dismissible fade show" role="alert">
+              <div class="d-flex align-items-start">
+                <i class="bi bi-{{ threat.icon }} me-2 mt-1"></i>
+                <div class="flex-grow-1">
+                  <strong>{{ threat.title }}</strong>
+                  <p class="mb-1">{{ threat.description }}</p>
+                  <small class="text-muted">
+                    <i class="bi bi-clock me-1"></i>
+                    {{ threat.detected_at | timeago }}
+                    <i class="bi bi-geo-alt ms-2 me-1"></i>
+                    {{ threat.source_ip }}
+                  </small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            </div>
+            {% empty %}
+            <div class="text-center text-success py-4">
+              <i class="bi bi-shield-check fs-1 d-block mb-3"></i>
+              <h5>No Active Threats</h5>
+              <p class="text-muted">All security systems are operating normally</p>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Threat Chart -->
+        <div class="row">
+          <div class="col-md-8">
+            <h6>Threat Activity (7 days)</h6>
+            <canvas id="threatChart" width="400" height="200"></canvas>
+          </div>
+          <div class="col-md-4">
+            <h6>Threat Types</h6>
+            <div class="list-group list-group-flush">
+              {% for threat_type in threat_types %}
+              <div class="list-group-item px-0 d-flex justify-content-between align-items-center">
+                <span>{{ threat_type.name }}</span>
+                <span class="badge bg-{{ threat_type.severity }} rounded-pill">{{ threat_type.count }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audit Log Tab -->
+  <div class="tab-pane fade" id="audit" role="tabpanel">
+    <div class="card">
+      <div class="card-header">
+        <div class="row align-items-center">
+          <div class="col">
+            <h6 class="mb-0">Security Audit Log</h6>
+          </div>
+          <div class="col-auto">
+            <div class="d-flex gap-2">
+              <select class="form-select form-select-sm" id="auditEventFilter">
+                <option value="all">All Events</option>
+                <option value="login">Login Events</option>
+                <option value="failed_login">Failed Logins</option>
+                <option value="logout">Logout Events</option>
+                <option value="admin">Admin Actions</option>
+                <option value="security">Security Events</option>
+              </select>
+              <input type="date" class="form-control form-control-sm" id="auditDateFilter"
+                value="{{ today | date:'Y-m-d' }}">
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Timestamp</th>
+                <th>Event</th>
+                <th>User</th>
+                <th>IP Address</th>
+                <th>User Agent</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody id="auditLogBody">
+              {% for event in audit_events %}
+              <tr class="audit-event" data-event-type="{{ event.event_type }}">
+                <td class="text-nowrap">{{ event.timestamp | date:'M d, H:i:s' }}</td>
+                <td>
+                  <span class="badge bg-{{ event.severity }}">{{ event.event_type | upper }}</span>
+                  <span class="small text-muted ms-1">{{ event.description }}</span>
+                </td>
+                <td>{{ event.user_email | default:'-' }}</td>
+                <td>
+                  <code class="small">{{ event.ip_address }}</code>
+                </td>
+                <td class="small" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">
+                  {{ event.user_agent | truncatechars:50 }}
+                </td>
+                <td>
+                  {% if event.success %}
+                  <i class="bi bi-check-circle text-success"></i>
+                  {% else %}
+                  <i class="bi bi-x-circle text-danger"></i>
+                  {% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="6" class="text-center text-muted py-3">
+                  No audit events found
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active Sessions Tab -->
+  <div class="tab-pane fade" id="sessions" role="tabpanel">
+    <div class="card">
+      <div class="card-header">
+        <div class="d-flex justify-content-between align-items-center">
+          <h6 class="mb-0">Active User Sessions</h6>
+          <button type="button" class="btn btn-sm btn-outline-danger" onclick="terminateAllSessions()">
+            <i class="bi bi-x-circle me-1"></i>
+            Terminate All
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>User</th>
+                <th>Session ID</th>
+                <th>IP Address</th>
+                <th>Location</th>
+                <th>Started</th>
+                <th>Last Activity</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for session in active_sessions %}
+              <tr data-session-id="{{ session.id }}">
+                <td>
+                  <div class="d-flex align-items-center">
+                    <div
+                      class="avatar-sm bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-2">
+                      {{ session.user_email | slice:":1" | upper }}
+                    </div>
+                    <div>
+                      <div class="small fw-medium">{{ session.user_email }}</div>
+                      {% if session.is_admin %}
+                      <span class="badge bg-danger small">Admin</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <code class="small">{{ session.id | slice:":8" }}...</code>
+                </td>
+                <td>
+                  <code class="small">{{ session.ip_address }}</code>
+                </td>
+                <td class="small">{{ session.location | default:"Unknown" }}</td>
+                <td class="small">{{ session.created_at | timeago }}</td>
+                <td class="small">{{ session.last_activity | timeago }}</td>
+                <td>
+                  {% if session.id != current_session_id %}
+                  <button type="button" class="btn btn-sm btn-outline-danger"
+                    onclick="terminateSession('{{ session.id }}')">
+                    <i class="bi bi-x-circle"></i>
+                  </button>
+                  {% else %}
+                  <span class="badge bg-info">Current</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-3">
+                  No active sessions found
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Blocked IPs Tab -->
+  <div class="tab-pane fade" id="blocked" role="tabpanel">
+    <div class="card">
+      <div class="card-header">
+        <div class="d-flex justify-content-between align-items-center">
+          <h6 class="mb-0">Blocked IP Addresses</h6>
+          <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#blockIpModal">
+            <i class="bi bi-plus-circle me-1"></i>
+            Block IP
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>IP Address</th>
+                <th>Reason</th>
+                <th>Blocked At</th>
+                <th>Expires</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for blocked_ip in blocked_ips_list %}
+              <tr data-ip="{{ blocked_ip.ip_address }}">
+                <td>
+                  <code>{{ blocked_ip.ip_address }}</code>
+                  {% if blocked_ip.country_code %}
+                  <span class="badge bg-secondary ms-1">{{ blocked_ip.country_code }}</span>
+                  {% endif %}
+                </td>
+                <td class="small">{{ blocked_ip.reason }}</td>
+                <td class="small">{{ blocked_ip.blocked_at | timeago }}</td>
+                <td class="small">
+                  {% if blocked_ip.expires_at %}
+                  {{ blocked_ip.expires_at | timeuntil }}
+                  {% else %}
+                  <span class="text-muted">Permanent</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn btn-outline-success"
+                      onclick="unblockIp('{{ blocked_ip.ip_address }}')">
+                      <i class="bi bi-check-circle"></i>
+                    </button>
+                    <button type="button" class="btn btn-outline-info"
+                      onclick="viewIpDetails('{{ blocked_ip.ip_address }}')">
+                      <i class="bi bi-info-circle"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="5" class="text-center text-muted py-3">
+                  No blocked IP addresses
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Block IP Modal -->
+<div class="modal fade" id="blockIpModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Block IP Address</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="blockIpForm">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="blockIpAddress" class="form-label">IP Address</label>
+            <input type="text" class="form-control" id="blockIpAddress" required
+              placeholder="192.168.1.1 or 192.168.1.0/24">
+          </div>
+          <div class="mb-3">
+            <label for="blockReason" class="form-label">Reason</label>
+            <select class="form-select" id="blockReason">
+              <option value="brute_force">Brute Force Attack</option>
+              <option value="malicious_activity">Malicious Activity</option>
+              <option value="spam">Spam/Abuse</option>
+              <option value="policy_violation">Policy Violation</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="blockDuration" class="form-label">Duration</label>
+            <select class="form-select" id="blockDuration">
+              <option value="1h">1 Hour</option>
+              <option value="24h">24 Hours</option>
+              <option value="7d">7 Days</option>
+              <option value="30d">30 Days</option>
+              <option value="permanent">Permanent</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="blockNotes" class="form-label">Additional Notes</label>
+            <textarea class="form-control" id="blockNotes" rows="3"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-danger">Block IP</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  // Security data refresh
+  async function refreshSecurityData() {
+    try {
+      const data = await apiCall('/security/refresh', 'POST');
+      window.location.reload();
+    } catch (error) {
+      alert('Failed to refresh security data: ' + error.message);
+    }
+  }
+
+  // Security audit
+  async function runSecurityAudit() {
+    try {
+      const result = await apiCall('/security/audit', 'POST');
+
+      // Show audit results
+      const results = result.findings.map(finding =>
+        `<li class="list-group-item list-group-item-${finding.severity}">${finding.description}</li>`
+      ).join('');
+
+      const modal = document.createElement('div');
+      modal.innerHTML = `
+                <div class="modal fade" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Security Audit Results</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info">
+                                    <strong>Audit Score:</strong> ${result.score}/100
+                                </div>
+                                <ul class="list-group">
+                                    ${results || '<li class="list-group-item list-group-item-success">No security issues found</li>'}
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+      document.body.appendChild(modal);
+      new bootstrap.Modal(modal.firstElementChild).show();
+    } catch (error) {
+      alert('Failed to run security audit: ' + error.message);
+    }
+  }
+
+  // Session management
+  async function terminateSession(sessionId) {
+    if (!confirm('Are you sure you want to terminate this session?')) {
+      return;
+    }
+
+    try {
+      await apiCall(`/sessions/${sessionId}`, 'DELETE');
+      document.querySelector(`tr[data-session-id="${sessionId}"]`).remove();
+    } catch (error) {
+      alert('Failed to terminate session: ' + error.message);
+    }
+  }
+
+  async function terminateAllSessions() {
+    if (!confirm('Are you sure you want to terminate ALL user sessions? This will log out all users except yourself.')) {
+      return;
+    }
+
+    try {
+      await apiCall('/sessions/terminate-all', 'POST');
+      window.location.reload();
+    } catch (error) {
+      alert('Failed to terminate sessions: ' + error.message);
+    }
+  }
+
+  // IP blocking
+  async function blockIp(event) {
+    event.preventDefault();
+
+    const formData = {
+      ip_address: document.getElementById('blockIpAddress').value,
+      reason: document.getElementById('blockReason').value,
+      duration: document.getElementById('blockDuration').value,
+      notes: document.getElementById('blockNotes').value
+    };
+
+    try {
+      await apiCall('/security/block-ip', 'POST', formData);
+      bootstrap.Modal.getInstance(document.getElementById('blockIpModal')).hide();
+      window.location.reload();
+    } catch (error) {
+      alert('Failed to block IP: ' + error.message);
+    }
+  }
+
+  async function unblockIp(ipAddress) {
+    if (!confirm(`Are you sure you want to unblock ${ipAddress}?`)) {
+      return;
+    }
+
+    try {
+      await apiCall(`/security/unblock-ip/${encodeURIComponent(ipAddress)}`, 'DELETE');
+      document.querySelector(`tr[data-ip="${ipAddress}"]`).remove();
+    } catch (error) {
+      alert('Failed to unblock IP: ' + error.message);
+    }
+  }
+
+  async function viewIpDetails(ipAddress) {
+    try {
+      const details = await apiCall(`/security/ip-details/${encodeURIComponent(ipAddress)}`);
+
+      // Show IP details modal (implementation would depend on data structure)
+      alert(`IP Details for ${ipAddress}:\n${JSON.stringify(details, null, 2)}`);
+    } catch (error) {
+      alert('Failed to load IP details: ' + error.message);
+    }
+  }
+
+  // Audit log filtering
+  document.getElementById('auditEventFilter').addEventListener('change', filterAuditLog);
+  document.getElementById('auditDateFilter').addEventListener('change', filterAuditLog);
+
+  function filterAuditLog() {
+    const eventFilter = document.getElementById('auditEventFilter').value;
+    const dateFilter = document.getElementById('auditDateFilter').value;
+    const rows = document.querySelectorAll('.audit-event');
+
+    rows.forEach(row => {
+      let show = true;
+
+      if (eventFilter !== 'all') {
+        const eventType = row.dataset.eventType;
+        show = show && eventType === eventFilter;
+      }
+
+      // Date filtering would require server-side implementation
+      // or timestamp data attributes on rows
+
+      row.style.display = show ? '' : 'none';
+    });
+  }
+
+  // Initialize threat chart
+  document.addEventListener('DOMContentLoaded', function () {
+    const ctx = document.getElementById('threatChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: {{ threat_chart_labels | safe }},
+    datasets: [{
+      label: 'Threats Detected',
+      data: {{ threat_chart_data | safe }},
+    borderColor: 'rgb(220, 53, 69)',
+    backgroundColor: 'rgba(220, 53, 69, 0.1)',
+    tension: 0.1
+                }]
+            },
+    options: {
+    responsive: true,
+    scales: {
+      y: {
+        beginAtZero: true
+      }
+    }
+  }
+        });
+
+  // Block IP form handler
+  document.getElementById('blockIpForm').addEventListener('submit', blockIp);
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,563 @@
+{% extends "base.html" %}
+
+{% block title %}Users - Auth Framework Admin{% endblock %}
+
+{% block header %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1>
+    <i class="bi bi-people me-2"></i>
+    User Management
+  </h1>
+  <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createUserModal">
+    <i class="bi bi-person-plus me-1"></i>
+    Create User
+  </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- User Statistics -->
+<div class="row mb-4">
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body text-center">
+        <h4 class="text-primary">{{ stats.total_users }}</h4>
+        <p class="mb-0 text-muted">Total Users</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body text-center">
+        <h4 class="text-success">{{ stats.active_users }}</h4>
+        <p class="mb-0 text-muted">Active Users</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body text-center">
+        <h4 class="text-info">{{ stats.admin_users }}</h4>
+        <p class="mb-0 text-muted">Admin Users</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body text-center">
+        <h4 class="text-warning">{{ stats.pending_users }}</h4>
+        <p class="mb-0 text-muted">Pending Verification</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- User Management Table -->
+<div class="card">
+  <div class="card-header">
+    <div class="row align-items-center">
+      <div class="col">
+        <h6 class="mb-0">User List</h6>
+      </div>
+      <div class="col-auto">
+        <div class="d-flex gap-2">
+          <!-- Search -->
+          <div class="input-group input-group-sm" style="width: 250px;">
+            <input type="text" class="form-control" id="userSearch" placeholder="Search users...">
+            <button class="btn btn-outline-secondary" type="button">
+              <i class="bi bi-search"></i>
+            </button>
+          </div>
+
+          <!-- Filter -->
+          <select class="form-select form-select-sm" id="userFilter" style="width: auto;">
+            <option value="all">All Users</option>
+            <option value="active">Active Only</option>
+            <option value="inactive">Inactive Only</option>
+            <option value="admin">Admin Only</option>
+            <option value="pending">Pending Verification</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>User</th>
+            <th>Status</th>
+            <th>Role</th>
+            <th>Last Login</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="userTableBody">
+          {% if users.is_empty() %}
+          <tr>
+            <td colspan="6" class="text-center text-muted py-4">
+              <i class="bi bi-person-x fs-2 d-block mb-2"></i>
+              No users found
+            </td>
+          </tr>
+          {% else %}
+          {% for user in users %}
+          <tr data-user-id="{{ user.id }}">
+            <td>
+              <div class="d-flex align-items-center">
+                <div
+                  class="avatar-sm bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-3">
+                  U
+                </div>
+                <div>
+                  <div class="fw-medium">{{ user.email }}</div>
+                  {% if user.full_name %}
+                  <div class="text-muted small">{{ user.full_name }}</div>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+            <td>
+              {% if user.is_active %}
+              <span class="badge bg-success">Active</span>
+              {% else %}
+              <span class="badge bg-secondary">Inactive</span>
+              {% endif %}
+
+              {% if user.email_verified %}
+              <span class="badge bg-info ms-1">Verified</span>
+              {% else %}
+              <span class="badge bg-warning ms-1">Unverified</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if user.is_admin %}
+              <span class="badge bg-danger">Admin</span>
+              {% else %}
+              <span class="badge bg-secondary">User</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if user.last_login %}
+              {{ user.last_login }}
+              {% else %}
+              <span class="text-muted">Never</span>
+              {% endif %}
+            </td>
+            <td>{{ user.created_at }}</td>
+            <td>
+              <div class="btn-group btn-group-sm">
+                <button type="button" class="btn btn-outline-primary" onclick="editUser('{{ user.id }}')">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                <button type="button" class="btn btn-outline-info" onclick="viewUserSessions('{{ user.id }}')">
+                  <i class="bi bi-activity"></i>
+                </button>
+                {% if not user.is_admin or user.id != current_user.id %}
+                <button type="button" class="btn btn-outline-danger"
+                  onclick="deleteUser('{{ user.id }}', '{{ user.email }}')">
+                  <i class="bi bi-trash"></i>
+                </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Pagination -->
+  {% if users.has_other_pages %}
+  <div class="card-footer">
+    <nav aria-label="User pagination">
+      <ul class="pagination pagination-sm mb-0 justify-content-center">
+        {% if users.has_previous %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ users.previous_page_number }}">Previous</a>
+        </li>
+        {% endif %}
+
+        {% for num in users.paginator.page_range %}
+        {% if users.number == num %}
+        <li class="page-item active">
+          <span class="page-link">{{ num }}</span>
+        </li>
+        {% else %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+        </li>
+        {% endif %}
+        {% endfor %}
+
+        {% if users.has_next %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ users.next_page_number }}">Next</a>
+        </li>
+        {% endif %}
+      </ul>
+    </nav>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Create User Modal -->
+<div class="modal fade" id="createUserModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Create New User</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="createUserForm">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="userEmail" class="form-label">Email Address</label>
+            <input type="email" class="form-control" id="userEmail" required>
+          </div>
+          <div class="mb-3">
+            <label for="userFullName" class="form-label">Full Name (Optional)</label>
+            <input type="text" class="form-control" id="userFullName">
+          </div>
+          <div class="mb-3">
+            <label for="userPassword" class="form-label">Password</label>
+            <input type="password" class="form-control" id="userPassword" required>
+            <div class="form-text">Leave empty to send invitation email</div>
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="userIsAdmin">
+              <label class="form-check-label" for="userIsAdmin">
+                Administrator privileges
+              </label>
+            </div>
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="userIsActive" checked>
+              <label class="form-check-label" for="userIsActive">
+                Account is active
+              </label>
+            </div>
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="sendInvitation" checked>
+              <label class="form-check-label" for="sendInvitation">
+                Send invitation email
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Edit User Modal -->
+<div class="modal fade" id="editUserModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Edit User</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="editUserForm">
+        <div class="modal-body">
+          <input type="hidden" id="editUserId">
+          <div class="mb-3">
+            <label for="editUserEmail" class="form-label">Email Address</label>
+            <input type="email" class="form-control" id="editUserEmail" required>
+          </div>
+          <div class="mb-3">
+            <label for="editUserFullName" class="form-label">Full Name</label>
+            <input type="text" class="form-control" id="editUserFullName">
+          </div>
+          <div class="mb-3">
+            <label for="editUserPassword" class="form-label">New Password</label>
+            <input type="password" class="form-control" id="editUserPassword">
+            <div class="form-text">Leave empty to keep current password</div>
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="editUserIsAdmin">
+              <label class="form-check-label" for="editUserIsAdmin">
+                Administrator privileges
+              </label>
+            </div>
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="editUserIsActive">
+              <label class="form-check-label" for="editUserIsActive">
+                Account is active
+              </label>
+            </div>
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="editUserEmailVerified">
+              <label class="form-check-label" for="editUserEmailVerified">
+                Email is verified
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Update User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- User Sessions Modal -->
+<div class="modal fade" id="userSessionsModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">User Sessions</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="sessionsContent">
+          <div class="text-center py-3">
+            <div class="spinner-border" role="status">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // User management functions
+  async function createUser(event) {
+    event.preventDefault();
+
+    const formData = {
+      email: document.getElementById('userEmail').value,
+      full_name: document.getElementById('userFullName').value,
+      password: document.getElementById('userPassword').value,
+      is_admin: document.getElementById('userIsAdmin').checked,
+      is_active: document.getElementById('userIsActive').checked,
+      send_invitation: document.getElementById('sendInvitation').checked
+    };
+
+    try {
+      await apiCall('/users', 'POST', formData);
+
+      // Close modal and reload page
+      bootstrap.Modal.getInstance(document.getElementById('createUserModal')).hide();
+      window.location.reload();
+    } catch (error) {
+      alert('Failed to create user: ' + error.message);
+    }
+  }
+
+  async function editUser(userId) {
+    try {
+      // Load user data
+      const user = await apiCall(`/users/${userId}`);
+
+      // Populate edit form
+      document.getElementById('editUserId').value = user.id;
+      document.getElementById('editUserEmail').value = user.email;
+      document.getElementById('editUserFullName').value = user.full_name || '';
+      document.getElementById('editUserIsAdmin').checked = user.is_admin;
+      document.getElementById('editUserIsActive').checked = user.is_active;
+      document.getElementById('editUserEmailVerified').checked = user.email_verified;
+
+      // Show modal
+      new bootstrap.Modal(document.getElementById('editUserModal')).show();
+    } catch (error) {
+      alert('Failed to load user data: ' + error.message);
+    }
+  }
+
+  async function updateUser(event) {
+    event.preventDefault();
+
+    const userId = document.getElementById('editUserId').value;
+    const formData = {
+      email: document.getElementById('editUserEmail').value,
+      full_name: document.getElementById('editUserFullName').value,
+      is_admin: document.getElementById('editUserIsAdmin').checked,
+      is_active: document.getElementById('editUserIsActive').checked,
+      email_verified: document.getElementById('editUserEmailVerified').checked
+    };
+
+    const password = document.getElementById('editUserPassword').value;
+    if (password) {
+      formData.password = password;
+    }
+
+    try {
+      await apiCall(`/users/${userId}`, 'PUT', formData);
+
+      // Close modal and reload page
+      bootstrap.Modal.getInstance(document.getElementById('editUserModal')).hide();
+      window.location.reload();
+    } catch (error) {
+      alert('Failed to update user: ' + error.message);
+    }
+  }
+
+  async function deleteUser(userId, email) {
+    if (!confirm(`Are you sure you want to delete user "${email}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await apiCall(`/users/${userId}`, 'DELETE');
+
+      // Remove row from table
+      document.querySelector(`tr[data-user-id="${userId}"]`).remove();
+
+      // Update stats (simple refresh for now)
+      window.location.reload();
+    } catch (error) {
+      alert('Failed to delete user: ' + error.message);
+    }
+  }
+
+  async function viewUserSessions(userId) {
+    try {
+      const sessions = await apiCall(`/users/${userId}/sessions`);
+
+      let sessionsHtml = '';
+      if (sessions.length === 0) {
+        sessionsHtml = '<div class="text-center text-muted py-3">No active sessions</div>';
+      } else {
+        sessionsHtml = `
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Session ID</th>
+                                    <th>IP Address</th>
+                                    <th>User Agent</th>
+                                    <th>Created</th>
+                                    <th>Last Activity</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
+        sessions.forEach(session => {
+          sessionsHtml += `
+                        <tr>
+                            <td><code class="small">${session.id.substring(0, 8)}...</code></td>
+                            <td>${session.ip_address}</td>
+                            <td class="small" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">
+                                ${session.user_agent}
+                            </td>
+                            <td>${new Date(session.created_at).toLocaleDateString()}</td>
+                            <td>${new Date(session.last_activity).toLocaleString()}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-danger"
+                                        onclick="terminateSession('${session.id}')">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+        });
+
+        sessionsHtml += '</tbody></table></div>';
+      }
+
+      document.getElementById('sessionsContent').innerHTML = sessionsHtml;
+      new bootstrap.Modal(document.getElementById('userSessionsModal')).show();
+    } catch (error) {
+      alert('Failed to load user sessions: ' + error.message);
+    }
+  }
+
+  async function terminateSession(sessionId) {
+    if (!confirm('Are you sure you want to terminate this session?')) {
+      return;
+    }
+
+    try {
+      await apiCall(`/sessions/${sessionId}`, 'DELETE');
+
+      // Reload sessions
+      const userId = document.getElementById('editUserId').value;
+      if (userId) {
+        viewUserSessions(userId);
+      }
+    } catch (error) {
+      alert('Failed to terminate session: ' + error.message);
+    }
+  }
+
+  // Search and filter functionality
+  document.getElementById('userSearch').addEventListener('input', function () {
+    filterUsers();
+  });
+
+  document.getElementById('userFilter').addEventListener('change', function () {
+    filterUsers();
+  });
+
+  function filterUsers() {
+    const searchTerm = document.getElementById('userSearch').value.toLowerCase();
+    const filter = document.getElementById('userFilter').value;
+    const rows = document.querySelectorAll('#userTableBody tr[data-user-id]');
+
+    rows.forEach(row => {
+      const email = row.querySelector('td:first-child .fw-medium').textContent.toLowerCase();
+      const badges = row.querySelector('td:nth-child(2)').textContent.toLowerCase();
+
+      let show = true;
+
+      // Apply search filter
+      if (searchTerm && !email.includes(searchTerm)) {
+        show = false;
+      }
+
+      // Apply status filter
+      if (filter !== 'all') {
+        switch (filter) {
+          case 'active':
+            show = show && badges.includes('active');
+            break;
+          case 'inactive':
+            show = show && badges.includes('inactive');
+            break;
+          case 'admin':
+            show = show && badges.includes('admin');
+            break;
+          case 'pending':
+            show = show && badges.includes('unverified');
+            break;
+        }
+      }
+
+      row.style.display = show ? '' : 'none';
+    });
+  }
+
+  // Form event listeners
+  document.getElementById('createUserForm').addEventListener('submit', createUser);
+  document.getElementById('editUserForm').addEventListener('submit', updateUser);
+</script>
+{% endblock %}

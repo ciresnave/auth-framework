@@ -1,0 +1,76 @@
+# Multi-Factor Authentication Configuration
+# MFA method configurations and settings
+
+[methods.mfa]
+# Global MFA settings
+enabled = true
+enforce_for_admin_roles = true
+backup_codes_enabled = true
+backup_codes_count = 10
+
+# TOTP (Time-based One-Time Password) configuration
+[methods.mfa.totp]
+enabled = true
+issuer = "AuthFramework"
+algorithm = "SHA1"       # SHA1, SHA256, or SHA512
+digits = 6               # Number of digits in the code
+period = 30              # Time period in seconds
+window = 1               # Allow codes from ±window periods
+
+# QR code generation settings
+qr_code_size = 256             # Pixel size for QR codes
+qr_code_error_correction = "M" # L, M, Q, or H
+
+[methods.mfa.sms]
+enabled = false          # Disabled by default (requires SMS service)
+provider = "twilio"      # twilio, aws_sns, custom
+code_length = 6
+code_expiry = "5m"
+rate_limit_per_hour = 10
+
+# SMS provider settings (when enabled)
+# twilio_account_sid = "${TWILIO_ACCOUNT_SID}"
+# twilio_auth_token = "${TWILIO_AUTH_TOKEN}"
+# twilio_from_number = "${TWILIO_FROM_NUMBER}"
+
+[methods.mfa.email]
+enabled = true
+code_length = 6
+code_expiry = "10m"
+rate_limit_per_hour = 5
+template = "default"    # Email template to use
+
+[methods.mfa.webauthn]
+enabled = false                             # Disabled by default (requires HTTPS)
+rp_name = "AuthFramework"                   # Relying Party name
+rp_id = "localhost"                         # Relying Party identifier (your domain)
+require_user_verification = false
+user_verification = "preferred"             # required, preferred, or discouraged
+authenticator_attachment = "cross-platform" # platform or cross-platform
+
+# Supported credential types
+[methods.mfa.webauthn.credential_types]
+public_key = true
+
+# Algorithm preferences (in order of preference)
+algorithms = [
+  -7,
+  -35,
+  -36,
+  -257,
+  -258,
+  -259,
+] # ES256, ES384, ES512, RS256, RS384, RS512
+
+[methods.mfa.recovery]
+# Account recovery options when MFA is lost
+enabled = true
+backup_codes_required = true
+admin_override_enabled = true   # Allow admins to reset MFA
+recovery_email_required = true
+recovery_phone_required = false
+
+# Recovery process settings
+recovery_code_length = 16
+recovery_code_expiry = "24h"
+max_recovery_attempts = 3

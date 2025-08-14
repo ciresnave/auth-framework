@@ -1,0 +1,69 @@
+# Session Management Configuration
+# Modular session configuration that can be included or used standalone
+
+[session]
+# Maximum concurrent sessions per user
+max_concurrent_sessions = 5
+
+# Session cleanup interval (seconds)
+cleanup_interval = 3600 # 1 hour
+
+# Enable device fingerprinting and tracking
+enable_device_tracking = true
+
+# Session timeout settings
+idle_timeout = "2h"         # Timeout after inactivity
+absolute_timeout = "12h"    # Maximum session duration
+remember_me_timeout = "30d" # "Remember me" session duration
+
+[session.cookie]
+# Session cookie configuration
+name = "auth_session"
+# domain = "example.com"     # Set to your domain in production
+path = "/"
+max_age = 86400   # 24 hours in seconds
+http_only = true
+secure = true     # Set to true in production with HTTPS
+same_site = "Lax"
+
+[session.security]
+# Session security settings
+enable_csrf_tokens = true
+csrf_token_lifetime = "1h"
+enable_session_rotation = true                                                # Rotate session ID on privilege changes
+require_fresh_login_for = ["password_change", "email_change", "mfa_settings"]
+
+[session.storage]
+# Session storage configuration
+# Can be "memory", "redis", "database", or "custom"
+type = "redis"
+
+# Redis-specific settings (when type = "redis")
+redis_prefix = "session:"
+redis_pool_size = 10
+redis_timeout = "5s"
+
+# Database-specific settings (when type = "database")
+# table_name = "user_sessions"
+# connection_pool_size = 10
+
+[session.activity_tracking]
+# Track user activity for security purposes
+enabled = true
+track_ip_changes = true
+track_user_agent_changes = true
+alert_on_suspicious_activity = true
+max_failed_attempts = 3
+lockout_duration = "15m"
+
+# Geographic activity tracking
+track_geolocation = true
+alert_on_impossible_travel = true
+max_travel_speed_kmh = 1000       # Maximum reasonable travel speed
+
+[session.cleanup]
+# Automatic session cleanup
+enabled = true
+cleanup_interval = "1h"
+remove_expired_after = "7d" # Keep expired sessions for analysis
+batch_size = 1000           # Process this many sessions per cleanup batch

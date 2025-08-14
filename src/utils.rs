@@ -1,8 +1,7 @@
 //! Utility functions for the authentication framework.
-
 use crate::errors::{AuthError, Result};
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use argon2::password_hash::{rand_core::OsRng, SaltString};
+use rand::Rng;
+pub use rate_limit::RateLimiter;
 use ring::digest;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,51 +9,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod password {
     use super::*;
 
-    /// Hash a password using Argon2.
+    /// Hash a password using bcrypt.
     pub fn hash_password(password: &str) -> Result<String> {
-        let salt = SaltString::generate(&mut OsRng);
-        let argon2 = Argon2::default();
-        
-        let password_hash = argon2.hash_password(password.as_bytes(), &salt)
-            .map_err(|e| AuthError::crypto(format!("Password hashing failed: {e}")))?;
-        
-        Ok(password_hash.to_string())
+        bcrypt::hash(password, bcrypt::DEFAULT_COST)
+            .map_err(|e| AuthError::crypto(format!("Password hashing failed: {e}")))
     }
 
     /// Verify a password against a hash.
     pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
-        let parsed_hash = PasswordHash::new(hash)
-            .map_err(|e| AuthError::crypto(format!("Invalid password hash: {e}")))?;
-        
-        match Argon2::default().verify_password(password.as_bytes(), &parsed_hash) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
-
-    /// Hash a password using bcrypt (alternative implementation).
-    pub fn hash_password_bcrypt(password: &str) -> Result<String> {
-        bcrypt::hash(password, bcrypt::DEFAULT_COST)
-            .map_err(|e| AuthError::crypto(format!("BCrypt hashing failed: {e}")))
-    }
-
-    /// Verify a password against a bcrypt hash.
-    pub fn verify_password_bcrypt(password: &str, hash: &str) -> Result<bool> {
         bcrypt::verify(password, hash)
-            .map_err(|e| AuthError::crypto(format!("BCrypt verification failed: {e}")))
+            .map_err(|e| AuthError::crypto(format!("Password verification failed: {e}")))
     }
 
     /// Generate a secure random password.
     pub fn generate_password(length: usize) -> String {
-        use rand::Rng;
-        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-        
+        const CHARSET: &[u8] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
         let mut rng = rand::thread_rng();
         (0..length)
-            .map(|_| {
-                let idx = rng.gen_range(0..CHARSET.len());
-                CHARSET[idx] as char
-            })
+            .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
             .collect()
     }
 
@@ -93,7 +66,10 @@ pub mod password {
             feedback.push("Password should contain numbers".to_string());
         }
 
-        if password.chars().any(|c| "!@#$%^&*()_+-=[]{}|;:,.<>?".contains(c)) {
+        if password
+            .chars()
+            .any(|c| "!@#$%^&*()_+-=[]{}|;:,.<>?".contains(c))
+        {
             score += 1;
         } else {
             feedback.push("Password should contain special characters".to_string());
@@ -144,9 +120,8 @@ pub mod crypto {
 
     /// Generate a secure random string.
     pub fn generate_random_string(length: usize) -> String {
-        use rand::Rng;
         const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        
+
         let mut rng = rand::thread_rng();
         (0..length)
             .map(|_| {
@@ -186,7 +161,7 @@ pub mod crypto {
         if a.len() != b.len() {
             return false;
         }
-        
+
         // Use a simple constant-time comparison
         let mut result = 0u8;
         for (byte_a, byte_b) in a.as_bytes().iter().zip(b.as_bytes().iter()) {
@@ -299,25 +274,35 @@ pub mod validation {
         }
 
         if username.len() < 3 {
-            return Err(AuthError::validation("Username must be at least 3 characters long"));
+            return Err(AuthError::validation(
+                "Username must be at least 3 characters long",
+            ));
         }
 
         if username.len() > 50 {
-            return Err(AuthError::validation("Username cannot be longer than 50 characters"));
+            return Err(AuthError::validation(
+                "Username cannot be longer than 50 characters",
+            ));
         }
 
         // Check for valid characters (alphanumeric, underscore, hyphen)
-        if !username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if !username
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             return Err(AuthError::validation(
-                "Username can only contain letters, numbers, underscores, and hyphens"
+                "Username can only contain letters, numbers, underscores, and hyphens",
             ));
         }
 
         // Cannot start or end with special characters
-        if username.starts_with('_') || username.starts_with('-') ||
-           username.ends_with('_') || username.ends_with('-') {
+        if username.starts_with('_')
+            || username.starts_with('-')
+            || username.ends_with('_')
+            || username.ends_with('-')
+        {
             return Err(AuthError::validation(
-                "Username cannot start or end with underscore or hyphen"
+                "Username cannot start or end with underscore or hyphen",
             ));
         }
 
@@ -342,23 +327,28 @@ pub mod validation {
     }
 
     /// Validate password according to policy.
-    pub fn validate_password(password: &str, min_length: usize, require_complexity: bool) -> Result<()> {
+    pub fn validate_password(
+        password: &str,
+        min_length: usize,
+        require_complexity: bool,
+    ) -> Result<()> {
         if password.is_empty() {
             return Err(AuthError::validation("Password cannot be empty"));
         }
 
         if password.len() < min_length {
-            return Err(AuthError::validation(
-                format!("Password must be at least {min_length} characters long")
-            ));
+            return Err(AuthError::validation(format!(
+                "Password must be at least {min_length} characters long"
+            )));
         }
 
         if require_complexity {
             let strength = password::check_password_strength(password);
             if matches!(strength.level, password::PasswordStrengthLevel::Weak) {
-                return Err(AuthError::validation(
-                    format!("Password is too weak: {}", strength.feedback.join(", "))
-                ));
+                return Err(AuthError::validation(format!(
+                    "Password is too weak: {}",
+                    strength.feedback.join(", ")
+                )));
             }
         }
 
@@ -371,13 +361,12 @@ pub mod validation {
             return Err(AuthError::validation("API key cannot be empty"));
         }
 
-        if let Some(prefix) = expected_prefix {
-            if !api_key.starts_with(prefix) {
-                return Err(AuthError::validation(
-                    format!("API key must start with '{prefix}'")
-                ));
+        if let Some(prefix) = expected_prefix
+            && !api_key.starts_with(prefix) {
+                return Err(AuthError::validation(format!(
+                    "API key must start with '{prefix}'"
+                )));
             }
-        }
 
         // Basic length check
         if api_key.len() < 16 {
@@ -394,14 +383,15 @@ pub mod validation {
 
 /// Rate limiting utilities.
 pub mod rate_limit {
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
+    use dashmap::DashMap;
+
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     /// Simple in-memory rate limiter.
     #[derive(Debug)]
     pub struct RateLimiter {
-        buckets: Arc<Mutex<HashMap<String, Bucket>>>,
+        buckets: Arc<DashMap<String, Bucket>>,
         max_requests: u32,
         window: Duration,
     }
@@ -416,7 +406,7 @@ pub mod rate_limit {
         /// Create a new rate limiter.
         pub fn new(max_requests: u32, window: Duration) -> Self {
             Self {
-                buckets: Arc::new(Mutex::new(HashMap::new())),
+                buckets: Arc::new(DashMap::new()),
                 max_requests,
                 window,
             }
@@ -424,10 +414,10 @@ pub mod rate_limit {
 
         /// Check if a request is allowed for the given key.
         pub fn is_allowed(&self, key: &str) -> bool {
-            let mut buckets = self.buckets.lock().unwrap();
             let now = Instant::now();
 
-            let bucket = buckets.entry(key.to_string()).or_insert(Bucket {
+            // Get or create bucket with deadlock-safe pattern
+            let mut bucket = self.buckets.entry(key.to_string()).or_insert(Bucket {
                 count: 0,
                 window_start: now,
             });
@@ -449,8 +439,8 @@ pub mod rate_limit {
 
         /// Get remaining requests for a key.
         pub fn remaining_requests(&self, key: &str) -> u32 {
-            let buckets = self.buckets.lock().unwrap();
-            if let Some(bucket) = buckets.get(key) {
+            if let Some(bucket_ref) = self.buckets.get(key) {
+                let bucket = bucket_ref.value();
                 let now = Instant::now();
                 if now.duration_since(bucket.window_start) >= self.window {
                     self.max_requests
@@ -464,12 +454,9 @@ pub mod rate_limit {
 
         /// Clean up expired buckets.
         pub fn cleanup(&self) {
-            let mut buckets = self.buckets.lock().unwrap();
             let now = Instant::now();
-            
-            buckets.retain(|_, bucket| {
-                now.duration_since(bucket.window_start) < self.window
-            });
+            self.buckets
+                .retain(|_, bucket| now.duration_since(bucket.window_start) < self.window);
         }
     }
 }
@@ -482,7 +469,7 @@ mod tests {
     fn test_password_hashing() {
         let password = "test_password_123";
         let hash = password::hash_password(password).unwrap();
-        
+
         assert!(password::verify_password(password, &hash).unwrap());
         assert!(!password::verify_password("wrong_password", &hash).unwrap());
     }
@@ -491,16 +478,19 @@ mod tests {
     fn test_password_strength() {
         let weak = password::check_password_strength("123");
         assert!(matches!(weak.level, password::PasswordStrengthLevel::Weak));
-        
+
         let strong = password::check_password_strength("MySecureP@ssw0rd!");
-        assert!(matches!(strong.level, password::PasswordStrengthLevel::Strong | password::PasswordStrengthLevel::VeryStrong));
+        assert!(matches!(
+            strong.level,
+            password::PasswordStrengthLevel::Strong | password::PasswordStrengthLevel::VeryStrong
+        ));
     }
 
     #[test]
     fn test_crypto_utils() {
         let random_string = crypto::generate_random_string(16);
         assert_eq!(random_string.len(), 16);
-        
+
         let data = b"test data";
         let hash = crypto::sha256_hex(data);
         assert_eq!(hash.len(), 64); // SHA256 hex is 64 characters
@@ -512,7 +502,7 @@ mod tests {
         assert!(masked.starts_with("se"));
         assert!(masked.ends_with("56"));
         assert!(masked.contains("*"));
-        
+
         assert!(string::is_valid_email("test@example.com"));
         assert!(!string::is_valid_email("invalid_email"));
     }
@@ -521,16 +511,16 @@ mod tests {
     fn test_validation() {
         // Valid username
         assert!(validation::validate_username("test_user").is_ok());
-        
+
         // Invalid usernames
         assert!(validation::validate_username("").is_err());
         assert!(validation::validate_username("ab").is_err());
         assert!(validation::validate_username("_invalid").is_err());
         assert!(validation::validate_username("invalid@").is_err());
-        
+
         // Valid email
         assert!(validation::validate_email("test@example.com").is_ok());
-        
+
         // Invalid emails
         assert!(validation::validate_email("").is_err());
         assert!(validation::validate_email("invalid").is_err());
@@ -539,15 +529,15 @@ mod tests {
     #[test]
     fn test_rate_limiter() {
         let limiter = rate_limit::RateLimiter::new(3, std::time::Duration::from_secs(1));
-        
+
         // First 3 requests should be allowed
         assert!(limiter.is_allowed("user1"));
         assert!(limiter.is_allowed("user1"));
         assert!(limiter.is_allowed("user1"));
-        
+
         // 4th request should be blocked
         assert!(!limiter.is_allowed("user1"));
-        
+
         // Different user should still be allowed
         assert!(limiter.is_allowed("user2"));
     }

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Auth Framework Admin{% endblock %}
+
+{% block content %}
+<div class="container-fluid vh-100">
+  <div class="row h-100 justify-content-center align-items-center">
+    <div class="col-md-4">
+      <div class="card shadow">
+        <div class="card-header text-center">
+          <h4 class="mb-0">
+            <i class="bi bi-shield-check me-2"></i>
+            Auth Framework Admin
+          </h4>
+        </div>
+        <div class="card-body">
+          {% if error %}
+          <div class="alert alert-danger" role="alert">
+            {{ error }}
+          </div>
+          {% endif %}
+
+          <form method="post" action="/login">
+            <div class="mb-3">
+              <label for="email" class="form-label">Email Address</label>
+              <input type="email" class="form-control" id="email" name="email" required placeholder="admin@example.com"
+                value="{{ email | default:'' }}">
+            </div>
+            <div class="mb-3">
+              <label for="password" class="form-label">Password</label>
+              <input type="password" class="form-control" id="password" name="password" required
+                placeholder="Enter your password">
+            </div>
+            <div class="mb-3 form-check">
+              <input type="checkbox" class="form-check-input" id="remember" name="remember">
+              <label class="form-check-label" for="remember">
+                Remember me
+              </label>
+            </div>
+            <div class="d-grid">
+              <button type="submit" class="btn btn-primary">
+                <i class="bi bi-box-arrow-in-right me-2"></i>
+                Sign In
+              </button>
+            </div>
+          </form>
+        </div>
+        <div class="card-footer text-center text-muted">
+          <small>Auth Framework v{{ version | default:"0.3.0" }}</small>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  body {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  }
+
+  .card {
+    border: none;
+    border-radius: 15px;
+  }
+
+  .card-header {
+    background: linear-gradient(90deg, #2c3e50 0%, #34495e 100%);
+    color: white;
+    border-radius: 15px 15px 0 0 !important;
+  }
+
+  .form-control:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+  }
+
+  .btn-primary {
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    border: none;
+  }
+
+  .btn-primary:hover {
+    background: linear-gradient(90deg, #5a6fd8 0%, #6a4190 100%);
+    transform: translateY(-1px);
+  }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Focus on email field when page loads
+  document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('email').focus();
+  });
+
+  // Handle form submission
+  document.querySelector('form').addEventListener('submit', function (e) {
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+
+    if (!email || !password) {
+      e.preventDefault();
+      alert('Please enter both email and password.');
+      return;
+    }
+
+    // Add loading state to button
+    const submitButton = this.querySelector('button[type="submit"]');
+    const originalContent = submitButton.innerHTML;
+    submitButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Signing In...';
+    submitButton.disabled = true;
+
+    // Reset button if form submission fails (client-side)
+    setTimeout(() => {
+      submitButton.innerHTML = originalContent;
+      submitButton.disabled = false;
+    }, 5000);
+  });
+
+  // Handle enter key in password field
+  document.getElementById('password').addEventListener('keypress', function (e) {
+    if (e.key === 'Enter') {
+      this.closest('form').submit();
+    }
+  });
+</script>
+{% endblock %}

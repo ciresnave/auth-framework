@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Auth Framework Admin</title>
+</head>
+
+<body>
+  <h1>Dashboard</h1>
+  <p>Server running: {{ server_running }}</p>
+  <p>Total users: {{ user_count }}</p>
+  <h2>Recent Events</h2>
+  {% if recent_events.is_empty() %}
+  <p>No recent events</p>
+  {% else %}
+  <ul>
+    {% for event in recent_events %}
+    <li>{{ event }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</body>
+
+</html>

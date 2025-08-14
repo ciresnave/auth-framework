@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+
+{% block title %}Servers - Auth Framework Admin{% endblock %}
+
+{% block header %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1>
+    <i class="bi bi-server me-2"></i>
+    Server Management
+  </h1>
+  <div class="btn-group">
+    <button type="button" class="btn btn-outline-success" onclick="startServer()">
+      <i class="bi bi-play-circle me-1"></i>
+      Start Server
+    </button>
+    <button type="button" class="btn btn-outline-warning" onclick="restartServer()">
+      <i class="bi bi-arrow-clockwise me-1"></i>
+      Restart Server
+    </button>
+    <button type="button" class="btn btn-outline-danger" onclick="stopServer()">
+      <i class="bi bi-stop-circle me-1"></i>
+      Stop Server
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Server Status Card -->
+<div class="row mb-4">
+  <div class="col-md-12">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0">Server Status</h5>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-3">
+            <h6>Status</h6>
+            <div class="d-flex align-items-center">
+              {% if server_running %}
+              <span class="status-dot status-healthy me-2"></span>
+              <span class="text-success fw-bold">Running</span>
+              {% else %}
+              <span class="status-dot status-critical me-2"></span>
+              <span class="text-danger fw-bold">Stopped</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-md-3">
+            <h6>Port</h6>
+            <code>{{ port | default:"Not Set" }}</code>
+          </div>
+          <div class="col-md-3">
+            <h6>Uptime</h6>
+            <span>{{ uptime | default:"N/A" }}</span>
+          </div>
+          <div class="col-md-3">
+            <h6>PID</h6>
+            <code>{{ pid | default:"N/A" }}</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Server Configuration -->
+<div class="row mb-4">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">
+        <h6 class="mb-0">Server Configuration</h6>
+      </div>
+      <div class="card-body">
+        <form id="serverConfigForm">
+          <div class="mb-3">
+            <label for="serverPort" class="form-label">Port</label>
+            <input type="number" class="form-control" id="serverPort" value="{{ config_port | default:'8080' }}">
+          </div>
+          <div class="mb-3">
+            <label for="serverHost" class="form-label">Host</label>
+            <input type="text" class="form-control" id="serverHost" value="{{ config_host | default:'127.0.0.1' }}">
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="serverTls" {{ tls_enabled | yesno:"checked," }}>
+              <label class="form-check-label" for="serverTls">
+                Enable TLS
+              </label>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">Update Configuration</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">
+        <h6 class="mb-0">Server Metrics</h6>
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Active Connections</label>
+          <div class="progress">
+            <div class="progress-bar" role="progressbar" style="width: {{ connection_percentage }}%"
+              aria-valuenow="{{ active_connections }}" aria-valuemin="0" aria-valuemax="{{ max_connections }}">
+              {{ active_connections }}/{{ max_connections }}
+            </div>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Memory Usage</label>
+          <div class="progress">
+            <div class="progress-bar bg-warning" role="progressbar" style="width: {{ memory_percentage }}%">
+              {{ memory_used }}MB/{{ memory_total }}MB
+            </div>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">CPU Usage</label>
+          <div class="progress">
+            <div class="progress-bar bg-info" role="progressbar" style="width: {{ cpu_percentage }}%">
+              {{ cpu_percentage }}%
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Server Logs -->
+<div class="row">
+  <div class="col-md-12">
+    <div class="card">
+      <div class="card-header">
+        <div class="d-flex justify-content-between align-items-center">
+          <h6 class="mb-0">Recent Server Logs</h6>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="autoRefreshLogs">
+            <label class="form-check-label" for="autoRefreshLogs">
+              Auto-refresh
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div id="serverLogs" class="log-container"
+          style="height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.875rem;">
+          {% for log in server_logs %}
+          <div class="log-entry p-2 border-bottom">
+            <span class="text-muted">{{ log.timestamp | date:"H:i:s" }}</span>
+            <span class="badge bg-{{ log.level }}">{{ log.level | upper }}</span>
+            {{ log.message }}
+          </div>
+          {% empty %}
+          <div class="text-center text-muted py-4">
+            No recent logs available
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let autoRefreshInterval = null;
+
+  // Server control functions
+  async function startServer() {
+    try {
+      const response = await apiCall('/server/start', 'POST');
+      if (response.success) {
+        showAlert('Server started successfully', 'success');
+        setTimeout(() => window.location.reload(), 1000);
+      }
+    } catch (error) {
+      showAlert('Failed to start server: ' + error.message, 'danger');
+    }
+  }
+
+  async function stopServer() {
+    if (!confirm('Are you sure you want to stop the server?')) {
+      return;
+    }
+
+    try {
+      const response = await apiCall('/server/stop', 'POST');
+      if (response.success) {
+        showAlert('Server stopped successfully', 'success');
+        setTimeout(() => window.location.reload(), 1000);
+      }
+    } catch (error) {
+      showAlert('Failed to stop server: ' + error.message, 'danger');
+    }
+  }
+
+  async function restartServer() {
+    if (!confirm('Are you sure you want to restart the server?')) {
+      return;
+    }
+
+    try {
+      const response = await apiCall('/server/restart', 'POST');
+      if (response.success) {
+        showAlert('Server restart initiated', 'success');
+        setTimeout(() => window.location.reload(), 2000);
+      }
+    } catch (error) {
+      showAlert('Failed to restart server: ' + error.message, 'danger');
+    }
+  }
+
+  // Configuration form handler
+  document.getElementById('serverConfigForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+
+    const config = {
+      port: parseInt(document.getElementById('serverPort').value),
+      host: document.getElementById('serverHost').value,
+      tls_enabled: document.getElementById('serverTls').checked
+    };
+
+    try {
+      const response = await apiCall('/server/config', 'PUT', config);
+      if (response.success) {
+        showAlert('Configuration updated successfully', 'success');
+      }
+    } catch (error) {
+      showAlert('Failed to update configuration: ' + error.message, 'danger');
+    }
+  });
+
+  // Auto-refresh logs
+  document.getElementById('autoRefreshLogs').addEventListener('change', function () {
+    if (this.checked) {
+      autoRefreshInterval = setInterval(refreshLogs, 5000);
+    } else {
+      clearInterval(autoRefreshInterval);
+    }
+  });
+
+  async function refreshLogs() {
+    try {
+      const response = await apiCall('/server/logs');
+      const logsContainer = document.getElementById('serverLogs');
+
+      logsContainer.innerHTML = '';
+      response.logs.forEach(log => {
+        const logEntry = document.createElement('div');
+        logEntry.className = 'log-entry p-2 border-bottom';
+        logEntry.innerHTML = `
+                    <span class="text-muted">${new Date(log.timestamp).toLocaleTimeString()}</span>
+                    <span class="badge bg-${log.level}">${log.level.toUpperCase()}</span>
+                    ${log.message}
+                `;
+        logsContainer.appendChild(logEntry);
+      });
+
+      // Auto-scroll to bottom
+      logsContainer.scrollTop = logsContainer.scrollHeight;
+    } catch (error) {
+      console.error('Failed to refresh logs:', error);
+    }
+  }
+
+  function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+
+    // Insert at top of content
+    const content = document.querySelector('.content-wrapper');
+    content.insertBefore(alertDiv, content.firstChild);
+
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+      alertDiv.classList.remove('show');
+      setTimeout(() => alertDiv.remove(), 150);
+    }, 5000);
+  }
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', function () {
+    if (autoRefreshInterval) {
+      clearInterval(autoRefreshInterval);
+    }
+  });
+</script>
+{% endblock %}

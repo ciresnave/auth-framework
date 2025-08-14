@@ -1,0 +1,51 @@
+# Threat Intelligence Configuration
+# This file can be included by the main configuration or used standalone
+
+[threat_intelligence]
+# Master switch - simple on/off configuration
+auto_update_enabled = true
+update_interval_seconds = 3600     # 1 hour
+feeds_directory = "./threat-feeds"
+download_timeout_seconds = 30
+
+# Individual feed configurations
+[threat_intelligence.feeds.tor_exits]
+enabled = true
+feed_type = "TorExitNodes"
+url = "https://check.torproject.org/torbulkexitlist"
+filename = "tor-exits.txt"
+format = "PlainText"
+
+[threat_intelligence.feeds.spamhaus_drop]
+enabled = true
+feed_type = "MaliciousIPs"
+url = "https://www.spamhaus.org/drop/drop.txt"
+filename = "spamhaus-drop.txt"
+format = "PlainText"
+
+[threat_intelligence.feeds.emergingthreats_compromised]
+enabled = false                                                          # Disabled by default
+feed_type = "MaliciousIPs"
+url = "https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt"
+filename = "emerging-threats-ips.txt"
+format = "PlainText"
+custom_interval_seconds = 7200                                           # 2 hours
+
+# Paid services (disabled by default, require API keys)
+[threat_intelligence.feeds.virustotal_malicious]
+enabled = false
+feed_type = "MaliciousIPs"
+url = "https://www.virustotal.com/api/v3/intelligence/hunting_notification_files"
+filename = "virustotal-malicious.json"
+format = "Json"
+custom_interval_seconds = 1800                                                    # 30 minutes
+# API key set via environment variable: VIRUSTOTAL_API_KEY
+
+[threat_intelligence.feeds.maxmind_proxy_detection]
+enabled = false
+feed_type = "VpnProxy"
+url = "https://download.maxmind.com/app/geoip_download"
+filename = "maxmind-proxy-ranges.tar.gz"
+format = "Csv"
+custom_interval_seconds = 86400                         # Daily updates
+# License key set via environment variable: MAXMIND_LICENSE_KEY

@@ -1,0 +1,582 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - Auth Framework Admin{% endblock %}
+
+{% block header %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1>
+    <i class="bi bi-journal-text me-2"></i>
+    System Logs
+  </h1>
+  <div class="btn-group">
+    <button type="button" class="btn btn-outline-primary" onclick="refreshLogs()">
+      <i class="bi bi-arrow-clockwise me-1"></i>
+      Refresh
+    </button>
+    <button type="button" class="btn btn-outline-secondary" onclick="downloadLogs()">
+      <i class="bi bi-download me-1"></i>
+      Download
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Log Controls -->
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="row align-items-center">
+      <div class="col-md-3">
+        <label for="logLevel" class="form-label">Log Level</label>
+        <select class="form-select" id="logLevel">
+          <option value="all">All Levels</option>
+          <option value="error">Error</option>
+          <option value="warn">Warning</option>
+          <option value="info" selected>Info</option>
+          <option value="debug">Debug</option>
+          <option value="trace">Trace</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label for="logSource" class="form-label">Source</label>
+        <select class="form-select" id="logSource">
+          <option value="all">All Sources</option>
+          <option value="auth">Authentication</option>
+          <option value="api">API</option>
+          <option value="database">Database</option>
+          <option value="security">Security</option>
+          <option value="system">System</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label for="logTimeRange" class="form-label">Time Range</label>
+        <select class="form-select" id="logTimeRange">
+          <option value="1h">Last Hour</option>
+          <option value="24h" selected>Last 24 Hours</option>
+          <option value="7d">Last 7 Days</option>
+          <option value="30d">Last 30 Days</option>
+          <option value="custom">Custom Range</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label for="logSearch" class="form-label">Search</label>
+        <input type="text" class="form-control" id="logSearch" placeholder="Search logs...">
+      </div>
+    </div>
+    <div class="row mt-3">
+      <div class="col-md-6">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="autoRefresh">
+          <label class="form-check-label" for="autoRefresh">
+            Auto-refresh every 10 seconds
+          </label>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="showRawLogs">
+          <label class="form-check-label" for="showRawLogs">
+            Show raw log format
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Log Viewer -->
+<div class="card">
+  <div class="card-header">
+    <div class="d-flex justify-content-between align-items-center">
+      <h6 class="mb-0">Log Entries</h6>
+      <div class="d-flex align-items-center">
+        <small class="text-muted me-3">
+          Showing {{ log_entries.len() }} of {{ total_log_entries }} entries
+        </small>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="followLogs">
+          <label class="form-check-label" for="followLogs">
+            Follow tail
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div id="logContainer" class="log-container"
+      style="height: 500px; overflow-y: auto; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;">
+      {% for entry in log_entries %}
+      <div class="log-entry p-2 border-bottom log-{{ entry.level }}" data-level="{{ entry.level }}"
+        data-source="{{ entry.source }}" data-timestamp="{{ entry.timestamp }}">
+        <div class="d-flex align-items-start">
+          <div class="me-3 text-nowrap">
+            <small class="text-muted">{{ entry.timestamp | date:'H:i:s.u' }}</small>
+          </div>
+          <div class="me-2">
+            {% if entry.level == 'error' %}
+            <span class="badge bg-danger">ERROR</span>
+            {% elif entry.level == 'warn' %}
+            <span class="badge bg-warning">WARN</span>
+            {% elif entry.level == 'info' %}
+            <span class="badge bg-info">INFO</span>
+            {% elif entry.level == 'debug' %}
+            <span class="badge bg-secondary">DEBUG</span>
+            {% elif entry.level == 'trace' %}
+            <span class="badge bg-light text-dark">TRACE</span>
+            {% endif %}
+          </div>
+          <div class="me-3">
+            <small class="badge bg-light text-dark">{{ entry.source | upper }}</small>
+          </div>
+          <div class="flex-grow-1">
+            <div class="log-message">{{ entry.message }}</div>
+            {% if entry.details %}
+            <div class="log-details mt-1 small text-muted">
+              <details>
+                <summary>Details</summary>
+                <pre class="mt-2 mb-0 small">{{ entry.details | pprint }}</pre>
+              </details>
+            </div>
+            {% endif %}
+            {% if entry.stack_trace %}
+            <div class="log-stack-trace mt-1">
+              <details>
+                <summary class="text-danger small">Stack Trace</summary>
+                <pre class="mt-2 mb-0 small text-danger">{{ entry.stack_trace }}</pre>
+              </details>
+            </div>
+            {% endif %}
+          </div>
+          {% if entry.user_id %}
+          <div class="me-2">
+            <small class="badge bg-primary">{{ entry.user_email | default:entry.user_id }}</small>
+          </div>
+          {% endif %}
+          {% if entry.request_id %}
+          <div class="me-2">
+            <small class="text-muted">{{ entry.request_id | slice:":8" }}</small>
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- Raw log format (hidden by default) -->
+        <div class="log-raw d-none mt-2">
+          <pre class="mb-0 small bg-light p-2 rounded">{{ entry.raw_log }}</pre>
+        </div>
+      </div>
+      {% empty %}
+      <div class="text-center text-muted py-5">
+        <i class="bi bi-journal-x fs-2 d-block mb-3"></i>
+        <h5>No Log Entries</h5>
+        <p>No log entries match the current filters</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Log Statistics Footer -->
+  <div class="card-footer">
+    <div class="row text-center">
+      <div class="col">
+        <div class="text-danger">
+          <strong>{{ log_stats.error_count }}</strong>
+          <small class="d-block text-muted">Errors</small>
+        </div>
+      </div>
+      <div class="col">
+        <div class="text-warning">
+          <strong>{{ log_stats.warning_count }}</strong>
+          <small class="d-block text-muted">Warnings</small>
+        </div>
+      </div>
+      <div class="col">
+        <div class="text-info">
+          <strong>{{ log_stats.info_count }}</strong>
+          <small class="d-block text-muted">Info</small>
+        </div>
+      </div>
+      <div class="col">
+        <div class="text-secondary">
+          <strong>{{ log_stats.debug_count }}</strong>
+          <small class="d-block text-muted">Debug</small>
+        </div>
+      </div>
+      <div class="col">
+        <div class="text-muted">
+          <strong>{{ log_stats.total_count }}</strong>
+          <small class="d-block text-muted">Total</small>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Custom Date Range Modal -->
+<div class="modal fade" id="customDateRangeModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Custom Date Range</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row">
+          <div class="col-md-6">
+            <label for="startDate" class="form-label">Start Date</label>
+            <input type="datetime-local" class="form-control" id="startDate">
+          </div>
+          <div class="col-md-6">
+            <label for="endDate" class="form-label">End Date</label>
+            <input type="datetime-local" class="form-control" id="endDate">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="applyCustomDateRange()">Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let autoRefreshInterval = null;
+  let logWebSocket = null;
+
+  document.addEventListener('DOMContentLoaded', function () {
+    // Initialize log filtering
+    setupLogFilters();
+
+    // Setup WebSocket for real-time logs
+    setupLogWebSocket();
+
+    // Setup auto-refresh
+    document.getElementById('autoRefresh').addEventListener('change', function () {
+      if (this.checked) {
+        startAutoRefresh();
+      } else {
+        stopAutoRefresh();
+      }
+    });
+
+    // Setup raw log toggle
+    document.getElementById('showRawLogs').addEventListener('change', function () {
+      toggleRawLogs(this.checked);
+    });
+
+    // Setup follow tail
+    document.getElementById('followLogs').addEventListener('change', function () {
+      if (this.checked) {
+        scrollToBottom();
+      }
+    });
+
+    // Setup custom date range
+    document.getElementById('logTimeRange').addEventListener('change', function () {
+      if (this.value === 'custom') {
+        new bootstrap.Modal(document.getElementById('customDateRangeModal')).show();
+      } else {
+        applyFilters();
+      }
+    });
+  });
+
+  function setupLogFilters() {
+    ['logLevel', 'logSource', 'logTimeRange', 'logSearch'].forEach(id => {
+      document.getElementById(id).addEventListener('change', debounce(applyFilters, 300));
+    });
+
+    document.getElementById('logSearch').addEventListener('input', debounce(applyFilters, 500));
+  }
+
+  function setupLogWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
+
+    logWebSocket = new WebSocket(wsUrl);
+
+    logWebSocket.onmessage = function (event) {
+      const logEntry = JSON.parse(event.data);
+      addLogEntry(logEntry);
+    };
+
+    logWebSocket.onclose = function (event) {
+      console.log('WebSocket connection closed, attempting to reconnect...');
+      setTimeout(setupLogWebSocket, 5000);
+    };
+  }
+
+  function applyFilters() {
+    const level = document.getElementById('logLevel').value;
+    const source = document.getElementById('logSource').value;
+    const search = document.getElementById('logSearch').value.toLowerCase();
+
+    const entries = document.querySelectorAll('.log-entry');
+
+    entries.forEach(entry => {
+      let show = true;
+
+      // Level filter
+      if (level !== 'all' && entry.dataset.level !== level) {
+        show = false;
+      }
+
+      // Source filter
+      if (source !== 'all' && entry.dataset.source !== source) {
+        show = false;
+      }
+
+      // Search filter
+      if (search && !entry.textContent.toLowerCase().includes(search)) {
+        show = false;
+      }
+
+      entry.style.display = show ? 'block' : 'none';
+    });
+  }
+
+  function addLogEntry(logEntry) {
+    const container = document.getElementById('logContainer');
+    const entry = createLogEntryElement(logEntry);
+
+    container.appendChild(entry);
+
+    // Follow tail if enabled
+    if (document.getElementById('followLogs').checked) {
+      scrollToBottom();
+    }
+
+    // Limit to prevent memory issues
+    const entries = container.querySelectorAll('.log-entry');
+    if (entries.length > 1000) {
+      entries[0].remove();
+    }
+  }
+
+  function createLogEntryElement(logEntry) {
+    const div = document.createElement('div');
+    div.className = `log-entry p-2 border-bottom log-${logEntry.level}`;
+    div.dataset.level = logEntry.level;
+    div.dataset.source = logEntry.source;
+    div.dataset.timestamp = logEntry.timestamp;
+
+    const levelBadge = getLevelBadge(logEntry.level);
+
+    div.innerHTML = `
+            <div class="d-flex align-items-start">
+                <div class="me-3 text-nowrap">
+                    <small class="text-muted">${formatTime(logEntry.timestamp)}</small>
+                </div>
+                <div class="me-2">${levelBadge}</div>
+                <div class="me-3">
+                    <small class="badge bg-light text-dark">${logEntry.source.toUpperCase()}</small>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="log-message">${logEntry.message}</div>
+                </div>
+            </div>
+        `;
+
+    return div;
+  }
+
+  function getLevelBadge(level) {
+    const badges = {
+      'error': '<span class="badge bg-danger">ERROR</span>',
+      'warn': '<span class="badge bg-warning">WARN</span>',
+      'info': '<span class="badge bg-info">INFO</span>',
+      'debug': '<span class="badge bg-secondary">DEBUG</span>',
+      'trace': '<span class="badge bg-light text-dark">TRACE</span>'
+    };
+    return badges[level] || '<span class="badge bg-secondary">LOG</span>';
+  }
+
+  function formatTime(timestamp) {
+    return new Date(timestamp).toLocaleTimeString('en-US', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  }
+
+  function scrollToBottom() {
+    const container = document.getElementById('logContainer');
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function toggleRawLogs(show) {
+    const rawLogs = document.querySelectorAll('.log-raw');
+    rawLogs.forEach(raw => {
+      raw.classList.toggle('d-none', !show);
+    });
+  }
+
+  function startAutoRefresh() {
+    stopAutoRefresh(); // Clear any existing interval
+    autoRefreshInterval = setInterval(refreshLogs, 10000);
+  }
+
+  function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+      clearInterval(autoRefreshInterval);
+      autoRefreshInterval = null;
+    }
+  }
+
+  async function refreshLogs() {
+    try {
+      const params = new URLSearchParams({
+        level: document.getElementById('logLevel').value,
+        source: document.getElementById('logSource').value,
+        time_range: document.getElementById('logTimeRange').value,
+        search: document.getElementById('logSearch').value
+      });
+
+      const response = await apiCall(`/logs?${params.toString()}`);
+
+      // Update log container
+      const container = document.getElementById('logContainer');
+      container.innerHTML = '';
+
+      response.entries.forEach(entry => {
+        container.appendChild(createLogEntryElement(entry));
+      });
+
+      // Update statistics
+      updateLogStatistics(response.stats);
+
+      if (document.getElementById('followLogs').checked) {
+        scrollToBottom();
+      }
+    } catch (error) {
+      console.error('Failed to refresh logs:', error);
+    }
+  }
+
+  function updateLogStatistics(stats) {
+    // Update footer statistics (implementation depends on API structure)
+    console.log('Log stats updated:', stats);
+  }
+
+  async function downloadLogs() {
+    try {
+      const params = new URLSearchParams({
+        level: document.getElementById('logLevel').value,
+        source: document.getElementById('logSource').value,
+        time_range: document.getElementById('logTimeRange').value,
+        search: document.getElementById('logSearch').value,
+        format: 'download'
+      });
+
+      const response = await fetch(`/api/logs/download?${params.toString()}`);
+      const blob = await response.blob();
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = `auth-framework-logs-${new Date().toISOString().split('T')[0]}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      alert('Failed to download logs: ' + error.message);
+    }
+  }
+
+  function applyCustomDateRange() {
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+
+    if (!startDate || !endDate) {
+      alert('Please select both start and end dates');
+      return;
+    }
+
+    // Apply custom date range (implementation would depend on API)
+    console.log('Custom date range:', startDate, 'to', endDate);
+
+    bootstrap.Modal.getInstance(document.getElementById('customDateRangeModal')).hide();
+    applyFilters();
+  }
+
+  // Utility function for debouncing
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', function () {
+    stopAutoRefresh();
+    if (logWebSocket) {
+      logWebSocket.close();
+    }
+  });
+</script>
+
+<style>
+  .log-container {
+    background-color: #f8f9fa;
+    font-size: 0.875rem;
+  }
+
+  .log-entry {
+    transition: background-color 0.2s ease;
+  }
+
+  .log-entry:hover {
+    background-color: rgba(0, 123, 255, 0.1);
+  }
+
+  .log-error {
+    border-left: 4px solid #dc3545;
+  }
+
+  .log-warn {
+    border-left: 4px solid #ffc107;
+  }
+
+  .log-info {
+    border-left: 4px solid #17a2b8;
+  }
+
+  .log-debug {
+    border-left: 4px solid #6c757d;
+  }
+
+  .log-trace {
+    border-left: 4px solid #e9ecef;
+  }
+
+  .log-message {
+    word-break: break-word;
+  }
+
+  .log-raw pre {
+    font-size: 0.75rem;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  details summary {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  details summary:hover {
+    text-decoration: underline;
+  }
+</style>
+{% endblock %}

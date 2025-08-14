@@ -1,0 +1,81 @@
+# Main auth-framework configuration
+# This file demonstrates the modular configuration approach with includes
+
+[auth]
+# Basic authentication settings
+token_lifetime = "1h"
+refresh_token_lifetime = "7d"
+enable_multi_factor = false
+issuer = "auth-framework"
+audience = "api"
+
+[auth.storage]
+# Use Redis storage with connection pooling
+type = "redis"
+url = "redis://localhost:6379"
+key_prefix = "auth:"
+
+[auth.rate_limiting]
+enabled = true
+max_requests = 100
+window = "1m"
+burst = 10
+
+[auth.security]
+min_password_length = 8
+require_password_complexity = true
+password_hash_algorithm = "Argon2"
+jwt_algorithm = "HS256"
+secure_cookies = true
+cookie_same_site = "Lax"
+csrf_protection = true
+session_timeout = "24h"
+
+[auth.audit]
+enabled = true
+log_success = true
+log_failures = true
+log_permissions = true
+log_tokens = false
+
+[auth.audit.storage]
+type = "tracing"
+
+# Include threat intelligence configuration from separate file
+# This demonstrates the modularity - threat intelligence can be
+# configured independently and included when needed
+include_threat_intel = "config/threat-intel.toml"
+
+# Include session configuration
+include_session = "config/session.toml"
+
+# Include method-specific configurations from a directory
+# All .toml files in this directory will be loaded
+include_methods = "config/methods/*.toml"
+
+# Environment-specific overrides
+[development]
+# Development-specific settings
+enable_debug_logging = true
+session_timeout = "24h"
+csrf_protection = false
+
+[production]
+# Production-specific settings
+enable_debug_logging = false
+session_timeout = "8h"
+csrf_protection = true
+secure_cookies = true
+
+# Example of custom application-specific settings
+# These will be passed through to the parent application
+[custom]
+app_name = "MyAuthApp"
+version = "1.0.0"
+features = ["oauth", "mfa", "audit"]
+
+[custom.database]
+# Additional database settings not covered by auth-framework
+connection_pool_size = 20
+query_timeout = "30s"
+migration_timeout = "5m"

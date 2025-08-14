@@ -1,0 +1,76 @@
+# Configuration template for Auth Framework
+# Copy this to auth.toml and customize for your environment
+
+[database]
+# PostgreSQL connection URL
+url = "postgresql://username:password@localhost:5432/auth_framework"
+max_connections = 10
+min_connections = 1
+connect_timeout_seconds = 30
+
+[redis]
+# Redis connection (optional, used for sessions and caching)
+url = "redis://localhost:6379"
+pool_size = 10
+
+[jwt]
+# JWT configuration - CHANGE THESE IN PRODUCTION!
+secret_key = "your-super-secret-jwt-key-at-least-256-bits-long"
+issuer = "your-app-name"
+audience = "your-api"
+access_token_ttl_seconds = 3600      # 1 hour
+refresh_token_ttl_seconds = 604800   # 7 days
+
+[oauth]
+# OAuth provider configurations (all optional)
+
+[oauth.google]
+client_id = "your-google-client-id"
+client_secret = "your-google-client-secret"
+redirect_uri = "/auth/google/callback"
+scopes = ["openid", "email", "profile"]
+
+[oauth.github]
+client_id = "your-github-client-id"
+client_secret = "your-github-client-secret"
+redirect_uri = "/auth/github/callback"
+scopes = ["user:email"]
+
+[oauth.microsoft]
+client_id = "your-microsoft-client-id"
+client_secret = "your-microsoft-client-secret"
+redirect_uri = "/auth/microsoft/callback"
+scopes = ["openid", "email", "profile"]
+
+[security]
+# Password policy
+password_min_length = 8
+password_require_special = true
+
+# Rate limiting
+rate_limit_requests_per_minute = 60
+
+# Session management
+session_timeout_hours = 24
+max_concurrent_sessions = 5
+
+# Multi-factor authentication
+require_mfa = false
+
+[logging]
+# Logging configuration
+level = "info"
+audit_enabled = true
+audit_storage = "database"  # Options: database, file, syslog
+
+# Environment-specific overrides
+# Development settings
+[development]
+log_level = "debug"
+require_mfa = false
+
+# Production settings
+[production]
+log_level = "warn"
+require_mfa = true
+session_timeout_hours = 8
