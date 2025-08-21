@@ -6,11 +6,11 @@
 
 use auth_framework::{
     auth::AuthFramework,
+    authentication::credentials::{Credential, CredentialMetadata},
     config::{
         AuthConfig, CookieSameSite, JwtAlgorithm, PasswordHashAlgorithm, RateLimitConfig,
         SecurityConfig, StorageConfig,
     },
-    credentials::{Credential, CredentialMetadata},
     errors::AuthError,
     methods::{ApiKeyMethod, AuthMethodEnum, JwtMethod, OAuth2Method, PasswordMethod},
     tokens::AuthToken,
@@ -201,7 +201,8 @@ mod authentication_tests {
             result.unwrap_err(),
             AuthError::AuthMethod {
                 method: _,
-                message: _
+                message: _,
+                ..
             }
         ));
     }
@@ -333,7 +334,8 @@ mod token_management_tests {
             result.unwrap_err(),
             AuthError::AuthMethod {
                 method: _,
-                message: _
+                message: _,
+                ..
             }
         ));
     }

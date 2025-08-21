@@ -804,12 +804,25 @@ impl AuthStorage for DashMapMemoryStorage {
 
         Ok(())
     }
+
+    async fn count_active_sessions(&self) -> Result<u64> {
+        let mut count = 0;
+
+        // Count all non-expired sessions
+        for entry in self.sessions.iter() {
+            if !entry.is_expired() {
+                count += 1;
+            }
+        }
+
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_infrastructure::TestEnvironmentGuard, tokens::TokenMetadata};
+    use crate::{testing::test_infrastructure::TestEnvironmentGuard, tokens::TokenMetadata};
     use std::collections::HashMap;
     use tokio::task::JoinSet;
 
@@ -832,6 +845,8 @@ mod tests {
             auth_method: "password".to_string(),
             client_id: Some("test-client".to_string()),
             user_profile: None,
+            permissions: vec!["read:data".to_string()],
+            roles: vec!["user".to_string()],
             metadata: TokenMetadata::default(),
         };
 
@@ -946,6 +961,8 @@ mod tests {
                         auth_method: "password".to_string(),
                         client_id: Some("test-client".to_string()),
                         user_profile: None,
+                        permissions: vec!["read:data".to_string()],
+                        roles: vec!["user".to_string()],
                         metadata: TokenMetadata::default(),
                     };
 
@@ -1019,3 +1036,4 @@ mod tests {
         }
     }
 }
+

@@ -426,3 +426,5 @@ mod tests {
         assert!(html.contains("30 * 1000")); // Default interval
     }
 }
+
+

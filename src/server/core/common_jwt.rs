@@ -132,7 +132,81 @@ impl CommonJwtClaims {
     }
 }
 
-/// Common JWT manager
+/// Common JWT token management for OAuth 2.0 and OpenID Connect operations.
+///
+/// `JwtManager` provides comprehensive JWT token creation, verification, and
+/// management capabilities specifically designed for OAuth 2.0 authorization
+/// servers and OpenID Connect providers. It supports both symmetric and
+/// asymmetric signing algorithms with security best practices.
+///
+/// # Supported Algorithms
+///
+/// - **HMAC**: HS256, HS384, HS512 (symmetric)
+/// - **RSA**: RS256, RS384, RS512 (asymmetric)
+/// - **ECDSA**: ES256, ES384, ES512 (asymmetric)
+/// - **EdDSA**: EdDSA (asymmetric, Ed25519)
+///
+/// # Security Features
+///
+/// - **Algorithm Validation**: Prevents algorithm confusion attacks
+/// - **Time Validation**: Automatic `exp`, `nbf`, and `iat` claim validation
+/// - **Audience Validation**: Ensures tokens are used by intended recipients
+/// - **Issuer Validation**: Verifies token origin
+/// - **Secure Defaults**: Uses secure algorithm choices and expiration times
+///
+/// # Token Types Supported
+///
+/// - **Access Tokens**: OAuth 2.0 access tokens with scopes
+/// - **ID Tokens**: OpenID Connect identity tokens
+/// - **Refresh Tokens**: Long-lived tokens for access token renewal
+/// - **Custom Tokens**: Application-specific token types
+///
+/// # Key Management
+///
+/// - **Symmetric Keys**: HMAC-based signing with shared secrets
+/// - **RSA Keys**: Support for PKCS#1 and PKCS#8 key formats
+/// - **Key Rotation**: Support for multiple signing keys
+/// - **Key Security**: Secure key storage and access patterns
+///
+/// # Example
+///
+/// ```rust
+/// use auth_framework::server::core::common_jwt::{JwtManager, JwtConfig, CommonJwtClaims};
+///
+/// // Create JWT manager with RSA keys
+/// let config = JwtConfig::with_rsa_keys(
+///     private_key_bytes,
+///     public_key_bytes,
+///     "https://auth.example.com".to_string()
+/// )?;
+/// let jwt_manager = JwtManager::new(config);
+///
+/// // Create access token
+/// let claims = CommonJwtClaims::new(
+///     "https://auth.example.com".to_string(),
+///     "user123".to_string(),
+///     vec!["api".to_string()],
+///     expiration_time
+/// ).with_custom_claim("scope".to_string(), json!("read write"));
+///
+/// let token = jwt_manager.create_token(&claims)?;
+///
+/// // Verify token
+/// let verified_claims = jwt_manager.verify_token(&token)?;
+/// ```
+///
+/// # Performance Considerations
+///
+/// - Asymmetric algorithms are more computationally expensive
+/// - Token verification is optimized for high-throughput scenarios
+/// - Key caching reduces cryptographic operation overhead
+///
+/// # RFC Compliance
+///
+/// - **RFC 7519**: JSON Web Token (JWT)
+/// - **RFC 7515**: JSON Web Signature (JWS)
+/// - **RFC 8725**: JWT Best Current Practices
+/// - **RFC 9068**: JWT Profile for OAuth 2.0 Access Tokens
 pub struct JwtManager {
     config: JwtConfig,
 }
@@ -347,11 +421,24 @@ pub mod utils {
     use super::*;
 
     /// Extract claims from JWT without verification (for inspection only)
+    ///
+    /// # Security Warning
+    /// This function bypasses JWT signature verification! Only use for:
+    /// - Token inspection and debugging
+    /// - Extracting metadata before full validation
+    /// - Non-security-critical token analysis
+    ///
+    /// Never use for authentication or authorization decisions!
     pub fn extract_claims_unsafe(token: &str) -> Result<serde_json::Value> {
         common_validation::jwt::extract_claims_unsafe(token)
     }
 
     /// Check if token is expired without full verification
+    ///
+    /// # Security Warning
+    /// This function checks expiration without validating the JWT signature.
+    /// Only use for preliminary checks - always validate the token fully
+    /// before making security decisions!
     pub fn is_token_expired(token: &str) -> Result<bool> {
         let claims = extract_claims_unsafe(token)?;
 
@@ -367,19 +454,31 @@ pub mod utils {
         }
     }
 
-    /// Get token expiration time
+    /// Get token expiration time without signature validation
+    ///
+    /// # Security Warning
+    /// This function extracts expiration time without validating the JWT signature.
+    /// Only use for inspection - validate the token before trusting the data!
     pub fn get_token_expiration(token: &str) -> Result<Option<i64>> {
         let claims = extract_claims_unsafe(token)?;
         Ok(claims.get("exp").and_then(|v| v.as_i64()))
     }
 
-    /// Get token subject
+    /// Get token subject without signature validation
+    ///
+    /// # Security Warning
+    /// This function extracts the subject without validating the JWT signature.
+    /// Only use for inspection - validate the token before trusting the data!
     pub fn get_token_subject(token: &str) -> Result<Option<String>> {
         let claims = extract_claims_unsafe(token)?;
         Ok(claims.get("sub").and_then(|v| v.as_str()).map(String::from))
     }
 
-    /// Get token scopes
+    /// Get token scopes without signature validation
+    ///
+    /// # Security Warning
+    /// This function extracts scopes without validating the JWT signature.
+    /// Only use for inspection - validate the token before trusting the data!
     pub fn get_token_scopes(token: &str) -> Result<Vec<String>> {
         let claims = extract_claims_unsafe(token)?;
 
@@ -396,3 +495,5 @@ pub mod utils {
         }
     }
 }
+
+

@@ -7,7 +7,7 @@ use crate::errors::{AuthError, Result};
 use crate::oauth2_enhanced_storage::{
     EnhancedAuthorizationCode, EnhancedClientCredentials, EnhancedTokenStorage, RefreshToken,
 };
-use crate::secure_utils::constant_time_compare;
+use crate::security::secure_utils::constant_time_compare;
 use crate::tokens::{AuthToken, TokenManager};
 use crate::user_context::{SessionStore, UserContext};
 use serde::{Deserialize, Serialize};
@@ -814,3 +814,5 @@ impl OAuth2Server {
         Ok(session_store.invalidate_session(session_id))
     }
 }
+
+

@@ -415,3 +415,5 @@ mod tests {
         assert_eq!(stats.total_requests, 0); // Removed after consumption
     }
 }
+
+

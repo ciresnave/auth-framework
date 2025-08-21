@@ -10,7 +10,7 @@ use auth_framework::{
     methods::{AuthMethodEnum, JwtMethod},
     server::OAuth2Server,
     storage::{AuthStorage, MemoryStorage},
-    test_infrastructure::TestEnvironmentGuard,
+    testing::test_infrastructure::TestEnvironmentGuard,
     tokens::TokenManager,
 };
 use std::{sync::Arc, time::Duration};

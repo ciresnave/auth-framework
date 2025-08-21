@@ -66,6 +66,8 @@ mod test_helpers {
             auth_method: "jwt".to_string(),
             client_id: Some("test-client".to_string()),
             user_profile: Some(create_test_user()),
+            permissions: vec!["read:data".to_string(), "write:data".to_string()],
+            roles: vec!["user".to_string()],
             metadata: TokenMetadata {
                 issued_ip: Some("192.168.1.100".to_string()),
                 user_agent: Some("Mozilla/5.0 Test Browser".to_string()),
@@ -161,9 +163,12 @@ mod memory_storage_tests {
         assert!(storage.store_token(&token).await.is_ok());
 
         // Retrieve token
-        let retrieved = storage.get_token(&token_id).await.unwrap();
-        assert!(retrieved.is_some());
-        let retrieved_token = retrieved.unwrap();
+        let retrieved = storage
+            .get_token(&token_id)
+            .await
+            .expect("Failed to retrieve token from storage");
+        assert!(retrieved.is_some(), "Token should exist in storage");
+        let retrieved_token = retrieved.expect("Token should be present");
         assert_eq!(retrieved_token.token_id, token_id);
         assert_eq!(retrieved_token.user_id, "user123");
     }
@@ -179,8 +184,11 @@ mod memory_storage_tests {
         assert!(storage.delete_token(&token_id).await.is_ok());
 
         // Should not be retrievable after deletion
-        let retrieved = storage.get_token(&token_id).await.unwrap();
-        assert!(retrieved.is_none());
+        let retrieved = storage
+            .get_token(&token_id)
+            .await
+            .expect("Failed to query storage for deleted token");
+        assert!(retrieved.is_none(), "Token should be deleted from storage");
     }
 
     #[tokio::test]
@@ -198,8 +206,15 @@ mod memory_storage_tests {
         assert!(storage.store_token(&token3).await.is_ok());
 
         // Should return only tokens for the specified user
-        let user_tokens = storage.list_user_tokens(user_id).await.unwrap();
-        assert_eq!(user_tokens.len(), 2);
+        let user_tokens = storage
+            .list_user_tokens(user_id)
+            .await
+            .expect("Failed to list user tokens");
+        assert_eq!(
+            user_tokens.len(),
+            2,
+            "Should find exactly 2 tokens for the user"
+        );
 
         for token in user_tokens {
             assert_eq!(token.user_id, user_id);

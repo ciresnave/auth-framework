@@ -9,6 +9,19 @@ pub mod postgres;
 #[cfg(feature = "redis")]
 pub mod redis;
 
+// Performance optimized unified storage
+#[cfg(feature = "performance-optimization")]
+pub mod unified;
+
 // Re-export the main storage traits and types
 pub use core::*;
 pub use encryption::{EncryptedStorage, StorageEncryption};
+
+// Re-export unified storage when feature is enabled
+#[cfg(feature = "performance-optimization")]
+pub use unified::{StorageStats, UnifiedStorage, UnifiedStorageConfig};
+
+// Convenience re-export for common trait
+pub use crate::storage::core::AuthStorage;
+
+

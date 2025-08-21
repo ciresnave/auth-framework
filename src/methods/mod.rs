@@ -1,7 +1,7 @@
 //! Authentication method implementations.
 
 use crate::{
-    credentials::{Credential, CredentialMetadata},
+    authentication::credentials::{Credential, CredentialMetadata},
     errors::{AuthError, Result},
     tokens::AuthToken,
 };
@@ -375,3 +375,5 @@ impl MfaChallenge {
         self
     }
 }
+
+

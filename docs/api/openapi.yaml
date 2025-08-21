@@ -1,0 +1,1411 @@
+openapi: 3.1.0
+info:
+  title: AuthFramework REST API
+  description: |
+    Comprehensive REST API for the AuthFramework authentication and authorization library.
+
+    This API provides complete access to AuthFramework's authentication, authorization,
+    user management, multi-factor authentication, OAuth 2.0, and administrative features
+    through standardized HTTP endpoints.
+
+    ## Authentication
+
+    Most endpoints require authentication via Bearer tokens in the Authorization header:
+    ```
+    Authorization: Bearer <your-access-token>
+    ```
+
+    ## Rate Limiting
+
+    API endpoints are rate-limited to prevent abuse:
+    - Authentication endpoints: 5 requests per minute per IP
+    - Standard endpoints: 100 requests per minute per user
+    - Admin endpoints: 50 requests per minute per admin user
+
+    ## Error Handling
+
+    All endpoints return standardized error responses:
+    ```json
+    {
+      "success": false,
+      "error": {
+        "code": "INVALID_CREDENTIALS",
+        "message": "The provided credentials are invalid",
+        "details": null
+      },
+      "timestamp": "2024-01-20T15:30:45Z"
+    }
+    ```
+  version: 1.0.0
+  contact:
+    name: AuthFramework Support
+    url: https://github.com/cires/AuthFramework
+    email: support@authframework.dev
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.authframework.dev
+    description: Production server
+  - url: https://staging-api.authframework.dev
+    description: Staging server
+  - url: http://localhost:8080
+    description: Development server
+
+paths:
+  # Health and Monitoring Endpoints
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Basic health check
+      description: Returns basic service health status
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /health/detailed:
+    get:
+      tags:
+        - Health
+      summary: Detailed health check
+      description: Returns detailed service health including dependencies
+      operationId: detailedHealthCheck
+      responses:
+        "200":
+          description: Detailed health information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DetailedHealthStatus"
+
+  /metrics:
+    get:
+      tags:
+        - Health
+      summary: Prometheus metrics
+      description: Returns Prometheus-formatted metrics
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  # Authentication Endpoints
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate user and return access and refresh tokens
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimit"
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Use refresh token to get new access token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenRequest"
+      responses:
+        "200":
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: User logout
+      description: Invalidate current session and tokens
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/validate:
+    post:
+      tags:
+        - Authentication
+      summary: Validate token
+      description: Validate access token and return user information
+      operationId: validateToken
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # User Management Endpoints
+  /users/profile:
+    get:
+      tags:
+        - Users
+      summary: Get user profile
+      description: Get current user's profile information
+      operationId: getUserProfile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    patch:
+      tags:
+        - Users
+      summary: Update user profile
+      description: Update current user's profile information
+      operationId: updateUserProfile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/password:
+    post:
+      tags:
+        - Users
+      summary: Change password
+      description: Change current user's password
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # Multi-Factor Authentication Endpoints
+  /mfa/setup:
+    post:
+      tags:
+        - MFA
+      summary: Setup MFA
+      description: Initialize multi-factor authentication for user
+      operationId: setupMFA
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: MFA setup initialized
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MFASetupResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: MFA already enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /mfa/verify:
+    post:
+      tags:
+        - MFA
+      summary: Verify MFA
+      description: Verify MFA code and complete setup or authentication
+      operationId: verifyMFA
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MFAVerifyRequest"
+      responses:
+        "200":
+          description: MFA verification successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MFAVerifyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /mfa/disable:
+    post:
+      tags:
+        - MFA
+      summary: Disable MFA
+      description: Disable multi-factor authentication for user
+      operationId: disableMFA
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DisableMFARequest"
+      responses:
+        "200":
+          description: MFA disabled successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # OAuth 2.0 Endpoints
+  /oauth/authorize:
+    get:
+      tags:
+        - OAuth
+      summary: OAuth authorization endpoint
+      description: OAuth 2.0 authorization endpoint for initiating flows
+      operationId: oauthAuthorize
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code, token]
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          schema:
+            type: string
+        - name: scope
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          schema:
+            type: string
+            enum: [plain, S256]
+      responses:
+        "302":
+          description: Redirect to authorization page or back to client
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /oauth/token:
+    post:
+      tags:
+        - OAuth
+      summary: OAuth token endpoint
+      description: OAuth 2.0 token endpoint for exchanging codes and refreshing tokens
+      operationId: oauthToken
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/OAuthTokenRequest"
+      responses:
+        "200":
+          description: Token issued successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /oauth/revoke:
+    post:
+      tags:
+        - OAuth
+      summary: Revoke OAuth token
+      description: Revoke an OAuth access or refresh token
+      operationId: revokeOAuthToken
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/RevokeTokenRequest"
+      responses:
+        "200":
+          description: Token revoked successfully
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /oauth/introspect:
+    post:
+      tags:
+        - OAuth
+      summary: Introspect OAuth token
+      description: Get information about an OAuth token
+      operationId: introspectOAuthToken
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/IntrospectTokenRequest"
+      responses:
+        "200":
+          description: Token introspection result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenIntrospectionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  # Administrative Endpoints
+  /admin/users:
+    get:
+      tags:
+        - Admin
+      summary: List users
+      description: Get paginated list of users (admin only)
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/LimitParam"
+        - name: search
+          in: query
+          description: Search term for filtering users
+          schema:
+            type: string
+        - name: role
+          in: query
+          description: Filter by user role
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Users retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserInfo"
+                      pagination:
+                        $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      tags:
+        - Admin
+      summary: Create user
+      description: Create a new user (admin only)
+      operationId: createUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserInfo"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /admin/users/{userId}:
+    get:
+      tags:
+        - Admin
+      summary: Get user details
+      description: Get detailed information about a specific user (admin only)
+      operationId: getUserDetails
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: User details retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      tags:
+        - Admin
+      summary: Delete user
+      description: Delete a user account (admin only)
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: User deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/stats:
+    get:
+      tags:
+        - Admin
+      summary: Get system statistics
+      description: Get system usage and performance statistics (admin only)
+      operationId: getSystemStats
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: System statistics retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SystemStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: Page number (1-based)
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+    RateLimit:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per time window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests in current window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Unix timestamp when rate limit resets
+
+  schemas:
+    # Base response schemas
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          description: Response payload (varies by endpoint)
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+      required:
+        - success
+        - timestamp
+
+    ApiError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "INVALID_CREDENTIALS"
+            message:
+              type: string
+              example: "The provided credentials are invalid"
+            details:
+              type: object
+              nullable: true
+          required:
+            - code
+            - message
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+      required:
+        - success
+        - error
+        - timestamp
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 150
+        has_next:
+          type: boolean
+          example: true
+        has_prev:
+          type: boolean
+          example: false
+      required:
+        - page
+        - limit
+        - total
+        - has_next
+        - has_prev
+
+    # Health schemas
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+      required:
+        - status
+        - timestamp
+
+    DetailedHealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          example: "healthy"
+        services:
+          type: object
+          properties:
+            database:
+              $ref: "#/components/schemas/ServiceHealth"
+            cache:
+              $ref: "#/components/schemas/ServiceHealth"
+            storage:
+              $ref: "#/components/schemas/ServiceHealth"
+        uptime:
+          type: integer
+          description: Service uptime in seconds
+          example: 86400
+        version:
+          type: string
+          example: "1.0.0"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+      required:
+        - status
+        - services
+        - uptime
+        - version
+        - timestamp
+
+    ServiceHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          example: "healthy"
+        response_time:
+          type: number
+          description: Response time in milliseconds
+          example: 12.5
+        last_check:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+      required:
+        - status
+        - response_time
+        - last_check
+
+    # Authentication schemas
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          example: "user@example.com"
+        password:
+          type: string
+          format: password
+          example: "SecurePassword123!"
+        remember_me:
+          type: boolean
+          default: false
+      required:
+        - username
+        - password
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        token_type:
+          type: string
+          example: "Bearer"
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds
+          example: 3600
+        user:
+          $ref: "#/components/schemas/UserInfo"
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+        - user
+
+    RefreshTokenRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      required:
+        - refresh_token
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        token_type:
+          type: string
+          example: "Bearer"
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds
+          example: 3600
+      required:
+        - access_token
+        - token_type
+        - expires_in
+
+    # User schemas
+    UserInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        username:
+          type: string
+          example: "user@example.com"
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        roles:
+          type: array
+          items:
+            type: string
+          example: ["user"]
+        mfa_enabled:
+          type: boolean
+          example: false
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+        last_login:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-01-20T15:30:45Z"
+      required:
+        - id
+        - username
+        - email
+        - roles
+        - mfa_enabled
+        - created_at
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        username:
+          type: string
+          example: "user@example.com"
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        first_name:
+          type: string
+          nullable: true
+          example: "John"
+        last_name:
+          type: string
+          nullable: true
+          example: "Doe"
+        phone:
+          type: string
+          nullable: true
+          example: "+1234567890"
+        timezone:
+          type: string
+          nullable: true
+          example: "UTC"
+        locale:
+          type: string
+          nullable: true
+          example: "en-US"
+        mfa_enabled:
+          type: boolean
+          example: false
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+      required:
+        - id
+        - username
+        - email
+        - mfa_enabled
+        - created_at
+        - updated_at
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        first_name:
+          type: string
+          nullable: true
+          example: "John"
+        last_name:
+          type: string
+          nullable: true
+          example: "Doe"
+        phone:
+          type: string
+          nullable: true
+          example: "+1234567890"
+        timezone:
+          type: string
+          nullable: true
+          example: "UTC"
+        locale:
+          type: string
+          nullable: true
+          example: "en-US"
+
+    ChangePasswordRequest:
+      type: object
+      properties:
+        current_password:
+          type: string
+          format: password
+          example: "CurrentPassword123!"
+        new_password:
+          type: string
+          format: password
+          example: "NewSecurePassword123!"
+      required:
+        - current_password
+        - new_password
+
+    CreateUserRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          example: "newuser@example.com"
+        email:
+          type: string
+          format: email
+          example: "newuser@example.com"
+        password:
+          type: string
+          format: password
+          example: "SecurePassword123!"
+        roles:
+          type: array
+          items:
+            type: string
+          example: ["user"]
+        first_name:
+          type: string
+          nullable: true
+          example: "Jane"
+        last_name:
+          type: string
+          nullable: true
+          example: "Smith"
+      required:
+        - username
+        - email
+        - password
+
+    # MFA schemas
+    MFASetupResponse:
+      type: object
+      properties:
+        secret:
+          type: string
+          description: Base32-encoded TOTP secret
+          example: "JBSWY3DPEHPK3PXP"
+        qr_code:
+          type: string
+          description: Base64-encoded QR code image
+          example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAT..."
+        backup_codes:
+          type: array
+          items:
+            type: string
+          description: One-time backup codes
+          example: ["12345678", "87654321", "11223344"]
+        setup_uri:
+          type: string
+          description: TOTP setup URI
+          example: "otpauth://totp/AuthFramework:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=AuthFramework"
+      required:
+        - secret
+        - qr_code
+        - backup_codes
+        - setup_uri
+
+    MFAVerifyRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: 6-digit TOTP code or backup code
+          example: "123456"
+      required:
+        - code
+
+    MFAVerifyResponse:
+      type: object
+      properties:
+        verified:
+          type: boolean
+          example: true
+        backup_codes:
+          type: array
+          items:
+            type: string
+          description: Remaining backup codes (only if backup code was used)
+          example: ["87654321", "11223344"]
+      required:
+        - verified
+
+    DisableMFARequest:
+      type: object
+      properties:
+        password:
+          type: string
+          format: password
+          example: "CurrentPassword123!"
+        code:
+          type: string
+          description: Current TOTP code or backup code
+          example: "123456"
+      required:
+        - password
+        - code
+
+    # OAuth schemas
+    OAuthTokenRequest:
+      type: object
+      properties:
+        grant_type:
+          type: string
+          enum: [authorization_code, refresh_token, client_credentials]
+          example: "authorization_code"
+        code:
+          type: string
+          description: Authorization code (for authorization_code grant)
+          example: "abc123def456"
+        redirect_uri:
+          type: string
+          description: Redirect URI (for authorization_code grant)
+          example: "https://client.example.com/callback"
+        client_id:
+          type: string
+          example: "client_123"
+        client_secret:
+          type: string
+          example: "secret_456"
+        refresh_token:
+          type: string
+          description: Refresh token (for refresh_token grant)
+          example: "refresh_abc123"
+        scope:
+          type: string
+          description: Requested scope
+          example: "read write"
+        code_verifier:
+          type: string
+          description: PKCE code verifier
+          example: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+      required:
+        - grant_type
+
+    OAuthTokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        token_type:
+          type: string
+          example: "Bearer"
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds
+          example: 3600
+        refresh_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        scope:
+          type: string
+          example: "read write"
+      required:
+        - access_token
+        - token_type
+        - expires_in
+
+    RevokeTokenRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Token to revoke
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        token_type_hint:
+          type: string
+          enum: [access_token, refresh_token]
+          example: "access_token"
+        client_id:
+          type: string
+          example: "client_123"
+        client_secret:
+          type: string
+          example: "secret_456"
+      required:
+        - token
+
+    IntrospectTokenRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Token to introspect
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        token_type_hint:
+          type: string
+          enum: [access_token, refresh_token]
+          example: "access_token"
+        client_id:
+          type: string
+          example: "client_123"
+        client_secret:
+          type: string
+          example: "secret_456"
+      required:
+        - token
+
+    TokenIntrospectionResponse:
+      type: object
+      properties:
+        active:
+          type: boolean
+          example: true
+        scope:
+          type: string
+          example: "read write"
+        client_id:
+          type: string
+          example: "client_123"
+        username:
+          type: string
+          example: "user@example.com"
+        token_type:
+          type: string
+          example: "Bearer"
+        exp:
+          type: integer
+          description: Expiration timestamp
+          example: 1642690245
+        iat:
+          type: integer
+          description: Issued at timestamp
+          example: 1642686645
+        sub:
+          type: string
+          description: Subject (user ID)
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        aud:
+          type: string
+          description: Audience
+          example: "https://api.example.com"
+        iss:
+          type: string
+          description: Issuer
+          example: "https://auth.example.com"
+      required:
+        - active
+
+    # Admin schemas
+    SystemStats:
+      type: object
+      properties:
+        users:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 1500
+            active:
+              type: integer
+              example: 1200
+            new_today:
+              type: integer
+              example: 25
+        sessions:
+          type: object
+          properties:
+            active:
+              type: integer
+              example: 450
+            peak_today:
+              type: integer
+              example: 680
+        oauth:
+          type: object
+          properties:
+            clients:
+              type: integer
+              example: 15
+            active_tokens:
+              type: integer
+              example: 2300
+        system:
+          type: object
+          properties:
+            uptime:
+              type: integer
+              description: System uptime in seconds
+              example: 86400
+            memory_usage:
+              type: number
+              description: Memory usage percentage
+              example: 67.5
+            cpu_usage:
+              type: number
+              description: CPU usage percentage
+              example: 23.8
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-20T15:30:45Z"
+      required:
+        - users
+        - sessions
+        - oauth
+        - system
+        - timestamp
+
+tags:
+  - name: Health
+    description: Health monitoring and metrics endpoints
+  - name: Authentication
+    description: User authentication and token management
+  - name: Users
+    description: User profile and account management
+  - name: MFA
+    description: Multi-factor authentication management
+  - name: OAuth
+    description: OAuth 2.0 authorization server endpoints
+  - name: Admin
+    description: Administrative endpoints (admin access required)

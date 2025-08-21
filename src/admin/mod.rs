@@ -1,7 +1,80 @@
-//! Administration Module
+//! Comprehensive administration module for AuthFramework management.
 //!
-//! This module provides administrative functionality for the auth-framework,
-//! including CLI, TUI, and Web interfaces.
+//! This module provides multiple administrative interfaces for monitoring,
+//! configuring, and managing AuthFramework deployments. It includes both
+//! interactive and programmatic interfaces suitable for different operational
+//! environments.
+//!
+//! # Administrative Interfaces
+//!
+//! - **CLI (Command Line Interface)**: Scriptable command-line administration
+//! - **TUI (Terminal User Interface)**: Interactive terminal dashboard
+//! - **Web Interface**: Browser-based administrative console
+//! - **API**: RESTful API for programmatic management
+//!
+//! # Core Capabilities
+//!
+//! - **Real-time Monitoring**: Live metrics and health status
+//! - **Configuration Management**: Dynamic configuration updates
+//! - **User Management**: User account and permission administration
+//! - **Security Monitoring**: Threat detection and incident response
+//! - **Audit Logging**: Comprehensive activity tracking
+//! - **Performance Analytics**: System performance and optimization
+//!
+//! # Security Features
+//!
+//! - **Role-based Access**: Admin, operator, and read-only roles
+//! - **Audit Trail**: All administrative actions are logged
+//! - **Secure Sessions**: Encrypted admin sessions
+//! - **MFA Enforcement**: Multi-factor authentication for admins
+//! - **IP Whitelisting**: Restrict admin access by network
+//!
+//! # Monitoring Dashboard
+//!
+//! The administrative interfaces provide comprehensive monitoring:
+//! - Active user sessions
+//! - Authentication success/failure rates
+//! - Security alerts and incidents
+//! - System performance metrics
+//! - Error rates and debugging information
+//!
+//! # Configuration Management
+//!
+//! - **Live Updates**: Modify configuration without restarts
+//! - **Validation**: Real-time configuration validation
+//! - **Backup/Restore**: Configuration versioning and rollback
+//! - **Environment Management**: Dev, staging, production configs
+//!
+//! # Example Usage
+//!
+//! ```rust
+//! use auth_framework::admin::{AdminInterface, AppState};
+//!
+//! // Create administrative interface
+//! let app_state = AppState::new(config_manager).await?;
+//! let admin = AdminInterface::new(app_state);
+//!
+//! // Start web interface
+//! admin.start_web_interface("127.0.0.1:8080").await?;
+//!
+//! // Start TUI interface
+//! admin.start_tui_interface().await?;
+//! ```
+//!
+//! # Deployment Scenarios
+//!
+//! - **Development**: TUI for local development and testing
+//! - **Production**: Web interface for remote administration
+//! - **Automation**: CLI for scripted operations and CI/CD
+//! - **Monitoring**: API integration with external monitoring systems
+//!
+//! # Integration
+//!
+//! Integrates with external systems:
+//! - Prometheus metrics export
+//! - Grafana dashboard templates
+//! - SIEM system integration
+//! - Log aggregation systems
 
 use crate::{config::AuthFrameworkSettings, errors::Result};
 use chrono;
@@ -279,3 +352,5 @@ pub enum SecurityAction {
         check_ip: Option<String>,
     },
 }
+
+

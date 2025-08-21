@@ -771,3 +771,5 @@ mod tests {
         assert_eq!(balanced.strategy, RateLimitStrategy::SlidingWindow);
     }
 }
+
+

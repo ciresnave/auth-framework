@@ -1,11 +1,62 @@
-//! Modularized authentication framework
+//! Modular authentication framework with component-based architecture.
+//!
+//! This module provides a modular approach to authentication and authorization,
+//! allowing fine-grained control over individual components while maintaining
+//! the same high-level API as the main `AuthFramework`.
+//!
+//! # Architecture
+//!
+//! The modular framework separates concerns into distinct managers:
+//! - **MFA Manager**: Multi-factor authentication coordination
+//! - **Session Manager**: Session lifecycle and security
+//! - **User Manager**: User account and profile management
+//! - **Token Manager**: JWT token creation and validation
+//! - **Permission Checker**: Authorization and access control
+//!
+//! # Benefits of Modular Design
+//!
+//! - **Composability**: Use only the components you need
+//! - **Testability**: Test individual components in isolation
+//! - **Extensibility**: Replace or extend specific managers
+//! - **Memory Efficiency**: Reduced memory footprint for specialized use cases
+//! - **Performance**: Optimized component interactions
+//!
+//! # Component Independence
+//!
+//! Each manager can operate independently while sharing common storage
+//! and configuration. This allows for:
+//! - Microservice deployment patterns
+//! - Custom authentication flows
+//! - Progressive feature adoption
+//! - A/B testing of authentication methods
+//!
+//! # Example
+//!
+//! ```rust
+//! use auth_framework::auth_modular::AuthFramework;
+//! use auth_framework::config::AuthConfig;
+//!
+//! // Create modular framework
+//! let config = AuthConfig::default();
+//! let auth = AuthFramework::new(config);
+//!
+//! // Access individual managers
+//! let mfa_manager = auth.mfa_manager();
+//! let session_manager = auth.session_manager();
+//! let user_manager = auth.user_manager();
+//! ```
+//!
+//! # Migration from Monolithic Framework
+//!
+//! The modular framework maintains API compatibility with the main framework,
+//! making migration straightforward while providing additional flexibility.
 
 pub mod mfa;
 pub mod session_manager;
 pub mod user_manager;
 
 use crate::config::AuthConfig;
-use crate::credentials::{Credential, CredentialMetadata};
+use crate::authentication::credentials::{Credential, CredentialMetadata};
 use crate::errors::{AuthError, MfaError, Result};
 use crate::methods::{AuthMethod, AuthMethodEnum, MethodResult, MfaChallenge};
 use crate::permissions::{Permission, PermissionChecker};
@@ -356,23 +407,10 @@ impl AuthFramework {
                     .await?
             }
             crate::methods::MfaType::Sms { .. } => {
-                #[cfg(feature = "smskit")]
-                {
-                    self.mfa_manager
-                        .sms_kit
-                        .verify_code(&challenge.id, mfa_code)
-                        .await?
-                }
-                #[cfg(not(feature = "smskit"))]
-                {
-                    #[allow(deprecated)]
-                    {
-                        self.mfa_manager
-                            .sms
-                            .verify_code(&challenge.id, mfa_code)
-                            .await?
-                    }
-                }
+                self.mfa_manager
+                    .sms
+                    .verify_code(&challenge.id, mfa_code)
+                    .await?
             }
             crate::methods::MfaType::Email { .. } => {
                 self.mfa_manager
@@ -487,65 +525,27 @@ impl AuthFramework {
         &self.user_manager
     }
 
-    /// Initiate SMS challenge (uses SMSKit when available)
+    /// Initiate SMS challenge (uses SMSKit)
     pub async fn initiate_sms_challenge(&self, user_id: &str) -> Result<String> {
-        #[cfg(feature = "smskit")]
-        {
-            self.mfa_manager.sms_kit.initiate_challenge(user_id).await
-        }
-        #[cfg(not(feature = "smskit"))]
-        {
-            #[allow(deprecated)]
-            self.mfa_manager.sms.initiate_challenge(user_id).await
-        }
+        self.mfa_manager.sms.initiate_challenge(user_id).await
     }
 
-    /// Send SMS code (uses SMSKit when available)
+    /// Send SMS code (uses SMSKit)
     pub async fn send_sms_code(&self, challenge_id: &str, phone_number: &str) -> Result<()> {
-        #[cfg(feature = "smskit")]
-        {
-            self.mfa_manager
-                .sms_kit
-                .send_code(challenge_id, phone_number)
-                .await
-        }
-        #[cfg(not(feature = "smskit"))]
-        {
-            #[allow(deprecated)]
-            self.mfa_manager
-                .sms
-                .send_code(challenge_id, phone_number)
-                .await
-        }
+        self.mfa_manager
+            .sms
+            .send_code(challenge_id, phone_number)
+            .await
     }
 
-    /// Generate SMS code (uses SMSKit when available)
+    /// Generate SMS code (uses SMSKit)
     pub async fn generate_sms_code(&self, challenge_id: &str) -> Result<String> {
-        #[cfg(feature = "smskit")]
-        {
-            self.mfa_manager.sms_kit.generate_code(challenge_id).await
-        }
-        #[cfg(not(feature = "smskit"))]
-        {
-            #[allow(deprecated)]
-            self.mfa_manager.sms.generate_code(challenge_id).await
-        }
+        self.mfa_manager.sms.generate_code(challenge_id).await
     }
 
-    /// Verify SMS code (uses SMSKit when available)
+    /// Verify SMS code (uses SMSKit)
     pub async fn verify_sms_code(&self, challenge_id: &str, code: &str) -> Result<bool> {
-        #[cfg(feature = "smskit")]
-        {
-            self.mfa_manager
-                .sms_kit
-                .verify_code(challenge_id, code)
-                .await
-        }
-        #[cfg(not(feature = "smskit"))]
-        {
-            #[allow(deprecated)]
-            self.mfa_manager.sms.verify_code(challenge_id, code).await
-        }
+        self.mfa_manager.sms.verify_code(challenge_id, code).await
     }
 
     /// Clean up expired data
@@ -676,3 +676,6 @@ mod tests {
         let _user_manager = framework.user_manager();
     }
 }
+
+
+

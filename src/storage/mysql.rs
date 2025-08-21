@@ -104,6 +104,8 @@ impl AuthStorage for MySqlStorage {
                 issuer: row.try_get("issuer").ok(),
                 client_id: row.try_get("client_id").ok(),
                 user_profile: None,
+                permissions: Vec::new(), // Note: Requires user_permissions table and additional query
+                roles: Vec::new(),       // Note: Requires user_roles table and additional query
                 metadata,
             }))
         } else {
@@ -155,6 +157,8 @@ impl AuthStorage for MySqlStorage {
                 issuer: row.try_get("issuer").ok(),
                 client_id: row.try_get("client_id").ok(),
                 user_profile: None,
+                permissions: Vec::new(), // Note: Requires user_permissions table and additional query
+                roles: Vec::new(),       // Note: Requires user_roles table and additional query
                 metadata,
             }))
         } else {
@@ -258,6 +262,8 @@ impl AuthStorage for MySqlStorage {
                 issuer: row.try_get("issuer").ok(),
                 client_id: row.try_get("client_id").ok(),
                 user_profile: None,
+                permissions: Vec::new(), // Note: Requires user_permissions table and additional query
+                roles: Vec::new(),       // Note: Requires user_roles table and additional query
                 metadata,
             });
         }
@@ -457,4 +463,28 @@ impl AuthStorage for MySqlStorage {
 
         Ok(sessions)
     }
+
+    async fn count_active_sessions(&self) -> Result<u64> {
+        use sqlx::Row;
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM sessions WHERE expires_at IS NULL OR expires_at > NOW()",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            crate::errors::AuthError::Storage(crate::errors::StorageError::operation_failed(
+                format!("Failed to count active sessions: {}", e),
+            ))
+        })?;
+
+        let count: i64 = row.try_get("count").map_err(|e| {
+            crate::errors::AuthError::Storage(crate::errors::StorageError::operation_failed(
+                format!("Failed to parse session count: {}", e),
+            ))
+        })?;
+
+        Ok(count as u64)
+    }
 }
+
+

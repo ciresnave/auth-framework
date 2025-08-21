@@ -86,7 +86,9 @@ See the [Security Policy](https://github.com/yourusername/auth-framework/blob/ma
 for comprehensive security guidelines.
 */
 
-pub mod advanced_auth;
+// REST API Server - NEW!
+#[cfg(feature = "api-server")]
+pub mod api;
 
 // ## Quick Start
 //
@@ -154,19 +156,32 @@ pub mod admin;
 
 pub mod auth;
 pub mod auth_modular; // Modular authentication components
-pub mod credentials;
+pub mod authentication; // Reorganized authentication modules
 pub mod errors;
 pub mod methods;
 pub mod permissions;
 pub mod profile_utils;
 pub mod providers;
+
+// SDK generation for multiple languages
+#[cfg(feature = "enhanced-rbac")]
+pub mod sdks;
+
 pub mod server;
 pub mod storage;
-pub mod test_infrastructure; // Bulletproof test isolation
-pub mod testing;
+pub mod testing; // Reorganized testing modules
 pub mod threat_intelligence; // Automated threat intelligence feed management
 pub mod tokens;
 pub mod utils;
+
+// Migration utilities for role-system v1.0 integration
+pub mod migration;
+
+// Analytics and monitoring for RBAC systems
+pub mod analytics;
+
+// Production deployment automation and monitoring
+pub mod deployment;
 
 // User context and session management
 pub mod user_context;
@@ -181,21 +196,25 @@ pub mod oauth2_server;
 // Consolidated security modules
 pub mod audit;
 pub mod authorization;
+#[cfg(feature = "role-system")]
+pub mod authorization_enhanced;
 pub mod distributed_rate_limiting; // Advanced distributed rate limiting
-pub mod mfa;
-pub mod secure_jwt; // Secure JWT validation
-pub mod secure_mfa; // Secure MFA implementation
-pub mod secure_session; // Secure session management
-pub mod secure_session_config; // Enhanced session security configuration
-pub mod secure_utils; // Secure utility functions
 pub mod security;
-pub mod session;
+pub mod session; // Reorganized session modules
 
 // Configuration management
 pub mod config;
 
 // Monitoring and metrics collection
 pub mod monitoring;
+
+// Enhanced observability
+#[cfg(feature = "enhanced-observability")]
+pub mod observability;
+
+// Architecture enhancements
+#[cfg(feature = "event-sourcing")]
+pub mod architecture;
 
 // Web framework integrations
 pub mod integrations {
@@ -215,6 +234,10 @@ pub mod migrations;
 // CLI tools
 pub mod cli;
 
+// Ergonomic builders and prelude for better developer experience
+pub mod builders;
+pub mod prelude;
+
 // WS-Security 1.1 and SAML 2.0 support
 pub mod saml_assertions;
 pub mod ws_security;
@@ -222,15 +245,19 @@ pub mod ws_trust;
 
 // Re-exports - Main modular auth framework components
 pub use crate::auth::{AuthFramework, AuthResult, AuthStats, UserInfo};
+pub use authentication::credentials::Credential;
 pub use config::{
     AuthConfig,
     app_config::{AppConfig, ConfigBuilder},
 };
-pub use credentials::Credential;
 pub use errors::{AuthError, Result};
 pub use methods::{
     ApiKeyMethod, AuthMethod, JwtMethod, MethodResult, OAuth2Method, PasswordMethod,
 };
+
+// REST API Server exports
+#[cfg(feature = "api-server")]
+pub use api::{ApiError, ApiResponse, ApiServer, ApiState};
 
 // SAML support (feature-gated)
 #[cfg(feature = "saml")]
@@ -290,18 +317,18 @@ pub use server::{
 
 // Security and authentication module re-exports
 pub use audit::{AuditEvent, AuditEventType, AuditLogger, EventOutcome, RiskLevel};
+pub use authentication::mfa::{MfaManager as LegacyMfaManager, MfaMethodType, TotpProvider};
 pub use authorization::{
     AccessCondition, AuthorizationEngine, Permission as AuthzPermission, Role as AuthzRole,
 };
-pub use mfa::{MfaManager as LegacyMfaManager, MfaMethodType, TotpProvider};
-pub use secure_jwt::{SecureJwtClaims, SecureJwtConfig, SecureJwtValidator};
-pub use secure_mfa::SecureMfaService;
-pub use secure_session::{
+pub use security::secure_jwt::{SecureJwtClaims, SecureJwtConfig, SecureJwtValidator};
+pub use security::secure_mfa::SecureMfaService;
+pub use security::secure_session::{
     DeviceFingerprint, SecureSession, SecureSessionConfig, SecureSessionManager, SecurityFlags,
     SessionState as SecureSessionState,
 };
-pub use secure_utils::{SecureComparison, SecureRandomGen};
-pub use session::{
+pub use security::secure_utils::{SecureComparison, SecureRandomGen};
+pub use session::manager::{
     DeviceInfo, Session, SessionConfig, SessionManager as LegacySessionManager, SessionState,
 };
 pub use utils::rate_limit::RateLimiter;
@@ -321,4 +348,7 @@ pub use testing::{MockAuthMethod, MockStorage}; // Removed helpers temporarily
 
 // Re-export test infrastructure for bulletproof testing
 #[cfg(any(test, feature = "testing"))]
-pub use test_infrastructure::{TestEnvironmentGuard, test_data};
+pub use testing::{
+    test_infrastructure::{TestEnvironmentGuard, test_data},
+    utilities::*,
+};

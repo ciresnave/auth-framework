@@ -130,7 +130,7 @@ impl EnhancedClientCredentials {
         allowed_scopes: Vec<String>,
         grant_types: Vec<String>,
     ) -> Result<Self> {
-        use crate::secure_utils::hash_password;
+        use crate::security::secure_utils::hash_password;
 
         Ok(Self {
             client_id,
@@ -166,7 +166,7 @@ impl EnhancedClientCredentials {
         match self.client_type {
             ClientType::Public => Ok(true), // Public clients don't need secret validation
             ClientType::Confidential => {
-                use crate::secure_utils::verify_password;
+                use crate::security::secure_utils::verify_password;
                 verify_password(provided_secret, &self.client_secret_hash)
             }
         }
@@ -386,3 +386,5 @@ impl Default for EnhancedTokenStorage {
         Self::new()
     }
 }
+
+

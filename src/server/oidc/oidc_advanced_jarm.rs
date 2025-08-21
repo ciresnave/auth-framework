@@ -56,7 +56,7 @@
 //! ```
 
 use crate::errors::{AuthError, Result};
-use crate::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
+use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header};
@@ -1074,3 +1074,5 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+

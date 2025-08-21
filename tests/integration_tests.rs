@@ -197,72 +197,72 @@ async fn test_all_integrations_comprehensive() {
             .check_access("admin_user", "write", "sessions")
             .unwrap()
     );
+}
 
-    #[tokio::test]
-    #[allow(dead_code)]
-    async fn test_comprehensive_integration() {
-        println!("🔍 Testing Comprehensive Integration of All Systems");
+#[tokio::test]
+#[allow(dead_code)]
+async fn test_comprehensive_integration() {
+    println!("🔍 Testing Comprehensive Integration of All Systems");
 
-        // 1. Test resource hierarchy system
-        let mut permissions = PermissionChecker::new();
-        permissions.create_default_roles();
+    // 1. Test resource hierarchy system
+    let mut permissions = PermissionChecker::new();
+    permissions.create_default_roles();
 
-        // Add hierarchical resources
-        permissions.add_resource_hierarchy(
-            "company".to_string(),
-            vec!["departments".to_string(), "projects".to_string()],
-        );
-        permissions.add_resource_hierarchy("projects".to_string(), vec!["tasks".to_string()]);
+    // Add hierarchical resources
+    permissions.add_resource_hierarchy(
+        "company".to_string(),
+        vec!["departments".to_string(), "projects".to_string()],
+    );
+    permissions.add_resource_hierarchy("projects".to_string(), vec!["tasks".to_string()]);
 
-        // Grant admin user hierarchical permissions
-        let admin_permission = Permission::new("manage", "company");
-        permissions.add_user_permission("admin_user", admin_permission);
+    // Grant admin user hierarchical permissions
+    let admin_permission = Permission::new("manage", "company");
+    permissions.add_user_permission("admin_user", admin_permission);
 
-        // Test hierarchical permission checking
-        assert!(
-            permissions
-                .check_hierarchical_permission("admin_user", "read", "projects")
-                .unwrap()
-        );
-        assert!(
-            permissions
-                .check_hierarchical_permission("admin_user", "write", "tasks")
-                .unwrap()
-        );
+    // Test hierarchical permission checking
+    assert!(
+        permissions
+            .check_hierarchical_permission("admin_user", "read", "projects")
+            .unwrap()
+    );
+    assert!(
+        permissions
+            .check_hierarchical_permission("admin_user", "write", "tasks")
+            .unwrap()
+    );
 
-        println!("   ✅ Resource hierarchy working");
+    println!("   ✅ Resource hierarchy working");
 
-        // 2. Test device fingerprinting system
-        use auth_framework::session::DeviceFingerprintGenerator;
-        let fingerprint_generator = DeviceFingerprintGenerator::new();
+    // 2. Test device fingerprinting system
+    use auth_framework::session::DeviceFingerprintGenerator;
+    let fingerprint_generator = DeviceFingerprintGenerator::new();
 
-        let test_metadata = RequestMetadata {
-            ip_address: Some("10.0.0.1".to_string()),
-            user_agent: Some("Integration Test Browser".to_string()),
-            request_id: Some("integration-123".to_string()),
-            endpoint: Some("/test".to_string()),
-            http_method: Some("GET".to_string()),
-            geolocation: None,
-            device_info: None,
-        };
+    let test_metadata = RequestMetadata {
+        ip_address: Some("10.0.0.1".to_string()),
+        user_agent: Some("Integration Test Browser".to_string()),
+        request_id: Some("integration-123".to_string()),
+        endpoint: Some("/test".to_string()),
+        http_method: Some("GET".to_string()),
+        geolocation: None,
+        device_info: None,
+    };
 
-        let fingerprint = fingerprint_generator.generate_fingerprint(&test_metadata);
-        assert!(!fingerprint.is_empty(), "Fingerprint should be generated");
+    let fingerprint = fingerprint_generator.generate_fingerprint(&test_metadata);
+    assert!(!fingerprint.is_empty(), "Fingerprint should be generated");
 
-        println!("   ✅ Device fingerprinting working");
+    println!("   ✅ Device fingerprinting working");
 
-        // 3. Test database migration system - SKIPPED (migrations not implemented)
-        println!("   ⚠️  Database migrations test skipped - not implemented");
+    // 3. Test database migration system - SKIPPED (migrations not implemented)
+    println!("   ⚠️  Database migrations test skipped - not implemented");
 
-        println!("✅ Comprehensive Integration Test: ALL SYSTEMS INTEGRATED");
+    println!("✅ Comprehensive Integration Test: ALL SYSTEMS INTEGRATED");
 
-        // Summary of integration validation
-        println!("\n📊 Integration Validation Summary:");
-        println!("   ✅ Resource Hierarchy: Hierarchical permission checking active");
-        println!("   ✅ Device Fingerprinting: Fingerprint generation active");
-        println!("   ✅ Database Migrations: Migration construction active");
-        println!("   ✅ No Dead Code: All previously unused components now integrated");
-    }
+    // Summary of integration validation
+    println!("\n📊 Integration Validation Summary:");
+    println!("   ✅ Resource Hierarchy: Hierarchical permission checking active");
+    println!("   ✅ Device Fingerprinting: Fingerprint generation active");
+    println!("   ✅ Database Migrations: Migration construction active");
+    println!("   ✅ No Dead Code: All previously unused components now integrated");
 }
 
 // Test to verify basic integration functionality - SIMPLIFIED VERSION

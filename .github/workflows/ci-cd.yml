@@ -1,0 +1,342 @@
+# GitHub Actions CI/CD Pipeline for AuthFramework v0.4.0
+
+name: AuthFramework CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, beta]
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: auth_framework_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev libssl-dev pkg-config
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run unit tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        run: cargo test --all-features --workspace
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        run: cargo test --test integration --all-features
+
+      - name: Run benchmarks
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        run: cargo bench --no-run
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v1
+
+  build:
+    name: Build and Test Docker Image
+    runs-on: ubuntu-latest
+    needs: [test, security-audit]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.optimized
+          target: testing
+          push: false
+          tags: authframework:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Docker tests
+        run: |
+          docker run --rm authframework:test
+
+      - name: Build production image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.optimized
+          target: runtime
+          push: false
+          tags: authframework:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  performance:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: auth_framework_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev libssl-dev pkg-config
+
+      - name: Run performance benchmarks
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        run: |
+          cargo bench --bench auth_performance 2>&1 | tee benchmark_results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: benchmark_results.txt
+
+      - name: Performance regression check
+        run: |
+          # Check if any benchmark shows >10% performance degradation
+          if grep -q "change:.*-[1-9][0-9]\%" benchmark_results.txt; then
+            echo "Performance regression detected!"
+            exit 1
+          fi
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, performance]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: authframework
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.optimized --target runtime -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Deploy to staging
+        run: |
+          # Update ECS service or Kubernetes deployment
+          aws ecs update-service --cluster staging --service authframework --force-new-deployment
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'release'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: authframework
+          IMAGE_TAG: ${{ steps.version.outputs.VERSION }}
+        run: |
+          docker build -f Dockerfile.optimized --target runtime -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build -f Dockerfile.optimized --target runtime -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Deploy to production
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          # Blue-green deployment with rollback capability
+          aws ecs update-service --cluster production --service authframework --task-definition authframework:$VERSION
+
+      - name: Run smoke tests
+        run: |
+          # Wait for deployment to complete
+          sleep 60
+
+          # Run smoke tests against production
+          curl -f https://api.authframework.com/health || exit 1
+
+          # Test authentication flow
+          curl -f -X POST https://api.authframework.com/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"test@example.com","password":"test"}' || exit 1
+
+  notify:
+    name: Notify Team
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+
+    steps:
+      - name: Slack notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: "#deployments"
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Clean up old artifacts
+        run: |
+          # Cleanup old Docker images, test artifacts, etc.
+          echo "Cleanup completed"

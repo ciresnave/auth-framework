@@ -445,4 +445,29 @@ impl AuthStorage for PostgresStorage {
 
         Ok(sessions)
     }
+
+    async fn count_active_sessions(&self) -> Result<u64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM sessions WHERE expires_at IS NULL OR expires_at > NOW()",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                "Failed to count active sessions: {}",
+                e
+            )))
+        })?;
+
+        let count: i64 = row.try_get("count").map_err(|e| {
+            AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                "Failed to parse session count: {}",
+                e
+            )))
+        })?;
+
+        Ok(count as u64)
+    }
 }
+
+

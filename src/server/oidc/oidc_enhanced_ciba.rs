@@ -47,7 +47,7 @@
 //! ```
 
 use crate::errors::{AuthError, Result};
-use crate::secure_jwt::{SecureJwtClaims, SecureJwtConfig, SecureJwtValidator};
+use crate::security::secure_jwt::{SecureJwtClaims, SecureJwtConfig, SecureJwtValidator};
 use crate::server::oidc::oidc_response_modes::ResponseMode;
 use crate::server::oidc::oidc_session_management::SessionManager;
 use chrono::{DateTime, Duration, Utc};
@@ -1392,7 +1392,10 @@ mod tests {
         let result = manager.poll_auth_request(&response.auth_req_id).await;
         assert!(result.is_err());
 
-        if let Err(AuthError::AuthMethod { method, message }) = result {
+        if let Err(AuthError::AuthMethod {
+            method, message, ..
+        }) = result
+        {
             assert_eq!(method, "ciba");
             assert_eq!(message, "authorization_pending");
         }

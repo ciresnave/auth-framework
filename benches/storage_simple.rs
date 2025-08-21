@@ -1,6 +1,6 @@
 use auth_framework::storage::core::AuthStorage;
 use auth_framework::storage::dashmap_memory::DashMapMemoryStorage;
-use auth_framework::test_infrastructure::TestEnvironmentGuard;
+use auth_framework::testing::test_infrastructure::TestEnvironmentGuard;
 use auth_framework::tokens::{AuthToken, TokenMetadata};
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::sync::Arc;
@@ -21,6 +21,8 @@ fn create_test_token(token_id: &str, user_id: &str, access_token: &str) -> AuthT
         auth_method: "password".to_string(),
         client_id: Some("test-client".to_string()),
         user_profile: None,
+        permissions: vec!["read".to_string(), "write".to_string()],
+        roles: vec!["user".to_string()],
         metadata: TokenMetadata::default(),
     }
 }

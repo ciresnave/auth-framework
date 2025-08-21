@@ -59,7 +59,7 @@
 //! ```
 
 use crate::errors::{AuthError, Result};
-use crate::secure_jwt::SecureJwtValidator;
+use crate::security::secure_jwt::SecureJwtValidator;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, Header, Validation, decode};
@@ -633,7 +633,7 @@ mod tests {
     use super::*;
 
     fn create_test_manager() -> PrivateKeyJwtManager {
-        let jwt_config = crate::secure_jwt::SecureJwtConfig::default();
+        let jwt_config = crate::security::secure_jwt::SecureJwtConfig::default();
         let jwt_validator = SecureJwtValidator::new(jwt_config);
         PrivateKeyJwtManager::new(jwt_validator)
     }
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_interval_configuration() {
-        let jwt_config = crate::secure_jwt::SecureJwtConfig::default();
+        let jwt_config = crate::security::secure_jwt::SecureJwtConfig::default();
         let jwt_validator = SecureJwtValidator::new(jwt_config);
         let manager =
             PrivateKeyJwtManager::new(jwt_validator).with_cleanup_interval(Duration::minutes(30));
@@ -871,3 +871,5 @@ mod tests {
         assert!(!jtis.contains_key("old_jti"), "Old JTI should be removed");
     }
 }
+
+

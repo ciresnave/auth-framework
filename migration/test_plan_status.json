@@ -1,0 +1,21 @@
+{
+  "plan_id": "test_plan",
+  "status": "Completed",
+  "started_at": "2025-08-21T01:22:25.869729400Z",
+  "completed_at": "2025-08-21T01:22:25.982955800Z",
+  "phases_completed": [
+    "test_phase"
+  ],
+  "current_phase": null,
+  "errors": [],
+  "warnings": [],
+  "metrics": {
+    "roles_migrated": 1,
+    "permissions_migrated": 0,
+    "users_migrated": 0,
+    "errors_encountered": 0,
+    "warnings_generated": 0,
+    "validation_failures": 0,
+    "rollback_count": 0
+  }
+}

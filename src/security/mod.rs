@@ -1,5 +1,23 @@
 use serde::{Deserialize, Serialize};
 
+// Timing protection utilities
+pub mod timing_protection;
+
+// Secure implementations
+pub mod secure_jwt;
+pub mod secure_mfa;
+pub mod secure_session;
+pub mod secure_session_config;
+pub mod secure_utils;
+
+// Security presets for easy configuration
+pub mod presets;
+
+// Re-export presets for convenience
+pub use presets::{
+    SecurityAuditReport, SecurityAuditStatus, SecurityIssue, SecurityPreset, SecuritySeverity,
+};
+
 /// Multi-Factor Authentication configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MfaConfig {
@@ -232,7 +250,7 @@ impl PasswordValidator {
         }
 
         if self.require_special_chars {
-            let special_count = password.chars().filter(|c| !c.is_alphanumeric()).count();
+            let special_count = password.chars().filter(|&c| !c.is_alphanumeric()).count();
             if special_count < self.min_special_chars {
                 is_valid = false;
                 issues.push(format!(

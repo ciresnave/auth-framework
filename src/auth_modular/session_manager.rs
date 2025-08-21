@@ -155,14 +155,11 @@ impl SessionManager {
     pub async fn count_active_sessions(&self) -> Result<u64> {
         debug!("Counting active sessions");
 
-        // This is a simplified implementation - in a real system you might:
-        // 1. Query the storage for all sessions
-        // 2. Filter by expiration time
-        // 3. Count valid sessions
+        // Use the storage layer's count_active_sessions method
+        let active_count = self.storage.count_active_sessions().await?;
 
-        // For now, we'll return a basic count
-        // TODO: Implement proper session enumeration in storage layer
-        Ok(0) // Placeholder - would need storage layer support
+        debug!("Found {} active sessions", active_count);
+        Ok(active_count)
     }
 
     /// Get security metrics for sessions
@@ -184,3 +181,5 @@ impl SessionManager {
         Ok(metrics)
     }
 }
+
+

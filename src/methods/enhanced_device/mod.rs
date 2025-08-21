@@ -3,7 +3,7 @@
 //! This module provides advanced device flow authentication using the oauth-device-flows crate
 //! for improved reliability, QR code generation, and better error handling.
 
-use crate::credentials::{Credential, CredentialMetadata};
+use crate::authentication::credentials::{Credential, CredentialMetadata};
 use crate::errors::{AuthError, Result};
 use crate::methods::{AuthMethod, MethodResult};
 use crate::tokens::AuthToken;
@@ -406,3 +406,5 @@ impl EnhancedDevice {
         }
     }
 }
+
+

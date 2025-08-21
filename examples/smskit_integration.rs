@@ -3,13 +3,16 @@
 //! This example demonstrates how to use the new SMSKit integration for SMS-based MFA
 //! instead of the deprecated SMS manager.
 
-use auth_framework::{errors::Result, storage::MemoryStorage};
+use auth_framework::errors::Result;
+
+#[cfg(feature = "smskit")]
+use auth_framework::storage::memory::InMemoryStorage;
+#[cfg(feature = "smskit")]
+use std::sync::Arc;
 
 // Import SMSKit types directly from the modules
 #[cfg(feature = "smskit")]
 use auth_framework::auth_modular::mfa::SmsKitManager;
-
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,7 +25,7 @@ async fn main() -> Result<()> {
     #[cfg(feature = "smskit")]
     {
         // Create storage backend
-        let storage = Arc::new(MemoryStorage::new());
+        let storage = Arc::new(InMemoryStorage::new());
 
         // Example 1: Basic SMSKit manager (development mode)
         println!("\n📱 Example 1: Development Mode SMSKit");

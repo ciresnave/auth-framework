@@ -1,9 +1,9 @@
 [package]
+description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
 name = "auth-framework"
 version = "0.4.0"
 edition = "2024"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
-description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/auth-framework"
 keywords = ["auth", "authentication", "authorization", "oauth", "jwt"]
@@ -30,8 +30,18 @@ reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Additional format support for migration
+toml = "0.9"
+serde_yaml = "0.9"
+
 # Configuration management
-config = { version = "0.14", default-features = false, features = [
+config = { version = "0.15", default-features = false, features = [
   "toml",
   "yaml",
   "json",
@@ -52,10 +62,6 @@ rand = "0.8"
 
 # Time handling
 time = { version = "0.3", features = ["serde", "parsing", "formatting"] }
-chrono = { version = "0.4", features = ["serde"] }
-
-# Unique identifiers
-uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Logging and tracing
 log = "0.4"
@@ -66,18 +72,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.4"
 
 # Base64 encoding
-base64 = "0.21"
+base64 = "0.22"
 
 # MaxMind GeoIP2 for IP geolocation
 maxminddb = "0.24"
 
 # Threat intelligence integration
-ipnetwork = "0.20"            # For CIDR network parsing
+ipnetwork = "0.21"            # For CIDR network parsing
 csv = "1.3"                   # For parsing threat feeds
-tokio-cron-scheduler = "0.10" # For automated feed updates
-serde_yaml = "0.9"            # For feed configuration files
-toml = "0.8"                  # For TOML configuration files
-dirs = "5.0"                  # For finding config directories
+tokio-cron-scheduler = "0.14" # For automated feed updates
+dirs = "6.0"                  # For finding config directories
 
 # Hex encoding
 hex = "0.4"
@@ -93,7 +97,14 @@ hmac = "0.12"
 
 # Password hashing
 argon2 = "0.5"
-bcrypt = "0.15"
+bcrypt = "0.17"
+
+# Enterprise RBAC system
+role-system = { version = "1.1.1", optional = true, features = [
+  "async",
+  "persistence",
+  "audit",
+] }
 
 # Optional Redis support
 redis = { version = "0.32", optional = true, features = ["aio", "tokio-comp"] }
@@ -112,10 +123,10 @@ base32 = "0.4"
 urlencoding = "2.1"
 
 # X.509 certificate parsing for OAuth 2.0 Mutual TLS (RFC 8705)
-x509-parser = "0.16"
+x509-parser = "0.17"
 
 # X.509 certificate chain validation (production-grade)
-rustls-webpki = "0.102"
+rustls-webpki = "0.103"
 
 # Fast CRC32 calculation
 crc32fast = "1.3"
@@ -130,7 +141,30 @@ subtle = "2.5"
 dashmap = "6.1"
 
 # Secret management
-secrecy = { version = "0.8", features = ["serde"] }
+secrecy = { version = "0.10", features = ["serde"] }
+
+# Performance and Observability enhancements
+prometheus = { version = "0.14", optional = true }
+opentelemetry = { version = "0.30", features = ["trace"], optional = true }
+opentelemetry_sdk = { version = "0.30", features = ["trace"], optional = true }
+opentelemetry-jaeger = { version = "0.22", optional = true }
+opentelemetry-prometheus = { version = "0.29", optional = true }
+opentelemetry-otlp = { version = "0.30", optional = true }
+tracing-opentelemetry = { version = "0.31", optional = true }
+metrics = { version = "0.24", optional = true }
+metrics-prometheus = { version = "0.11", optional = true }
+
+# Event sourcing and streaming
+tokio-stream = { version = "0.1", optional = true }
+futures = { version = "0.3", optional = true }
+serde_derive = "1.0"
+
+# Configuration hot-reload
+notify = { version = "8.2", optional = true }
+
+# Memory pool optimization
+object-pool = { version = "0.6", optional = true }
+bumpalo = { version = "3.14", optional = true }
 
 # OAuth device flows (optional enhanced device flow support)
 oauth-device-flows = { version = "0.1", optional = true }
@@ -149,21 +183,21 @@ rpassword = { version = "7.0", optional = true }
 
 # TUI dependencies
 ratatui = { version = "0.28", optional = true }   # Keep current stable version
-crossterm = { version = "0.28", optional = true }
+crossterm = { version = "0.28", optional = true } # Keep compatible with ratatui
 tui-input = { version = "0.10", optional = true }
 
 # Additional utility dependencies
-indicatif = { version = "0.17", optional = true }
-console = { version = "0.15", optional = true }
+indicatif = { version = "0.18", optional = true }
+console = { version = "0.16", optional = true }
 dialoguer = { version = "0.11", optional = true }
-colored = { version = "2.0", optional = true }
+colored = { version = "3.0", optional = true }
 
 # Web framework dependencies
 futures-util = { version = "0.3", optional = true }
 
 # Template engine for web GUI
-askama = { version = "0.12", optional = true }
-askama_axum = { version = "0.4", optional = true }
+askama = { version = "0.14", optional = true }
+# Note: askama_axum was removed in askama 0.13+ - axum integration is now built into askama
 
 # XML processing for SAML
 quick-xml = { version = "0.36", features = ["serialize"], optional = true }
@@ -211,10 +245,16 @@ sms-web-axum = { version = "0.2", optional = true }
 tokio-test = "0.4"
 mockito = "1.2"
 test-log = "0.2"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.7", features = ["html_reports", "async_tokio"] }
+fastrand = "2.0"
+axum-test = "17.3"
+tempfile = "3.21"
 
 [features]
-default = ["postgres-storage"]                # PostgreSQL recommended for optimal security
+default = [
+  "postgres-storage",
+  "enhanced-rbac",    # Re-enabled for comprehensive authorization testing
+] # PostgreSQL recommended
 redis-storage = ["redis"]
 postgres-storage = ["sqlx", "tokio-postgres"]
 mysql-storage = ["sqlx"]
@@ -226,9 +266,13 @@ enhanced-crypto = ["chacha20poly1305", "x25519-dalek", "ed25519-dalek"]
 fips-compliance = ["aws-lc-rs"]
 distributed-rate-limiting = ["redis"]
 
+# Enterprise RBAC with role-system v1.0
+enhanced-rbac = ["role-system", "api-server"]
+
 # Additional features referenced in code
 passkeys = ["passkey", "coset", "passkey-client"]
 saml = ["quick-xml"]
+api-server = ["axum", "tower", "tower-http"]
 cli = [
   "clap",
   "rpassword",
@@ -239,14 +283,7 @@ cli = [
   "colored",
 ]
 tui = ["ratatui", "crossterm", "tui-input", "indicatif", "console", "colored"]
-web-gui = [
-  "axum",
-  "tower",
-  "tower-http",
-  "askama",
-  "askama_axum",
-  "serde_urlencoded",
-]
+web-gui = ["axum", "tower", "tower-http", "askama", "serde_urlencoded"]
 admin-binary = ["cli", "tui", "web-gui"]
 docker-tests = ["testcontainers"]
 axum-integration = ["axum", "tower", "tower-http", "serde_urlencoded"]
@@ -255,6 +292,27 @@ warp-integration = ["warp"]
 ldap-auth = ["ldap3"]
 otp-auth = ["otpauth"]
 unicode-support = ["unicode-normalization"]
+
+# Enhanced performance and observability
+performance-optimization = [
+  "object-pool",
+  "bumpalo",
+  "prometheus",
+  "metrics",
+  "metrics-prometheus",
+]
+enhanced-observability = [
+  "opentelemetry",
+  "opentelemetry-jaeger",
+  "opentelemetry-prometheus",
+  "opentelemetry-otlp",
+  "tracing-opentelemetry",
+  "tokio-stream",
+  "futures",
+]
+event-sourcing = ["tokio-stream", "futures", "notify"]
+config-hot-reload = ["notify"]
+tiered-storage = ["redis", "postgres-storage"]
 
 # SMSKit integration (next-generation SMS support)
 smskit = [
@@ -293,5 +351,22 @@ optional = true
 version = "0.12"
 
 [dependencies.getrandom]
-version = "0.2"
+version = "0.3"
 features = ["std"]
+
+[[bench]]
+name = "auth_performance"
+harness = false
+
+[[example]]
+name = "performance_demo"
+required-features = [
+  "performance-optimization",
+  "enhanced-observability",
+  "event-sourcing",
+]
+
+[[example]]
+name = "complete_rest_api_server"
+path = "examples/complete_rest_api_server.rs"
+required-features = ["api-server"]

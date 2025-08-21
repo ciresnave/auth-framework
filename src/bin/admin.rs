@@ -122,3 +122,5 @@ async fn load_config(
     println!("🔧 Environment prefix: {}", env_prefix);
     Ok(settings)
 }
+
+

@@ -289,13 +289,33 @@ fn validate_token_secure(token_str: &str) -> Result<AuthToken> {
         issued_at: chrono::DateTime::from_timestamp(iat, 0).unwrap_or_else(chrono::Utc::now),
         auth_method: "jwt".to_string(),
         client_id: Some("test_client".to_string()),
+        user_profile: None,
+        permissions: payload
+            .get("permissions")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        roles: payload
+            .get("roles")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default(),
         metadata: crate::tokens::TokenMetadata::default(),
         subject: Some(sub.to_string()),
         issuer: payload
             .get("iss")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        user_profile: None,
     })
 }
 
@@ -425,3 +445,5 @@ mod tests {
         assert_eq!(resp.status(), 200);
     }
 }
+
+

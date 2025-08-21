@@ -3,8 +3,8 @@
 
 use auth_framework::{
     auth::{AuthFramework, AuthResult},
+    authentication::credentials::{Credential, CredentialMetadata},
     config::{AuditConfig, AuthConfig, RateLimitConfig, SecurityConfig, StorageConfig},
-    credentials::{Credential, CredentialMetadata},
     methods::{
         ApiKeyMethod, AuthMethodEnum, JwtMethod, MfaChallenge, MfaType, OAuth2Method,
         PasswordMethod,
@@ -76,7 +76,10 @@ async fn test_framework_creation_and_initialization() {
 async fn test_method_registration_all_types() {
     let config = create_working_config();
     let mut framework = AuthFramework::new(config);
-    framework.initialize().await.unwrap();
+    framework
+        .initialize()
+        .await
+        .expect("Framework initialization should succeed");
 
     // Password method (using simplified placeholders for testing)
     let _token_manager =
@@ -100,10 +103,14 @@ async fn test_method_registration_all_types() {
     framework.register_method("oauth2", AuthMethodEnum::OAuth2(oauth2_method));
 
     // Verify methods are registered by checking statistics
-    let stats = framework.get_stats().await.unwrap();
+    let stats = framework
+        .get_stats()
+        .await
+        .expect("Getting framework stats should succeed");
     assert!(
         stats.registered_methods.len() >= 4,
-        "All methods should be registered"
+        "All methods should be registered, found: {}",
+        stats.registered_methods.len()
     );
 }
 
@@ -112,7 +119,10 @@ async fn test_method_registration_all_types() {
 async fn test_authentication_flows() {
     let config = create_working_config();
     let mut framework = AuthFramework::new(config);
-    framework.initialize().await.unwrap();
+    framework
+        .initialize()
+        .await
+        .expect("Framework initialization should succeed");
 
     // Register password method (simplified for working example)
     let password_method = PasswordMethod::new();

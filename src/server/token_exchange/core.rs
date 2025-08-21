@@ -56,7 +56,7 @@
 //! ```
 
 use crate::errors::{AuthError, Result};
-use crate::secure_jwt::{SecureJwtClaims, SecureJwtValidator};
+use crate::security::secure_jwt::{SecureJwtClaims, SecureJwtValidator};
 use crate::server::token_exchange::token_exchange_common::{
     ServiceComplexityLevel, TokenExchangeCapabilities, TokenExchangeService, TokenValidationResult,
     ValidationUtils,
@@ -904,7 +904,7 @@ impl TokenExchangeService for TokenExchangeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::secure_jwt::SecureJwtConfig;
+    use crate::security::secure_jwt::SecureJwtConfig;
 
     fn create_test_manager() -> TokenExchangeManager {
         let jwt_config = SecureJwtConfig::default();
@@ -1007,3 +1007,5 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+

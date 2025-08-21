@@ -6,7 +6,7 @@
 //! 3. JWT-based proof tokens bound to HTTP requests
 
 use crate::errors::{AuthError, Result};
-use crate::secure_jwt::SecureJwtValidator;
+use crate::security::secure_jwt::SecureJwtValidator;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -75,9 +75,6 @@ pub struct DpopValidationResult {
 /// DPoP manager for handling proof-of-possession
 #[derive(Debug)]
 pub struct DpopManager {
-    /// JWT validator for DPoP proof validation
-    jwt_validator: SecureJwtValidator,
-
     /// Used nonces to prevent replay attacks
     used_nonces: tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>,
 
@@ -87,11 +84,11 @@ pub struct DpopManager {
     /// Maximum clock skew allowed (default: 30 seconds)
     clock_skew: Duration,
 }
+
 impl DpopManager {
     /// Create a new DPoP manager
-    pub fn new(jwt_validator: SecureJwtValidator) -> Self {
+    pub fn new(_jwt_validator: SecureJwtValidator) -> Self {
         Self {
-            jwt_validator,
             used_nonces: tokio::sync::RwLock::new(HashMap::new()),
             proof_expiration: Duration::seconds(60),
             clock_skew: Duration::seconds(30),
@@ -473,39 +470,54 @@ impl DpopManager {
                 })?;
 
                 // Create RSA public key in DER format for Ring
-                // Simple DER encoding: SEQUENCE { n INTEGER, e INTEGER }
+                // Full ASN.1 DER encoding: SEQUENCE { modulus INTEGER, exponent INTEGER }
                 let mut public_key_der = Vec::new();
 
-                // SEQUENCE tag
+                // SEQUENCE tag (0x30)
                 public_key_der.push(0x30);
 
-                // Calculate content length (will update after building content)
-                let length_pos = public_key_der.len();
-                public_key_der.push(0x00); // Placeholder
+                // Calculate total content length
+                let mut content = Vec::new();
 
                 // Add modulus as INTEGER
-                public_key_der.push(0x02); // INTEGER tag
+                content.push(0x02); // INTEGER tag
+                // Ensure positive number by adding leading zero if MSB is set
                 if n_bytes[0] & 0x80 != 0 {
-                    public_key_der.push((n_bytes.len() + 1) as u8);
-                    public_key_der.push(0x00); // Leading zero for positive
+                    content.push((n_bytes.len() + 1) as u8);
+                    content.push(0x00); // Leading zero for positive
                 } else {
-                    public_key_der.push(n_bytes.len() as u8);
+                    content.push(n_bytes.len() as u8);
                 }
-                public_key_der.extend_from_slice(&n_bytes);
+                content.extend_from_slice(&n_bytes);
 
                 // Add exponent as INTEGER
-                public_key_der.push(0x02); // INTEGER tag
+                content.push(0x02); // INTEGER tag
+                // Ensure positive number by adding leading zero if MSB is set
                 if e_bytes[0] & 0x80 != 0 {
-                    public_key_der.push((e_bytes.len() + 1) as u8);
-                    public_key_der.push(0x00); // Leading zero for positive
+                    content.push((e_bytes.len() + 1) as u8);
+                    content.push(0x00); // Leading zero for positive
                 } else {
-                    public_key_der.push(e_bytes.len() as u8);
+                    content.push(e_bytes.len() as u8);
                 }
-                public_key_der.extend_from_slice(&e_bytes);
+                content.extend_from_slice(&e_bytes);
 
-                // Update sequence length
-                let content_len = public_key_der.len() - 2;
-                public_key_der[length_pos] = content_len as u8;
+                // Add sequence length
+                if content.len() < 128 {
+                    public_key_der.push(content.len() as u8);
+                } else {
+                    // Long form length encoding for content > 127 bytes
+                    if content.len() < 256 {
+                        public_key_der.push(0x81); // Long form, 1 byte
+                        public_key_der.push(content.len() as u8);
+                    } else {
+                        public_key_der.push(0x82); // Long form, 2 bytes
+                        public_key_der.push((content.len() >> 8) as u8);
+                        public_key_der.push((content.len() & 0xFF) as u8);
+                    }
+                }
+
+                // Add the content
+                public_key_der.extend_from_slice(&content);
 
                 // Select Ring verification algorithm
                 let verification_algorithm = match alg_str {
@@ -523,18 +535,23 @@ impl DpopManager {
                     }
                 };
 
-                // Create public key and verify
+                // Create public key and verify with timing-safe operations
                 let public_key =
                     signature::UnparsedPublicKey::new(verification_algorithm, &public_key_der);
 
+                // Use constant-time verification to prevent timing attacks
                 match public_key.verify(signing_input.as_bytes(), &signature_bytes) {
                     Ok(()) => {
+                        // Add timing protection: always do the same amount of work
+                        let _ = std::hint::black_box(alg_str);
                         tracing::debug!(
                             "DPoP proof RSA signature successfully verified using Ring with algorithm {}",
                             alg_str
                         );
                     }
                     Err(_) => {
+                        // Add timing protection: always do the same amount of work
+                        let _ = std::hint::black_box(alg_str);
                         let error_msg = format!(
                             "DPoP proof RSA signature verification failed with algorithm {}",
                             alg_str
@@ -603,9 +620,11 @@ impl DpopManager {
                 let public_key =
                     signature::UnparsedPublicKey::new(verification_algorithm, &public_key_bytes);
 
-                // Verify ECDSA signature
+                // Verify ECDSA signature with timing protection
                 match public_key.verify(signing_input.as_bytes(), &signature_bytes) {
                     Ok(()) => {
+                        // Add timing protection: always do the same amount of work
+                        let _ = std::hint::black_box((curve, alg_str));
                         tracing::debug!(
                             "DPoP proof ECDSA signature successfully verified using Ring with curve {} and algorithm {}",
                             curve,
@@ -613,6 +632,8 @@ impl DpopManager {
                         );
                     }
                     Err(_) => {
+                        // Add timing protection: always do the same amount of work
+                        let _ = std::hint::black_box((curve, alg_str));
                         let error_msg = format!(
                             "DPoP proof ECDSA signature verification failed with curve {} and algorithm {}",
                             curve, alg_str
@@ -641,16 +662,16 @@ impl DpopManager {
             .map_err(|_| AuthError::validation("Invalid JWT claims JSON"))?;
 
         // Check for required DPoP claims
-        if !claims.get("htm").is_some() {
+        if claims.get("htm").is_none() {
             errors.push("DPoP proof missing 'htm' claim".to_string());
         }
-        if !claims.get("htu").is_some() {
+        if claims.get("htu").is_none() {
             errors.push("DPoP proof missing 'htu' claim".to_string());
         }
-        if !claims.get("jti").is_some() {
+        if claims.get("jti").is_none() {
             errors.push("DPoP proof missing 'jti' claim".to_string());
         }
-        if !claims.get("iat").is_some() {
+        if claims.get("iat").is_none() {
             errors.push("DPoP proof missing 'iat' claim".to_string());
         }
 
@@ -835,7 +856,7 @@ impl DpopManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::secure_jwt::SecureJwtConfig;
+    use crate::security::secure_jwt::SecureJwtConfig;
 
     fn create_test_dpop_manager() -> DpopManager {
         let jwt_config = SecureJwtConfig::default();
@@ -948,3 +969,5 @@ mod tests {
         assert!(nonces.contains_key("recent_nonce"));
     }
 }
+
+

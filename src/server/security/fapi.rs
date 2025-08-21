@@ -22,7 +22,7 @@
 //! - Enhanced threat modeling and protection
 
 use crate::errors::{AuthError, Result};
-use crate::secure_jwt::SecureJwtValidator;
+use crate::security::secure_jwt::SecureJwtValidator;
 use crate::server::{DpopManager, MutualTlsManager, PARManager, PrivateKeyJwtManager};
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -630,6 +630,10 @@ impl FapiManager {
         if !self.config.enable_jarm {
             return Err(AuthError::Configuration {
                 message: "JARM not enabled".to_string(),
+                help: Some("Enable JARM in your configuration to use this feature".to_string()),
+                docs_url: Some("https://docs.auth-framework.com/fapi#jarm".to_string()),
+                source: None,
+                suggested_fix: Some("Set enable_jarm to true in your FAPIConfig".to_string()),
             });
         }
 

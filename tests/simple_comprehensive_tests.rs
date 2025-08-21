@@ -5,8 +5,8 @@
 use auth_framework::{
     AuthResult,
     auth::AuthFramework,
+    authentication::credentials::Credential,
     config::AuthConfig,
-    credentials::Credential,
     errors::AuthError,
     methods::{ApiKeyMethod, AuthMethodEnum, JwtMethod, PasswordMethod},
 };
@@ -127,6 +127,9 @@ mod authentication_tests {
             AuthError::AuthMethod {
                 method: _,
                 message: _,
+                help: _,
+                docs_url: _,
+                suggested_fix: _,
             } => {
                 // Expected error type
             }

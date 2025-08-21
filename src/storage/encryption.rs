@@ -213,6 +213,10 @@ where
         self.inner.list_user_sessions(user_id).await
     }
 
+    async fn count_active_sessions(&self) -> Result<u64> {
+        self.inner.count_active_sessions().await
+    }
+
     // Key-value methods with encryption
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
         let encrypted_value = self.encryption.encrypt_for_storage(value)?;
@@ -275,3 +279,5 @@ mod tests {
         assert_eq!(decrypted, data);
     }
 }
+
+

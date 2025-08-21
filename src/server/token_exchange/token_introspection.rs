@@ -373,7 +373,7 @@ impl TokenIntrospectionService {
                         if let Some(stored_secret) =
                             client.get("client_secret").and_then(|v| v.as_str())
                         {
-                            if !crate::secure_utils::constant_time_compare(
+                            if !crate::security::secure_utils::constant_time_compare(
                                 client_secret.as_bytes(),
                                 stored_secret.as_bytes(),
                             ) {
@@ -739,6 +739,8 @@ mod tests {
             auth_method: "test".to_string(),
             client_id: None,
             user_profile: None,
+            permissions: vec!["read:data".to_string(), "write:data".to_string()],
+            roles: vec!["user".to_string()],
             metadata: Default::default(),
         };
 
@@ -806,3 +808,5 @@ mod tests {
         assert!(metadata.contains_key("token_introspection_supported"));
     }
 }
+
+

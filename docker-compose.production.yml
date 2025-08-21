@@ -1,0 +1,299 @@
+# Production-optimized Docker Compose for AuthFramework v0.4.0
+# Includes security hardening, performance optimization, and monitoring
+
+version: '3.8'
+
+services:
+  #############################################################################
+  # Database Layer
+  #############################################################################
+
+  # PostgreSQL with performance optimizations
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auth_framework
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      # Performance optimizations
+      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
+      POSTGRES_MAX_CONNECTIONS: 100
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    networks:
+      - backend
+    secrets:
+      - db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_framework"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Redis with persistence and security
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass-file /run/secrets/redis_password
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - backend
+    secrets:
+      - redis_password
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+  #############################################################################
+  # Application Layer
+  #############################################################################
+
+  # AuthFramework CLI for migrations and admin tasks
+  auth-migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+      target: runtime
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://auth_user@postgres:5432/auth_framework
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      LOG_LEVEL: info
+      RUST_LOG: auth_framework=info
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    networks:
+      - backend
+    secrets:
+      - db_password
+      - redis_password
+      - jwt_secret
+    command: ["auth-framework-cli", "db", "migrate"]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  # Main AuthFramework server
+  auth-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      auth-migrator:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://auth_user@postgres:5432/auth_framework
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      RUST_LOG: auth_framework=info,tower_http=debug
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      # Security settings
+      REQUIRE_MFA: ${REQUIRE_MFA:-false}
+      SESSION_TIMEOUT: 3600
+      RATE_LIMIT_REQUESTS: 1000
+      RATE_LIMIT_WINDOW: 60
+      # Performance settings
+      MAX_CONNECTIONS: 100
+      WORKER_THREADS: 4
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./ssl:/app/ssl:ro
+    networks:
+      - backend
+      - frontend
+    secrets:
+      - db_password
+      - redis_password
+      - jwt_secret
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  #############################################################################
+  # Load Balancer & Proxy Layer
+  #############################################################################
+
+  # Nginx reverse proxy with SSL termination
+  nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    depends_on:
+      - auth-server
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+      - nginx_cache:/var/cache/nginx
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+
+  #############################################################################
+  # Monitoring & Observability
+  #############################################################################
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - monitoring
+    secrets:
+      - grafana_password
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+#############################################################################
+# Networks
+#############################################################################
+networks:
+  frontend:
+    driver: bridge
+    attachable: false
+  backend:
+    driver: bridge
+    internal: true
+  monitoring:
+    driver: bridge
+    internal: true
+
+#############################################################################
+# Volumes
+#############################################################################
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  nginx_cache:
+    driver: local
+
+#############################################################################
+# Secrets
+#############################################################################
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  grafana_password:
+    file: ./secrets/grafana_password.txt

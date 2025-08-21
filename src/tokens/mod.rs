@@ -53,6 +53,12 @@ pub struct AuthToken {
     /// User profile data (optional)
     pub user_profile: Option<UserProfile>,
 
+    /// User's permissions
+    pub permissions: Vec<String>,
+
+    /// User's roles
+    pub roles: Vec<String>,
+
     /// Additional token metadata
     pub metadata: TokenMetadata,
 }
@@ -164,6 +170,15 @@ pub struct JwtClaims {
     /// Scopes
     pub scope: String,
 
+    /// User permissions
+    pub permissions: Option<Vec<String>>,
+
+    /// User roles
+    pub roles: Option<Vec<String>>,
+
+    /// Client ID
+    pub client_id: Option<String>,
+
     /// Custom claims
     #[serde(flatten)]
     pub custom: HashMap<String, serde_json::Value>,
@@ -177,6 +192,9 @@ pub struct TokenManager {
     /// JWT decoding key
     decoding_key: DecodingKey,
 
+    /// Key material for recreating keys during clone
+    key_material: KeyMaterial,
+
     /// JWT algorithm
     algorithm: Algorithm,
 
@@ -188,6 +206,15 @@ pub struct TokenManager {
 
     /// Default token lifetime
     default_lifetime: Duration,
+}
+
+/// Key material for cloning TokenManager
+#[derive(Clone)]
+enum KeyMaterial {
+    /// HMAC secret
+    Hmac(Vec<u8>),
+    /// RSA private and public keys
+    Rsa { private: Vec<u8>, public: Vec<u8> },
 }
 
 impl AuthToken {
@@ -216,6 +243,8 @@ impl AuthToken {
             auth_method: auth_method.into(),
             client_id: None,
             user_profile: None,
+            permissions: Vec::new(),
+            roles: Vec::new(),
             metadata: TokenMetadata::default(),
         }
     }
@@ -344,6 +373,69 @@ impl AuthToken {
     pub fn get_custom_claim(&self, key: &str) -> Option<&serde_json::Value> {
         self.metadata.custom.get(key)
     }
+
+    /// Check if the token has a specific permission
+    pub fn has_permission(&self, permission: &str) -> bool {
+        self.permissions.contains(&permission.to_string())
+    }
+
+    /// Add a permission to the token
+    pub fn add_permission(&mut self, permission: impl Into<String>) {
+        let permission = permission.into();
+        if !self.permissions.contains(&permission) {
+            self.permissions.push(permission);
+        }
+    }
+
+    /// Add a role to the token
+    pub fn add_role(&mut self, role: impl Into<String>) {
+        let role = role.into();
+        if !self.roles.contains(&role) {
+            self.roles.push(role);
+        }
+    }
+
+    /// Check if the token has a specific role
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.contains(&role.to_string())
+    }
+
+    /// Set the permissions
+    pub fn with_permissions(mut self, permissions: Vec<String>) -> Self {
+        self.permissions = permissions;
+        self
+    }
+
+    /// Set the roles
+    pub fn with_roles(mut self, roles: Vec<String>) -> Self {
+        self.roles = roles;
+        self
+    }
+}
+
+impl Clone for TokenManager {
+    fn clone(&self) -> Self {
+        match &self.key_material {
+            KeyMaterial::Hmac(secret) => Self {
+                encoding_key: EncodingKey::from_secret(secret),
+                decoding_key: DecodingKey::from_secret(secret),
+                key_material: self.key_material.clone(),
+                algorithm: self.algorithm,
+                issuer: self.issuer.clone(),
+                audience: self.audience.clone(),
+                default_lifetime: self.default_lifetime,
+            },
+            KeyMaterial::Rsa { private, public } => Self {
+                encoding_key: EncodingKey::from_rsa_pem(private).expect("Valid RSA private key"),
+                decoding_key: DecodingKey::from_rsa_pem(public).expect("Valid RSA public key"),
+                key_material: self.key_material.clone(),
+                algorithm: self.algorithm,
+                issuer: self.issuer.clone(),
+                audience: self.audience.clone(),
+                default_lifetime: self.default_lifetime,
+            },
+        }
+    }
 }
 
 impl TokenManager {
@@ -352,6 +444,7 @@ impl TokenManager {
         Self {
             encoding_key: EncodingKey::from_secret(secret),
             decoding_key: DecodingKey::from_secret(secret),
+            key_material: KeyMaterial::Hmac(secret.to_vec()),
             algorithm: Algorithm::HS256,
             issuer: issuer.into(),
             audience: audience.into(),
@@ -401,6 +494,10 @@ impl TokenManager {
         Ok(Self {
             encoding_key,
             decoding_key,
+            key_material: KeyMaterial::Rsa {
+                private: private_key.to_vec(),
+                public: public_key.to_vec(),
+            },
             algorithm: Algorithm::RS256,
             issuer: issuer.into(),
             audience: audience.into(),
@@ -435,6 +532,9 @@ impl TokenManager {
             nbf: now.timestamp(),
             jti: Uuid::new_v4().to_string(),
             scope: scopes.join(" "),
+            permissions: None,
+            roles: None,
+            client_id: None,
             custom: HashMap::new(),
         };
 
@@ -674,3 +774,5 @@ mod tests {
 
 // #[cfg(test)]
 // pub mod token_edge_tests;
+
+

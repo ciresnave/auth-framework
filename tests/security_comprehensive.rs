@@ -1,7 +1,7 @@
 use auth_framework::auth::AuthFramework;
+use auth_framework::authentication::credentials::Credential;
 use auth_framework::config::AuthConfig;
-use auth_framework::credentials::Credential;
-use auth_framework::test_infrastructure::TestEnvironmentGuard;
+use auth_framework::testing::test_infrastructure::TestEnvironmentGuard;
 use auth_framework::tokens::AuthToken;
 use auth_framework::{SecureJwtClaims, SecureJwtConfig, SecureJwtValidator};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, encode};

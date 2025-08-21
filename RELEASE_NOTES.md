@@ -108,23 +108,29 @@ This release introduces comprehensive OAuth device flow support through integrat
 
 ## 🔧 API Improvements
 
-### Better Method Registration
+### OAuth Provider Integration
 
 ```rust
-// Simplified OAuth provider setup
-let github_method = OAuth2Method::new()
-    .provider(OAuthProvider::GitHub) // Auto-includes user:email scope
-    .client_id("your-client-id")
-    .client_secret("your-client-secret");
+// OAuth providers available for server implementations
+let github_provider = OAuthProvider::GitHub; // Includes user:email scope
+let google_provider = OAuthProvider::Google;
+let microsoft_provider = OAuthProvider::Microsoft;
+
+// See server examples for complete OAuth integration:
+// - examples/oauth2_authorization_server.rs
+// - examples/complete_oauth2_server_axum.rs
 ```
 
 ### Unified Credential Types
 
 ```rust
 // Clear relationship between credentials and methods
-let oauth_cred = Credential::oauth_code("authorization_code");
-let device_cred = Credential::device_code("device_code", "client_id");
+let jwt_cred = Credential::jwt("jwt_token_string");
 let api_key_cred = Credential::api_key("api_key_string");
+let password_cred = Credential::password("username", "password");
+
+// OAuth credential handling in server implementations
+// See server examples for complete OAuth flows
 ```
 
 ### Enhanced UserProfile

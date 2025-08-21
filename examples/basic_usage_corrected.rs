@@ -26,12 +26,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔐 Auth Framework - Basic Usage Example");
     println!("=====================================\n");
 
-    // 1. Create configuration
+    // Set environment to test mode to allow memory storage
+    unsafe {
+        std::env::set_var("ENVIRONMENT", "test");
+    }
+
+    // 1. Create configuration with JWT secret
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "dGhpcyBpcyBhIGRlbW8gandrIGZvciB0ZXN0aW5n".to_string()); // base64 demo key
+
     let config = AuthConfig::new()
         .token_lifetime(Duration::from_secs(3600))
-        .refresh_token_lifetime(Duration::from_secs(86400 * 7));
-
-    // 2. Create storage backend
+        .refresh_token_lifetime(Duration::from_secs(86400 * 7))
+        .secret(jwt_secret); // 2. Create storage backend
     let storage = Arc::new(MemoryStorage::new());
 
     // 3. Initialize auth framework
@@ -125,6 +132,8 @@ fn create_test_token(user_profile: &UserProfile) -> Result<AuthToken, Box<dyn st
         auth_method: "jwt".to_string(),
         client_id: Some("demo-client".to_string()),
         user_profile: Some(user_profile.clone()),
+        permissions: vec!["read:profile".to_string(), "write:profile".to_string()],
+        roles: vec!["user".to_string()],
         metadata: TokenMetadata {
             issued_ip: Some("127.0.0.1".to_string()),
             user_agent: Some("Example Browser/1.0".to_string()),

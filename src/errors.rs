@@ -1,20 +1,169 @@
-//! Error types for the authentication framework.
+//! Comprehensive error types for the AuthFramework.
+//!
+//! This module defines all error types used throughout the authentication framework,
+//! providing detailed error information for debugging, logging, and user feedback.
+//! All errors implement standard Rust error traits and provide contextual information
+//! to help diagnose issues.
+//!
+//! # Error Categories
+//!
+//! - **Authentication Errors**: Credential validation and method failures
+//! - **Authorization Errors**: Permission and access control failures
+//! - **Token Errors**: JWT creation, validation, and lifecycle issues
+//! - **Configuration Errors**: Setup and configuration problems
+//! - **Storage Errors**: Database and persistence layer issues
+//! - **Network Errors**: External service communication failures
+//! - **Cryptographic Errors**: Security operation failures
+//!
+//! # Error Handling Patterns
+//!
+//! The framework uses structured error handling with:
+//! - Contextual error messages with relevant details
+//! - Error chaining to preserve root cause information
+//! - Categorized errors for appropriate response handling
+//! - Security-safe error messages that don't leak sensitive data
+//!
+//! # Example Error Handling
+//!
+//! ```rust
+//! use auth_framework::{AuthFramework, AuthError};
+//!
+//! match auth_framework.authenticate("password", credential, metadata).await {
+//!     Ok(result) => handle_success(result),
+//!     Err(AuthError::InvalidCredential { credential_type, message }) => {
+//!         log::warn!("Invalid {} credential: {}", credential_type, message);
+//!         respond_with_auth_failure()
+//!     },
+//!     Err(AuthError::RateLimited { retry_after, .. }) => {
+//!         respond_with_rate_limit(retry_after)
+//!     },
+//!     Err(e) => {
+//!         log::error!("Authentication system error: {}", e);
+//!         respond_with_system_error()
+//!     }
+//! }
+//! ```
+//!
+//! # Security Considerations
+//!
+//! Error messages are designed to:
+//! - Provide useful debugging information for developers
+//! - Avoid exposing sensitive information to potential attackers
+//! - Enable proper security monitoring and alerting
+//! - Support compliance requirements for audit logging
 
 use thiserror::Error;
 
-/// Result type alias for the authentication framework.
+/// Type alias for Results in the authentication framework.
+///
+/// This alias simplifies error handling throughout the framework by defaulting
+/// to `AuthError` as the error type while allowing flexibility for other error
+/// types when needed.
 pub type Result<T, E = AuthError> = std::result::Result<T, E>;
 
-/// Main error type for the authentication framework.
+/// Comprehensive error type covering all authentication and authorization failures.
+///
+/// `AuthError` provides detailed error information for all aspects of the authentication
+/// framework, from configuration issues to runtime failures. Each error variant includes
+/// contextual information to aid in debugging and provide appropriate user feedback.
+///
+/// This enhanced error type provides:
+/// - **Actionable error messages** with specific suggestions for fixes
+/// - **Documentation links** to relevant guides and troubleshooting
+/// - **Contextual help** that guides users to solutions
+/// - **Security-aware messaging** that doesn't leak sensitive information
+///
+/// # Error Categories
+///
+/// ## Configuration Errors
+/// Errors that occur during framework setup and configuration validation.
+///
+/// ## Authentication Errors
+/// Errors related to credential validation and authentication method execution.
+///
+/// ## Authorization Errors
+/// Errors related to permission checking and access control.
+///
+/// ## Token Errors
+/// JWT token creation, validation, expiration, and lifecycle issues.
+///
+/// ## Storage Errors
+/// Database connectivity, query failures, and data persistence issues.
+///
+/// ## Network Errors
+/// External service communication, timeouts, and connectivity problems.
+///
+/// ## Cryptographic Errors
+/// Encryption, decryption, signing, and other security operation failures.
+///
+/// # Enhanced Error Handling
+///
+/// ```rust
+/// use auth_framework::AuthError;
+///
+/// // Enhanced error handling with contextual help
+/// match auth_result {
+///     Err(AuthError::Configuration { message, help, docs_url, .. }) => {
+///         eprintln!("❌ Configuration Error: {}", message);
+///         if let Some(help) = help {
+///             eprintln!("💡 Help: {}", help);
+///         }
+///         if let Some(docs) = docs_url {
+///             eprintln!("📖 See: {}", docs);
+///         }
+///     },
+///     Err(AuthError::InvalidCredential { credential_type, message, suggested_fix, .. }) => {
+///         eprintln!("🔐 Invalid {}: {}", credential_type, message);
+///         if let Some(fix) = suggested_fix {
+///             eprintln!("🔧 Suggested fix: {}", fix);
+///         }
+///     },
+///     // ... handle other error types
+/// }
+/// ```
+///
+/// # Security Notes
+///
+/// Error messages are carefully crafted to:
+/// - Provide sufficient detail for debugging and monitoring
+/// - Avoid exposing sensitive information that could aid attackers
+/// - Enable security teams to identify potential threats
+/// - Support compliance and audit requirements
+/// - Guide users to secure solutions and best practices
 #[derive(Error, Debug)]
 pub enum AuthError {
-    /// Configuration errors
+    /// Configuration validation and setup errors.
+    ///
+    /// These errors occur when the authentication framework is misconfigured
+    /// or when configuration validation fails during startup.
     #[error("Configuration error: {message}")]
-    Configuration { message: String },
+    Configuration {
+        message: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        /// Helpful guidance for fixing the issue
+        help: Option<String>,
+        /// Link to relevant documentation
+        docs_url: Option<String>,
+        /// Specific fix suggestion with commands or code
+        suggested_fix: Option<String>,
+    },
 
-    /// Authentication method errors
+    /// Authentication method execution errors.
+    ///
+    /// These errors occur when a specific authentication method fails to
+    /// execute properly, such as OAuth provider communication failures.
     #[error("Authentication method '{method}' error: {message}")]
-    AuthMethod { method: String, message: String },
+    AuthMethod {
+        method: String,
+        message: String,
+        /// Helpful guidance for fixing the issue
+        help: Option<String>,
+        /// Link to relevant documentation
+        docs_url: Option<String>,
+        /// Specific fix suggestion
+        suggested_fix: Option<String>,
+    },
 
     /// Token-related errors
     #[error("Token error: {0}")]
@@ -47,6 +196,11 @@ pub enum AuthError {
     /// TOML parsing errors
     #[error("TOML error: {0}")]
     Toml(#[from] toml::ser::Error),
+
+    /// Prometheus metrics errors
+    #[cfg(feature = "prometheus")]
+    #[error("Metrics error: {0}")]
+    Metrics(#[from] prometheus::Error),
 
     /// IO errors
     #[error("IO error: {0}")]
@@ -325,6 +479,52 @@ impl AuthError {
     pub fn config(message: impl Into<String>) -> Self {
         Self::Configuration {
             message: message.into(),
+            source: None,
+            help: None,
+            docs_url: None,
+            suggested_fix: None,
+        }
+    }
+
+    /// Create a configuration error with helpful context
+    pub fn config_with_help(
+        message: impl Into<String>,
+        help: impl Into<String>,
+        suggested_fix: Option<String>,
+    ) -> Self {
+        Self::Configuration {
+            message: message.into(),
+            source: None,
+            help: Some(help.into()),
+            docs_url: Some(
+                "https://docs.rs/auth-framework/latest/auth_framework/config/".to_string(),
+            ),
+            suggested_fix,
+        }
+    }
+
+    /// Create a JWT secret validation error with helpful guidance
+    pub fn jwt_secret_too_short(current_length: usize) -> Self {
+        Self::Configuration {
+            message: format!(
+                "JWT secret too short (got {} characters, need 32+ for security)",
+                current_length
+            ),
+            source: None,
+            help: Some("Use a cryptographically secure random string of at least 32 characters".to_string()),
+            docs_url: Some("https://docs.rs/auth-framework/latest/auth_framework/config/struct.SecurityConfig.html".to_string()),
+            suggested_fix: Some("Generate a secure secret: `openssl rand -hex 32`".to_string()),
+        }
+    }
+
+    /// Create a production environment error with guidance
+    pub fn production_memory_storage() -> Self {
+        Self::Configuration {
+            message: "Memory storage is not suitable for production environments".to_string(),
+            source: None,
+            help: Some("Use a persistent storage backend like PostgreSQL or Redis".to_string()),
+            docs_url: Some("https://docs.rs/auth-framework/latest/auth_framework/storage/".to_string()),
+            suggested_fix: Some("Configure PostgreSQL: .with_postgres(\"postgresql://...\") or Redis: .with_redis(\"redis://...\")".to_string()),
         }
     }
 
@@ -333,6 +533,27 @@ impl AuthError {
         Self::AuthMethod {
             method: method.into(),
             message: message.into(),
+            help: None,
+            docs_url: None,
+            suggested_fix: None,
+        }
+    }
+
+    /// Create an auth method error with helpful context
+    pub fn auth_method_with_help(
+        method: impl Into<String>,
+        message: impl Into<String>,
+        help: impl Into<String>,
+        suggested_fix: Option<String>,
+    ) -> Self {
+        Self::AuthMethod {
+            method: method.into(),
+            message: message.into(),
+            help: Some(help.into()),
+            docs_url: Some(
+                "https://docs.rs/auth-framework/latest/auth_framework/methods/".to_string(),
+            ),
+            suggested_fix,
         }
     }
 
@@ -440,6 +661,10 @@ impl AuthError {
     pub fn configuration(message: impl Into<String>) -> Self {
         Self::Configuration {
             message: message.into(),
+            source: None,
+            help: None,
+            docs_url: None,
+            suggested_fix: None,
         }
     }
 }

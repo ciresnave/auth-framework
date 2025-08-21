@@ -1,0 +1,77 @@
+{
+  "name": "@authframework/js-sdk",
+  "version": "1.0.0",
+  "description": "Official JavaScript/TypeScript SDK for AuthFramework REST API",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.esm.js",
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "build:watch": "rollup -c -w",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "auth",
+    "authentication",
+    "authorization",
+    "jwt",
+    "oauth",
+    "mfa",
+    "rest-api",
+    "sdk",
+    "typescript",
+    "javascript"
+  ],
+  "author": "AuthFramework Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cires/AuthFramework.git",
+    "directory": "sdks/javascript"
+  },
+  "bugs": {
+    "url": "https://github.com/cires/AuthFramework/issues"
+  },
+  "homepage": "https://github.com/cires/AuthFramework#readme",
+  "devDependencies": {
+    "@types/jest": "^29.5.8",
+    "@types/node": "^20.9.0",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "eslint": "^8.54.0",
+    "jest": "^29.7.0",
+    "rimraf": "^5.0.5",
+    "rollup": "^4.5.0",
+    "@rollup/plugin-typescript": "^11.1.5",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "rollup-plugin-dts": "^6.1.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.2.2"
+  },
+  "dependencies": {
+    "axios": "^1.6.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.esm.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  }
+}

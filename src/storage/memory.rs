@@ -369,6 +369,18 @@ impl AuthStorage for InMemoryStorage {
         );
         Ok(())
     }
+
+    async fn count_active_sessions(&self) -> Result<u64> {
+        let sessions = self.sessions.read().unwrap();
+        let now = Instant::now();
+
+        let active_count = sessions
+            .values()
+            .filter(|timestamped| timestamped.expires_at > now)
+            .count() as u64;
+
+        Ok(active_count)
+    }
 }
 
 /// Configuration for in-memory storage
@@ -505,3 +517,5 @@ mod tests {
         assert!(retrieved.is_none());
     }
 }
+
+

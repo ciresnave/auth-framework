@@ -57,8 +57,10 @@ pub enum AuditEventType {
     BruteForceDetected,
     RateLimitExceeded,
     SecurityPolicyViolation,
+    SecurityViolation,
 
     // Administrative events
+    AdminAction,
     ConfigurationChanged,
     SystemStartup,
     SystemShutdown,
@@ -68,7 +70,7 @@ pub enum AuditEventType {
 }
 
 /// Security risk level
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq, Serialize, Deserialize)]
 pub enum RiskLevel {
     Low,
     Medium,
@@ -567,6 +569,179 @@ impl<S: AuditStorage> AuditLogger<S> {
         self.storage.get_statistics(query).await
     }
 
+    /// Get failed login count in the last 24 hours
+    pub async fn get_failed_login_count_24h(&self) -> Result<u64> {
+        let query = AuditQuery {
+            event_types: Some(vec![AuditEventType::LoginFailure]),
+            time_range: Some(TimeRange {
+                start: SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60),
+                end: SystemTime::now(),
+            }),
+            limit: None,
+            offset: None,
+            user_id: None,
+            risk_level: None,
+            outcome: None,
+            resource_type: None,
+            actor_id: None,
+            correlation_id: None,
+            ip_address: None,
+            sort_order: SortOrder::TimestampDesc,
+        };
+        self.storage.count_events(&query).await
+    }
+
+    /// Get successful login count in the last 24 hours
+    pub async fn get_successful_login_count_24h(&self) -> Result<u64> {
+        let query = AuditQuery {
+            event_types: Some(vec![AuditEventType::LoginSuccess]),
+            time_range: Some(TimeRange {
+                start: SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60),
+                end: SystemTime::now(),
+            }),
+            limit: None,
+            offset: None,
+            user_id: None,
+            risk_level: None,
+            outcome: None,
+            resource_type: None,
+            actor_id: None,
+            correlation_id: None,
+            ip_address: None,
+            sort_order: SortOrder::TimestampDesc,
+        };
+        self.storage.count_events(&query).await
+    }
+
+    /// Get token issued count in the last 24 hours
+    pub async fn get_token_issued_count_24h(&self) -> Result<u64> {
+        let query = AuditQuery {
+            event_types: Some(vec![
+                AuditEventType::TokenRefresh,
+                AuditEventType::LoginSuccess,
+            ]),
+            time_range: Some(TimeRange {
+                start: SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60),
+                end: SystemTime::now(),
+            }),
+            limit: None,
+            offset: None,
+            user_id: None,
+            risk_level: None,
+            outcome: None,
+            resource_type: None,
+            actor_id: None,
+            correlation_id: None,
+            ip_address: None,
+            sort_order: SortOrder::TimestampDesc,
+        };
+        self.storage.count_events(&query).await
+    }
+
+    /// Get unique users count in the last 24 hours
+    pub async fn get_unique_users_24h(&self) -> Result<u64> {
+        let query = AuditQuery {
+            event_types: Some(vec![AuditEventType::LoginSuccess]),
+            time_range: Some(TimeRange {
+                start: SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60),
+                end: SystemTime::now(),
+            }),
+            limit: None,
+            offset: None,
+            user_id: None,
+            risk_level: None,
+            outcome: None,
+            resource_type: None,
+            actor_id: None,
+            correlation_id: None,
+            ip_address: None,
+            sort_order: SortOrder::TimestampDesc,
+        };
+
+        let events = self.storage.query_events(&query).await?;
+        let unique_users: std::collections::HashSet<_> =
+            events.iter().filter_map(|e| e.user_id.as_ref()).collect();
+        Ok(unique_users.len() as u64)
+    }
+
+    /// Get password reset count in the last 24 hours
+    pub async fn get_password_reset_count_24h(&self) -> Result<u64> {
+        let query = AuditQuery {
+            event_types: Some(vec![AuditEventType::UserPasswordReset]),
+            time_range: Some(TimeRange {
+                start: SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60),
+                end: SystemTime::now(),
+            }),
+            limit: None,
+            offset: None,
+            user_id: None,
+            risk_level: None,
+            outcome: None,
+            resource_type: None,
+            actor_id: None,
+            correlation_id: None,
+            ip_address: None,
+            sort_order: SortOrder::TimestampDesc,
+        };
+        self.storage.count_events(&query).await
+    }
+
+    /// Get admin action count in the last 24 hours
+    pub async fn get_admin_action_count_24h(&self) -> Result<u64> {
+        let query = AuditQuery {
+            event_types: Some(vec![
+                AuditEventType::AdminAction,
+                AuditEventType::UserCreated,
+                AuditEventType::UserUpdated,
+                AuditEventType::UserDeleted,
+                AuditEventType::RoleCreated,
+                AuditEventType::RoleUpdated,
+                AuditEventType::RoleDeleted,
+            ]),
+            time_range: Some(TimeRange {
+                start: SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60),
+                end: SystemTime::now(),
+            }),
+            limit: None,
+            offset: None,
+            user_id: None,
+            risk_level: None,
+            outcome: None,
+            resource_type: None,
+            actor_id: None,
+            correlation_id: None,
+            ip_address: None,
+            sort_order: SortOrder::TimestampDesc,
+        };
+        self.storage.count_events(&query).await
+    }
+
+    /// Get security alert count in the last 24 hours
+    pub async fn get_security_alert_count_24h(&self) -> Result<u64> {
+        let query = AuditQuery {
+            event_types: Some(vec![
+                AuditEventType::SuspiciousActivity,
+                AuditEventType::BruteForceDetected,
+                AuditEventType::SecurityViolation,
+            ]),
+            time_range: Some(TimeRange {
+                start: SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60),
+                end: SystemTime::now(),
+            }),
+            limit: None,
+            offset: None,
+            user_id: None,
+            risk_level: Some(RiskLevel::High),
+            outcome: None,
+            resource_type: None,
+            actor_id: None,
+            correlation_id: None,
+            ip_address: None,
+            sort_order: SortOrder::TimestampDesc,
+        };
+        self.storage.count_events(&query).await
+    }
+
     /// Clean up old audit events
     pub async fn cleanup_old_events(&self, retention_days: u32) -> Result<u64> {
         let cutoff_time =
@@ -665,3 +840,5 @@ mod tests {
         assert_eq!(metadata.endpoint, Some("/api/auth/login".to_string()));
     }
 }
+
+

@@ -5,11 +5,11 @@
 
 use auth_framework::{
     auth::AuthFramework,
+    authentication::credentials::Credential,
     config::{
         AuthConfig, CookieSameSite, JwtAlgorithm, PasswordHashAlgorithm, RateLimitConfig,
         SecurityConfig, StorageConfig,
     },
-    credentials::Credential,
     methods::{ApiKeyMethod, AuthMethodEnum, JwtMethod, OAuth2Method, PasswordMethod},
 };
 use std::{sync::Arc, time::Duration};

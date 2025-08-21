@@ -10,7 +10,7 @@
 //! - RSA-SHA256 and ECDSA-P256-SHA256 support
 //! - Protection against XML signature wrapping attacks
 
-use crate::credentials::{Credential, CredentialMetadata};
+use crate::authentication::credentials::{Credential, CredentialMetadata};
 use crate::errors::{AuthError, Result};
 use crate::methods::{AuthMethod, MethodResult};
 use crate::tokens::{AuthToken, TokenManager};
@@ -129,8 +129,18 @@ struct SamlAssertionXml {
     attribute_statements: Option<Vec<SamlAttributeStatement>>,
     #[serde(rename = "AuthnStatement")]
     authn_statements: Option<Vec<SamlAuthnStatement>>,
+    #[serde(rename = "Conditions")]
+    conditions: Option<SamlConditions>,
     #[serde(rename = "IssueInstant")]
     issue_instant: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SamlConditions {
+    #[serde(rename = "NotBefore")]
+    not_before: Option<String>,
+    #[serde(rename = "NotOnOrAfter")]
+    not_on_or_after: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -302,7 +312,7 @@ impl SamlAuthMethod {
             let issuer = &response_issuer.value;
 
             // Verify this is a known IdP
-            let idp_metadata = self
+            let _idp_metadata = self
                 .identity_providers
                 .get(issuer)
                 .ok_or_else(|| AuthError::validation(format!("Unknown issuer: {}", issuer)))?;
@@ -346,15 +356,44 @@ impl SamlAuthMethod {
                     }
                 }
 
+                // Extract timing information
+                let issue_instant = assertion
+                    .issue_instant
+                    .as_ref()
+                    .and_then(|ts| self.parse_timestamp(ts).ok())
+                    .unwrap_or_else(SystemTime::now);
+
+                let (not_before, not_on_or_after) = if let Some(conditions) = &assertion.conditions
+                {
+                    let not_before = conditions
+                        .not_before
+                        .as_ref()
+                        .and_then(|ts| self.parse_timestamp(ts).ok());
+                    let not_on_or_after = conditions
+                        .not_on_or_after
+                        .as_ref()
+                        .and_then(|ts| self.parse_timestamp(ts).ok());
+                    (not_before, not_on_or_after)
+                } else {
+                    (None, None)
+                };
+
+                // Extract session index from AuthnStatement
+                let session_index = assertion
+                    .authn_statements
+                    .as_ref()
+                    .and_then(|statements| statements.first())
+                    .and_then(|stmt| stmt.session_index.clone());
+
                 // Create validated assertion
                 return Ok(SamlAssertion {
                     subject: user_id,
                     attributes,
                     issuer: issuer.clone(),
-                    issue_instant: SystemTime::now(), // TODO: Parse from assertion.issue_instant
-                    not_before: None,                 // TODO: Extract from conditions
-                    not_on_or_after: None,            // TODO: Extract from conditions
-                    session_index: None,              // TODO: Extract from AuthnStatement
+                    issue_instant,
+                    not_before,
+                    not_on_or_after,
+                    session_index,
                 });
             } else {
                 return Err(AuthError::validation(
@@ -751,3 +790,5 @@ mod tests {
         );
     }
 }
+
+

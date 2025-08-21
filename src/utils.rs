@@ -362,11 +362,12 @@ pub mod validation {
         }
 
         if let Some(prefix) = expected_prefix
-            && !api_key.starts_with(prefix) {
-                return Err(AuthError::validation(format!(
-                    "API key must start with '{prefix}'"
-                )));
-            }
+            && !api_key.starts_with(prefix)
+        {
+            return Err(AuthError::validation(format!(
+                "API key must start with '{prefix}'"
+            )));
+        }
 
         // Basic length check
         if api_key.len() < 16 {
@@ -542,3 +543,5 @@ mod tests {
         assert!(limiter.is_allowed("user2"));
     }
 }
+
+

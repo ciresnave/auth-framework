@@ -316,4 +316,34 @@ impl AuthStorage for RedisStorage {
 
         Ok(tokens)
     }
+
+    async fn count_active_sessions(&self) -> Result<u64> {
+        let mut conn = self.get_connection().await?;
+        let pattern = format!("{}session:*", self.key_prefix);
+
+        let keys: Vec<String> = conn
+            .keys(&pattern)
+            .await
+            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+
+        // Count only non-expired sessions
+        let mut active_count = 0u64;
+        for key in keys {
+            let ttl: i64 = conn
+                .ttl(&key)
+                .await
+                .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+
+            // TTL > 0 means key has expiration and is still active
+            // TTL = -1 means key has no expiration (active)
+            // TTL = -2 means key doesn't exist (expired)
+            if ttl > 0 || ttl == -1 {
+                active_count += 1;
+            }
+        }
+
+        Ok(active_count)
+    }
 }
+
+

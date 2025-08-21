@@ -28,180 +28,233 @@ pub async fn run_cli(state: AppState, command: CliCommand) -> Result<()> {
 #[cfg(feature = "cli")]
 async fn handle_config_action(state: AppState, action: ConfigAction) -> Result<()> {
     match action {
-        ConfigAction::Show { section, format } => {
-            println!("{}", "📋 Current Configuration".bold().blue());
-
-            let config = state.config.read().await;
-
-            let output = match format.as_str() {
-                "json" => serde_json::to_string_pretty(&*config)?,
-                "yaml" => serde_yaml::to_string(&*config)?,
-                "toml" => toml::to_string_pretty(&*config)?,
-                _ => toml::to_string_pretty(&*config)?,
-            };
-
-            if let Some(section_name) = section {
-                // Show specific section (simplified implementation)
-                println!("Section: {}", section_name.bold());
-                // In a real implementation, we'd parse and show only the requested section
-            }
-
-            println!("{}", output);
-        }
-        ConfigAction::Validate { file } => {
-            let spinner = create_spinner("Validating configuration...");
-
-            let result = if let Some(file_path) = file {
-                // Validate specific file
-                use crate::config::ConfigBuilder;
-                let temp_manager = ConfigBuilder::new().add_file(&file_path, true).build()?;
-                temp_manager.validate()
-            } else {
-                // Validate current configuration
-                state.config_manager.validate()
-            };
-
-            spinner.finish_with_message(if result.is_ok() {
-                "✅ Configuration is valid".green().to_string()
-            } else {
-                format!("❌ Configuration error: {}", result.unwrap_err())
-                    .red()
-                    .to_string()
-            });
-        }
+        ConfigAction::Show { section, format } => handle_config_show(state, section, format).await,
+        ConfigAction::Validate { file } => handle_config_validate(state, file).await,
         ConfigAction::Set {
             key,
             value,
             hot_reload,
-        } => {
-            println!("Setting {}={}", key.cyan(), value.yellow());
-
-            if hot_reload {
-                println!("🔄 Hot-reloading configuration...");
-                state.reload_config().await?;
-                println!("✅ Configuration updated and reloaded");
-            } else {
-                println!("⚠️ Configuration will take effect after restart");
-            }
-        }
-        ConfigAction::Get { key } => {
-            println!("Getting configuration for: {}", key.cyan());
-            // Implementation would retrieve and display the specific key value
-            println!("Value: {}", "example_value".green());
-        }
-        ConfigAction::Reload { show_diff } => {
-            if show_diff {
-                println!("📊 Configuration differences:");
-                // Implementation would show diff between current and file config
-            }
-
-            let spinner = create_spinner("Reloading configuration...");
-            state.reload_config().await?;
-            spinner
-                .finish_with_message("✅ Configuration reloaded successfully".green().to_string());
-        }
+        } => handle_config_set(state, key, value, hot_reload).await,
+        ConfigAction::Get { key } => handle_config_get(key).await,
+        ConfigAction::Reload { show_diff } => handle_config_reload(state, show_diff).await,
         ConfigAction::Template { output, complete } => {
-            let template = if complete {
-                create_complete_config_template()
-            } else {
-                create_minimal_config_template()
-            };
-
-            if let Some(output_path) = output {
-                std::fs::write(&output_path, template)?;
-                println!(
-                    "✅ Configuration template written to: {}",
-                    output_path.green()
-                );
-            } else {
-                println!("{}", template);
-            }
+            handle_config_template(output, complete).await
         }
-        ConfigAction::Reset => {
-            println!("🔄 Resetting configuration to defaults...");
-            let spinner = create_spinner("Resetting configuration...");
-            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-            spinner.finish_with_message("✅ Configuration reset to defaults".green().to_string());
-        }
+        ConfigAction::Reset => handle_config_reset().await,
     }
+}
+
+#[cfg(feature = "cli")]
+async fn handle_config_show(
+    state: AppState,
+    section: Option<String>,
+    format: String,
+) -> Result<()> {
+    println!("{}", "📋 Current Configuration".bold().blue());
+
+    let config = state.config.read().await;
+    let output = match format.as_str() {
+        "json" => serde_json::to_string_pretty(&*config)?,
+        "yaml" => serde_yaml::to_string(&*config)?,
+        "toml" => toml::to_string_pretty(&*config)?,
+        _ => toml::to_string_pretty(&*config)?,
+    };
+
+    if let Some(section_name) = section {
+        println!("Section: {}", section_name.bold());
+        // In a real implementation, we'd parse and show only the requested section
+    }
+
+    println!("{}", output);
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_config_validate(state: AppState, file: Option<String>) -> Result<()> {
+    let spinner = create_spinner("Validating configuration...");
+
+    let result = if let Some(file_path) = file {
+        use crate::config::ConfigBuilder;
+        let temp_manager = ConfigBuilder::new().add_file(&file_path, true).build()?;
+        temp_manager.validate()
+    } else {
+        state.config_manager.validate()
+    };
+
+    spinner.finish_with_message(if result.is_ok() {
+        "✅ Configuration is valid".green().to_string()
+    } else {
+        format!("❌ Configuration error: {}", result.unwrap_err())
+            .red()
+            .to_string()
+    });
+
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_config_set(
+    state: AppState,
+    key: String,
+    value: String,
+    hot_reload: bool,
+) -> Result<()> {
+    println!("Setting {}={}", key.cyan(), value.yellow());
+
+    if hot_reload {
+        println!("🔄 Hot-reloading configuration...");
+        state.reload_config().await?;
+        println!("✅ Configuration updated and reloaded");
+    } else {
+        println!("⚠️ Configuration will take effect after restart");
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_config_get(key: String) -> Result<()> {
+    println!("Getting configuration for: {}", key.cyan());
+    // Implementation would retrieve and display the specific key value
+    println!("Value: {}", "example_value".green());
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_config_reload(state: AppState, show_diff: bool) -> Result<()> {
+    if show_diff {
+        println!("📊 Configuration differences:");
+        // Implementation would show diff between current and file config
+    }
+
+    let spinner = create_spinner("Reloading configuration...");
+    state.reload_config().await?;
+    spinner.finish_with_message("✅ Configuration reloaded successfully".green().to_string());
+
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_config_template(output: Option<String>, complete: bool) -> Result<()> {
+    let template = if complete {
+        create_complete_config_template()
+    } else {
+        create_minimal_config_template()
+    };
+
+    if let Some(output_path) = output {
+        std::fs::write(&output_path, template)?;
+        println!(
+            "✅ Configuration template written to: {}",
+            output_path.green()
+        );
+    } else {
+        println!("{}", template);
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_config_reset() -> Result<()> {
+    println!("🔄 Resetting configuration to defaults...");
+    let spinner = create_spinner("Resetting configuration...");
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    spinner.finish_with_message("✅ Configuration reset to defaults".green().to_string());
     Ok(())
 }
 
 #[cfg(feature = "cli")]
 async fn handle_server_action(state: AppState, action: ServerAction) -> Result<()> {
     match action {
-        ServerAction::Start { port, daemon } => {
-            let port_num = port.unwrap_or(8080);
-            println!(
-                "🚀 Starting web server on port {}",
-                port_num.to_string().cyan()
-            );
-
-            if daemon {
-                println!("Running as daemon...");
-                // Implementation would daemonize the process
-            }
-
-            state.update_server_status(true, Some(port_num)).await;
-            println!("✅ Web server started successfully");
-        }
-        ServerAction::Stop { force } => {
-            println!("🛑 Stopping web server...");
-
-            if force {
-                println!("⚠️ Force stopping (may lose data)");
-            } else {
-                println!("Gracefully shutting down...");
-            }
-
-            state.update_server_status(false, None).await;
-            println!("✅ Web server stopped");
-        }
-        ServerAction::Restart { port } => {
-            println!("🔄 Restarting web server...");
-
-            // Stop
-            state.update_server_status(false, None).await;
-
-            // Start with new port if provided
-            let new_port = port.unwrap_or(8080);
-            state.update_server_status(true, Some(new_port)).await;
-
-            println!(
-                "✅ Web server restarted on port {}",
-                new_port.to_string().cyan()
-            );
-        }
-        ServerAction::Status => {
-            let status = state.server_status.read().await;
-
-            println!("{}", "🔍 Server Status".bold().blue());
-            println!(
-                "Web Server: {}",
-                if status.web_server_running {
-                    "Running".green()
-                } else {
-                    "Stopped".red()
-                }
-            );
-
-            if let Some(port) = status.web_server_port {
-                println!("Port: {}", port.to_string().cyan());
-            }
-
-            println!("Health: {}", format_health_status(&status.health_status));
-
-            if let Some(last_update) = status.last_config_update {
-                println!(
-                    "Last Config Update: {}",
-                    last_update
-                        .format("%Y-%m-%d %H:%M:%S UTC")
-                        .to_string()
-                        .dimmed()
-                );
-            }
-        }
+        ServerAction::Start { port, daemon } => handle_server_start(state, port, daemon).await,
+        ServerAction::Stop { force } => handle_server_stop(state, force).await,
+        ServerAction::Restart { port } => handle_server_restart(state, port).await,
+        ServerAction::Status => handle_server_status(state).await,
     }
+}
+
+#[cfg(feature = "cli")]
+async fn handle_server_start(state: AppState, port: Option<u16>, daemon: bool) -> Result<()> {
+    let port_num = port.unwrap_or(8080);
+    println!(
+        "🚀 Starting web server on port {}",
+        port_num.to_string().cyan()
+    );
+
+    if daemon {
+        println!("Running as daemon...");
+        // Implementation would daemonize the process
+    }
+
+    state.update_server_status(true, Some(port_num)).await;
+    println!("✅ Web server started successfully");
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_server_stop(state: AppState, force: bool) -> Result<()> {
+    println!("🛑 Stopping web server...");
+
+    if force {
+        println!("⚠️ Force stopping (may lose data)");
+    } else {
+        println!("Gracefully shutting down...");
+    }
+
+    state.update_server_status(false, None).await;
+    println!("✅ Web server stopped");
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_server_restart(state: AppState, port: Option<u16>) -> Result<()> {
+    println!("🔄 Restarting web server...");
+
+    // Stop
+    state.update_server_status(false, None).await;
+
+    // Start with new port if provided
+    let new_port = port.unwrap_or(8080);
+    state.update_server_status(true, Some(new_port)).await;
+
+    println!(
+        "✅ Web server restarted on port {}",
+        new_port.to_string().cyan()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_server_status(state: AppState) -> Result<()> {
+    let status = state.server_status.read().await;
+
+    println!("{}", "🔍 Server Status".bold().blue());
+    println!(
+        "Web Server: {}",
+        if status.web_server_running {
+            "Running".green()
+        } else {
+            "Stopped".red()
+        }
+    );
+
+    if let Some(port) = status.web_server_port {
+        println!("Port: {}", port.to_string().cyan());
+    }
+
+    println!("Health: {}", format_health_status(&status.health_status));
+
+    if let Some(last_update) = status.last_config_update {
+        println!(
+            "Last Config Update: {}",
+            last_update
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string()
+                .dimmed()
+        );
+    }
+
     Ok(())
 }
 
@@ -667,3 +720,5 @@ include = [
 "#
     .to_string()
 }
+
+

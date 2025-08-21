@@ -4,7 +4,7 @@
 //! the appropriate token exchange manager based on your use case.
 
 use crate::errors::Result;
-use crate::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
+use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
 use crate::server::token_exchange::advanced_token_exchange::{
     AdvancedTokenExchangeConfig, AdvancedTokenExchangeManager,
 };
@@ -292,3 +292,5 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+
+

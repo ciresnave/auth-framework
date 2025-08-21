@@ -170,7 +170,7 @@ impl ClientRegistry {
             match (&client.client_type, &client.client_secret) {
                 (ClientType::Confidential, Some(stored_secret)) => {
                     // Use constant-time comparison to prevent timing attacks
-                    Ok(crate::secure_utils::constant_time_compare(
+                    Ok(crate::security::secure_utils::constant_time_compare(
                         client_secret.as_bytes(),
                         stored_secret.as_bytes(),
                     ))
@@ -375,3 +375,5 @@ mod tests {
         assert!(registry.register_client(invalid_config).await.is_err());
     }
 }
+
+

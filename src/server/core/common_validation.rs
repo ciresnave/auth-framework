@@ -32,7 +32,20 @@ pub mod jwt {
         Ok(())
     }
 
-    /// Extract claims without signature validation (for inspection)
+    /// Extract claims without signature validation (for inspection ONLY)
+    ///
+    /// # Security Warning
+    /// This function does NOT validate the JWT signature, making it vulnerable to:
+    /// - Token forgery
+    /// - Data tampering
+    /// - Man-in-the-middle attacks
+    ///
+    /// Only use for:
+    /// - Token inspection/debugging
+    /// - Extracting metadata before validation
+    /// - Non-security-critical operations
+    ///
+    /// Never use for authentication or authorization decisions!
     pub fn extract_claims_unsafe(token: &str) -> Result<serde_json::Value> {
         validate_jwt_format(token)?;
 
@@ -61,15 +74,17 @@ pub mod jwt {
 
         // Check expiration
         if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64())
-            && now >= exp {
-                return Err(AuthError::validation("Token has expired"));
-            }
+            && now >= exp
+        {
+            return Err(AuthError::validation("Token has expired"));
+        }
 
         // Check not before
         if let Some(nbf) = claims.get("nbf").and_then(|v| v.as_i64())
-            && now < nbf {
-                return Err(AuthError::validation("Token not yet valid (nbf)"));
-            }
+            && now < nbf
+        {
+            return Err(AuthError::validation("Token not yet valid (nbf)"));
+        }
 
         // Check issued at (reasonable bounds)
         if let Some(iat) = claims.get("iat").and_then(|v| v.as_i64()) {
@@ -346,7 +361,38 @@ pub mod url {
     }
 }
 
-/// Common validation result aggregation
+/// Collects and aggregates validation errors from multiple validation operations.
+///
+/// This function takes a vector of validation results and combines any errors
+/// into a single error message. If all validations pass, returns Ok(()).
+/// If any validations fail, returns an error containing all error messages.
+///
+/// # Arguments
+///
+/// * `validations` - A vector of validation results to aggregate
+///
+/// # Returns
+///
+/// * `Ok(())` if all validations passed
+/// * `Err(AuthError)` containing aggregated error messages if any validations failed
+///
+/// # Example
+///
+/// ```rust
+/// use auth_framework::server::core::common_validation::collect_validation_errors;
+///
+/// let validations = vec![
+///     validate_client_id("valid_client"),
+///     validate_scope("read write"),
+///     validate_redirect_uri("https://example.com/callback"),
+/// ];
+///
+/// let result = collect_validation_errors(validations);
+/// match result {
+///     Ok(()) => println!("All validations passed"),
+///     Err(e) => println!("Validation errors: {}", e),
+/// }
+/// ```
 pub fn collect_validation_errors(validations: Vec<Result<()>>) -> Result<()> {
     let errors: Vec<String> = validations
         .into_iter()
@@ -360,3 +406,5 @@ pub fn collect_validation_errors(validations: Vec<Result<()>>) -> Result<()> {
         Err(AuthError::validation(errors.join("; ")))
     }
 }
+
+

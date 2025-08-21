@@ -148,6 +148,8 @@ where
                                 auth_method: "jwt".to_string(),
                                 client_id: None,
                                 user_profile: None,
+                                permissions: claims.permissions.unwrap_or_default(),
+                                roles: claims.roles.unwrap_or_default(),
                                 metadata: crate::tokens::TokenMetadata::default(),
                             };
                             tracing::debug!("AuthToken stored in request extensions");
@@ -192,21 +194,34 @@ impl FromRequest for AuthenticatedUser {
 pub struct RequirePermission<S: AuthorizationStorage> {
     permission: Permission,
     authorization: Arc<AuthorizationEngine<S>>,
-    #[allow(dead_code)]
-    user_id: String,
+    expected_user_id: Option<String>, // PRODUCTION FIX: Renamed for clarity - optional user ID validation
 }
 
 impl<S: AuthorizationStorage + 'static> RequirePermission<S> {
     pub fn new(
         permission: Permission,
         authorization: Arc<AuthorizationEngine<S>>,
-        user_id: String,
+        expected_user_id: Option<String>, // Optional - if provided, validates JWT user matches
     ) -> Self {
         Self {
             permission,
             authorization,
-            user_id,
+            expected_user_id,
         }
+    }
+
+    /// Create without specific user ID requirement (validates any authenticated user)
+    pub fn any_user(permission: Permission, authorization: Arc<AuthorizationEngine<S>>) -> Self {
+        Self::new(permission, authorization, None)
+    }
+
+    /// Create with specific user ID requirement (validates specific user)
+    pub fn specific_user(
+        permission: Permission,
+        authorization: Arc<AuthorizationEngine<S>>,
+        user_id: String,
+    ) -> Self {
+        Self::new(permission, authorization, Some(user_id))
     }
 
     /// Check if the current user has the specific permission this struct was created with
@@ -258,6 +273,16 @@ impl<S: AuthorizationStorage + 'static> RequirePermission<S> {
             }
         };
         let user_id = claims.sub;
+
+        // PRODUCTION FIX: Validate specific user ID if required
+        if let Some(expected_id) = &self.expected_user_id {
+            if user_id != *expected_id {
+                return Err(AuthError::access_denied(format!(
+                    "Token user ID '{}' does not match expected user ID '{}'",
+                    user_id, expected_id
+                )));
+            }
+        }
 
         // Check if user has the required permission
         let has_permission = self.check_access(&user_id, request).await?;
@@ -474,3 +499,5 @@ mod tests {
         }
     }
 }
+
+

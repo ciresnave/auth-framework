@@ -81,9 +81,9 @@
 //! ```
 
 use crate::errors::{AuthError, Result};
+use crate::server::core::stepped_up_auth::SteppedUpAuthManager;
 use crate::server::oidc::oidc_backchannel_logout::BackChannelLogoutManager;
 use crate::server::oidc::oidc_session_management::SessionManager;
-use crate::server::core::stepped_up_auth::SteppedUpAuthManager;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Timelike, Utc};
@@ -503,6 +503,10 @@ impl CaepManager {
         let evaluation_interval = interval(config.evaluation_interval.to_std().map_err(|e| {
             AuthError::Configuration {
                 message: format!("Invalid evaluation interval: {}", e),
+                help: Some("Provide a valid duration for evaluation interval".to_string()),
+                docs_url: Some("https://docs.auth-framework.com/configuration".to_string()),
+                source: None,
+                suggested_fix: Some("Check your configuration and ensure the evaluation interval is properly formatted".to_string()),
             }
         })?);
 
@@ -694,25 +698,26 @@ impl CaepManager {
         // Process back-channel logout for each session
         for (session_id, _) in &sessions_to_logout {
             // Use the BackChannelLogoutManager to perform proper logout
-            let logout_request = crate::server::oidc::oidc_backchannel_logout::BackChannelLogoutRequest {
-                session_id: session_id.clone(),
-                sub: subject.to_string(),
-                sid: Some(session_id.clone()),
-                iss: "caep-manager".to_string(), // In production, use actual issuer
-                initiating_client_id: None,      // CAEP-initiated logout
-                additional_events: Some({
-                    let mut events = HashMap::new();
-                    events.insert(
-                        "caep_reason".to_string(),
-                        serde_json::json!("automatic_revocation"),
-                    );
-                    events.insert(
-                        "timestamp".to_string(),
-                        serde_json::json!(Utc::now().timestamp()),
-                    );
-                    events
-                }),
-            };
+            let logout_request =
+                crate::server::oidc::oidc_backchannel_logout::BackChannelLogoutRequest {
+                    session_id: session_id.clone(),
+                    sub: subject.to_string(),
+                    sid: Some(session_id.clone()),
+                    iss: "caep-manager".to_string(), // In production, use actual issuer
+                    initiating_client_id: None,      // CAEP-initiated logout
+                    additional_events: Some({
+                        let mut events = HashMap::new();
+                        events.insert(
+                            "caep_reason".to_string(),
+                            serde_json::json!("automatic_revocation"),
+                        );
+                        events.insert(
+                            "timestamp".to_string(),
+                            serde_json::json!(Utc::now().timestamp()),
+                        );
+                        events
+                    }),
+                };
 
             // Process the logout through the BackChannelLogoutManager
             // Use async approach to handle logout manager integration

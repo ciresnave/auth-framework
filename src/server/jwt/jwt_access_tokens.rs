@@ -453,6 +453,8 @@ mod tests {
             auth_method: "test".to_string(),
             client_id: None,
             user_profile: None,
+            permissions: vec!["test:read".to_string(), "test:write".to_string()],
+            roles: vec!["user".to_string()],
             metadata: Default::default(),
         }
     }
@@ -637,3 +639,5 @@ mod tests {
         assert_eq!(response.scope.unwrap(), "read write");
     }
 }
+
+

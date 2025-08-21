@@ -184,17 +184,24 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Configure the auth framework
+    // Set environment for development/testing (allows memory storage)
+    std::env::set_var("ENVIRONMENT", "development");
+
+    // Configure the auth framework with required JWT secret
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "your-secure-jwt-secret-at-least-32-characters-long".to_string());
+
     let config = AuthConfig::new()
         .token_lifetime(Duration::from_secs(3600))
-        .refresh_token_lifetime(Duration::from_secs(86400 * 7));
+        .refresh_token_lifetime(Duration::from_secs(86400 * 7))
+        .secret(jwt_secret);
 
     // Create the auth framework (storage is handled internally)
     let mut auth = AuthFramework::new(config);
 
     // Register a JWT authentication method
     let jwt_method = JwtMethod::new()
-        .secret_key("your-secret-key")
+        .secret_key("your-secure-jwt-secret-at-least-32-characters-long")
         .issuer("your-service");
 
     auth.register_method("jwt", AuthMethodEnum::Jwt(jwt_method));
@@ -346,35 +353,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### OAuth Authentication
 
-```rust
-use auth_framework::methods::{OAuth2Method, AuthMethodEnum};
+> **Note**: OAuth authentication is currently implemented through provider configurations and server components.
+> For complete OAuth client flows, see the server examples in `examples/oauth2_authorization_server.rs` and `examples/complete_oauth2_server_axum.rs`.```rust
 use auth_framework::providers::OAuthProvider;
 
-// Set up OAuth with GitHub
-let oauth_method = OAuth2Method::new()
-    .provider(OAuthProvider::GitHub)
-    .client_id("your-github-client-id")
-    .client_secret("your-github-client-secret")
-    .redirect_uri("https://your-app.com/auth/callback");
+// OAuth providers are available for server implementations
+let github_provider = OAuthProvider::GitHub;
+let google_provider = OAuthProvider::Google;
 
-auth.register_method("github", AuthMethodEnum::OAuth2(oauth_method));
+// Build authorization URLs for OAuth flows
+let auth_url = github_provider.build_authorization_url(
+    "your-client-id",
+    "<https://your-app.com/callback>",
+    "random-state",
+    Some(&["user:email".to_string()]),
+    None
+)?;
 
-// Generate authorization URL
-let (auth_url, state, pkce) = oauth_method.authorization_url()?;
-println!("Visit: {}", auth_url);
+println!("Authorization URL: {}", auth_url);
 
-// After user authorizes, exchange code for token
-let credential = auth_framework::credentials::Credential::oauth_code("authorization-code-from-callback");
-let result = auth.authenticate("github", credential).await?;
+// Exchange code for tokens (server-side)
+let token_response = github_provider.exchange_code(
+    "your-client-id",
+    "your-client-secret",
+    "authorization-code-from-callback",
+    "<https://your-app.com/callback>",
+    None
+).await?;
 
-match result {
-    auth_framework::AuthResult::Success(token) => {
-        println!("GitHub authentication successful!");
-        let user_info = auth.get_user_info(&token).await?;
-        println!("Welcome, {}!", user_info.name.unwrap_or("User".to_string()));
-    }
-    _ => println!("Authentication failed"),
-}
+println!("Access token: {}", token_response.access_token);
+
+```
 ```
 
 ### API Key Authentication
@@ -582,79 +591,26 @@ async fn auth_validator(
 
 ### Device Flow Authentication
 
-Device flow is perfect for CLI applications, IoT devices, or any scenario where the user authenticates on a different device than where the application is running.
+Device flow is supported through the provider implementations. See the OAuth server examples for complete device flow implementations:
 
 ```rust
-use auth_framework::{
-    AuthFramework, AuthConfig, Credential,
-    methods::OAuth2Method,
-    providers::{OAuthProvider, DeviceAuthorizationResponse},
-};
+use auth_framework::providers::OAuthProvider;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Set up auth framework
-    let config = AuthConfig::new();
-    let mut auth = AuthFramework::new(config);
+    // Device flow is available through provider implementations
+    // For complete examples, see:
+    // - examples/oauth2_authorization_server.rs
+    // - examples/complete_oauth2_server_axum.rs
 
-    // Configure OAuth for device flow
-    let oauth_method = OAuth2Method::new()
-        .provider(OAuthProvider::GitHub)
-        .client_id("your-client-id")
-        .client_secret("your-client-secret");
+    let provider = OAuthProvider::GitHub;
 
-    auth.register_method("github", AuthMethodEnum::OAuth2(oauth_method));
-    auth.initialize().await?;
+    // Device flow methods are available on providers:
+    // provider.start_device_authorization()
+    // provider.poll_device_token()
+    // See server examples for complete implementation
 
-    // Step 1: Request device authorization
-    // (In a real implementation, this would make an HTTP request)
-    let device_auth = DeviceAuthorizationResponse {
-        device_code: "device_code_from_provider".to_string(),
-        user_code: "USER-CODE".to_string(),
-        verification_uri: "https://github.com/login/device".to_string(),
-        verification_uri_complete: None,
-        interval: 5,
-        expires_in: 900,
-    };
-
-    // Step 2: Show instructions to user
-    println!("Visit: {}", device_auth.verification_uri);
-    println!("Enter code: {}", device_auth.user_code);
-
-    // Step 3: Poll for authorization (simplified)
-    let credential = Credential::Custom {
-        method: "device_code".to_string(),
-        data: {
-            let mut data = std::collections::HashMap::new();
-            data.insert("device_code".to_string(), device_auth.device_code);
-            data.insert("client_id".to_string(), "your-client-id".to_string());
-            data
-        }
-    };
-
-    // Poll until user completes authorization
-    loop {
-        match auth.authenticate("github", credential.clone()).await? {
-            auth_framework::AuthResult::Success(token) => {
-                println!("Success! Access token: {}", token.access_token);
-                break;
-            }
-            auth_framework::AuthResult::Failure(reason) => {
-                if reason.contains("authorization_pending") {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                    continue;
-                } else {
-                    eprintln!("Authentication failed: {}", reason);
-                    break;
-                }
-            }
-            _ => {
-                eprintln!("Unexpected result");
-                break;
-            }
-        }
-    }
-
+    println!("Check server examples for complete device flow implementation");
     Ok(())
 }
 ```
@@ -736,7 +692,7 @@ export AUTH_SESSION_DOMAIN="myapp.com"
 
 Organize configuration into logical modules:
 
-```
+```text
 config/
 ├── auth-framework.toml    # Main configuration with includes
 ├── threat-intel.toml      # Threat intelligence settings
@@ -1052,42 +1008,37 @@ async fn handle_auth_errors() {
 
 ## Provider Configuration
 
-Simplified provider setup with sensible defaults:
+OAuth providers are available for server-side implementations. See the server examples for complete provider usage:
 
 ```rust
-use auth_framework::{AuthFramework, providers::{OAuthProvider, UserProfile}};
+use auth_framework::providers::{OAuthProvider, OAuthProviderConfig, UserProfile};
+use std::collections::HashMap;
 
-// GitHub with default scopes and settings
-let github_method = OAuth2Method::new()
-    .provider(OAuthProvider::GitHub) // Automatically includes user:email scope
-    .client_id("your-github-client-id")
-    .client_secret("your-github-client-secret");
+// Available providers for OAuth server implementations
+let github_provider = OAuthProvider::GitHub;
+let google_provider = OAuthProvider::Google;
+let microsoft_provider = OAuthProvider::Microsoft;
 
-// Google with default profile scopes
-let google_method = OAuth2Method::new()
-    .provider(OAuthProvider::Google) // Includes profile, email scopes
-    .client_id("your-google-client-id")
-    .client_secret("your-google-client-secret");
+// Custom provider configuration
+let custom_provider = OAuthProvider::Custom {
+    name: "My Provider".to_string(),
+    config: OAuthProviderConfig {
+        authorization_url: "https://auth.example.com/authorize".to_string(),
+        token_url: "https://auth.example.com/token".to_string(),
+        device_authorization_url: Some("https://auth.example.com/device".to_string()),
+        userinfo_url: Some("https://auth.example.com/userinfo".to_string()),
+        revocation_url: Some("https://auth.example.com/revoke".to_string()),
+        default_scopes: vec!["read".to_string(), "profile".to_string()],
+        supports_pkce: true,
+        supports_refresh: true,
+        supports_device_flow: true,
+        additional_params: HashMap::new(),
+    },
+};
 
-// Custom provider with full configuration
-let custom_method = OAuth2Method::new()
-    .provider(OAuthProvider::Custom {
-        name: "My Provider".to_string(),
-        config: OAuthProviderConfig {
-            authorization_url: "https://auth.example.com/authorize".to_string(),
-            token_url: "https://auth.example.com/token".to_string(),
-            device_authorization_url: Some("https://auth.example.com/device".to_string()),
-            userinfo_url: Some("https://auth.example.com/userinfo".to_string()),
-            revocation_url: Some("https://auth.example.com/revoke".to_string()),
-            default_scopes: vec!["read".to_string(), "profile".to_string()],
-            supports_pkce: true,
-            supports_refresh: true,
-            supports_device_flow: true,
-            additional_params: HashMap::new(),
-        },
-    })
-    .client_id("your-client-id")
-    .client_secret("your-client-secret");
+// For complete OAuth server implementation examples, see:
+// - examples/oauth2_authorization_server.rs
+// - examples/complete_oauth2_server_axum.rs
 ```
 
 ## User Profile Standardization
@@ -1140,19 +1091,14 @@ use auth_framework::Credential;
 // Password credentials -> PasswordMethod
 let password_cred = Credential::password("username", "password");
 
-// OAuth authorization code -> OAuth2Method
-let oauth_cred = Credential::oauth_code("authorization_code_from_callback");
-
-// OAuth refresh token -> OAuth2Method (for token refresh)
-let refresh_cred = Credential::oauth_refresh("refresh_token_string");
-
 // API key -> ApiKeyMethod
 let api_key_cred = Credential::api_key("your_api_key_here");
 
 // JWT token -> JwtMethod
 let jwt_cred = Credential::jwt("jwt.token.string");
 
-// Device code (for device flow) -> OAuth2Method with device flow
+// OAuth flows are handled by the OAuth server implementation
+// See server examples for complete OAuth credential handling
 let device_cred = Credential::Custom {
     method: "device_code".to_string(),
     data: {
@@ -1195,6 +1141,7 @@ tokio = { version = "1.0", features = ["full"] }
 
 ```rust
 use auth_framework::{AuthFramework, AuthConfig, Credential};
+use auth_framework::providers::OAuthProvider;
 use clap::{Arg, Command};
 
 fn create_auth_command() -> Command {
@@ -1253,24 +1200,20 @@ async fn perform_device_flow_auth(provider: &str, client_id: &str) -> Result<(),
     let config = AuthConfig::new();
     let mut auth = AuthFramework::new(config);
 
-    // Configure OAuth method based on provider
-    let oauth_method = match provider {
-        "github" => OAuth2Method::new()
-            .provider(OAuthProvider::GitHub)
-            .client_id(client_id)
-            .client_secret(&std::env::var("GITHUB_CLIENT_SECRET")?),
-        "google" => OAuth2Method::new()
-            .provider(OAuthProvider::Google)
-            .client_id(client_id)
-            .client_secret(&std::env::var("GOOGLE_CLIENT_SECRET")?),
+    // OAuth providers are available for server-side implementations
+    let oauth_provider = match provider {
+        "github" => OAuthProvider::GitHub,
+        "google" => OAuthProvider::Google,
+        "microsoft" => OAuthProvider::Microsoft,
         _ => return Err("Unsupported provider".into()),
     };
 
-    auth.register_method("oauth", AuthMethodEnum::OAuth2(oauth_method));
-    auth.initialize().await?;
+    println!("Selected provider: {:?}", oauth_provider);
 
-    // Implement device flow logic here...
-    println!("✅ Authentication successful!");
+    // For complete OAuth server implementation, see:
+    // - examples/oauth2_authorization_server.rs
+    // - examples/complete_oauth2_server_axum.rs
+    println!("✅ Provider configuration complete!");
 
     Ok(())
 }

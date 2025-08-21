@@ -410,11 +410,19 @@ impl AuthConfig {
             ));
         }
 
+        // Validate JWT secret configuration
+        self.validate_jwt_secret()?;
+
         // Validate security settings
         if self.security.min_password_length < 4 {
             return Err(AuthError::config(
                 "Minimum password length must be at least 4 characters",
             ));
+        }
+
+        // Enhanced security validation for production
+        if self.is_production_environment() && !self.is_test_environment() {
+            self.validate_production_security()?;
         }
 
         // Validate rate limiting
@@ -424,7 +432,173 @@ impl AuthConfig {
             ));
         }
 
+        // Validate storage configuration
+        self.validate_storage_config()?;
+
         Ok(())
+    }
+
+    /// Validate JWT secret configuration for security
+    fn validate_jwt_secret(&self) -> Result<()> {
+        // Check multiple sources for JWT secret
+        let env_secret = std::env::var("JWT_SECRET").ok();
+        let jwt_secret = self
+            .security
+            .secret_key
+            .as_ref()
+            .or(self.secret.as_ref())
+            .or(env_secret.as_ref());
+
+        if let Some(secret) = jwt_secret {
+            if secret.len() < 32 {
+                return Err(AuthError::config(
+                    "JWT secret must be at least 32 characters for security. \
+                     Generate with: openssl rand -base64 32",
+                ));
+            }
+
+            // Check for common insecure patterns (but allow in test environments)
+            if !self.is_test_environment()
+                && (secret.contains("secret")
+                    || secret.contains("password")
+                    || secret.contains("123"))
+            {
+                return Err(AuthError::config(
+                    "JWT secret appears to contain common words or patterns. \
+                     Use a cryptographically secure random string.",
+                ));
+            }
+
+            // Warn if secret looks like it might be base64 but too short
+            if secret.len() < 44
+                && secret
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '+' || c == '/' || c == '=')
+            {
+                tracing::warn!(
+                    "JWT secret may be too short for optimal security. \
+                     Consider using at least 44 characters (32 bytes base64-encoded)."
+                );
+            }
+        } else if self.is_production_environment() {
+            return Err(AuthError::config(
+                "JWT secret is required for production environments. \
+                 Set JWT_SECRET environment variable or configure security.secret_key",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate production-specific security requirements
+    fn validate_production_security(&self) -> Result<()> {
+        // Require strong password policies in production
+        if self.security.min_password_length < 8 {
+            return Err(AuthError::config(
+                "Production environments require minimum password length of 8 characters",
+            ));
+        }
+
+        if !self.security.require_password_complexity {
+            tracing::warn!("Production deployment should enable password complexity requirements");
+        }
+
+        // Require secure cookies in production
+        if !self.security.secure_cookies {
+            return Err(AuthError::config(
+                "Production environments must use secure cookies (HTTPS required)",
+            ));
+        }
+
+        // Ensure rate limiting is enabled
+        if !self.rate_limiting.enabled {
+            tracing::warn!("Production deployment should enable rate limiting for security");
+        }
+
+        // Validate audit configuration for compliance
+        if !self.audit.enabled {
+            return Err(AuthError::config(
+                "Production environments require audit logging for compliance",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate storage configuration
+    fn validate_storage_config(&self) -> Result<()> {
+        match &self.storage {
+            StorageConfig::Memory => {
+                if self.is_production_environment() && !self.is_test_environment() {
+                    return Err(AuthError::config(
+                        "Memory storage is not suitable for production environments. \
+                         Use PostgreSQL, Redis, or MySQL storage.",
+                    ));
+                }
+            }
+            #[cfg(feature = "mysql-storage")]
+            StorageConfig::MySQL { .. } => {
+                tracing::warn!(
+                    "MySQL storage has known RSA vulnerability (RUSTSEC-2023-0071). \
+                     Consider using PostgreSQL for enhanced security."
+                );
+            }
+            _ => {} // PostgreSQL and Redis are production-ready
+        }
+
+        Ok(())
+    }
+
+    /// Detect production environment
+    fn is_production_environment(&self) -> bool {
+        // Check common production environment indicators
+        if let Ok(env) = std::env::var("ENVIRONMENT")
+            && (env.to_lowercase() == "production" || env.to_lowercase() == "prod")
+        {
+            return true;
+        }
+
+        if let Ok(env) = std::env::var("ENV")
+            && (env.to_lowercase() == "production" || env.to_lowercase() == "prod")
+        {
+            return true;
+        }
+
+        if let Ok(env) = std::env::var("NODE_ENV")
+            && env.to_lowercase() == "production"
+        {
+            return true;
+        }
+
+        if let Ok(env) = std::env::var("RUST_ENV")
+            && env.to_lowercase() == "production"
+        {
+            return true;
+        }
+
+        // Check for containerized environments
+        if std::env::var("KUBERNETES_SERVICE_HOST").is_ok() {
+            return true;
+        }
+
+        if std::env::var("DOCKER_CONTAINER").is_ok() {
+            return true;
+        }
+
+        false
+    }
+
+    /// Detect test environment
+    fn is_test_environment(&self) -> bool {
+        // Check if we're running in a test environment
+        cfg!(test)
+            || std::thread::current()
+                .name()
+                .is_some_and(|name| name.contains("test"))
+            || std::env::var("RUST_TEST").is_ok()
+            || std::env::var("ENVIRONMENT").as_deref() == Ok("test")
+            || std::env::var("ENV").as_deref() == Ok("test")
+            || std::env::args().any(|arg| arg.contains("test"))
     }
 }
 
