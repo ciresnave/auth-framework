@@ -1,7 +1,7 @@
 [package]
 description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
 name = "auth-framework"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 license = "MIT OR Apache-2.0"
