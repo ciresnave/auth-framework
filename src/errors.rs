@@ -809,6 +809,12 @@ impl actix_web::ResponseError for AuthError {
     }
 }
 
+impl From<toml::ser::Error> for AuthError {
+    fn from(error: toml::ser::Error) -> Self {
+        AuthError::Toml(toml::de::Error::custom(error.to_string()))
+    }
+}
+
 // Additional From implementations for admin tools
 impl From<Box<dyn std::error::Error + Send + Sync>> for AuthError {
     fn from(error: Box<dyn std::error::Error + Send + Sync>) -> Self {

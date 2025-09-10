@@ -18,8 +18,9 @@ async fn test_resource_hierarchy_works() {
     checker.add_resource_hierarchy("parent".to_string(), vec!["child".to_string()]);
 
     // Verify hierarchy exists
-    let children = checker.get_child_resources("parent");
-    let children = children.expect("parent should have child resources");
+    let children = checker
+        .get_child_resources("parent")
+        .expect("parent should have child resources");
     assert_eq!(children.len(), 1);
 
     // Test hierarchical permission check (without user assignment)
