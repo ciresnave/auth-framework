@@ -80,17 +80,15 @@ Enhancement suggestions are welcome! When proposing an enhancement:
 ```text
 auth-framework/
 ├── src/
-│   ├── auth.rs           # Main authentication framework
-│   ├── config.rs         # Configuration management
-│   ├── credentials.rs    # Credential types and handling
-│   ├── errors.rs         # Error types and handling
-│   ├── lib.rs           # Library entry point
-│   ├── methods.rs        # Authentication methods
-│   ├── permissions.rs    # Permission system
-│   ├── providers.rs      # OAuth providers
-│   ├── storage.rs        # Storage backends
-│   ├── tokens.rs         # Token management
-│   └── utils.rs          # Utility functions
+│   ├── auth.rs             # Core authentication framework
+│   ├── audit.rs            # Audit logging
+│   ├── authorization.rs    # Authorization logic
+│   ├── errors.rs           # Error types and handling
+│   ├── lib.rs              # Library entry point
+│   ├── permissions.rs      # Permission system
+│   ├── providers.rs        # OAuth providers
+│   ├── user_context.rs     # Per-request user context
+│   └── utils.rs            # Utility functions
 ├── examples/            # Example code
 └── tests/              # Integration tests
 ```

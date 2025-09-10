@@ -195,7 +195,7 @@ pub enum AuthError {
 
     /// TOML parsing errors
     #[error("TOML error: {0}")]
-    Toml(#[from] toml::ser::Error),
+    Toml(#[from] toml::de::Error),
 
     /// Prometheus metrics errors
     #[cfg(feature = "prometheus")]
