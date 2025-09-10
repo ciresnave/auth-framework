@@ -60,7 +60,7 @@ Our documentation follows the **CLEAR** framework:
 - **C**omplete: All necessary information is present
 - **L**ogical: Information is organized logically
 - **E**xact: Information is accurate and precise
-- **A**ccessible: Easy to find and understand
+- **A**ccessible: Easy to find and understand.
 - **R**elevant: Focused on user needs
 
 ### Quality Metrics
