@@ -291,7 +291,7 @@ impl SecureValidation {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::constant_time_compare;
+/// use auth_framework::security::secure_utils::constant_time_compare;
 ///
 /// let token1 = b"secure_token_value";
 /// let token2 = b"secure_token_value";
@@ -328,7 +328,7 @@ pub fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::generate_secure_token;
+/// use auth_framework::security::secure_utils::generate_secure_token;
 ///
 /// // Generate a 256-bit (32-byte) token
 /// let token = generate_secure_token(32).unwrap();
@@ -363,7 +363,7 @@ pub fn generate_secure_token(byte_length: usize) -> Result<String> {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::hash_password;
+/// use auth_framework::security::secure_utils::hash_password;
 ///
 /// let password = "user_password_123";
 /// let hash = hash_password(password).unwrap();
@@ -406,7 +406,7 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::{hash_password, verify_password};
+/// use auth_framework::security::secure_utils::{hash_password, verify_password};
 ///
 /// let password = "user_password_123";
 /// let hash = hash_password(password).unwrap();

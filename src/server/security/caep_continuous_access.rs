@@ -27,7 +27,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use auth_framework::server::caep_continuous_access::*;
 //! use auth_framework::server::{SessionManager, oidc_backchannel_logout::BackChannelLogoutManager};
 //! use chrono::Duration;

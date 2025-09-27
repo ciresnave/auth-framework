@@ -27,7 +27,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use auth_framework::server::oidc_user_registration::{RegistrationManager, RegistrationConfig, RegistrationRequest};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {

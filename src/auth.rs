@@ -83,19 +83,33 @@ pub struct UserInfo {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::{AuthFramework, AuthConfig};
+/// use auth_framework::authentication::credentials::Credential;
+/// use auth_framework::methods::passkey::PasskeyAuthMethod;
 ///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create framework with default configuration
 /// let config = AuthConfig::default();
-/// let auth = AuthFramework::new(config);
+/// let auth = AuthFramework::new(config).unwrap();
 ///
-/// // Register authentication methods
-/// auth.register_method("password", password_method);
-/// auth.register_method("oauth2", oauth2_method);
+/// // Create authentication methods
+/// # let passkey_config = auth_framework::methods::passkey::PasskeyConfig::default();
+/// # let token_manager = auth_framework::tokens::TokenManager::new_hmac(b"secret", "issuer", "audience");
+/// # let passkey_method = PasskeyAuthMethod::new(passkey_config, token_manager)?;
+///
+/// // Register authentication methods  
+/// # auth.register_method("passkey", Box::new(passkey_method));
 ///
 /// // Authenticate a user
-/// let result = auth.authenticate("password", credential, metadata).await?;
+/// let credential = Credential::Password {
+///     username: "user123".to_string(),
+///     password: "user_password".to_string()
+/// };
+/// let result = auth.authenticate("passkey", credential).await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Security Considerations
@@ -2333,7 +2347,12 @@ impl AuthFramework {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// use auth_framework::{AuthFramework, AuthConfig};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let auth_framework = AuthFramework::new(AuthConfig::default()).unwrap();
     /// let monitoring = auth_framework.get_monitoring_manager();
     ///
     /// // Use for health checks
@@ -2341,6 +2360,8 @@ impl AuthFramework {
     ///
     /// // Use for metrics collection
     /// let metrics = monitoring.get_performance_metrics().await;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_monitoring_manager(&self) -> Arc<crate::monitoring::MonitoringManager> {
         self.monitoring_manager.clone()
@@ -3013,7 +3034,19 @@ impl SecurityAuditStats {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # let security_stats = auth_framework::auth::SecurityAuditStats {
+    /// #     active_sessions: 100,
+    /// #     failed_logins_24h: 150,
+    /// #     successful_logins_24h: 1000,
+    /// #     unique_users_24h: 500,
+    /// #     token_issued_24h: 2000,
+    /// #     password_resets_24h: 10,
+    /// #     admin_actions_24h: 5,
+    /// #     security_alerts_24h: 6,
+    /// #     collection_timestamp: chrono::Utc::now(),
+    /// # };
+    /// # fn alert_security_team(_stats: &auth_framework::auth::SecurityAuditStats) {}
     /// if security_stats.requires_immediate_attention() {
     ///     // Trigger security alerts, notify administrators
     ///     alert_security_team(&security_stats);
@@ -3046,7 +3079,19 @@ impl SecurityAuditStats {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # let security_stats = auth_framework::auth::SecurityAuditStats {
+    /// #     active_sessions: 100,
+    /// #     failed_logins_24h: 150,
+    /// #     successful_logins_24h: 1000,
+    /// #     unique_users_24h: 500,
+    /// #     token_issued_24h: 2000,
+    /// #     password_resets_24h: 10,
+    /// #     admin_actions_24h: 5,
+    /// #     security_alerts_24h: 6,
+    /// #     collection_timestamp: chrono::Utc::now(),
+    /// # };
+    /// # fn notify_administrators(_alert: &str) {}
     /// if let Some(alert) = security_stats.security_alert_message() {
     ///     log::error!("Security Alert: {}", alert);
     ///     notify_administrators(&alert);

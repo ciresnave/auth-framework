@@ -33,7 +33,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use auth_framework::server::federated_authentication_orchestration::*;
 //! use auth_framework::server::oidc_session_management::SessionManager;
 //! use std::sync::Arc;

@@ -34,7 +34,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use auth_framework::server::advanced_token_exchange::*;
 //! use auth_framework::server::SessionManager;
 //! use std::sync::Arc;

@@ -25,23 +25,37 @@
 //!
 //! # Example Error Handling
 //!
-//! ```rust
+//! ```rust,no_run
 //! use auth_framework::{AuthFramework, AuthError};
+//! use auth_framework::authentication::credentials::Credential;
 //!
-//! match auth_framework.authenticate("password", credential, metadata).await {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let auth_framework = AuthFramework::quick_start().build().await?;
+//! # let credential = Credential::Password { 
+//! #     username: "user123".to_string(),
+//! #     password: "password".to_string() 
+//! # };
+//! # fn handle_success(_result: auth_framework::AuthResult) { }
+//! # fn respond_with_auth_failure() { }
+//! # fn respond_with_rate_limit(_message: &str) { }
+//! # fn respond_with_system_error() { }
+//! match auth_framework.authenticate("password", credential).await {
 //!     Ok(result) => handle_success(result),
 //!     Err(AuthError::InvalidCredential { credential_type, message }) => {
 //!         log::warn!("Invalid {} credential: {}", credential_type, message);
 //!         respond_with_auth_failure()
 //!     },
-//!     Err(AuthError::RateLimited { retry_after, .. }) => {
-//!         respond_with_rate_limit(retry_after)
+//!     Err(AuthError::RateLimit { message }) => {
+//!         respond_with_rate_limit(&message)
 //!     },
 //!     Err(e) => {
 //!         log::error!("Authentication system error: {}", e);
 //!         respond_with_system_error()
 //!     }
 //! }
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Security Considerations
@@ -98,9 +112,15 @@ pub type Result<T, E = AuthError> = std::result::Result<T, E>;
 ///
 /// # Enhanced Error Handling
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::AuthError;
 ///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let auth_result: Result<auth_framework::AuthResult, AuthError> = Err(AuthError::InvalidCredential {
+/// #     credential_type: "password".to_string(),
+/// #     message: "Invalid password".to_string(),
+/// # });
 /// // Enhanced error handling with contextual help
 /// match auth_result {
 ///     Err(AuthError::Configuration { message, help, docs_url, .. }) => {
@@ -112,14 +132,15 @@ pub type Result<T, E = AuthError> = std::result::Result<T, E>;
 ///             eprintln!("📖 See: {}", docs);
 ///         }
 ///     },
-///     Err(AuthError::InvalidCredential { credential_type, message, suggested_fix, .. }) => {
+///     Err(AuthError::InvalidCredential { credential_type, message }) => {
 ///         eprintln!("🔐 Invalid {}: {}", credential_type, message);
-///         if let Some(fix) = suggested_fix {
-///             eprintln!("🔧 Suggested fix: {}", fix);
-///         }
 ///     },
-///     // ... handle other error types
+///     _ => {
+///         // ... handle other error types
+///     }
 /// }
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Security Notes

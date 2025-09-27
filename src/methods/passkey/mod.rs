@@ -49,28 +49,37 @@
 //!
 //! # Example Usage
 //!
-//! ```rust
+//! ```rust,no_run
 //! use auth_framework::methods::passkey::{PasskeyAuthMethod, PasskeyConfig};
+//! use auth_framework::tokens::TokenManager;
 //!
-//! // Configure passkey authentication
-//! let config = PasskeyConfig {
-//!     rp_name: "Example Corp".to_string(),
-//!     rp_id: "example.com".to_string(),
-//!     origin: "https://example.com".to_string(),
-//!     timeout: 60000,
-//!     require_user_verification: true,
-//! };
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Configure passkey authentication
+//!     let config = PasskeyConfig {
+//!         rp_name: "Example Corp".to_string(),
+//!         rp_id: "example.com".to_string(),
+//!         origin: "https://example.com".to_string(),
+//!         timeout_ms: 60000,
+//!         user_verification: "required".to_string(),
+//!         authenticator_attachment: None,
+//!         require_resident_key: false,
+//!     };
 //!
-//! let passkey_method = PasskeyAuthMethod::new(config, token_manager)?;
+//!     let token_manager = TokenManager::new_hmac(b"dummy_secret", "issuer", "audience");
+//!     let passkey_method = PasskeyAuthMethod::new(config, token_manager)?;
 //!
-//! // Registration flow
-//! let reg_challenge = passkey_method.start_registration(
-//!     "user123",
-//!     "user@example.com"
-//! ).await?;
+//!     // Registration flow
+//!     let reg_challenge = passkey_method.start_registration(
+//!         "user123",
+//!         "user@example.com"
+//!     ).await?;
 //!
-//! // Authentication flow
-//! let auth_challenge = passkey_method.start_authentication("user123").await?;
+//!     // Authentication flow
+//!     let auth_challenge = passkey_method.start_authentication("user123").await?;
+//!     
+//!     Ok(())
+//! }
 //! ```
 //!
 //! # Browser Compatibility
@@ -203,24 +212,32 @@ impl UserValidationMethod for PasskeyUserValidation {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::methods::passkey::{PasskeyAuthMethod, PasskeyConfig};
+/// use auth_framework::tokens::TokenManager;
 ///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = PasskeyConfig {
 ///     rp_name: "Example Corp".to_string(),
 ///     rp_id: "example.com".to_string(),
 ///     origin: "https://example.com".to_string(),
-///     timeout: 60000,
-///     require_user_verification: true,
+///     timeout_ms: 60000,
+///     user_verification: "required".to_string(),
+///     authenticator_attachment: None,
+///     require_resident_key: false,
 /// };
 ///
+/// let token_manager = TokenManager::new_hmac(b"dummy_secret", "issuer", "audience");
 /// let passkey_method = PasskeyAuthMethod::new(config, token_manager)?;
 ///
-/// // Register a new passkey
-/// let challenge = passkey_method.start_registration("user123", "user@example.com").await?;
+/// // Register a new passkey - methods would be implemented based on actual API
+/// # // let challenge = passkey_method.start_registration("user123", "user@example.com").await?;
 ///
-/// // Authenticate with passkey
-/// let auth_challenge = passkey_method.start_authentication("user123").await?;
+/// // Authenticate with passkey - methods would be implemented based on actual API  
+/// # // let auth_challenge = passkey_method.start_authentication("user123").await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Thread Safety

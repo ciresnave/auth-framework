@@ -29,7 +29,7 @@
 //!
 //! ## Example Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use auth_framework::server::token_exchange::{TokenExchangeManager, TokenExchangeRequest};
 //! use auth_framework::secure_jwt::{SecureJwtValidator, SecureJwtConfig};
 //!

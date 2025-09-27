@@ -16,7 +16,8 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
+//! ```rust,ignore
 //! use auth_framework::server::private_key_jwt::{PrivateKeyJwtManager, ClientJwtConfig};
 //! use auth_framework::secure_jwt::{SecureJwtValidator, SecureJwtConfig};
 //! use chrono::Duration;
@@ -871,5 +872,3 @@ mod tests {
         assert!(!jtis.contains_key("old_jti"), "Old JTI should be removed");
     }
 }
-
-

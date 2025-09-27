@@ -15,11 +15,15 @@
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Quick setup with security preset
 //! let auth = AuthFramework::quick_start()
 //!     .jwt_auth_from_env()
 //!     .security_level(SecurityPreset::HighSecurity)
 //!     .build().await?;
+//! # Ok(())
+//! # }
 //!
 //! // Or apply to existing configuration
 //! let config = AuthConfig::new()
@@ -34,6 +38,8 @@
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Validate security configuration
 //! let issues = SecurityPreset::HighSecurity
 //!     .validate_environment()
@@ -43,6 +49,8 @@
 //!     println!("⚠️  {}: {}", issue.severity, issue.description);
 //!     println!("💡 Fix: {}", issue.suggestion);
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::{

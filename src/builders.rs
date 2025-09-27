@@ -10,17 +10,21 @@
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Simple JWT auth with environment variables
 //! let auth = AuthFramework::quick_start()
 //!     .jwt_auth_from_env()
 //!     .build().await?;
 //!
-//! // Web app with database
-//! let auth = AuthFramework::quick_start()
+//! // Web app with database  
+//! let auth2 = AuthFramework::quick_start()
 //!     .jwt_auth("your-secret-key")
 //!     .with_postgres("postgresql://...")
 //!     .with_axum()
 //!     .build().await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Preset Configurations
@@ -30,10 +34,14 @@
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
 //!
-//! let auth = AuthFramework::new()
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let auth = AuthFramework::builder()
 //!     .security_preset(SecurityPreset::HighSecurity)
 //!     .performance_preset(PerformancePreset::LowLatency)
 //!     .build().await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Use Case Templates
@@ -43,13 +51,17 @@
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Configure for web application
 //! let auth = AuthFramework::for_use_case(UseCasePreset::WebApp)
 //!     .customize(|config| {
-//!         config.token_lifetime(hours(24))
-//!               .enable_sessions(true)
+//!         config.token_lifetime = hours(24);
+//!         config
 //!     })
 //!     .build().await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::{

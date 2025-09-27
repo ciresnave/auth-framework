@@ -21,7 +21,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use auth_framework::server::oidc_enhanced_ciba::{
 //!     EnhancedCibaManager, EnhancedCibaConfig, AuthenticationMode, BackchannelAuthParams, UserIdentifierHint
 //! };

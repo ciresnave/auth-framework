@@ -36,14 +36,19 @@
 //! use auth_framework::auth_modular::AuthFramework;
 //! use auth_framework::config::AuthConfig;
 //!
-//! // Create modular framework
-//! let config = AuthConfig::default();
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create modular framework with JWT secret
+//! let mut config = AuthConfig::default();
+//! config.security.secret_key = Some("a_very_strong_secret_of_32_plus_chars_123".to_string());
 //! let auth = AuthFramework::new(config);
 //!
 //! // Access individual managers
 //! let mfa_manager = auth.mfa_manager();
 //! let session_manager = auth.session_manager();
 //! let user_manager = auth.user_manager();
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Migration from Monolithic Framework

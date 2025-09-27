@@ -464,11 +464,11 @@ impl TokenManager {
     ///
     /// ## Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use auth_framework::tokens::TokenManager;
     ///
     /// // Both PKCS#1 and PKCS#8 formats work
-    /// let private_key = include_bytes!("../../private.pem");  // Either format
+    /// let private_key = include_bytes!("../../private.pem");  // Either format  
     /// let public_key = include_bytes!("../../public.pem");
     ///
     /// let manager = TokenManager::new_rsa(

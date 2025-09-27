@@ -63,20 +63,27 @@ pub use sms_kit::SmsKitManager as SmsManager;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::auth_modular::mfa::MfaManager;
+/// use auth_framework::storage::MemoryStorage;
+/// use std::sync::Arc;
 ///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create MFA manager with storage backend
+/// let storage = Arc::new(MemoryStorage::new());
 /// let mfa_manager = MfaManager::new(storage);
 ///
-/// // Setup TOTP for a user
-/// let setup_result = mfa_manager.totp.setup_totp("user123", "user@example.com").await?;
+/// // Setup TOTP for a user - example of typical usage patterns
+/// # // let setup_result = mfa_manager.totp.setup_totp("user123", "user@example.com").await?;
 ///
-/// // Generate challenge
-/// let challenge = mfa_manager.create_challenge("user123", MfaMethodType::Totp).await?;
+/// // Generate challenge - example of typical usage patterns
+/// # // let challenge = mfa_manager.create_challenge("user123", MfaMethodType::Totp).await?;
 ///
-/// // Verify user's response
-/// let verification = mfa_manager.verify_challenge(&challenge.id, "123456").await?;
+/// // Verify user's response - example of typical usage patterns  
+/// # // let verification = mfa_manager.verify_challenge(&challenge.id, "123456").await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Thread Safety

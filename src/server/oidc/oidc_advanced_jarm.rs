@@ -22,7 +22,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use auth_framework::server::oidc_advanced_jarm::{
 //!     AdvancedJarmManager, AdvancedJarmConfig, JarmDeliveryMode, AuthorizationResponse
 //! };

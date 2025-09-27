@@ -1,8 +1,8 @@
 {
   "plan_id": "test_plan",
   "status": "Completed",
-  "started_at": "2025-08-24T16:02:04.135969900Z",
-  "completed_at": "2025-08-24T16:02:04.264694200Z",
+  "started_at": "2025-09-27T12:18:40.121881300Z",
+  "completed_at": "2025-09-27T12:18:40.225564900Z",
   "phases_completed": [
     "test_phase"
   ],

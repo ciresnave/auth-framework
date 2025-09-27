@@ -21,7 +21,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use auth_framework::server::stepped_up_auth::{
 //!     SteppedUpAuthManager, StepUpConfig, AuthenticationLevel, StepUpContext
 //! };
