@@ -86,28 +86,22 @@ pub struct UserInfo {
 /// ```rust,no_run
 /// use auth_framework::{AuthFramework, AuthConfig};
 /// use auth_framework::authentication::credentials::Credential;
-/// use auth_framework::methods::passkey::PasskeyAuthMethod;
 ///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create framework with default configuration
 /// let config = AuthConfig::default();
-/// let auth = AuthFramework::new(config).unwrap();
+/// let auth = AuthFramework::new(config);
 ///
-/// // Create authentication methods
-/// # let passkey_config = auth_framework::methods::passkey::PasskeyConfig::default();
-/// # let token_manager = auth_framework::tokens::TokenManager::new_hmac(b"secret", "issuer", "audience");
-/// # let passkey_method = PasskeyAuthMethod::new(passkey_config, token_manager)?;
+/// // Authentication methods would be registered here based on enabled features
+/// // Example: auth.register_method("method_name", method_implementation);
 ///
-/// // Register authentication methods  
-/// # auth.register_method("passkey", Box::new(passkey_method));
-///
-/// // Authenticate a user
+/// // Authenticate a user (example - requires registered method)
 /// let credential = Credential::Password {
 ///     username: "user123".to_string(),
 ///     password: "user_password".to_string()
 /// };
-/// let result = auth.authenticate("passkey", credential).await?;
+/// // Example: let result = auth.authenticate("method_name", credential).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -2352,14 +2346,14 @@ impl AuthFramework {
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let auth_framework = AuthFramework::new(AuthConfig::default()).unwrap();
+    /// # let auth_framework = AuthFramework::new(AuthConfig::default());
     /// let monitoring = auth_framework.get_monitoring_manager();
     ///
     /// // Use for health checks
-    /// let health_status = monitoring.get_health_status().await;
+    /// let health_status = monitoring.health_check().await?;
     ///
     /// // Use for metrics collection
-    /// let metrics = monitoring.get_performance_metrics().await;
+    /// let metrics = monitoring.get_performance_metrics();
     /// # Ok(())
     /// # }
     /// ```

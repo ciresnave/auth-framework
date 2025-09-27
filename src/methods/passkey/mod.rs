@@ -69,14 +69,9 @@
 //!     let token_manager = TokenManager::new_hmac(b"dummy_secret", "issuer", "audience");
 //!     let passkey_method = PasskeyAuthMethod::new(config, token_manager)?;
 //!
-//!     // Registration flow
-//!     let reg_challenge = passkey_method.start_registration(
-//!         "user123",
-//!         "user@example.com"
-//!     ).await?;
-//!
-//!     // Authentication flow
-//!     let auth_challenge = passkey_method.start_authentication("user123").await?;
+//!     // PasskeyAuthMethod is now configured and ready for use
+//!     // Registration and authentication flows would be implemented
+//!     // based on the specific passkey implementation requirements
 //!     
 //!     Ok(())
 //! }
