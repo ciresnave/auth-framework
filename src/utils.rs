@@ -25,9 +25,9 @@ pub mod password {
     pub fn generate_password(length: usize) -> String {
         const CHARSET: &[u8] =
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         (0..length)
-            .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+            .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
             .collect()
     }
 
@@ -45,6 +45,10 @@ pub mod password {
 
         if password.len() >= 12 {
             score += 1;
+        }
+
+        if password.len() >= 16 {
+            score += 1; // Extra point for very long passwords
         }
 
         // Character variety checks
@@ -122,10 +126,10 @@ pub mod crypto {
     pub fn generate_random_string(length: usize) -> String {
         const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         (0..length)
             .map(|_| {
-                let idx = rng.gen_range(0..CHARSET.len());
+                let idx = rng.random_range(0..CHARSET.len());
                 CHARSET[idx] as char
             })
             .collect()
@@ -135,7 +139,7 @@ pub mod crypto {
     pub fn generate_random_bytes(length: usize) -> Vec<u8> {
         use rand::RngCore;
         let mut bytes = vec![0u8; length];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        rand::rng().fill_bytes(&mut bytes);
         bytes
     }
 
@@ -222,6 +226,14 @@ pub mod time {
 pub mod string {
     /// Mask a string for safe logging.
     pub fn mask_string(input: &str, visible_chars: usize) -> String {
+        if input.is_empty() {
+            return String::new();
+        }
+
+        if visible_chars >= input.len() {
+            return input.to_string();
+        }
+
         if input.len() <= visible_chars * 2 {
             "*".repeat(input.len().min(8))
         } else {
@@ -245,9 +257,51 @@ pub mod string {
 
     /// Check if a string is a valid email address (basic check).
     pub fn is_valid_email(email: &str) -> bool {
-        email.contains('@') && email.contains('.') && email.len() > 5
-    }
+        if email.len() <= 5 || !email.contains('@') || !email.contains('.') {
+            return false;
+        }
 
+        // Must not start or end with @
+        if email.starts_with('@') || email.ends_with('@') {
+            return false;
+        }
+
+        // Must not contain spaces
+        if email.contains(' ') {
+            return false;
+        }
+
+        // Must have exactly one @
+        if email.matches('@').count() != 1 {
+            return false;
+        }
+
+        let parts: Vec<&str> = email.split('@').collect();
+        let local = parts[0];
+        let domain = parts[1];
+
+        // Local part must not be empty
+        if local.is_empty() {
+            return false;
+        }
+
+        // Domain must contain a dot and not be empty
+        if domain.is_empty() || !domain.contains('.') {
+            return false;
+        }
+
+        // Domain must not start or end with dots
+        if domain.starts_with('.') || domain.ends_with('.') {
+            return false;
+        }
+
+        // Domain must not contain consecutive dots
+        if domain.contains("..") {
+            return false;
+        }
+
+        true
+    }
     /// Normalize an email address.
     pub fn normalize_email(email: &str) -> String {
         email.trim().to_lowercase()
@@ -311,19 +365,8 @@ pub mod validation {
 
     /// Validate email format.
     pub fn validate_email(email: &str) -> Result<()> {
-        if email.is_empty() {
-            return Err(AuthError::validation("Email cannot be empty"));
-        }
-
-        if !string::is_valid_email(email) {
-            return Err(AuthError::validation("Invalid email format"));
-        }
-
-        if email.len() > 254 {
-            return Err(AuthError::validation("Email address is too long"));
-        }
-
-        Ok(())
+        use crate::security::secure_utils::SecureValidation;
+        SecureValidation::validate_email(email).map(|_| ())
     }
 
     /// Validate password according to policy.
@@ -542,6 +585,354 @@ mod tests {
         // Different user should still be allowed
         assert!(limiter.is_allowed("user2"));
     }
+
+    #[test]
+    fn test_password_hashing_edge_cases() {
+        // Test very long password
+        let long_password = "a".repeat(1000);
+        let hash = password::hash_password(&long_password).unwrap();
+        assert!(password::verify_password(&long_password, &hash).unwrap());
+
+        // Test password with special characters
+        let special_password = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+        let hash = password::hash_password(special_password).unwrap();
+        assert!(password::verify_password(special_password, &hash).unwrap());
+
+        // Test Unicode password
+        let unicode_password = "пароль测试🔒";
+        let hash = password::hash_password(unicode_password).unwrap();
+        assert!(password::verify_password(unicode_password, &hash).unwrap());
+
+        // Test different passwords produce different hashes
+        let password1 = "password123";
+        let password2 = "password124";
+        let hash1 = password::hash_password(password1).unwrap();
+        let hash2 = password::hash_password(password2).unwrap();
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_password_strength_comprehensive() {
+        let test_cases = vec![
+            ("", password::PasswordStrengthLevel::Weak),
+            ("a", password::PasswordStrengthLevel::Weak),
+            ("password", password::PasswordStrengthLevel::Weak),
+            ("password123", password::PasswordStrengthLevel::Weak), // Common password
+            ("mypassword123", password::PasswordStrengthLevel::Medium), // Not in common list
+            ("MyPassword123", password::PasswordStrengthLevel::Medium),
+            ("MyPassword123!", password::PasswordStrengthLevel::Strong),
+            (
+                "VerySecureP@ssw0rd2024!",
+                password::PasswordStrengthLevel::VeryStrong,
+            ),
+        ];
+
+        for (password, expected_min_level) in test_cases {
+            let strength = password::check_password_strength(password);
+            // Check that we meet at least the minimum expected level
+            match expected_min_level {
+                password::PasswordStrengthLevel::Weak => {
+                    // All levels are acceptable
+                }
+                password::PasswordStrengthLevel::Medium => {
+                    assert!(
+                        !matches!(strength.level, password::PasswordStrengthLevel::Weak),
+                        "Password '{}' should be at least Medium strength",
+                        password
+                    );
+                }
+                password::PasswordStrengthLevel::Strong => {
+                    assert!(
+                        matches!(
+                            strength.level,
+                            password::PasswordStrengthLevel::Strong
+                                | password::PasswordStrengthLevel::VeryStrong
+                        ),
+                        "Password '{}' should be at least Strong",
+                        password
+                    );
+                }
+                password::PasswordStrengthLevel::VeryStrong => {
+                    assert!(
+                        matches!(strength.level, password::PasswordStrengthLevel::VeryStrong),
+                        "Password '{}' should be VeryStrong",
+                        password
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_crypto_utils_edge_cases() {
+        // Test random string generation with different lengths
+        let lengths = vec![0, 1, 8, 16, 32, 64, 128];
+        for length in lengths {
+            let random_string = crypto::generate_random_string(length);
+            assert_eq!(
+                random_string.len(),
+                length,
+                "Generated string should have requested length"
+            );
+
+            if length > 0 {
+                // Generate another string and ensure they're different (extremely high probability)
+                let another_string = crypto::generate_random_string(length);
+                if length > 4 {
+                    // For very short strings, collision is possible but unlikely
+                    assert_ne!(
+                        random_string, another_string,
+                        "Random strings should be different"
+                    );
+                }
+            }
+        }
+
+        // Test SHA256 with various inputs
+        let test_data = vec![
+            b"".as_slice(),
+            b"a",
+            b"hello world",
+            &[0u8; 1000], // Large data
+            "unicode: 测试 🔒".as_bytes(),
+        ];
+
+        for data in test_data {
+            let hash = crypto::sha256_hex(data);
+            assert_eq!(hash.len(), 64, "SHA256 hex should always be 64 characters");
+
+            // Same input should produce same hash
+            let hash2 = crypto::sha256_hex(data);
+            assert_eq!(hash, hash2, "Same input should produce same hash");
+        }
+    }
+
+    #[test]
+    fn test_string_utils_comprehensive() {
+        // Test masking with various inputs
+        let masking_tests = vec![
+            ("", 0),
+            ("a", 1),
+            ("ab", 1),
+            ("secret", 2),
+            ("verylongsecret", 3),
+            ("short", 10), // reveal_chars > length
+        ];
+
+        for (input, reveal_chars) in masking_tests {
+            let masked = string::mask_string(input, reveal_chars);
+            if input.is_empty() {
+                assert_eq!(masked, "");
+            } else if reveal_chars >= input.len() {
+                assert_eq!(masked, input, "Should not mask if reveal_chars >= length");
+            } else if input.len() > reveal_chars * 2 {
+                // Only test character preservation for longer strings
+                assert!(
+                    masked.starts_with(&input[..reveal_chars]),
+                    "Should preserve first {} characters",
+                    reveal_chars
+                );
+                assert!(masked.contains("*"), "Should contain masking characters");
+            } else {
+                // For short strings, just check it contains masking characters
+                assert!(
+                    masked.contains("*"),
+                    "Should contain masking characters for short strings"
+                );
+            }
+        }
+
+        // Test email validation comprehensively
+        let valid_emails = vec![
+            "user@example.com",
+            "user.name@example.com",
+            "user+tag@example.co.uk",
+            "user123@example-domain.com",
+            "a@b.co",
+            "test_email@domain.info",
+        ];
+
+        let invalid_emails = vec![
+            "",
+            "user",
+            "@example.com",
+            "user@",
+            "user@@example.com",
+            "user@example",
+            "user @example.com",
+            "user@exam ple.com",
+            "user@.example.com",
+            "user@example..com",
+        ];
+
+        for email in valid_emails {
+            assert!(
+                string::is_valid_email(email),
+                "Should accept valid email: {}",
+                email
+            );
+        }
+
+        for email in invalid_emails {
+            assert!(
+                !string::is_valid_email(email),
+                "Should reject invalid email: {}",
+                email
+            );
+        }
+    }
+
+    #[test]
+    fn test_validation_comprehensive() {
+        // Test username validation edge cases
+        let valid_usernames = vec!["user", "user123", "user_name", "user-name", "abc"];
+
+        let invalid_usernames = vec![
+            "",
+            "us",          // too short
+            "a",           // too short
+            "user name",   // space
+            "user@domain", // @
+            "user\0name",  // null
+            "_invalid",    // starts with underscore
+        ];
+
+        for username in valid_usernames {
+            assert!(
+                validation::validate_username(username).is_ok(),
+                "Should accept valid username: {}",
+                username
+            );
+        }
+
+        for username in invalid_usernames {
+            assert!(
+                validation::validate_username(username).is_err(),
+                "Should reject invalid username: {}",
+                username
+            );
+        }
+
+        // Test email validation
+        let valid_emails = vec![
+            "test@example.com",
+            "user.name@domain.co.uk",
+            "user+tag@example.org",
+        ];
+
+        let invalid_emails = vec!["", "invalid", "@example.com", "user@", "user@@example.com"];
+
+        for email in valid_emails {
+            assert!(
+                validation::validate_email(email).is_ok(),
+                "Should accept valid email: {}",
+                email
+            );
+        }
+
+        for email in invalid_emails {
+            assert!(
+                validation::validate_email(email).is_err(),
+                "Should reject invalid email: {}",
+                email
+            );
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_edge_cases() {
+        // Test with zero limit
+        let zero_limiter = rate_limit::RateLimiter::new(0, std::time::Duration::from_secs(60));
+        assert!(!zero_limiter.is_allowed("user1")); // Should always deny
+
+        // Test with very short window
+        let short_limiter = rate_limit::RateLimiter::new(1, std::time::Duration::from_millis(10));
+        assert!(short_limiter.is_allowed("user1"));
+        assert!(!short_limiter.is_allowed("user1")); // Should be blocked
+
+        // Wait for window to expire
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(short_limiter.is_allowed("user1")); // Should be allowed again
+    }
+
+    #[test]
+    fn test_rate_limiter_multiple_users() {
+        let limiter = rate_limit::RateLimiter::new(2, std::time::Duration::from_secs(60));
+
+        // Each user should have independent limits
+        assert!(limiter.is_allowed("user1"));
+        assert!(limiter.is_allowed("user1"));
+        assert!(!limiter.is_allowed("user1")); // user1 exhausted
+
+        assert!(limiter.is_allowed("user2"));
+        assert!(limiter.is_allowed("user2"));
+        assert!(!limiter.is_allowed("user2")); // user2 exhausted
+
+        // user3 should still be allowed
+        assert!(limiter.is_allowed("user3"));
+        assert!(limiter.is_allowed("user3"));
+        assert!(!limiter.is_allowed("user3")); // user3 exhausted
+    }
+
+    #[test]
+    fn test_crypto_random_uniqueness() {
+        // Generate multiple random strings and ensure they're all unique
+        let mut strings = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let random_string = crypto::generate_random_string(16);
+            assert!(
+                !strings.contains(&random_string),
+                "Generated duplicate random string"
+            );
+            strings.insert(random_string);
+        }
+    }
+
+    #[test]
+    fn test_password_hash_uniqueness() {
+        // Same password should produce different hashes due to salt
+        let password = "test_password_123";
+        let mut hashes = std::collections::HashSet::new();
+
+        for _ in 0..10 {
+            let hash = password::hash_password(password).unwrap();
+            assert!(
+                !hashes.contains(&hash),
+                "Password hashes should be unique due to salt"
+            );
+            hashes.insert(hash.clone());
+
+            // Each hash should still verify correctly
+            assert!(password::verify_password(password, &hash).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_duration_serialization() {
+        use chrono::Duration;
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct TestStruct {
+            duration: Duration,
+            name: String,
+        }
+
+        let test = TestStruct {
+            duration: Duration::minutes(30),
+            name: "test".to_string(),
+        };
+
+        // Test serialization - this should work without issues
+        let json = serde_json::to_string(&test).expect("Failed to serialize Duration");
+        println!("Serialized Duration: {}", json);
+
+        // Test deserialization - this should also work
+        let deserialized: TestStruct =
+            serde_json::from_str(&json).expect("Failed to deserialize Duration");
+        println!("Deserialized Duration: {:?}", deserialized);
+
+        assert_eq!(test, deserialized);
+        assert_eq!(test.duration, Duration::minutes(30));
+    }
 }
-
-

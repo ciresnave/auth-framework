@@ -308,13 +308,18 @@ impl IPSecurityUtils {
 
         match maxminddb::Reader::open_readfile(&db_path) {
             Ok(reader) => match reader.lookup::<maxminddb::geoip2::City>(ip_addr) {
-                Ok(city) => {
+                Ok(Some(city)) => {
                     if let Some(location) = city.location
-                        && let (Some(lat), Some(lon)) = (location.latitude, location.longitude) {
-                            log::debug!("MaxMind lookup for {}: lat={}, lon={}", ip, lat, lon);
-                            return Some((lat, lon));
-                        }
+                        && let (Some(lat), Some(lon)) = (location.latitude, location.longitude)
+                    {
+                        log::debug!("MaxMind lookup for {}: lat={}, lon={}", ip, lat, lon);
+                        return Some((lat, lon));
+                    }
                     log::debug!("MaxMind lookup for {} returned no coordinates", ip);
+                    None
+                }
+                Ok(None) => {
+                    log::debug!("MaxMind lookup for {} returned no data", ip);
                     None
                 }
                 Err(e) => {
@@ -499,5 +504,3 @@ mod tests {
         }
     }
 }
-
-

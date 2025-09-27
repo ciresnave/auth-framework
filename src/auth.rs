@@ -271,6 +271,36 @@ impl AuthFramework {
         })
     }
 
+    /// Replace the storage backend with a custom implementation.
+    ///
+    /// This will swap the internal storage Arc so subsequent operations use
+    /// the provided storage instance. Implementations that rely on a
+    /// different concrete storage may need additional reconfiguration by the
+    /// caller.
+    pub fn replace_storage(&mut self, storage: std::sync::Arc<dyn AuthStorage>) {
+        self.storage = storage;
+    }
+
+    /// Convenience constructor that creates a framework with a custom storage instance.
+    pub fn new_with_storage(config: AuthConfig, storage: std::sync::Arc<dyn AuthStorage>) -> Self {
+        let mut framework = Self::new(config);
+        framework.replace_storage(storage);
+        framework
+    }
+
+    /// Create and initialize a framework with a custom storage instance.
+    ///
+    /// This validates configuration during `initialize()` and returns an
+    /// initialized framework or an error.
+    pub async fn new_initialized_with_storage(
+        config: AuthConfig,
+        storage: std::sync::Arc<dyn AuthStorage>,
+    ) -> Result<Self> {
+        let mut framework = Self::new_with_storage(config, storage);
+        framework.initialize().await?;
+        Ok(framework)
+    }
+
     /// Register an authentication method.
     pub fn register_method(&mut self, name: impl Into<String>, method: AuthMethodEnum) {
         let name = name.into();
@@ -1415,7 +1445,7 @@ impl AuthFramework {
         use ring::hmac;
 
         // Decode base32 secret
-        let secret_bytes = base32::decode(base32::Alphabet::RFC4648 { padding: true }, secret)
+        let secret_bytes = base32::decode(base32::Alphabet::Rfc4648 { padding: true }, secret)
             .ok_or_else(|| AuthError::InvalidInput("Invalid TOTP secret format".to_string()))?;
 
         // Create HMAC key for TOTP (using SHA1 as per RFC)
@@ -1631,7 +1661,7 @@ impl AuthFramework {
                 .map_err(|_| AuthError::crypto("Failed to generate secure random bytes"))?;
 
             // Convert to base32 for human readability
-            let code = base32::encode(base32::Alphabet::RFC4648 { padding: false }, &bytes);
+            let code = base32::encode(base32::Alphabet::Rfc4648 { padding: false }, &bytes);
 
             // Format as XXXX-XXXX-XXXX-XXXX for readability
             let formatted_code = format!(
@@ -1715,7 +1745,7 @@ impl AuthFramework {
 
         // Convert to base32 for TOTP compatibility
         Ok(base32::encode(
-            base32::Alphabet::RFC4648 { padding: true },
+            base32::Alphabet::Rfc4648 { padding: true },
             &hash[0..20], // Use first 160 bits (20 bytes)
         ))
     }
@@ -1861,7 +1891,7 @@ impl AuthFramework {
         type HmacSha1 = Hmac<Sha1>;
 
         // Decode base32 secret to bytes
-        let key_bytes = decode(Alphabet::RFC4648 { padding: true }, secret)
+        let key_bytes = decode(Alphabet::Rfc4648 { padding: true }, secret)
             .ok_or_else(|| AuthError::validation("Invalid base32 secret"))?;
 
         // Convert time counter to bytes (big-endian)

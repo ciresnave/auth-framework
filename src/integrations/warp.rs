@@ -1,8 +1,7 @@
-use warp::hyper;
 /// Advanced middleware hooks (request/response, error mapping) stub
 pub trait AdvancedMiddlewareHooks {
-    fn on_request(&self, _req: &warp::http::Request<hyper::Body>) {}
-    fn on_response(&self, _res: &warp::http::Response<hyper::Body>) {}
+    fn on_request(&self, _req: &warp::http::Request<warp::hyper::body::Incoming>) {}
+    fn on_response(&self, _res: &warp::http::Response<warp::hyper::body::Incoming>) {}
     fn on_error(&self, _err: &AuthError) {}
 }
 /// Warp integration for auth-framework.
@@ -445,5 +444,3 @@ mod tests {
         assert_eq!(resp.status(), 200);
     }
 }
-
-

@@ -347,7 +347,7 @@ async fn users_handler(State(_state): State<AppState>) -> impl IntoResponse {
 
 #[cfg(feature = "web-gui")]
 async fn create_user_handler(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Form(form): Form<CreateUserForm>,
 ) -> impl IntoResponse {
     println!("Creating user: {} with admin: {:?}", form.email, form.admin);
@@ -364,9 +364,7 @@ async fn create_user_handler(
 
     // 2. Hash the password securely
     use argon2::password_hash::rand_core::OsRng;
-    use argon2::{
-        Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString,
-    };
+    use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
 
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
@@ -393,7 +391,7 @@ async fn create_user_handler(
     println!("User created successfully: {}", user_data);
 
     // 5. Redirect with success message
-    Redirect::to("/users?success=user_created")
+    Redirect::to("/users?success=user_created").into_response()
 }
 
 #[cfg(feature = "web-gui")]
@@ -619,5 +617,3 @@ async fn api_security_handler(State(_state): State<AppState>) -> impl IntoRespon
 
     axum::Json(events)
 }
-
-

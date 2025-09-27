@@ -46,14 +46,14 @@
 //!     .with_state(auth);
 //! ```
 
-use crate::{AuthError, AuthFramework, AuthResult, AuthToken, permissions::Permission};
+use crate::{AuthError, AuthFramework, AuthToken};
 use axum::{
     Json, Router,
     extract::{FromRequestParts, Request, State},
     http::{StatusCode, header::AUTHORIZATION, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
-    routing::{MethodRouter, get, post},
+    routing::post,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -293,7 +293,7 @@ async fn logout_handler(
 }
 
 async fn refresh_handler(
-    State(auth): State<Arc<AuthFramework>>,
+    State(_auth): State<Arc<AuthFramework>>,
     // Extract refresh token from request
 ) -> Result<impl IntoResponse, AuthError> {
     // This would implement token refresh logic
@@ -358,7 +358,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         // Extract auth framework from state
-        let auth = Arc::<AuthFramework>::from_request_parts(parts, state)
+        let _auth = Arc::<AuthFramework>::from_request_parts(parts, state)
             .await
             .map_err(|_| AuthError::internal("Failed to extract auth framework from state"))?;
 

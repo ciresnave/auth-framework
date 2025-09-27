@@ -838,13 +838,13 @@ See the `examples/` directory for complete client examples:
 
 Choose the deployment that fits your needs:
 
-| Deployment Type | Use Case | Storage | Features |
-|---|---|---|---|
-| **Development** | Local testing | In-memory | Relaxed security, test clients |
-| **Single Server** | Small-medium apps | PostgreSQL + Redis | Standard production features |
-| **High Availability** | Large applications | PostgreSQL cluster + Redis | Load balancing, shared state |
-| **Enterprise** | Fortune 500 | Encrypted storage + HSM | Advanced security, compliance |
-| **Microservices** | Service mesh | Service discovery | Health checks, circuit breakers |
+| Deployment Type       | Use Case           | Storage                    | Features                        |
+| --------------------- | ------------------ | -------------------------- | ------------------------------- |
+| **Development**       | Local testing      | In-memory                  | Relaxed security, test clients  |
+| **Single Server**     | Small-medium apps  | PostgreSQL + Redis         | Standard production features    |
+| **High Availability** | Large applications | PostgreSQL cluster + Redis | Load balancing, shared state    |
+| **Enterprise**        | Fortune 500        | Encrypted storage + HSM    | Advanced security, compliance   |
+| **Microservices**     | Service mesh       | Service discovery          | Health checks, circuit breakers |
 
 ### 🚀 Quick Start Server
 

@@ -61,12 +61,13 @@ use crate::{
 use std::time::Duration;
 
 /// Main builder for AuthFramework with fluent API
-#[derive(Debug)]
 pub struct AuthBuilder {
     config: AuthConfig,
     security_preset: Option<SecurityPreset>,
     performance_preset: Option<PerformancePreset>,
     use_case_preset: Option<UseCasePreset>,
+    /// Optional custom storage instance supplied by caller (Arc<dyn AuthStorage>)
+    custom_storage: Option<std::sync::Arc<dyn crate::storage::AuthStorage>>,
 }
 
 /// Quick start builder for common authentication setups
@@ -144,6 +145,7 @@ impl AuthBuilder {
             security_preset: None,
             performance_preset: None,
             use_case_preset: None,
+            custom_storage: None,
         }
     }
 
@@ -223,7 +225,12 @@ impl AuthBuilder {
         self.config.validate()?;
 
         // Create and initialize framework
+        // If a custom storage was provided via the builder, we'll construct a framework
+        // and replace its storage before initialization so managers use the custom storage.
         let mut framework = AuthFramework::new(self.config);
+        if let Some(storage) = self.custom_storage.take() {
+            framework.replace_storage(storage);
+        }
         framework.initialize().await?;
 
         Ok(framework)
@@ -548,6 +555,21 @@ impl JwtBuilder {
     }
 }
 
+// Provide a custom Debug implementation for AuthBuilder that omits the
+// `custom_storage` field (trait object) to avoid requiring Debug on all
+// storage implementations.
+impl std::fmt::Debug for AuthBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthBuilder")
+            .field("config", &"<AuthConfig>")
+            .field("security_preset", &self.security_preset)
+            .field("performance_preset", &self.performance_preset)
+            .field("use_case_preset", &self.use_case_preset)
+            .field("custom_storage", &"<custom storage omitted>")
+            .finish()
+    }
+}
+
 /// OAuth2 configuration builder
 pub struct OAuth2Builder {
     parent: AuthBuilder,
@@ -610,6 +632,22 @@ pub struct StorageBuilder {
 impl StorageBuilder {
     fn new(parent: AuthBuilder) -> Self {
         Self { parent }
+    }
+
+    /// Use a custom storage instance (already initialized) instead of configuring via enums.
+    ///
+    /// Example:
+    ///
+    /// let storage = Arc::new(MySurrealStorage::connect(...).await?);
+    /// let auth = AuthFramework::builder()
+    ///     .with_storage()
+    ///     .custom(storage)
+    ///     .done()
+    ///     .build()
+    ///     .await?;
+    pub fn custom(mut self, storage: std::sync::Arc<dyn crate::storage::AuthStorage>) -> Self {
+        self.parent.custom_storage = Some(storage);
+        self
     }
 
     /// Configure in-memory storage

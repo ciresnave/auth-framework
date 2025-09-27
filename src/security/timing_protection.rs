@@ -47,7 +47,7 @@ pub fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
 /// to determine success/failure patterns or extract sensitive information.
 pub async fn random_delay(base_delay_ms: u64, max_random_ms: u64) {
     let base_delay = Duration::from_millis(base_delay_ms);
-    let random_delay = Duration::from_millis(rand::thread_rng().gen_range(0..max_random_ms));
+    let random_delay = Duration::from_millis(rand::rng().random_range(0..max_random_ms));
     let total_delay = base_delay + random_delay;
 
     tokio::time::sleep(total_delay).await;
@@ -171,5 +171,3 @@ mod tests {
         assert!(elapsed >= Duration::from_millis(50));
     }
 }
-
-

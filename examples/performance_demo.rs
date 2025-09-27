@@ -18,8 +18,7 @@ use auth_framework::observability::{ObservabilityConfig, ObservabilityManager};
 
 #[cfg(feature = "event-sourcing")]
 use auth_framework::architecture::{
-    ConfigHotReloadManager, EventSourcingConfig, EventSourcingManager, TieredStorageConfig,
-    TieredStorageManager,
+    EventSourcingManager, TieredStorageConfig, TieredStorageManager,
 };
 
 use std::{sync::Arc, time::Duration};
@@ -205,7 +204,7 @@ async fn demo_observability() -> Result<()> {
 /// Demonstrate architecture enhancement features
 #[cfg(feature = "event-sourcing")]
 async fn demo_architecture_enhancements() -> Result<()> {
-    use auth_framework::architecture::{ConfigChangeEvent, ConfigChangeType, DomainEvent};
+    use auth_framework::architecture::DomainEvent;
     use auth_framework::storage::memory::InMemoryStorage;
     use std::collections::HashMap;
     use std::time::SystemTime;
@@ -231,7 +230,7 @@ async fn demo_architecture_enhancements() -> Result<()> {
 
     // Demonstrate event sourcing
     println!("  • Setting up event sourcing system...");
-    let mut event_sourcing = EventSourcingManager::new();
+    let event_sourcing = EventSourcingManager::new();
 
     // Create domain events
     for i in 0..10 {
@@ -260,7 +259,7 @@ async fn demo_architecture_enhancements() -> Result<()> {
     println!("  • Testing configuration hot-reload...");
 
     // Create a temporary config file
-    let config_content = serde_json::json!({
+    let _config_content = serde_json::json!({
         "auth": {
             "token_lifetime": 3600,
             "max_attempts": 5

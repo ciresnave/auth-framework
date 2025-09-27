@@ -1,372 +1,378 @@
 [package]
-description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
-name = "auth-framework"
-version = "0.4.2"
-edition = "2024"
-authors = ["Eric Evans <ciresnave@gmail.com>"]
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/ciresnave/auth-framework"
-keywords = ["auth", "authentication", "authorization", "oauth", "jwt"]
-categories = ["authentication", "web-programming"]
-readme = "README.md"
-documentation = "https://docs.rs/auth-framework"
+  authors       = ["Eric Evans <ciresnave@gmail.com>"]
+  categories    = ["authentication", "web-programming"]
+  description   = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
+  documentation = "https://docs.rs/auth-framework"
+  edition       = "2024"
+  keywords      = ["auth", "authentication", "authorization", "jwt", "oauth"]
+  license       = "MIT OR Apache-2.0"
+  name          = "auth-framework"
+  readme        = "README.md"
+  repository    = "https://github.com/ciresnave/auth-framework"
+  rust-version  = "1.88"
+  version       = "0.4.2"
 
 [[bin]]
-name = "auth-framework"
-path = "src/bin/admin.rs"
-required-features = ["admin-binary"]
+  name              = "auth-framework"
+  path              = "src/bin/admin.rs"
+  required-features = ["admin-binary"]
 
 [dependencies]
-# Async runtime
-tokio = { version = "1.0", features = ["full"] }
+  # Async runtime
+  tokio = { version = "1.0", features = ["full"] }
 
-# JWT handling
-jsonwebtoken = "9.2"
+  # JWT handling
+  jsonwebtoken = "9.2"
 
-# HTTP client for OAuth flows
-reqwest = { version = "0.12", features = ["json"] }
+  # HTTP client for OAuth flows
+  reqwest = { version = "0.12", features = ["json"] }
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+  # Serialization
+  serde      = { version = "1.0", features = ["derive"] }
+  serde_json = "1.0"
 
-# Time handling
-chrono = { version = "0.4", features = ["serde"] }
+  # Time handling
+  chrono = { version = "0.4", features = ["serde"] }
 
-# UUID generation
-uuid = { version = "1.0", features = ["v4", "serde"] }
+  # UUID generation
+  uuid = { version = "1.0", features = ["serde", "v4"] }
 
-# Additional format support for migration
-toml = "0.9"
-serde_yaml = "0.9"
+  # Additional format support for migration
+  serde_yaml = "0.9"
+  toml       = "0.9"
 
-# Configuration management
-config = { version = "0.15", default-features = false, features = [
-  "toml",
-  "yaml",
-  "json",
-  "ron",
-  "ini",
-] }
+  # Configuration management
+  config = { version = "0.15", default-features = false, features = [
+    "ini",
+    "json",
+    "ron",
+    "toml",
+    "yaml",
+  ] }
 
-# Error handling
-thiserror = "2.0"
-anyhow = "1.0"
+  # Error handling
+  anyhow    = "1.0"
+  thiserror = "2.0"
 
-# Async trait support
-async-trait = "0.1"
+  # Async trait support
+  async-trait = "0.1"
 
-# Cryptography
-ring = "0.17"
-rand = "0.9"
+  # Cryptography
+  rand = "0.9"
+  ring = "0.17"
 
-# Time handling
-time = { version = "0.3", features = ["serde", "parsing", "formatting"] }
+  # Time handling
+  time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 
-# Logging and tracing
-log = "0.4"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+  # Logging and tracing
+  log                = "0.4"
+  tracing            = "0.1"
+  tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# URL handling
-url = "2.4"
+  # URL handling
+  url = "2.4"
 
-# Base64 encoding
-base64 = "0.22"
+  # Base64 encoding
+  base64 = "0.22"
 
-# MaxMind GeoIP2 for IP geolocation
-maxminddb = "0.26"
+  # MaxMind GeoIP2 for IP geolocation
+  maxminddb = "0.26"
 
-# Threat intelligence integration
-ipnetwork = "0.21"            # For CIDR network parsing
-csv = "1.3"                   # For parsing threat feeds
-tokio-cron-scheduler = "0.14" # For automated feed updates
-dirs = "6.0"                  # For finding config directories
+  # Threat intelligence integration
+  csv                  = "1.3"  # For parsing threat feeds
+  dirs                 = "6.0"  # For finding config directories
+  ipnetwork            = "0.21" # For CIDR network parsing
+  tokio-cron-scheduler = "0.14" # For automated feed updates
 
-# Hex encoding
-hex = "0.4"
+  # Hex encoding
+  hex = "0.4"
 
-# SHA-2 hashing (for OAuth 2.0 PKCE and other server features)
-sha2 = "0.10"
+  # SHA-2 hashing (for OAuth 2.0 PKCE and other server features)
+  sha2 = "0.10"
 
-# SHA-1 hashing (for WS-Security password digest)
-sha1 = "0.10"
+  # SHA-1 hashing (for WS-Security password digest)
+  sha1 = "0.10"
 
-# HMAC for TOTP and other authentication schemes
-hmac = "0.12"
+  # HMAC for TOTP and other authentication schemes
+  hmac = "0.12"
 
-# Password hashing
-argon2 = "0.5"
-bcrypt = "0.17"
+  # Password hashing
+  argon2 = "0.5"
+  bcrypt = "0.17"
 
-# Enterprise RBAC system
-role-system = { version = "1.1.1", optional = true, features = [
-  "async",
-  "persistence",
-  "audit",
-] }
+  # Enterprise RBAC system
+  role-system = { version = "1.1.1", optional = true, features = [
+    "async",
+    "audit",
+    "persistence",
+  ] }
 
-# Optional Redis support
-redis = { version = "0.32", optional = true, features = ["aio", "tokio-comp"] }
+  # Optional Redis support
+  redis = { version = "0.32", optional = true, features = [
+    "aio",
+    "tokio-comp",
+  ] }
 
-# Rate limiting
-governor = "0.10"
-nonzero_ext = "0.3"
+  # Rate limiting
+  governor    = "0.10"
+  nonzero_ext = "0.3"
 
-# TOTP authentication
-totp-lite = "2.0"
+  # TOTP authentication
+  totp-lite = "2.0"
 
-# Base32 encoding for TOTP
-base32 = "0.5"
+  # Base32 encoding for TOTP
+  base32 = "0.5"
 
-# URL encoding utilities
-urlencoding = "2.1"
+  # URL encoding utilities
+  urlencoding = "2.1"
 
-# X.509 certificate parsing for OAuth 2.0 Mutual TLS (RFC 8705)
-x509-parser = "0.17"
+  # X.509 certificate parsing for OAuth 2.0 Mutual TLS (RFC 8705)
+  x509-parser = "0.17"
 
-# X.509 certificate chain validation (production-grade)
-rustls-webpki = "0.103"
+  # X.509 certificate chain validation (production-grade)
+  rustls-webpki = "0.103"
 
-# Fast CRC32 calculation
-crc32fast = "1.3"
+  # Fast CRC32 calculation
+  crc32fast = "1.3"
 
-# Memory protection and zeroization
-zeroize = { version = "1.8", features = ["zeroize_derive"] }
+  # Memory protection and zeroization
+  zeroize = { version = "1.8", features = ["zeroize_derive"] }
 
-# Constant-time comparisons
-subtle = "2.5"
+  # Constant-time comparisons
+  subtle = "2.5"
 
-# High-performance concurrent data structures
-dashmap = "6.1"
+  # High-performance concurrent data structures
+  dashmap = "6.1"
 
-# Secret management
-secrecy = { version = "0.10", features = ["serde"] }
+  # Secret management
+  secrecy = { version = "0.10", features = ["serde"] }
 
-# Performance and Observability enhancements
-prometheus = { version = "0.14", optional = true }
-opentelemetry = { version = "0.30", features = ["trace"], optional = true }
-opentelemetry_sdk = { version = "0.30", features = ["trace"], optional = true }
-opentelemetry-jaeger = { version = "0.22", optional = true }
-opentelemetry-prometheus = { version = "0.29", optional = true }
-opentelemetry-otlp = { version = "0.30", optional = true }
-tracing-opentelemetry = { version = "0.31", optional = true }
-metrics = { version = "0.24", optional = true }
-metrics-prometheus = { version = "0.11", optional = true }
+  # Performance and Observability enhancements
+  metrics = { version = "0.24", optional = true }
+  metrics-prometheus = { version = "0.11", optional = true }
+  opentelemetry = { version = "0.30", features = ["trace"], optional = true }
+  opentelemetry-jaeger = { version = "0.22", optional = true }
+  opentelemetry-otlp = { version = "0.30", optional = true }
+  opentelemetry-prometheus = { version = "0.29", optional = true }
+  opentelemetry_sdk = { version = "0.30", features = [
+    "trace",
+  ], optional = true }
+  prometheus = { version = "0.14", optional = true }
+  tracing-opentelemetry = { version = "0.31", optional = true }
 
-# Event sourcing and streaming
-tokio-stream = { version = "0.1", optional = true }
-futures = { version = "0.3", optional = true }
-serde_derive = "1.0"
+  # Event sourcing and streaming
+  futures      = { version = "0.3", optional = true }
+  serde_derive = "1.0"
+  tokio-stream = { version = "0.1", optional = true }
 
-# Configuration hot-reload
-notify = { version = "8.2", optional = true }
+  # Configuration hot-reload
+  notify = { version = "8.2", optional = true }
 
-# Memory pool optimization
-object-pool = { version = "0.6", optional = true }
-bumpalo = { version = "3.14", optional = true }
+  # Memory pool optimization
+  bumpalo     = { version = "3.14", optional = true }
+  object-pool = { version = "0.6", optional = true }
 
-# OAuth device flows (optional enhanced device flow support)
-oauth-device-flows = { version = "0.1", optional = true }
+  # OAuth device flows (optional enhanced device flow support)
+  oauth-device-flows = { version = "0.1", optional = true }
 
-# OpenID Connect support (optional) - Updated to fix RSA dependency
-openidconnect = { version = "4.0", optional = true }
+  # OpenID Connect support (optional) - Updated to fix RSA dependency
+  openidconnect = { version = "4.0", optional = true }
 
-# Missing dependencies for 100% completion
-ldap3 = { version = "0.11", optional = true }
-otpauth = { version = "0.5", optional = true }               # Updated to latest available
-unicode-normalization = { version = "0.1", optional = true }
+  # Missing dependencies for 100% completion
+  ldap3                 = { version = "0.11", optional = true }
+  otpauth               = { version = "0.5", optional = true }  # Updated to latest available
+  unicode-normalization = { version = "0.1", optional = true }
 
-# CLI dependencies
-clap = { version = "4.0", features = ["derive"], optional = true }
-rpassword = { version = "7.0", optional = true }
+  # CLI dependencies
+  clap      = { version = "4.0", features = ["derive"], optional = true }
+  rpassword = { version = "7.0", optional = true }
 
-# TUI dependencies
-ratatui = { version = "0.29", optional = true }   # Updated to latest version
-crossterm = { version = "0.29", optional = true } # Updated to maintain compatibility
-tui-input = { version = "0.14", optional = true }
+  # TUI dependencies
+  crossterm = { version = "0.29", optional = true } # Updated to maintain compatibility
+  ratatui   = { version = "0.29", optional = true } # Updated to latest version
+  tui-input = { version = "0.14", optional = true }
 
-# Additional utility dependencies
-indicatif = { version = "0.18", optional = true }
-console = { version = "0.16", optional = true }
-dialoguer = { version = "0.12", optional = true }
-colored = { version = "3.0", optional = true }
+  # Additional utility dependencies
+  colored   = { version = "3.0", optional = true }
+  console   = { version = "0.16", optional = true }
+  dialoguer = { version = "0.12", optional = true }
+  indicatif = { version = "0.18", optional = true }
 
-# Web framework dependencies
-futures-util = { version = "0.3", optional = true }
+  # Web framework dependencies
+  futures-util = { version = "0.3", optional = true }
 
-# Template engine for web GUI
-askama = { version = "0.14", optional = true }
-# Note: askama_axum was removed in askama 0.13+ - axum integration is now built into askama
+  # Template engine for web GUI
+  askama = { version = "0.14", optional = true }
+  # Note: askama_axum was removed in askama 0.13+ - axum integration is now built into askama
 
-# XML processing for SAML
-quick-xml = { version = "0.38", features = ["serialize"], optional = true }
+  # XML processing for SAML
+  quick-xml = { version = "0.38", features = ["serialize"], optional = true }
 
-# Passkey/WebAuthn dependencies
-passkey = { version = "0.4", optional = true }        # Updated to fix idna dependency
-coset = { version = "0.3", optional = true }
-passkey-client = { version = "0.4", optional = true } # Updated to fix idna dependency
+  # Passkey/WebAuthn dependencies
+  coset          = { version = "0.3", optional = true }
+  passkey        = { version = "0.4", optional = true } # Updated to fix idna dependency
+  passkey-client = { version = "0.4", optional = true } # Updated to fix idna dependency
 
-# Web framework integrations (optional)
-warp = { version = "0.4", features = ["server", "test"], optional = true }
-actix-web = { version = "4.0", optional = true }
-axum = { version = "0.8", features = ["macros"], optional = true }
-tower = { version = "0.5", features = ["util"], optional = true }
-tower-http = { version = "0.6", features = [
-  "cors",
-  "trace",
-  "fs",
-], optional = true }
-serde_urlencoded = { version = "0.7", optional = true }
+  # Web framework integrations (optional)
+  actix-web = { version = "4.0", optional = true }
+  axum = { version = "0.8", features = ["macros"], optional = true }
+  serde_urlencoded = { version = "0.7", optional = true }
+  tower = { version = "0.5", features = ["util"], optional = true }
+  tower-http = { version = "0.6", features = [
+    "cors",
+    "fs",
+    "trace",
+  ], optional = true }
+  warp = { version = "0.4", features = ["server", "test"], optional = true }
 
-# Database integrations (optional) - Updated sqlx to fix RSA vulnerability
-sqlx = { version = "0.8", features = [
-  "runtime-tokio-rustls",
-  "postgres",
-  "mysql",
-  "chrono",
-  "uuid",
-], optional = true }
-tokio-postgres = { version = "0.7", optional = true }
+  # Database integrations (optional) - Updated sqlx to fix RSA vulnerability
+  sqlx = { version = "0.8", features = [
+    "chrono",
+    "mysql",
+    "postgres",
+    "runtime-tokio-rustls",
+    "uuid",
+  ], optional = true }
+  tokio-postgres = { version = "0.7", optional = true }
 
-# Testing infrastructure (optional)
-testcontainers = { version = "0.25", optional = true }
-html-escape = "0.2.13"
+  # Testing infrastructure (optional)
+  html-escape    = "0.2.13"
+  testcontainers = { version = "0.25", optional = true }
 
-# SMSKit dependencies for next-gen SMS support
-sms-core = { version = "0.2", optional = true }
-sms-plivo = { version = "0.2", optional = true }
-sms-twilio = { version = "0.2", optional = true }
-sms-aws-sns = { version = "0.2", optional = true }
-sms-web-generic = { version = "0.2", optional = true }
-sms-web-axum = { version = "0.2", optional = true }
+  # SMSKit dependencies for next-gen SMS support
+  sms-aws-sns     = { version = "0.2", optional = true }
+  sms-core        = { version = "0.2", optional = true }
+  sms-plivo       = { version = "0.2", optional = true }
+  sms-twilio      = { version = "0.2", optional = true }
+  sms-web-axum    = { version = "0.2", optional = true }
+  sms-web-generic = { version = "0.2", optional = true }
 
 [dev-dependencies]
-tokio-test = "0.4"
-mockito = "1.2"
-test-log = "0.2"
-criterion = { version = "0.7", features = ["html_reports", "async_tokio"] }
-fastrand = "2.0"
-axum-test = "18.0"
-tempfile = "3.21"
+  axum-test  = "18.0"
+  criterion  = { version = "0.7", features = ["async_tokio", "html_reports"] }
+  fastrand   = "2.0"
+  mockito    = "1.2"
+  tempfile   = "3.21"
+  test-log   = "0.2"
+  tokio-test = "0.4"
 
 [features]
-default = [
-  "postgres-storage",
-  "enhanced-rbac",    # Re-enabled for comprehensive authorization testing
-] # PostgreSQL recommended
-redis-storage = ["redis"]
-postgres-storage = ["sqlx", "tokio-postgres"]
-mysql-storage = ["sqlx"]
-testing = []
-enhanced-device-flow = ["oauth-device-flows"]
-openid-connect = ["openidconnect"]
-# Enhanced cryptography features
-enhanced-crypto = ["chacha20poly1305", "x25519-dalek", "ed25519-dalek"]
-fips-compliance = ["aws-lc-rs"]
-distributed-rate-limiting = ["redis"]
+  default = [
+    "enhanced-rbac",    # Re-enabled for comprehensive authorization testing
+    "postgres-storage",
+  ] # PostgreSQL recommended
+  enhanced-device-flow = ["oauth-device-flows"]
+  mysql-storage = ["sqlx"]
+  openid-connect = ["openidconnect"]
+  postgres-storage = ["sqlx", "tokio-postgres"]
+  redis-storage = ["redis"]
+  testing = []
+  # Enhanced cryptography features
+  distributed-rate-limiting = ["redis"]
+  enhanced-crypto           = ["chacha20poly1305", "ed25519-dalek", "x25519-dalek"]
+  fips-compliance           = ["aws-lc-rs"]
 
-# Enterprise RBAC with role-system v1.0
-enhanced-rbac = ["role-system", "api-server"]
+  # Enterprise RBAC with role-system v1.0
+  enhanced-rbac = ["api-server", "role-system"]
 
-# Additional features referenced in code
-passkeys = ["passkey", "coset", "passkey-client"]
-saml = ["quick-xml"]
-api-server = ["axum", "tower", "tower-http"]
-cli = [
-  "clap",
-  "rpassword",
-  "tokio-postgres",
-  "indicatif",
-  "console",
-  "dialoguer",
-  "colored",
-]
-tui = ["ratatui", "crossterm", "tui-input", "indicatif", "console", "colored"]
-web-gui = ["axum", "tower", "tower-http", "askama", "serde_urlencoded"]
-admin-binary = ["cli", "tui", "web-gui"]
-docker-tests = ["testcontainers"]
-axum-integration = ["axum", "tower", "tower-http", "serde_urlencoded"]
-actix-integration = ["actix-web", "futures-util"]
-warp-integration = ["warp"]
-ldap-auth = ["ldap3"]
-otp-auth = ["otpauth"]
-unicode-support = ["unicode-normalization"]
+  # Additional features referenced in code
+  actix-integration = ["actix-web", "futures-util"]
+  admin-binary = ["cli", "tui", "web-gui"]
+  api-server = ["axum", "tower", "tower-http"]
+  axum-integration = ["axum", "serde_urlencoded", "tower", "tower-http"]
+  cli = [
+    "clap",
+    "colored",
+    "console",
+    "dialoguer",
+    "indicatif",
+    "rpassword",
+    "tokio-postgres",
+  ]
+  docker-tests = ["testcontainers"]
+  ldap-auth = ["ldap3"]
+  otp-auth = ["otpauth"]
+  passkeys = ["coset", "passkey", "passkey-client"]
+  saml = ["quick-xml"]
+  tui = ["colored", "console", "crossterm", "indicatif", "ratatui", "tui-input"]
+  unicode-support = ["unicode-normalization"]
+  warp-integration = ["warp"]
+  web-gui = ["askama", "axum", "serde_urlencoded", "tower", "tower-http"]
 
-# Enhanced performance and observability
-performance-optimization = [
-  "object-pool",
-  "bumpalo",
-  "prometheus",
-  "metrics",
-  "metrics-prometheus",
-]
-enhanced-observability = [
-  "opentelemetry",
-  "opentelemetry-jaeger",
-  "opentelemetry-prometheus",
-  "opentelemetry-otlp",
-  "tracing-opentelemetry",
-  "tokio-stream",
-  "futures",
-]
-event-sourcing = ["tokio-stream", "futures", "notify"]
-config-hot-reload = ["notify"]
-tiered-storage = ["redis", "postgres-storage"]
+  # Enhanced performance and observability
+  config-hot-reload = ["notify"]
+  enhanced-observability = [
+    "futures",
+    "opentelemetry",
+    "opentelemetry-jaeger",
+    "opentelemetry-otlp",
+    "opentelemetry-prometheus",
+    "tokio-stream",
+    "tracing-opentelemetry",
+  ]
+  event-sourcing = ["futures", "notify", "tokio-stream"]
+  performance-optimization = [
+    "bumpalo",
+    "metrics",
+    "metrics-prometheus",
+    "object-pool",
+    "prometheus",
+  ]
+  tiered-storage = ["postgres-storage", "redis"]
 
-# SMSKit integration (next-generation SMS support)
-smskit = [
-  "sms-core",
-  "sms-plivo",
-  "sms-twilio",
-  "sms-aws-sns",
-  "sms-web-generic",
-]
-smskit-web-axum = ["smskit", "sms-web-axum", "axum-integration"]
+  # SMSKit integration (next-generation SMS support)
+  smskit = [
+    "sms-aws-sns",
+    "sms-core",
+    "sms-plivo",
+    "sms-twilio",
+    "sms-web-generic",
+  ]
+  smskit-web-axum = ["axum-integration", "sms-web-axum", "smskit"]
 
-# Enhanced cryptography dependencies
-[dependencies.aes-gcm]
-version = "0.10"
-optional = false # Enable by default for encryption support
+  # Enhanced cryptography dependencies
+  [dependencies.aes-gcm]
+    optional = false  # Enable by default for encryption support
+    version  = "0.10"
 
-[dependencies.chacha20poly1305]
-version = "0.10"
-optional = true
+  [dependencies.chacha20poly1305]
+    optional = true
+    version  = "0.10"
 
-[dependencies.x25519-dalek]
-version = "2.0"
-optional = true
+  [dependencies.x25519-dalek]
+    optional = true
+    version  = "2.0"
 
-[dependencies.ed25519-dalek]
-version = "2.1"
-features = ["rand_core"]
-optional = true
+  [dependencies.ed25519-dalek]
+    features = ["rand_core"]
+    optional = true
+    version  = "2.1"
 
-[dependencies.aws-lc-rs]
-version = "1.8"
-features = ["aws-lc-sys"]
-optional = true
+  [dependencies.aws-lc-rs]
+    features = ["aws-lc-sys"]
+    optional = true
+    version  = "1.8"
 
-[dependencies.parking_lot]
-version = "0.12"
+  [dependencies.parking_lot]
+    version = "0.12"
 
-[dependencies.getrandom]
-version = "0.3"
-features = ["std"]
+  [dependencies.getrandom]
+    features = ["std"]
+    version  = "0.3"
 
 [[bench]]
-name = "auth_performance"
-harness = false
+  harness = false
+  name    = "auth_performance"
 
 [[example]]
-name = "performance_demo"
-required-features = [
-  "performance-optimization",
-  "enhanced-observability",
-  "event-sourcing",
-]
+  name = "performance_demo"
+  required-features = [
+    "enhanced-observability",
+    "event-sourcing",
+    "performance-optimization",
+  ]
 
 [[example]]
-name = "complete_rest_api_server"
-path = "examples/complete_rest_api_server.rs"
-required-features = ["api-server"]
+  name              = "complete_rest_api_server"
+  path              = "examples/complete_rest_api_server.rs"
+  required-features = ["api-server"]

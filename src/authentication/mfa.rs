@@ -165,7 +165,7 @@ impl TotpProvider {
             crate::errors::AuthError::crypto("Failed to generate secure TOTP secret".to_string())
         })?;
         Ok(base32::encode(
-            base32::Alphabet::RFC4648 { padding: true },
+            base32::Alphabet::Rfc4648 { padding: true },
             &secret,
         ))
     }
@@ -189,7 +189,7 @@ impl TotpProvider {
             return Err(AuthError::validation("TOTP secret cannot be empty"));
         }
 
-        let secret_bytes = base32::decode(base32::Alphabet::RFC4648 { padding: true }, secret)
+        let secret_bytes = base32::decode(base32::Alphabet::Rfc4648 { padding: true }, secret)
             .ok_or_else(|| AuthError::validation("Invalid TOTP secret"))?;
 
         let time_step = time_step.unwrap_or_else(|| {
@@ -225,7 +225,7 @@ impl TotpProvider {
     /// Verify TOTP code with time window tolerance
     pub fn verify_code(&self, secret: &str, code: &str, time_window: Option<u64>) -> Result<bool> {
         // First validate the secret by trying to decode it
-        let _secret_bytes = base32::decode(base32::Alphabet::RFC4648 { padding: true }, secret)
+        let _secret_bytes = base32::decode(base32::Alphabet::Rfc4648 { padding: true }, secret)
             .ok_or_else(|| AuthError::validation("Invalid TOTP secret"))?;
 
         let current_time_step = if let Some(time) = time_window {
@@ -313,13 +313,13 @@ pub struct BackupCodesProvider;
 impl BackupCodesProvider {
     /// Generate backup codes
     pub fn generate_codes(count: u8) -> Vec<String> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         (0..count)
             .map(|_| {
                 format!(
                     "{:04}-{:04}",
-                    rng.gen_range(1000..9999),
-                    rng.gen_range(1000..9999)
+                    rng.random_range(1000..9999),
+                    rng.random_range(1000..9999)
                 )
             })
             .collect()
@@ -663,9 +663,9 @@ impl<S: MfaStorage> MfaManager<S> {
 
 /// Generate a numeric code of specified length
 fn generate_numeric_code(length: u8) -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..length)
-        .map(|_| rng.gen_range(0..10).to_string())
+        .map(|_| rng.random_range(0..10).to_string())
         .collect()
 }
 
@@ -735,5 +735,3 @@ mod tests {
         assert_eq!(mask_email("user@example.com"), "u***@example.com");
     }
 }
-
-

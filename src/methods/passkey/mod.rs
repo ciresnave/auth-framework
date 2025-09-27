@@ -580,8 +580,23 @@ impl AuthMethod for PasskeyAuthMethod {
                     );
 
                     // Use advanced verification methods for production security
-                    let public_key_jwk = registration.public_key_jwk.clone();
-                    let stored_counter = registration.signature_counter;
+                    // Parse the stored passkey data to get the required information
+                    let passkey_data: serde_json::Value =
+                        serde_json::from_str(&registration.passkey_data).map_err(|e| {
+                            AuthError::InvalidCredential {
+                                credential_type: "passkey".to_string(),
+                                message: format!("Failed to parse stored passkey data: {}", e),
+                            }
+                        })?;
+
+                    let public_key_jwk = passkey_data
+                        .get("public_key")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let stored_counter = passkey_data
+                        .get("signature_counter")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
 
                     // Generate expected challenge (in production, use session-stored challenge)
                     let expected_challenge = b"production_challenge_placeholder"; // Production: use session challenge
@@ -605,8 +620,31 @@ impl AuthMethod for PasskeyAuthMethod {
 
                             // Update counter to prevent replay attacks
                             let mut updated_registration = registration.clone();
-                            updated_registration.signature_counter =
-                                verification_result.new_counter;
+
+                            // Update the passkey data with the new counter
+                            let mut passkey_data: serde_json::Value = serde_json::from_str(
+                                &updated_registration.passkey_data,
+                            )
+                            .map_err(|e| AuthError::InvalidCredential {
+                                credential_type: "passkey".to_string(),
+                                message: format!("Failed to parse stored passkey data: {}", e),
+                            })?;
+
+                            passkey_data["signature_counter"] = serde_json::Value::Number(
+                                serde_json::Number::from(verification_result.new_counter),
+                            );
+
+                            updated_registration.passkey_data =
+                                serde_json::to_string(&passkey_data).map_err(|e| {
+                                    AuthError::InvalidCredential {
+                                        credential_type: "passkey".to_string(),
+                                        message: format!(
+                                            "Failed to serialize updated passkey data: {}",
+                                            e
+                                        ),
+                                    }
+                                })?;
+
                             updated_registration.last_used = Some(SystemTime::now());
 
                             {

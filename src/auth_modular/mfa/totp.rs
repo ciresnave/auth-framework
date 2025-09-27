@@ -71,7 +71,7 @@ impl TotpManager {
         use ring::hmac;
 
         // Decode base32 secret
-        let secret_bytes = base32::decode(base32::Alphabet::RFC4648 { padding: true }, secret)
+        let secret_bytes = base32::decode(base32::Alphabet::Rfc4648 { padding: true }, secret)
             .ok_or_else(|| AuthError::InvalidRequest("Invalid TOTP secret format".to_string()))?;
 
         // Create HMAC key for TOTP (using SHA1 as per RFC)
@@ -156,7 +156,7 @@ impl TotpManager {
 
             // Convert to base32 for TOTP compatibility
             let secret = base32::encode(
-                base32::Alphabet::RFC4648 { padding: true },
+                base32::Alphabet::Rfc4648 { padding: true },
                 &hash[0..20], // Use first 160 bits (20 bytes)
             );
 
@@ -176,5 +176,3 @@ impl TotpManager {
         }
     }
 }
-
-

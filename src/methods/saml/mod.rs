@@ -630,12 +630,33 @@ impl AuthMethod for SamlAuthMethod {
         if self.config.entity_id.is_empty() {
             return Err(AuthError::Configuration {
                 message: "SAML entity_id cannot be empty".to_string(),
+                source: None,
+                help: Some("Set a valid entity_id in the SAML configuration".to_string()),
+                docs_url: Some(
+                    "https://docs.rs/auth-framework/latest/auth_framework/methods/saml/"
+                        .to_string(),
+                ),
+                suggested_fix: Some(
+                    "Add entity_id = \"your-service-provider-id\" to SAML config".to_string(),
+                ),
             });
         }
 
         if self.config.acs_url.is_empty() {
             return Err(AuthError::Configuration {
                 message: "SAML acs_url cannot be empty".to_string(),
+                source: None,
+                help: Some(
+                    "Set a valid Assertion Consumer Service URL in the SAML configuration"
+                        .to_string(),
+                ),
+                docs_url: Some(
+                    "https://docs.rs/auth-framework/latest/auth_framework/methods/saml/"
+                        .to_string(),
+                ),
+                suggested_fix: Some(
+                    "Add acs_url = \"https://your-domain.com/saml/acs\" to SAML config".to_string(),
+                ),
             });
         }
 
@@ -790,5 +811,3 @@ mod tests {
         );
     }
 }
-
-
