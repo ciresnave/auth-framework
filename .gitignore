@@ -1,2 +1,12 @@
 /target
 *.profraw
+.cargo
+
+# IDE Configs (RustRover etc)
+.idea
+
+# Env
+.env
+.env.production
+.env.development
+.env.local
