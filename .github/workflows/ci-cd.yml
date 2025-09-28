@@ -106,14 +106,17 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+
+      - name: Run cargo-deny security audit
+        run: cargo deny check
+
       - name: Install cargo-audit
         run: cargo install cargo-audit
 
-      - name: Run security audit
+      - name: Run additional security audit
         run: cargo audit
-
-      - name: Run cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v1
 
   build:
     name: Build and Test Docker Image
@@ -229,7 +232,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, performance]
     if: github.ref == 'refs/heads/develop'
-    environment: staging
 
     steps:
       - uses: actions/checkout@v4
@@ -264,11 +266,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     if: github.event_name == 'release'
-    environment: production
 
     steps:
       - uses: actions/checkout@v4
 
+      # Note: Requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY secrets to be configured in repository settings
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -322,13 +324,15 @@ jobs:
     if: always()
 
     steps:
+      # Note: Requires SLACK_WEBHOOK_URL secret to be configured in repository settings
       - name: Slack notification
         uses: 8398a7/action-slack@v3
         with:
           status: ${{ job.status }}
           channel: "#deployments"
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
           fields: repo,message,commit,author,action,eventName,ref,workflow
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
   cleanup:
     name: Cleanup
