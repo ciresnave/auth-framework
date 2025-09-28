@@ -4,12 +4,7 @@
 //! for OAuth 2.0, JWT, and related security standards.
 
 // Standard library imports for Rust 2024 edition
-use std::{
-    assert,
-    println,
-    sync::Arc,
-    time::Duration,
-};
+use std::{assert, println, sync::Arc, time::Duration};
 
 use auth_framework::{
     auth::AuthFramework,

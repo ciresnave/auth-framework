@@ -311,7 +311,8 @@ async fn config_edit_handler(
 
 #[cfg(feature = "web-gui")]
 async fn users_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    let _users = [User {
+    let _users = [
+        User {
             id: "1".to_string(),
             email: "admin@example.com".to_string(),
             active: true,
@@ -334,7 +335,8 @@ async fn users_handler(State(_state): State<AppState>) -> impl IntoResponse {
             created: "2024-01-03".to_string(),
             last_login: None,
             roles: vec!["user".to_string()],
-        }];
+        },
+    ];
 
     let template = UsersTemplate {
         user_count: 3, // Simplified for now
@@ -394,7 +396,8 @@ async fn create_user_handler(
 
 #[cfg(feature = "web-gui")]
 async fn security_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    let _security_events = [SecurityEvent {
+    let _security_events = [
+        SecurityEvent {
             id: "1".to_string(),
             timestamp: "2024-08-10 14:30:15".to_string(),
             event_type: "login_success".to_string(),
@@ -420,7 +423,8 @@ async fn security_handler(State(_state): State<AppState>) -> impl IntoResponse {
             ip_address: Some("192.168.1.50".to_string()),
             details: "Password reset requested and processed".to_string(),
             severity: "info".to_string(),
-        }];
+        },
+    ];
 
     let template = SecurityTemplate {};
 
@@ -454,7 +458,8 @@ async fn servers_handler(State(state): State<AppState>) -> impl IntoResponse {
 
 #[cfg(feature = "web-gui")]
 async fn logs_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    let _log_entries = [LogEntry {
+    let _log_entries = [
+        LogEntry {
             id: "1".to_string(),
             timestamp: "2024-08-10 14:35:12".to_string(),
             level: "INFO".to_string(),
@@ -474,7 +479,8 @@ async fn logs_handler(State(_state): State<AppState>) -> impl IntoResponse {
             level: "DEBUG".to_string(),
             component: "auth".to_string(),
             message: "JWT validation service initialized".to_string(),
-        }];
+        },
+    ];
 
     let template = LogsTemplate {};
 

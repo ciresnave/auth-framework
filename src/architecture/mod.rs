@@ -431,7 +431,10 @@ impl EventSourcingManager {
         }
 
         // Check if snapshot is needed
-        if event.event_version.is_multiple_of(self.config.snapshot_interval) {
+        if event
+            .event_version
+            .is_multiple_of(self.config.snapshot_interval)
+        {
             self.create_snapshot(&event.aggregate_id).await?;
         }
 

@@ -156,10 +156,11 @@ impl UnifiedStorage {
                     let (key, value) = (entry.key(), entry.value());
 
                     if let Some(expires_at) = value.expires_at
-                        && now > expires_at {
-                            expired_keys.push(key.clone());
-                            memory_freed += Self::estimate_value_size(value);
-                        }
+                        && now > expires_at
+                    {
+                        expired_keys.push(key.clone());
+                        memory_freed += Self::estimate_value_size(value);
+                    }
                 }
 
                 // Remove expired entries
@@ -280,12 +281,13 @@ impl UnifiedStorage {
         if let Some(mut entry) = self.storage.get_mut(key) {
             // Check expiration
             if let Some(expires_at) = entry.expires_at
-                && SystemTime::now() > expires_at {
-                    drop(entry);
-                    self.storage.remove(key);
-                    self.miss_count.fetch_add(1, Ordering::Relaxed);
-                    return None;
-                }
+                && SystemTime::now() > expires_at
+            {
+                drop(entry);
+                self.storage.remove(key);
+                self.miss_count.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
 
             // Update access statistics
             entry.access_count += 1;
@@ -389,10 +391,11 @@ impl AuthStorage for UnifiedStorage {
             // Update user token list
             let user_key = StorageKey::UserTokens(token.user_id.clone());
             if let Some(value) = self.get_internal(&user_key)
-                && let StorageData::UserTokenList(mut tokens) = value.data {
-                    tokens.retain(|t| t != token_id);
-                    let _ = self.store_internal(user_key, StorageData::UserTokenList(tokens), None);
-                }
+                && let StorageData::UserTokenList(mut tokens) = value.data
+            {
+                tokens.retain(|t| t != token_id);
+                let _ = self.store_internal(user_key, StorageData::UserTokenList(tokens), None);
+            }
         }
 
         Ok(())
@@ -471,11 +474,11 @@ impl AuthStorage for UnifiedStorage {
             // Update user session list
             let user_key = StorageKey::UserSessions(session.user_id.clone());
             if let Some(value) = self.get_internal(&user_key)
-                && let StorageData::UserSessionList(mut sessions) = value.data {
-                    sessions.retain(|s| s != session_id);
-                    let _ =
-                        self.store_internal(user_key, StorageData::UserSessionList(sessions), None);
-                }
+                && let StorageData::UserSessionList(mut sessions) = value.data
+            {
+                sessions.retain(|s| s != session_id);
+                let _ = self.store_internal(user_key, StorageData::UserSessionList(sessions), None);
+            }
         }
 
         Ok(())

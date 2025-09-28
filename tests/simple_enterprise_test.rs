@@ -7,8 +7,7 @@
 use std::{
     assert, assert_eq,
     option::Option::{None, Some},
-    println,
-    vec,
+    println, vec,
 };
 
 use auth_framework::{
