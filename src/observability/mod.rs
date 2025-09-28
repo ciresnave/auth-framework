@@ -619,5 +619,3 @@ impl ObservabilityMiddleware {
         result
     }
 }
-
-

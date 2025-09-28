@@ -406,5 +406,3 @@ impl EnhancedDevice {
         }
     }
 }
-
-

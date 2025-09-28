@@ -745,5 +745,3 @@ mod tests {
         assert!(has_circular_dependencies(&phases));
     }
 }
-
-

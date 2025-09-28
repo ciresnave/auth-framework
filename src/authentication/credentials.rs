@@ -418,5 +418,3 @@ impl AuthRequest {
         )
     }
 }
-
-

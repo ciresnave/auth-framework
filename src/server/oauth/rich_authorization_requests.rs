@@ -1473,13 +1473,14 @@ impl RarManager {
 
         // 2. Subject-based linkage validation
         if let Some(session) = self.session_manager.get_session(session_id)
-            && decision.subject == session.sub {
-                tracing::debug!(
-                    "Decision linked to session via subject match: {}",
-                    decision.subject
-                );
-                return true;
-            }
+            && decision.subject == session.sub
+        {
+            tracing::debug!(
+                "Decision linked to session via subject match: {}",
+                decision.subject
+            );
+            return true;
+        }
 
         // 3. Client ID correlation
         if let Some(session) = self.session_manager.get_session(session_id) {
@@ -1612,5 +1613,3 @@ mod tests {
         Ok(())
     }
 }
-
-

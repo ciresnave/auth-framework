@@ -7,13 +7,13 @@
 
 // Standard library imports for Rust 2024 edition
 use std::{
-    assert, assert_eq, 
-    println,
-    vec,
+    assert, assert_eq,
     default::Default,
-    option::Option::{Some, None},
-    result::Result::{Ok, Err},
+    option::Option::{None, Some},
+    println,
+    result::Result::{Err, Ok},
     string::ToString,
+    vec,
 };
 
 use auth_framework::audit::RequestMetadata;

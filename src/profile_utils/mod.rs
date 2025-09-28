@@ -270,5 +270,3 @@ fn extract_string_optional_from_value(json: &Value, field: &str) -> Option<Strin
 // Include tests
 // #[cfg(test)]
 // mod tests;
-
-

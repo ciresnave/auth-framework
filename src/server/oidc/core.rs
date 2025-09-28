@@ -1076,5 +1076,3 @@ mod tests {
         assert_eq!(config.subject_types_supported, vec![SubjectType::Public]);
     }
 }
-
-

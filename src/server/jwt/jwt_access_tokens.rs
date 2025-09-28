@@ -639,5 +639,3 @@ mod tests {
         assert_eq!(response.scope.unwrap(), "read write");
     }
 }
-
-

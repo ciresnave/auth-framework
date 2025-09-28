@@ -5,14 +5,13 @@
 
 use crate::errors::Result;
 use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
+use crate::server::oidc::oidc_session_management::SessionManager;
+use crate::server::token_exchange::TokenExchangeManager;
 use crate::server::token_exchange::advanced_token_exchange::{
     AdvancedTokenExchangeConfig, AdvancedTokenExchangeManager,
 };
-use crate::server::oidc::oidc_session_management::SessionManager;
-use crate::server::token_exchange::TokenExchangeManager;
 use crate::server::token_exchange::token_exchange_common::{
-    ExchangeRequirements, ServiceComplexityLevel, TokenExchangeFactory,
-    TokenExchangeUseCase,
+    ExchangeRequirements, ServiceComplexityLevel, TokenExchangeFactory, TokenExchangeUseCase,
 };
 use std::sync::Arc;
 
@@ -292,5 +291,3 @@ mod tests {
         assert!(result.is_ok());
     }
 }
-
-

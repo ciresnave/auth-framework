@@ -1,9 +1,6 @@
 // Comprehensive tests for AuthToken edge cases
 // Standard library imports for Rust 2024 edition
-use std::{
-    assert, assert_eq,
-    option::Option::Some,
-};
+use std::{assert, assert_eq, option::Option::Some};
 
 use auth_framework::tokens::AuthToken;
 use std::time::Duration;

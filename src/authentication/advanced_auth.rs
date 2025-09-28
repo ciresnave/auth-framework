@@ -104,5 +104,3 @@ pub trait BackupCodeManager {
     fn verify_code(&mut self, user_id: &str, code: &str) -> bool;
     fn rotate_codes(&mut self, user_id: &str);
 }
-
-

@@ -808,5 +808,3 @@ mod tests {
         assert!(metadata.contains_key("token_introspection_supported"));
     }
 }
-
-

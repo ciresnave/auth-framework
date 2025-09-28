@@ -638,5 +638,3 @@ mod tests {
         assert_eq!(depth, 1);
     }
 }
-
-

@@ -57,8 +57,7 @@ pub enum ConfigSource {
 }
 
 /// Settings that can be used by parent applications to configure auth-framework
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthFrameworkSettings {
     /// Main auth framework configuration
     #[serde(flatten)]
@@ -459,7 +458,6 @@ impl Default for ConfigManager {
     }
 }
 
-
 impl Default for SessionSettings {
     fn default() -> Self {
         Self {
@@ -537,5 +535,3 @@ mod tests {
         assert!(!sources.is_empty());
     }
 }
-
-

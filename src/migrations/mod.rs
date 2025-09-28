@@ -343,5 +343,3 @@ impl MigrationCli {
         Ok(())
     }
 }
-
-

@@ -870,5 +870,3 @@ mod tests {
         assert!(critical_roles.contains(&"admin".to_string()));
     }
 }
-
-

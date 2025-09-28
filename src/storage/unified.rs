@@ -52,6 +52,7 @@ pub struct StorageValue {
 }
 
 /// Storage data variants
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageData {
     Token(AuthToken),
@@ -74,13 +75,16 @@ pub struct UnifiedStorage {
 
     /// Object pool for reducing allocations
     #[cfg(feature = "object-pool")]
+    #[allow(dead_code)]
     token_pool: Pool<AuthToken>,
 
     #[cfg(feature = "object-pool")]
+    #[allow(dead_code)]
     session_pool: Pool<SessionData>,
 
     /// Memory arena for temporary allocations
     #[cfg(feature = "bumpalo")]
+    #[allow(dead_code)]
     arena: Arc<parking_lot::Mutex<Bump>>,
 
     /// Configuration

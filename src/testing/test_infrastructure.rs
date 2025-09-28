@@ -364,5 +364,3 @@ mod tests {
         assert_eq!(str2.len(), 64);
     }
 }
-
-

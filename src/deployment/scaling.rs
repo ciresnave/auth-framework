@@ -445,5 +445,3 @@ mod tests {
         assert_eq!(scaler.current_instances, 3);
     }
 }
-
-

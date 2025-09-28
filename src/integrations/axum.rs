@@ -139,6 +139,7 @@ where
 /// Protected handler wrapper
 #[derive(Clone)]
 pub struct ProtectedHandler<F> {
+    #[allow(dead_code)]
     handler: F,
     required_permissions: Vec<String>,
     required_roles: Vec<String>,

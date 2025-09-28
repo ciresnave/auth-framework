@@ -605,5 +605,3 @@ mod tests {
         assert_eq!(manager.event_buffer.len(), 1);
     }
 }
-
-

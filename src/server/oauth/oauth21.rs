@@ -300,5 +300,3 @@ mod tests {
         assert!(!grant_types.iter().any(|g| g.as_str() == Some("password")));
     }
 }
-
-

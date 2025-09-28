@@ -603,5 +603,3 @@ mod tests {
         assert!(RiskLevel::High < RiskLevel::Critical);
     }
 }
-
-
