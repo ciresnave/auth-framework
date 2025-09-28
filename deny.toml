@@ -1,0 +1,46 @@
+# Cargo-deny configuration for AuthFramework
+# Security-first configuration for authentication framework
+
+[advisories]
+    # Vulnerability database settings
+    db-path = "~/.cargo/advisory-db"
+    db-urls = ["https://github.com/RustSec/advisory-db"]
+
+    # Security-first approach: Only allow explicitly documented exceptions
+    # This forces explicit review and justification of ALL security issues
+    ignore = [
+        # RSA timing attack - no fix available yet, used by essential dependencies
+        # Impact: Low risk in our authentication context as we don't expose raw RSA operations
+        # Tracking: Will update when sqlx/openidconnect provide fixed versions
+        "RUSTSEC-2023-0071",
+    ]
+
+[licenses]
+    # License policy - allow common open source licenses
+    allow = [
+        "Apache-2.0 WITH LLVM-exception",
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "CDLA-Permissive-2.0",            # Community Data License Agreement - for webpki-roots
+        "ISC",
+        "MIT",
+        "MPL-2.0",                        # Mozilla Public License 2.0 - weak copyleft, commercial-friendly
+        "Unicode-3.0",                    # Unicode License v3 - for ICU components
+        "Zlib",                           # Zlib license - very permissive, commercial-friendly
+    ]
+    # Confidence threshold for license detection
+    confidence-threshold = 0.8
+
+[bans]
+    # Crate banning rules
+    highlight         = "all"   # Highlight all issues
+    multiple-versions = "warn"  # Allow multiple versions but warn
+    wildcards         = "allow" # Allow wildcard dependencies
+
+[sources]
+    # Source repository settings  
+    allow-git        = []
+    allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
+    unknown-git      = "warn"                                           # Warn about unknown git sources
+    unknown-registry = "warn"                                           # Warn about unknown registries
