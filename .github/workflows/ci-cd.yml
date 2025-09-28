@@ -60,10 +60,34 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4-latest
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/release/deps
+            target/debug/deps
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.rust }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Free up disk space
+        run: |
+          echo "Disk usage before cleanup:"
+          df -h
+          
+          # Remove unnecessary packages and clean package cache
+          sudo apt-get autoremove -y
+          sudo apt-get autoclean
+          sudo apt-get clean
+          
+          # Remove large unnecessary directories
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          
+          echo "Disk usage after cleanup:"
+          df -h
 
       - name: Install system dependencies
         run: |
@@ -81,6 +105,8 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+          CARGO_INCREMENTAL: 0
+          CARGO_NET_RETRY: 10
         run: cargo test --all-features --workspace
 
       - name: Run integration tests
@@ -96,6 +122,15 @@ jobs:
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: cargo bench --no-run
+
+      - name: Clean up build artifacts
+        run: |
+          # Remove large binary files but keep dependencies cache
+          find target -name "*.rlib" -delete
+          find target -name "auth-framework*" -type f -executable -delete
+          find target -name "integration_tests*" -type f -executable -delete
+          echo "Remaining disk usage:"
+          df -h
 
   security-audit:
     name: Security Audit
