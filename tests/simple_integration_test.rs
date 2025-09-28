@@ -28,8 +28,8 @@ async fn test_resource_hierarchy_works() {
 
     // Verify hierarchy exists
     let children = checker.get_child_resources("parent");
-    assert!(children.is_some());
-    assert_eq!(children.unwrap().len(), 1);
+    let children = children.expect("parent should have child resources");
+    assert_eq!(children.len(), 1);
 
     // Test hierarchical permission check (without user assignment)
     let _result = checker.check_hierarchical_permission("admin", "read", "child");
