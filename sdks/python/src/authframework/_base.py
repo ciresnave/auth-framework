@@ -24,7 +24,6 @@ from .exceptions import (
     is_retryable_error,
 )
 
-
 # HTTP Error Status Constants
 HTTP_SUCCESS_THRESHOLD = 400
 

@@ -1,3 +1,0 @@
-# Custom target directory (uncomment if desired, but may cause crate resolution issues)
-# [build]
-#     target-dir = "C:\\Users\\cires\\.cache\\auth-framework\\target"
