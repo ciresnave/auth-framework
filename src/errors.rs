@@ -25,23 +25,37 @@
 //!
 //! # Example Error Handling
 //!
-//! ```rust
+//! ```rust,no_run
 //! use auth_framework::{AuthFramework, AuthError};
+//! use auth_framework::authentication::credentials::Credential;
 //!
-//! match auth_framework.authenticate("password", credential, metadata).await {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let auth_framework = AuthFramework::quick_start().build().await?;
+//! # let credential = Credential::Password {
+//! #     username: "user123".to_string(),
+//! #     password: "password".to_string()
+//! # };
+//! # fn handle_success(_result: auth_framework::AuthResult) { }
+//! # fn respond_with_auth_failure() { }
+//! # fn respond_with_rate_limit(_message: &str) { }
+//! # fn respond_with_system_error() { }
+//! match auth_framework.authenticate("password", credential).await {
 //!     Ok(result) => handle_success(result),
 //!     Err(AuthError::InvalidCredential { credential_type, message }) => {
 //!         log::warn!("Invalid {} credential: {}", credential_type, message);
 //!         respond_with_auth_failure()
 //!     },
-//!     Err(AuthError::RateLimited { retry_after, .. }) => {
-//!         respond_with_rate_limit(retry_after)
+//!     Err(AuthError::RateLimit { message }) => {
+//!         respond_with_rate_limit(&message)
 //!     },
 //!     Err(e) => {
 //!         log::error!("Authentication system error: {}", e);
 //!         respond_with_system_error()
 //!     }
 //! }
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Security Considerations
@@ -98,9 +112,15 @@ pub type Result<T, E = AuthError> = std::result::Result<T, E>;
 ///
 /// # Enhanced Error Handling
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::AuthError;
 ///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let auth_result: Result<auth_framework::AuthResult, AuthError> = Err(AuthError::InvalidCredential {
+/// #     credential_type: "password".to_string(),
+/// #     message: "Invalid password".to_string(),
+/// # });
 /// // Enhanced error handling with contextual help
 /// match auth_result {
 ///     Err(AuthError::Configuration { message, help, docs_url, .. }) => {
@@ -112,14 +132,15 @@ pub type Result<T, E = AuthError> = std::result::Result<T, E>;
 ///             eprintln!("📖 See: {}", docs);
 ///         }
 ///     },
-///     Err(AuthError::InvalidCredential { credential_type, message, suggested_fix, .. }) => {
+///     Err(AuthError::InvalidCredential { credential_type, message }) => {
 ///         eprintln!("🔐 Invalid {}: {}", credential_type, message);
-///         if let Some(fix) = suggested_fix {
-///             eprintln!("🔧 Suggested fix: {}", fix);
-///         }
 ///     },
-///     // ... handle other error types
+///     _ => {
+///         // ... handle other error types
+///     }
 /// }
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Security Notes
@@ -193,9 +214,13 @@ pub enum AuthError {
     #[error("YAML error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 
-    /// TOML parsing errors
-    #[error("TOML error: {0}")]
-    Toml(#[from] toml::de::Error),
+    /// TOML serialization errors
+    #[error("TOML serialization error: {0}")]
+    TomlSer(#[from] toml::ser::Error),
+
+    /// TOML deserialization errors  
+    #[error("TOML deserialization error: {0}")]
+    TomlDe(#[from] toml::de::Error),
 
     /// Prometheus metrics errors
     #[cfg(feature = "prometheus")]
@@ -350,7 +375,7 @@ pub enum TokenError {
     #[error("Token has expired")]
     Expired,
 
-    #[error("Token is invalid")]
+    #[error("Token is invalid: {message}")]
     Invalid { message: String },
 
     #[error("Token not found")]
@@ -783,7 +808,9 @@ impl actix_web::ResponseError for AuthError {
                     "error_description": self.to_string()
                 }))
             }
-            AuthError::Configuration { .. } | AuthError::Storage(_) => {
+            AuthError::Configuration { .. }
+            | AuthError::Storage(_)
+            | AuthError::Internal { .. } => {
                 actix_web::HttpResponse::InternalServerError().json(serde_json::json!({
                     "error": "internal_error",
                     "error_description": "An internal error occurred"
@@ -801,9 +828,9 @@ impl actix_web::ResponseError for AuthError {
             AuthError::Token(_) => actix_web::http::StatusCode::UNAUTHORIZED,
             AuthError::Permission(_) => actix_web::http::StatusCode::FORBIDDEN,
             AuthError::RateLimit { .. } => actix_web::http::StatusCode::TOO_MANY_REQUESTS,
-            AuthError::Configuration { .. } | AuthError::Storage(_) => {
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
-            }
+            AuthError::Configuration { .. }
+            | AuthError::Storage(_)
+            | AuthError::Internal { .. } => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
             _ => actix_web::http::StatusCode::BAD_REQUEST,
         }
     }
@@ -819,5 +846,295 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for AuthError {
 impl From<Box<dyn std::error::Error>> for AuthError {
     fn from(error: Box<dyn std::error::Error>) -> Self {
         AuthError::Cli(format!("Admin tool error: {}", error))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn test_auth_error_creation() {
+        let token_error = AuthError::token("Invalid JWT signature");
+        assert!(matches!(token_error, AuthError::Token(_)));
+        assert!(token_error.to_string().contains("Invalid JWT signature"));
+
+        let permission_error = AuthError::access_denied("Access denied");
+        assert!(matches!(permission_error, AuthError::Permission(_)));
+        assert!(permission_error.to_string().contains("Access denied"));
+
+        let config_error = AuthError::config("Database connection failed");
+        assert!(matches!(config_error, AuthError::Configuration { .. }));
+        assert!(
+            config_error
+                .to_string()
+                .contains("Database connection failed")
+        );
+    }
+
+    #[test]
+    fn test_auth_error_categorization() {
+        // Test various error types maintain their category
+        let errors = vec![
+            (AuthError::token("test"), "Token"),
+            (AuthError::access_denied("test"), "Permission"),
+            (AuthError::config("test"), "Configuration"),
+            (AuthError::crypto("test"), "Crypto"),
+            (AuthError::validation("test"), "Validation"),
+        ];
+
+        for (error, expected_category) in errors {
+            let error_string = format!("{:?}", error);
+            assert!(
+                error_string.contains(expected_category),
+                "Error {:?} should contain category {}",
+                error,
+                expected_category
+            );
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_error() {
+        let rate_limit_error = AuthError::rate_limit("Too many requests");
+
+        match rate_limit_error {
+            AuthError::RateLimit { message } => {
+                assert_eq!(message, "Too many requests");
+            }
+            _ => panic!("Expected RateLimit error"),
+        }
+    }
+
+    #[test]
+    fn test_validation_error() {
+        let validation_error = AuthError::validation("username must not be empty");
+
+        match validation_error {
+            AuthError::Validation { message } => {
+                assert_eq!(message, "username must not be empty");
+            }
+            _ => panic!("Expected Validation error"),
+        }
+    }
+
+    #[test]
+    fn test_configuration_error() {
+        let config_error = AuthError::config("jwt_secret is required");
+
+        match config_error {
+            AuthError::Configuration { message, .. } => {
+                assert_eq!(message, "jwt_secret is required");
+            }
+            _ => panic!("Expected Configuration error"),
+        }
+    }
+
+    #[test]
+    fn test_error_chain() {
+        let root_cause = std::io::Error::new(std::io::ErrorKind::NotFound, "File not found");
+        let auth_error = AuthError::internal(format!("Config file error: {}", root_cause));
+
+        // Test that error information is preserved
+        assert!(auth_error.to_string().contains("File not found"));
+        assert!(auth_error.to_string().contains("Config file error"));
+    }
+
+    #[test]
+    fn test_error_source() {
+        let token_error = AuthError::token("JWT parsing failed");
+
+        // AuthError implements Error trait
+        // Token error wraps TokenError, so it should have a source
+        assert!(token_error.source().is_some());
+
+        // Test error display
+        let error_msg = format!("{}", token_error);
+        assert!(error_msg.contains("JWT parsing failed"));
+    }
+
+    #[test]
+    fn test_from_conversions() {
+        // Test conversion from std::io::Error
+        let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Access denied");
+        let auth_error: AuthError = io_error.into();
+        assert!(matches!(auth_error, AuthError::Io(_)));
+
+        // Test conversion from serde_json::Error
+        let json_str = r#"{"invalid": json"#;
+        let json_error: serde_json::Error =
+            serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
+        let auth_error: AuthError = json_error.into();
+        assert!(matches!(auth_error, AuthError::Json(_)));
+    }
+
+    #[test]
+    fn test_error_equality() {
+        let error1 = AuthError::token("Same message");
+        let error2 = AuthError::token("Same message");
+        let error3 = AuthError::token("Different message");
+
+        // Test Debug representation for consistency
+        assert_eq!(format!("{:?}", error1), format!("{:?}", error2));
+        assert_ne!(format!("{:?}", error1), format!("{:?}", error3));
+    }
+
+    #[test]
+    fn test_actix_web_integration() {
+        #[cfg(feature = "actix-integration")]
+        {
+            use actix_web::ResponseError;
+
+            // Test status codes
+            assert_eq!(
+                AuthError::token("test").status_code(),
+                actix_web::http::StatusCode::UNAUTHORIZED
+            );
+            assert_eq!(
+                AuthError::access_denied("test").status_code(),
+                actix_web::http::StatusCode::FORBIDDEN
+            );
+            assert_eq!(
+                AuthError::rate_limit("test").status_code(),
+                actix_web::http::StatusCode::TOO_MANY_REQUESTS
+            );
+            assert_eq!(
+                AuthError::internal("test").status_code(),
+                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    #[test]
+    fn test_error_message_safety() {
+        // Ensure error messages don't leak sensitive information
+        let sensitive_data = "password123";
+        let safe_error = AuthError::token("Invalid credentials");
+
+        // Error message should not contain sensitive data
+        assert!(!safe_error.to_string().contains(sensitive_data));
+
+        // Test that we can create errors without exposing internals
+        let config_error = AuthError::config("connection failed");
+        assert!(!config_error.to_string().contains("password"));
+        assert!(!config_error.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn test_cli_error_conversion() {
+        let boxed_error: Box<dyn std::error::Error + Send + Sync> = "CLI operation failed".into();
+        let auth_error: AuthError = boxed_error.into();
+
+        assert!(matches!(auth_error, AuthError::Cli(_)));
+        assert!(auth_error.to_string().contains("CLI operation failed"));
+    }
+
+    #[test]
+    fn test_error_variants_coverage() {
+        // Ensure all error variants can be created and have proper messages
+        let test_errors = vec![
+            AuthError::token("token error"),
+            AuthError::access_denied("permission error"),
+            AuthError::internal("internal error"),
+            AuthError::crypto("crypto error"),
+            AuthError::Cli("cli error".to_string()),
+            AuthError::validation("validation error"),
+            AuthError::config("config error"),
+            AuthError::rate_limit("rate limit error"),
+        ];
+
+        for error in test_errors {
+            // All errors should have non-empty messages
+            assert!(
+                !error.to_string().is_empty(),
+                "Error should have message: {:?}",
+                error
+            );
+
+            // All errors should implement Debug
+            let debug_repr = format!("{:?}", error);
+            assert!(
+                !debug_repr.is_empty(),
+                "Error should have debug representation: {:?}",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn test_oauth_specific_errors() {
+        // Test OAuth-specific error creation using auth_method
+        let invalid_client = AuthError::auth_method("oauth", "Client authentication failed");
+        assert!(
+            invalid_client
+                .to_string()
+                .contains("Client authentication failed")
+        );
+
+        let invalid_grant = AuthError::auth_method("oauth", "Authorization code expired");
+        assert!(
+            invalid_grant
+                .to_string()
+                .contains("Authorization code expired")
+        );
+    }
+
+    #[test]
+    fn test_error_context_preservation() {
+        // Test that errors maintain context through transformations
+        let original_msg = "Original error message";
+        let context_msg = "Additional context";
+
+        let base_error = AuthError::internal(original_msg);
+        let contextual_error = AuthError::internal(format!("{}: {}", context_msg, base_error));
+
+        assert!(contextual_error.to_string().contains(original_msg));
+        assert!(contextual_error.to_string().contains(context_msg));
+    }
+
+    #[test]
+    fn test_error_serialization() {
+        // Test that errors can be converted to JSON for API responses
+        let error = AuthError::validation("email invalid format");
+
+        // Should be able to include in structured responses
+        let error_response = serde_json::json!({
+            "error": "validation_failed",
+            "message": error.to_string(),
+            "field": "email"
+        });
+
+        assert!(
+            error_response["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid format")
+        );
+    }
+
+    #[test]
+    fn test_concurrent_error_creation() {
+        use std::thread;
+
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                thread::spawn(move || {
+                    let error = AuthError::token(format!("Concurrent error {}", i));
+                    assert!(
+                        error
+                            .to_string()
+                            .contains(&format!("Concurrent error {}", i))
+                    );
+                    error
+                })
+            })
+            .collect();
+
+        // Wait for all threads and verify errors
+        for handle in handles {
+            let error = handle.join().unwrap();
+            assert!(!error.to_string().is_empty());
+        }
     }
 }

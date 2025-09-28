@@ -97,5 +97,3 @@ impl BackupCodesManager {
         self.generate_codes(user_id, count).await
     }
 }
-
-

@@ -1,1 +1,199 @@
-/target
+# =============================================================================
+# RUST PROJECT IGNORES
+# =============================================================================
+
+# Cargo build artifacts
+debug/
+target/
+
+# Backup files from rustfmt
+**/*.rs.bk
+
+# Cargo mutants (mutation testing)
+**/mutants.out*/
+
+# Profiling data
+*.profdata
+*.profraw
+
+# Cargo audit/advisory database cache
+.cargo/advisory-db/
+advisory-db/
+**/.cargo/advisory-db/
+
+# =============================================================================
+# DEVELOPMENT ENVIRONMENT
+# =============================================================================
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*~
+
+# Environment files
+.env
+.envrc
+
+# =============================================================================
+# PYTHON SDK IGNORES
+# =============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing & Coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.pytest_cache/
+.hypothesis/
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+cover/
+
+# Virtual environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Package managers
+Pipfile.lock
+uv.lock
+poetry.lock
+poetry.toml
+pdm.lock
+pdm.toml
+.pdm-python
+.pdm-build/
+pixi.lock
+.pixi
+__pypackages__/
+
+# Type checking & linting
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+# Sphinx documentation
+docs/_build/
+
+# PyPI configuration
+.pypirc
+
+# =============================================================================
+# COMPILED LANGUAGES (C/C++/etc)
+# =============================================================================
+
+# Prerequisites & Object files
+*.d
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Shared objects
+*.so
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Debug information
+*.pdb
+*.dwo
+*.ilk
+
+# Fortran modules
+*.mod
+*.smod
+
+# =============================================================================
+# GENERAL BUILD & TEMPORARY FILES
+# =============================================================================
+
+# Node.js
+node_modules/
+
+# Logs & temporary files
+*.log
+*.log.*
+*.tmp
+*.temp
+*.err
+*.trace
+*.trace.*
+*.session
+*.session.*
+*.cache
+*.cache.*
+*.prof
+*.info
+
+# Backup files
+*.bak
+*.bak.*
+*.old
+*.old.*
+*.orig
+*.orig.*
+*.gho
+*.ori
+
+# Coverage files
+coverage/
+*.lcov
+*.gcov
+*.gcda
+*.gcno

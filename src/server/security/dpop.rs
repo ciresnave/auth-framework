@@ -256,7 +256,7 @@ impl DpopManager {
     /// Generate a nonce for DPoP proof
     pub fn generate_nonce(&self) -> String {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut nonce = [0u8; 16];
         rng.fill_bytes(&mut nonce);
         URL_SAFE_NO_PAD.encode(nonce)
@@ -969,5 +969,3 @@ mod tests {
         assert!(nonces.contains_key("recent_nonce"));
     }
 }
-
-

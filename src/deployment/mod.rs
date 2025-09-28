@@ -661,5 +661,3 @@ mod tests {
         assert!(metrics.timestamp > 0);
     }
 }
-
-

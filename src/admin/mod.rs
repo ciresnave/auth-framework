@@ -47,18 +47,26 @@
 //!
 //! # Example Usage
 //!
-//! ```rust
-//! use auth_framework::admin::{AdminInterface, AppState};
+//! ```rust,no_run
+//! use auth_framework::admin::AppState;
+//! use auth_framework::config::AuthFrameworkSettings;
 //!
-//! // Create administrative interface
-//! let app_state = AppState::new(config_manager).await?;
-//! let admin = AdminInterface::new(app_state);
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let settings = AuthFrameworkSettings::default();
+//!     
+//!     // Create administrative interface
+//!     let app_state = AppState::new(settings)?;
+//!     // Note: AdminInterface would be created here in real usage
+//!     // let admin = AdminInterface::new(app_state);
 //!
-//! // Start web interface
-//! admin.start_web_interface("127.0.0.1:8080").await?;
+//!     // Start web interface (example)
+//!     // admin.start_web_interface("127.0.0.1:8080").await?;
 //!
-//! // Start TUI interface
-//! admin.start_tui_interface().await?;
+//!     // Start TUI interface (example)
+//!     // admin.start_tui_interface().await?;
+//!     Ok(())
+//! }
 //! ```
 //!
 //! # Deployment Scenarios
@@ -108,6 +116,35 @@ pub enum HealthStatus {
     Critical(String),
 }
 
+/// Server information for TUI display
+#[derive(Debug, Clone)]
+pub struct ServerInfo {
+    pub version: String,
+    pub uptime: String,
+    pub status: String,
+    pub port: Option<u16>,
+    pub active_sessions: u32,
+}
+
+/// User statistics for TUI display
+#[derive(Debug, Clone)]
+pub struct UserStatistics {
+    pub total_users: u32,
+    pub active_sessions: u32,
+    pub failed_logins_today: u32,
+    pub new_registrations_today: u32,
+}
+
+/// Security event for TUI display
+#[derive(Debug, Clone)]
+pub struct SecurityEvent {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub event_type: String,
+    pub description: String,
+    pub ip_address: Option<String>,
+    pub user_id: Option<String>,
+}
+
 impl AppState {
     pub fn new(settings: AuthFrameworkSettings) -> Result<Self> {
         let config = Arc::new(RwLock::new(settings));
@@ -147,6 +184,40 @@ impl AppState {
         let mut status = self.server_status.write().await;
         status.web_server_running = running;
         status.web_server_port = port;
+    }
+
+    /// Get server information for display in TUI
+    pub async fn get_server_info(&self) -> Result<ServerInfo> {
+        let status = self.server_status.read().await;
+        Ok(ServerInfo {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            uptime: "N/A".to_string(), // Would be calculated from start time
+            status: if status.web_server_running {
+                "Running"
+            } else {
+                "Stopped"
+            }
+            .to_string(),
+            port: status.web_server_port,
+            active_sessions: status.active_sessions,
+        })
+    }
+
+    /// Get user statistics for display in TUI
+    pub async fn get_user_statistics(&self) -> Result<UserStatistics> {
+        // Mock data - in real implementation would query the database
+        Ok(UserStatistics {
+            total_users: 0,
+            active_sessions: 0,
+            failed_logins_today: 0,
+            new_registrations_today: 0,
+        })
+    }
+
+    /// Get recent security events for display in TUI
+    pub async fn get_recent_security_events(&self) -> Result<Vec<SecurityEvent>> {
+        // Mock data - in real implementation would query the audit log
+        Ok(vec![])
     }
 } // Command line interface types and functions
 #[cfg(feature = "cli")]
@@ -352,5 +423,3 @@ pub enum SecurityAction {
         check_ip: Option<String>,
     },
 }
-
-

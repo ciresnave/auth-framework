@@ -12,18 +12,23 @@
 //!
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
-//! use axum::{Router, routing::get};
+//! use auth_framework::integrations::axum::{AuthenticatedUser, RequireAuth};
 //!
-//! let auth = AuthFramework::quick_start()
-//!     .jwt_auth_from_env()
-//!     .with_axum()
-//!     .build().await?;
-//!
-//! let app = Router::new()
-//!     .route("/public", get(public_handler))
-//!     .route("/protected", get(protected(protected_handler)))
-//!     .route("/admin", get(protected(admin_handler).require_role("admin")))
-//!     .with_state(auth);
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create auth framework
+//!     let _auth = AuthFramework::quick_start()
+//!         .jwt_auth_from_env()
+//!         .build().await?;
+//!     
+//!     // Create authentication middleware
+//!     let _auth_middleware = RequireAuth::new()
+//!         .with_roles(&["user", "admin"])
+//!         .with_permissions(&["read", "write"]);
+//!     
+//!     println!("Auth framework configured for Axum integration");
+//!     Ok(())
+//! }
 //! ```
 //!
 //! # Advanced Usage
@@ -31,29 +36,36 @@
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
 //! use auth_framework::integrations::axum::*;
+//! use std::sync::Arc;
 //!
-//! // Custom auth routes
-//! let auth_routes = AuthRouter::new()
-//!     .login_route("/auth/login")
-//!     .logout_route("/auth/logout")
-//!     .refresh_route("/auth/refresh")
-//!     .build();
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let auth = Arc::new(AuthFramework::quick_start().build().await?);
 //!
-//! let app = Router::new()
-//!     .merge(auth_routes)
-//!     .route("/api/profile", get(profile_handler))
-//!     .layer(RequireAuth::new())
-//!     .with_state(auth);
+//!     // Configure auth routes
+//!     let _auth_routes = AuthRouter::new()
+//!         .login_route("/auth/login")
+//!         .logout_route("/auth/logout")
+//!         .refresh_route("/auth/refresh")
+//!         .build();
+//!
+//!     // Configure middleware
+//!     let _permission_middleware = RequirePermission::new("admin:read")
+//!         .for_resource("user-profiles");
+//!     
+//!     println!("Advanced auth configuration completed");
+//!     Ok(())
+//! }
 //! ```
 
-use crate::{AuthError, AuthFramework, AuthResult, AuthToken, permissions::Permission};
+use crate::{AuthError, AuthFramework, AuthToken};
 use axum::{
     Json, Router,
     extract::{FromRequestParts, Request, State},
     http::{StatusCode, header::AUTHORIZATION, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
-    routing::{MethodRouter, get, post},
+    routing::post,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -127,9 +139,16 @@ where
 /// Protected handler wrapper
 #[derive(Clone)]
 pub struct ProtectedHandler<F> {
+    #[allow(dead_code)]
     handler: F,
     required_permissions: Vec<String>,
     required_roles: Vec<String>,
+}
+
+impl Default for RequireAuth {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RequireAuth {
@@ -201,6 +220,12 @@ impl<F> ProtectedHandler<F> {
     pub fn require_role(mut self, role: &str) -> Self {
         self.required_roles = vec![role.to_string()];
         self
+    }
+}
+
+impl Default for AuthRouter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -281,6 +306,7 @@ async fn login_handler(
     Ok(Json(response))
 }
 
+#[allow(dead_code)]
 async fn logout_handler(
     State(_auth): State<Arc<AuthFramework>>,
     user: AuthenticatedUser,
@@ -293,7 +319,7 @@ async fn logout_handler(
 }
 
 async fn refresh_handler(
-    State(auth): State<Arc<AuthFramework>>,
+    State(_auth): State<Arc<AuthFramework>>,
     // Extract refresh token from request
 ) -> Result<impl IntoResponse, AuthError> {
     // This would implement token refresh logic
@@ -303,6 +329,7 @@ async fn refresh_handler(
     ))
 }
 
+#[allow(dead_code)]
 async fn profile_handler(user: AuthenticatedUser) -> Result<impl IntoResponse, AuthError> {
     Ok(Json(UserInfo {
         id: user.user_id,
@@ -339,8 +366,8 @@ fn extract_bearer_token(request: &Request) -> Result<String, AuthError> {
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| AuthError::Token(crate::errors::TokenError::Missing))?;
 
-    if auth_header.starts_with("Bearer ") {
-        Ok(auth_header[7..].to_string())
+    if let Some(stripped) = auth_header.strip_prefix("Bearer ") {
+        Ok(stripped.to_string())
     } else {
         Err(AuthError::Token(crate::errors::TokenError::Invalid {
             message: "Authorization header must use Bearer scheme".to_string(),
@@ -358,7 +385,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         // Extract auth framework from state
-        let auth = Arc::<AuthFramework>::from_request_parts(parts, state)
+        let _auth = Arc::<AuthFramework>::from_request_parts(parts, state)
             .await
             .map_err(|_| AuthError::internal("Failed to extract auth framework from state"))?;
 
@@ -408,8 +435,8 @@ fn extract_bearer_token_from_parts(parts: &Parts) -> Result<String, AuthError> {
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| AuthError::Token(crate::errors::TokenError::Missing))?;
 
-    if auth_header.starts_with("Bearer ") {
-        Ok(auth_header[7..].to_string())
+    if let Some(stripped) = auth_header.strip_prefix("Bearer ") {
+        Ok(stripped.to_string())
     } else {
         Err(AuthError::Token(crate::errors::TokenError::Invalid {
             message: "Authorization header must use Bearer scheme".to_string(),

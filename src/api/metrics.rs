@@ -287,5 +287,3 @@ mod tests {
         assert!(prometheus.contains("endpoint=\"/api/test\""));
     }
 }
-
-

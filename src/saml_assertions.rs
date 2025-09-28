@@ -1072,5 +1072,3 @@ mod tests {
         assert!(validator.validate(&assertion).is_err());
     }
 }
-
-

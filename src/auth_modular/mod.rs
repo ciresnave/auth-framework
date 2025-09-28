@@ -36,14 +36,19 @@
 //! use auth_framework::auth_modular::AuthFramework;
 //! use auth_framework::config::AuthConfig;
 //!
-//! // Create modular framework
-//! let config = AuthConfig::default();
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create modular framework with JWT secret
+//! let mut config = AuthConfig::default();
+//! config.security.secret_key = Some("a_very_strong_secret_of_32_plus_chars_123".to_string());
 //! let auth = AuthFramework::new(config);
 //!
 //! // Access individual managers
 //! let mfa_manager = auth.mfa_manager();
 //! let session_manager = auth.session_manager();
 //! let user_manager = auth.user_manager();
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Migration from Monolithic Framework
@@ -55,8 +60,8 @@ pub mod mfa;
 pub mod session_manager;
 pub mod user_manager;
 
-use crate::config::AuthConfig;
 use crate::authentication::credentials::{Credential, CredentialMetadata};
+use crate::config::AuthConfig;
 use crate::errors::{AuthError, MfaError, Result};
 use crate::methods::{AuthMethod, AuthMethodEnum, MethodResult, MfaChallenge};
 use crate::permissions::{Permission, PermissionChecker};
@@ -194,6 +199,27 @@ impl AuthFramework {
             user_manager,
             initialized: false,
         }
+    }
+
+    /// Replace the storage backend with a custom implementation.
+    ///
+    /// This will swap the internal storage Arc and recreate dependent managers so
+    /// they use the provided storage instance.
+    pub fn replace_storage(&mut self, storage: Arc<dyn AuthStorage>) {
+        // Replace storage
+        self.storage = storage.clone();
+
+        // Recreate managers that depend on storage
+        self.mfa_manager = MfaManager::new(self.storage.clone());
+        self.session_manager = SessionManager::new(self.storage.clone());
+        self.user_manager = UserManager::new(self.storage.clone());
+    }
+
+    /// Convenience constructor that creates a framework with a custom storage instance.
+    pub fn new_with_storage(config: AuthConfig, storage: Arc<dyn AuthStorage>) -> Self {
+        let mut framework = Self::new(config);
+        framework.replace_storage(storage);
+        framework
     }
 
     /// Create a new framework with SMSKit configuration
@@ -676,6 +702,3 @@ mod tests {
         let _user_manager = framework.user_manager();
     }
 }
-
-
-

@@ -170,9 +170,16 @@ impl CommonJwtClaims {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::server::core::common_jwt::{JwtManager, JwtConfig, CommonJwtClaims};
+/// use serde_json::json;
+/// use chrono::{Duration, Utc};
 ///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let private_key_bytes = b"dummy_private_key";
+/// # let public_key_bytes = b"dummy_public_key";
+/// # let expiration_time = (Utc::now() + Duration::hours(1)).timestamp();
 /// // Create JWT manager with RSA keys
 /// let config = JwtConfig::with_rsa_keys(
 ///     private_key_bytes,
@@ -193,6 +200,8 @@ impl CommonJwtClaims {
 ///
 /// // Verify token
 /// let verified_claims = jwt_manager.verify_token(&token)?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Performance Considerations
@@ -495,5 +504,3 @@ pub mod utils {
         }
     }
 }
-
-

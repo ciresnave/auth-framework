@@ -9,7 +9,6 @@ from typing import Any
 
 from ._base import BaseClient, RequestConfig
 
-
 class AuthService:
     """Service for authentication operations."""
 

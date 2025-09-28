@@ -699,5 +699,3 @@ mod tests {
         assert_eq!(status, AlertStatus::Warning);
     }
 }
-
-

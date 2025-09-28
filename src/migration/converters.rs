@@ -608,5 +608,3 @@ mod tests {
         assert_eq!(converted_system.role_mappings.len(), 1);
     }
 }
-
-

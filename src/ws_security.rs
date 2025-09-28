@@ -357,7 +357,7 @@ impl WsSecurityClient {
     /// Generate a random nonce
     fn generate_nonce(&self) -> String {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut nonce = [0u8; 16];
         rng.fill_bytes(&mut nonce);
         STANDARD.encode(nonce)
@@ -645,5 +645,3 @@ mod tests {
         assert_eq!(bst.value, STANDARD.encode(dummy_cert));
     }
 }
-
-

@@ -1,3 +1,13 @@
+// Standard library imports for Rust 2024 edition
+use std::{
+    assert, assert_eq,
+    default::Default,
+    option::Option::{None, Some},
+    println,
+    result::Result::{Err, Ok},
+    vec,
+};
+
 use auth_framework::auth::AuthFramework;
 use auth_framework::authentication::credentials::Credential;
 use auth_framework::config::AuthConfig;
@@ -7,10 +17,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Comprehensive edge case testing to ensure bulletproof behavior
+// Use a proper 32+ character JWT secret for all tests
+const TEST_JWT_SECRET: &str = "Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==";
 
 #[tokio::test]
 async fn test_extreme_input_sizes() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -61,7 +73,7 @@ async fn test_extreme_input_sizes() {
 
 #[tokio::test]
 async fn test_special_character_handling() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -113,7 +125,7 @@ async fn test_special_character_handling() {
 
 #[tokio::test]
 async fn test_session_expiration_edge_cases() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -179,7 +191,7 @@ async fn test_session_expiration_edge_cases() {
 
 #[tokio::test]
 async fn test_token_validation_edge_cases() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -245,7 +257,7 @@ async fn test_token_validation_edge_cases() {
 
 #[tokio::test]
 async fn test_concurrent_data_races() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -291,7 +303,7 @@ async fn test_concurrent_data_races() {
         handles.push(handle);
     }
 
-    let mut results = Vec::new();
+    let mut results: Vec<Result<bool, auth_framework::errors::AuthError>> = Vec::new();
     for handle in handles {
         match handle.await {
             Ok(result) => results.push(result),
@@ -313,7 +325,7 @@ async fn test_concurrent_data_races() {
 
 #[tokio::test]
 async fn test_memory_cleanup_edge_cases() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -372,7 +384,7 @@ async fn test_memory_cleanup_edge_cases() {
 
 #[tokio::test]
 async fn test_framework_reinitialization() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -414,7 +426,7 @@ async fn test_framework_reinitialization() {
 
 #[tokio::test]
 async fn test_boundary_value_analysis() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -486,7 +498,7 @@ async fn test_boundary_value_analysis() {
 
 #[tokio::test]
 async fn test_error_propagation_consistency() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env = TestEnvironmentGuard::new().with_jwt_secret(TEST_JWT_SECRET);
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -505,7 +517,9 @@ async fn test_error_propagation_consistency() {
         let credential = Credential::password(username, "wrong_password");
 
         // Test multiple times to ensure consistency
-        let mut results = Vec::new();
+        let mut results: Vec<
+            Result<auth_framework::AuthResult, auth_framework::errors::AuthError>,
+        > = Vec::new();
         for _ in 0..3 {
             let result = framework.authenticate("password", credential.clone()).await;
             results.push(result);

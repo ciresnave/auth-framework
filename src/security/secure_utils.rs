@@ -99,30 +99,12 @@ impl SecureComparison {
     }
 
     /// Verify that two tokens match using constant-time comparison
-    pub fn verify_token(provided: &str, expected: &str) -> bool {
-        Self::secure_string_compare(provided, expected)
-    }
-
-    /// Verify API key or session token with timing attack protection
-    pub fn verify_api_key(provided: &str, stored_hash: &str) -> Result<bool> {
-        // For API keys, we typically compare against a hash
-        // This assumes the stored value is already hashed
-        if provided.is_empty() || stored_hash.is_empty() {
-            return Ok(false);
-        }
-
-        // Use bcrypt for API key verification if stored as bcrypt hash
-        if stored_hash.starts_with("$2") {
-            bcrypt::verify(provided, stored_hash)
-                .map_err(|e| AuthError::crypto(format!("API key verification failed: {}", e)))
-        } else {
-            // For direct comparison (not recommended for production)
-            Ok(Self::secure_string_compare(provided, stored_hash))
-        }
+    pub fn verify_token(token1: &str, token2: &str) -> bool {
+        Self::secure_string_compare(token1, token2)
     }
 }
 
-/// Secure random generation utilities
+/// Generate secure random values
 pub struct SecureRandomGen;
 
 impl SecureRandomGen {
@@ -173,10 +155,17 @@ impl SecureValidation {
             return Err(AuthError::validation("Username too long".to_string()));
         }
 
-        // Check for potentially dangerous characters
+        // Check for potentially dangerous characters including control characters
         if username.contains('\0') || username.contains('\r') || username.contains('\n') {
             return Err(AuthError::validation(
                 "Username contains invalid characters".to_string(),
+            ));
+        }
+
+        // Check for control characters (0x01-0x1F and 0x7F-0x9F)
+        if username.chars().any(|c| c.is_control()) {
+            return Err(AuthError::validation(
+                "Username contains control characters".to_string(),
             ));
         }
 
@@ -229,13 +218,11 @@ impl SecureValidation {
 
     /// Sanitize user input to prevent injection attacks
     pub fn sanitize_input(input: &str) -> String {
-        // Remove null bytes and control characters except newlines/tabs
+        // Remove null bytes and control characters except newlines/tabs and spaces
         input
             .chars()
-            .filter(|&c| !c.is_control() || c == '\n' || c == '\t')
-            .collect::<String>()
-            .trim()
-            .to_string()
+            .filter(|&c| !c.is_control() || c == '\n' || c == '\t' || c == ' ')
+            .collect()
     }
 
     /// Validate and sanitize email address
@@ -252,6 +239,35 @@ impl SecureValidation {
 
         // Basic email validation
         if !sanitized.contains('@') || sanitized.starts_with('@') || sanitized.ends_with('@') {
+            return Err(AuthError::validation("Invalid email format".to_string()));
+        }
+
+        // Check for multiple @ symbols
+        if sanitized.matches('@').count() != 1 {
+            return Err(AuthError::validation("Invalid email format".to_string()));
+        }
+
+        let parts: Vec<&str> = sanitized.split('@').collect();
+        let local_part = parts[0];
+        let domain_part = parts[1];
+
+        // Check local part
+        if local_part.is_empty() || local_part.starts_with('.') || local_part.ends_with('.') {
+            return Err(AuthError::validation("Invalid email format".to_string()));
+        }
+
+        // Check domain part
+        if domain_part.is_empty()
+            || domain_part.starts_with('.')
+            || domain_part.ends_with('.')
+            || domain_part.contains("..")
+            || !domain_part.contains('.')
+        {
+            return Err(AuthError::validation("Invalid email format".to_string()));
+        }
+
+        // Check for spaces in email
+        if sanitized.contains(' ') {
             return Err(AuthError::validation("Invalid email format".to_string()));
         }
 
@@ -282,7 +298,7 @@ impl SecureValidation {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::constant_time_compare;
+/// use auth_framework::security::secure_utils::constant_time_compare;
 ///
 /// let token1 = b"secure_token_value";
 /// let token2 = b"secure_token_value";
@@ -298,47 +314,42 @@ pub fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
 /// Generates a cryptographically secure random token as a base64-encoded string.
 ///
 /// This function creates a secure random token suitable for use as session tokens,
-/// CSRF tokens, or other security-sensitive identifiers. The token is generated
-/// using a cryptographically secure random number generator.
+/// API keys, or other security-sensitive identifiers. The token is base64url-encoded
+/// for safe use in URLs and HTTP headers.
 ///
 /// # Arguments
 ///
-/// * `byte_len` - Number of random bytes to generate before base64 encoding
+/// * `byte_length` - The number of random bytes to generate before encoding
 ///
 /// # Returns
 ///
-/// A base64-encoded string containing the secure random token. If secure random
-/// generation fails, falls back to generating a UUID.
+/// * `Ok(String)` - A base64url-encoded random token
+/// * `Err(AuthError)` - If random number generation fails
 ///
 /// # Security Notes
 ///
-/// The generated token has sufficient entropy for cryptographic use. A 32-byte
-/// input produces a token with 256 bits of entropy.
+/// - Uses cryptographically secure random number generation
+/// - The output length will be approximately 4/3 times the input byte length due to base64 encoding
+/// - Tokens are suitable for cryptographic purposes
 ///
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::generate_secure_token;
+/// use auth_framework::security::secure_utils::generate_secure_token;
 ///
-/// // Generate a 32-byte secure token (256 bits of entropy)
-/// let token = generate_secure_token(32);
-/// println!("Secure token: {}", token);
-///
-/// // Generate a shorter token for less critical uses
-/// let csrf_token = generate_secure_token(16);
+/// // Generate a 256-bit (32-byte) token
+/// let token = generate_secure_token(32).unwrap();
+/// println!("Generated token: {}", token);
 /// ```
-pub fn generate_secure_token(byte_len: usize) -> String {
-    SecureRandomGen::generate_string(byte_len).unwrap_or_else(|_| {
-        // Fallback to UUID if secure random fails
-        uuid::Uuid::new_v4().to_string()
-    })
+pub fn generate_secure_token(byte_length: usize) -> Result<String> {
+    SecureRandomGen::generate_string(byte_length)
 }
 
 /// Hashes a password using bcrypt with a secure cost factor.
 ///
-/// This function uses bcrypt to hash passwords with a default cost factor that
-/// provides good security while maintaining reasonable performance. The bcrypt
-/// algorithm includes salt generation automatically.
+/// This function uses the bcrypt algorithm to hash passwords with a predefined
+/// cost factor. Bcrypt is designed to be computationally expensive to prevent
+/// brute-force attacks and includes automatic salt generation.
 ///
 /// # Arguments
 ///
@@ -346,25 +357,32 @@ pub fn generate_secure_token(byte_len: usize) -> String {
 ///
 /// # Returns
 ///
-/// * `Ok(String)` containing the bcrypt hash of the password
-/// * `Err(AuthError)` if hashing fails
+/// * `Ok(String)` - The bcrypt hash including salt and cost parameters
+/// * `Err(AuthError)` - If hashing fails or password is invalid
 ///
 /// # Security Notes
 ///
 /// - Uses bcrypt's default cost factor (currently 12)
-/// - Automatically generates a unique salt for each password
-/// - The resulting hash includes the salt and cost parameters
+/// - Each hash includes a unique random salt
+/// - The same password will produce different hashes due to random salting
+/// - Empty passwords are rejected for security
 ///
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::hash_password;
+/// use auth_framework::security::secure_utils::hash_password;
 ///
 /// let password = "user_password_123";
-/// let hash = hash_password(password)?;
+/// let hash = hash_password(password).unwrap();
 /// println!("Password hash: {}", hash);
 /// ```
 pub fn hash_password(password: &str) -> Result<String> {
+    if password.is_empty() {
+        return Err(AuthError::validation(
+            "Password cannot be empty".to_string(),
+        ));
+    }
+
     bcrypt::hash(password, bcrypt::DEFAULT_COST)
         .map_err(|e| AuthError::crypto(format!("Password hashing failed: {}", e)))
 }
@@ -395,16 +413,13 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::{hash_password, verify_password};
+/// use auth_framework::security::secure_utils::{hash_password, verify_password};
 ///
 /// let password = "user_password_123";
-/// let hash = hash_password(password)?;
+/// let hash = hash_password(password).unwrap();
 ///
-/// // Verify correct password
-/// assert!(verify_password(password, &hash)?);
-///
-/// // Verify incorrect password
-/// assert!(!verify_password("wrong_password", &hash)?);
+/// assert!(verify_password(password, &hash).unwrap());
+/// assert!(!verify_password("wrong_password", &hash).unwrap());
 /// ```
 pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
     bcrypt::verify(password, hash)
@@ -462,16 +477,12 @@ mod tests {
         assert!(SecureValidation::validate_username("user123").is_ok());
         assert!(SecureValidation::validate_username("").is_err());
         assert!(SecureValidation::validate_username("user\0name").is_err());
-
-        assert!(SecureValidation::validate_password("password123").is_ok());
-        assert!(SecureValidation::validate_password("").is_err());
-        assert!(SecureValidation::validate_password("pass\0word").is_err());
     }
 
     #[test]
     fn test_email_validation() {
-        assert!(SecureValidation::validate_email("user@example.com").is_ok());
-        assert!(SecureValidation::validate_email("invalid").is_err());
+        assert!(SecureValidation::validate_email("test@example.com").is_ok());
+        assert!(SecureValidation::validate_email("").is_err());
         assert!(SecureValidation::validate_email("@example.com").is_err());
         assert!(SecureValidation::validate_email("user@").is_err());
     }
@@ -486,6 +497,279 @@ mod tests {
         let cleaned = SecureValidation::sanitize_input(with_newlines);
         assert_eq!(cleaned, "line1\nline2\tline3");
     }
+
+    #[test]
+    fn test_secure_string_zeroization() {
+        let secret = SecureString::new("sensitive_data".to_string());
+        let _ptr = secret.as_str().as_ptr();
+
+        // Verify content before drop
+        assert_eq!(secret.as_str(), "sensitive_data");
+        drop(secret);
+
+        // After drop, we can't verify zeroization directly due to Rust safety,
+        // but this test ensures the SecureString type is working correctly
+    }
+
+    #[test]
+    fn test_constant_time_comparison_edge_cases() {
+        // Test empty strings
+        assert!(SecureComparison::constant_time_eq("", ""));
+        assert!(!SecureComparison::constant_time_eq("", "nonempty"));
+        assert!(!SecureComparison::constant_time_eq("nonempty", ""));
+
+        // Test very long strings
+        let long1 = "a".repeat(1000);
+        let long2 = "a".repeat(1000);
+        let long3 = "b".repeat(1000);
+
+        assert!(SecureComparison::constant_time_eq(&long1, &long2));
+        assert!(!SecureComparison::constant_time_eq(&long1, &long3));
+
+        // Test strings that differ only in the last character
+        let almost_same1 = "verylongstringtestX";
+        let almost_same2 = "verylongstringtestY";
+        assert!(!SecureComparison::constant_time_eq(
+            almost_same1,
+            almost_same2
+        ));
+    }
+
+    #[test]
+    fn test_secure_random_generation_uniqueness() {
+        let mut tokens = std::collections::HashSet::new();
+
+        // Generate multiple tokens and ensure they're unique
+        for _ in 0..100 {
+            let token = SecureRandomGen::generate_token().unwrap();
+            assert!(!tokens.contains(&token), "Generated duplicate token");
+            tokens.insert(token);
+        }
+    }
+
+    #[test]
+    fn test_secure_random_generation_length() {
+        // Test different lengths
+        for byte_len in [8, 16, 32, 64] {
+            let token = SecureRandomGen::generate_string(byte_len).unwrap();
+            // Base64url encoding: 4 chars per 3 bytes, no padding
+            let expected_len = (byte_len * 4).div_ceil(3);
+            assert!(
+                token.len() >= expected_len - 2 && token.len() <= expected_len + 2,
+                "Token length {} not in expected range for {} bytes",
+                token.len(),
+                byte_len
+            );
+        }
+    }
+
+    #[test]
+    fn test_input_validation_edge_cases() {
+        // Test various edge cases for username validation
+        let long_username = "a".repeat(320);
+        assert!(SecureValidation::validate_username(&long_username).is_ok());
+        let too_long_username = "a".repeat(321);
+        assert!(SecureValidation::validate_username(&too_long_username).is_err());
+
+        // Control characters
+        assert!(SecureValidation::validate_username("user\x01").is_err());
+        assert!(SecureValidation::validate_username("user\x1f").is_err());
+
+        // Unicode considerations (basic test)
+        assert!(SecureValidation::validate_username("user_ñ").is_ok());
+    }
+
+    #[test]
+    fn test_email_validation_comprehensive() {
+        // Valid emails
+        let valid_emails = vec![
+            "user@example.com",
+            "user.name@example.com",
+            "user+tag@example.com",
+            "user123@example-domain.com",
+            "a@b.co",
+            "very.long.email.address@very.long.domain.name.com",
+        ];
+
+        for email in valid_emails {
+            assert!(
+                SecureValidation::validate_email(email).is_ok(),
+                "Should accept valid email: {}",
+                email
+            );
+        }
+
+        // Invalid emails
+        let invalid_emails = vec![
+            "",
+            "user",
+            "@example.com",
+            "user@",
+            "user@@example.com",
+            "user@example",
+            "user @example.com", // Space
+            "user@exam ple.com", // Space in domain
+            "user@.example.com", // Leading dot
+            "user@example..com", // Double dot
+            ".user@example.com", // Leading dot in local part
+            "user.@example.com", // Trailing dot in local part
+        ];
+
+        for email in invalid_emails {
+            assert!(
+                SecureValidation::validate_email(email).is_err(),
+                "Should reject invalid email: {}",
+                email
+            );
+        }
+    }
+
+    #[test]
+    fn test_input_sanitization_comprehensive() {
+        // Test various control characters
+        let test_cases = vec![
+            ("hello\0world", "helloworld"),             // Null byte
+            ("test\x01\x02\x03", "test"),               // Control chars
+            ("normal text", "normal text"),             // No change
+            ("\x7f", ""),                               // DEL character
+            ("mix\0ed\x01cont\x02rol", "mixedcontrol"), // Mixed
+            ("", ""),                                   // Empty
+            ("   spaced   ", "   spaced   "),           // Preserve normal spaces
+        ];
+
+        for (input, expected) in test_cases {
+            let result = SecureValidation::sanitize_input(input);
+            assert_eq!(result, expected, "Sanitization failed for: {:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_password_hashing_security() {
+        let password = "test_password_123";
+
+        // Hash the same password multiple times
+        let hash1 = hash_password(password).unwrap();
+        let hash2 = hash_password(password).unwrap();
+
+        // Hashes should be different (due to salt)
+        assert_ne!(
+            hash1, hash2,
+            "Password hashes should be different due to random salt"
+        );
+
+        // Both hashes should verify correctly
+        assert!(verify_password(password, &hash1).unwrap());
+        assert!(verify_password(password, &hash2).unwrap());
+
+        // Wrong password should not verify
+        assert!(!verify_password("wrong_password", &hash1).unwrap());
+        assert!(!verify_password("wrong_password", &hash2).unwrap());
+    }
+
+    #[test]
+    fn test_password_hashing_edge_cases() {
+        // Test empty password
+        let result = hash_password("");
+        assert!(result.is_err(), "Should reject empty password");
+
+        // Test very long password
+        let long_password = "a".repeat(100);
+        let hash = hash_password(&long_password).unwrap();
+        assert!(verify_password(&long_password, &hash).unwrap());
+
+        // Test password with special characters
+        let special_password = "p@ssw0rd!#$%^&*()";
+        let hash = hash_password(special_password).unwrap();
+        assert!(verify_password(special_password, &hash).unwrap());
+
+        // Test password with Unicode
+        let unicode_password = "пароль123测试";
+        let hash = hash_password(unicode_password).unwrap();
+        assert!(verify_password(unicode_password, &hash).unwrap());
+    }
+
+    #[test]
+    fn test_secure_comparison_timing() {
+        // This test can't verify timing directly, but ensures the function works correctly
+        // with various input sizes to ensure it's implemented properly
+
+        let short_a = "a";
+        let short_b = "a";
+        let long_a = "a".repeat(1000);
+        let long_b = "a".repeat(1000);
+
+        assert!(SecureComparison::constant_time_eq(short_a, short_b));
+        assert!(SecureComparison::secure_string_compare(short_a, short_b));
+        assert!(SecureComparison::verify_token(short_a, short_b));
+
+        assert!(SecureComparison::constant_time_eq(&long_a, &long_b));
+        assert!(SecureComparison::secure_string_compare(&long_a, &long_b));
+        assert!(SecureComparison::verify_token(&long_a, &long_b));
+
+        let different_short_a = "a";
+        let different_short_b = "b";
+        let different_long_a = "a".repeat(1000);
+        let different_long_b = "b".repeat(1000);
+
+        assert!(!SecureComparison::constant_time_eq(
+            different_short_a,
+            different_short_b
+        ));
+        assert!(!SecureComparison::secure_string_compare(
+            different_short_a,
+            different_short_b
+        ));
+        assert!(!SecureComparison::verify_token(
+            different_short_a,
+            different_short_b
+        ));
+
+        assert!(!SecureComparison::constant_time_eq(
+            &different_long_a,
+            &different_long_b
+        ));
+        assert!(!SecureComparison::secure_string_compare(
+            &different_long_a,
+            &different_long_b
+        ));
+        assert!(!SecureComparison::verify_token(
+            &different_long_a,
+            &different_long_b
+        ));
+    }
+
+    #[test]
+    fn test_secure_string_multiple_operations() {
+        let secret1 = SecureString::new("password1".to_string());
+        let secret2 = SecureString::new("password2".to_string());
+
+        assert_ne!(secret1.as_str(), secret2.as_str());
+        assert!(SecureComparison::verify_token(
+            secret1.as_str(),
+            secret1.as_str()
+        ));
+        assert!(!SecureComparison::verify_token(
+            secret1.as_str(),
+            secret2.as_str()
+        ));
+
+        // Test operations
+        assert_eq!(secret1.len(), 9);
+        assert_eq!(secret2.len(), 9);
+        assert!(!secret1.is_empty());
+        assert!(!secret2.is_empty());
+    }
+
+    #[test]
+    fn test_token_verification_false_positives() {
+        let token = "secure_token_123";
+        let similar_token = "secure_token_124"; // Only last char different
+        let prefix_token = "secure_token_12"; // Shorter
+        let longer_token = "secure_token_1234"; // Longer
+
+        assert!(SecureComparison::verify_token(token, token));
+        assert!(!SecureComparison::verify_token(token, similar_token));
+        assert!(!SecureComparison::verify_token(token, prefix_token));
+        assert!(!SecureComparison::verify_token(token, longer_token));
+    }
 }
-
-

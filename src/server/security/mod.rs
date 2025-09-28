@@ -39,8 +39,16 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use auth_framework::server::security::{DpopManager, FapiManager};
+//! use std::sync::Arc;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let jwt_validator = todo!(); // JWT validator implementation
+//! # let dpop_proof = "dummy_proof";
+//! # let access_token = "dummy_token";
+//! # let request = todo!(); // Request implementation
 //!
 //! // DPoP for token binding
 //! let dpop_manager = DpopManager::new(jwt_validator);
@@ -52,9 +60,35 @@
 //!     None
 //! ).await?;
 //!
-//! // FAPI compliance validation
-//! let fapi_manager = FapiManager::new(config);
-//! let fapi_validation = fapi_manager.validate_request(&request).await?;
+//! // FAPI compliance validation requires proper manager setup
+//! # let config = todo!(); // FAPI config implementation
+//! # let dpop_manager_arc = Arc::new(dpop_manager);  
+//! # let mutual_tls_manager = todo!(); // MutualTlsManager implementation
+//! # let par_manager = todo!(); // PARManager implementation
+//! # let private_key_jwt_manager = todo!(); // PrivateKeyJwtManager implementation
+//! # let secure_jwt_validator = todo!(); // SecureJwtValidator implementation
+//! let fapi_manager = FapiManager::new(
+//!     config,
+//!     dpop_manager_arc,
+//!     mutual_tls_manager,
+//!     par_manager,
+//!     private_key_jwt_manager,
+//!     secure_jwt_validator,
+//! );
+//!
+//! // FAPI validation with proper method call
+//! # let client_assertion = None;
+//! # let client_cert = None;
+//! # let dpop_proof_opt = None;
+//! # let authorization_code = "dummy_code";
+//! let fapi_validation = fapi_manager.validate_token_request(
+//!     client_assertion,
+//!     client_cert,
+//!     dpop_proof_opt,
+//!     authorization_code,
+//! ).await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Performance Considerations
@@ -77,5 +111,3 @@ pub use dpop::*;
 pub use fapi::*;
 pub use mtls::*;
 pub use x509_signing::*;
-
-

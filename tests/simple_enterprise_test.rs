@@ -3,6 +3,13 @@
 //! This test validates that our enterprise authentication components work
 //! independently of the OAuth modules that have compilation issues.
 
+// Standard library imports for Rust 2024 edition
+use std::{
+    assert, assert_eq,
+    option::Option::{None, Some},
+    println, vec,
+};
+
 use auth_framework::{
     saml_assertions::{SamlAssertionBuilder, SamlAssertionValidator, SamlNameId, SamlSubject},
     ws_security::{PasswordType, WsSecurityClient, WsSecurityConfig},

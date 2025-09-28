@@ -73,6 +73,68 @@ use std::time::Duration;
 # }
 ```
 
+/// Example: plug in a custom storage implementation (e.g. SurrealDB)
+///
+/// This snippet demonstrates how you might connect a SurrealDB-backed storage
+/// implementation and pass it into the framework. This is a usage example and
+/// may require an actual SurrealDB storage implementation that implements
+/// `crate::storage::AuthStorage`.
+///
+/// ```rust,ignore
+/// use auth_framework::{AuthFramework, AuthConfig};
+/// use std::sync::Arc;
+/// // Assume `MySurrealStorage` is your implementation of `AuthStorage` backed by SurrealDB
+/// let config = AuthConfig::default();
+/// // Connect to SurrealDB and create your storage (async)
+/// let storage = Arc::new(MySurrealStorage::connect("http://localhost:8000").await?);
+///
+/// // Option A: supply custom storage via the builder
+/// let auth = AuthFramework::builder()
+///     .with_storage()
+///     .custom(storage.clone())
+///     .done()
+///     .build()
+///     .await?;
+///
+/// // Option B: convenience async constructor that returns an initialized framework
+/// let initialized = AuthFramework::new_initialized_with_storage(config, storage).await?;
+/// ```
+
+/// Doc-test example (compiles): demonstrates both the builder.custom(...) path and
+/// the async convenience constructor `new_initialized_with_storage`. This example
+/// uses the in-memory `MemoryStorage` so doctests can run without external services.
+///
+/// ```rust
+/// use auth_framework::{AuthFramework, AuthConfig};
+/// use auth_framework::storage::MemoryStorage;
+/// use std::sync::Arc;
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Use a strong secret for validation
+/// let mut config = AuthConfig::default();
+/// config.security.secret_key = Some("a_very_strong_secret_of_32_plus_chars_123".to_string());
+///
+/// // 1) Builder.custom(...) path
+/// let storage = Arc::new(MemoryStorage::new());
+/// let auth = AuthFramework::builder()
+///     .with_storage()
+///     .custom(storage.clone())
+///     .done()
+///     .build()
+///     .await?;
+///
+/// // Use the framework (it is initialized by the builder)
+/// let _ = auth.get_stats().await?;
+///
+/// // 2) new_initialized_with_storage convenience (async)
+/// let storage2 = Arc::new(MemoryStorage::new());
+/// let initialized = AuthFramework::new_initialized_with_storage(config, storage2).await?;
+/// let _ = initialized.get_stats().await?;
+/// # Ok(())
+/// # }
+/// ```
+
 ## Security Considerations
 
 - Always use HTTPS in production

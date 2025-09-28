@@ -486,5 +486,3 @@ impl AuthStorage for MySqlStorage {
         Ok(count as u64)
     }
 }
-
-

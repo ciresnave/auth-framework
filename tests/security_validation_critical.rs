@@ -1,8 +1,6 @@
 //! Critical security validation test to ensure JWT signature bypass vulnerability is fixed
 
-use auth_framework::{
-    AuthConfig, AuthFramework,
-};
+use auth_framework::{AuthConfig, AuthFramework};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
@@ -24,7 +22,7 @@ async fn test_jwt_signature_validation() {
     println!("🔒 Testing JWT signature validation...");
 
     let config = AuthConfig::new()
-        .secret("test-secret-for-security-validation-32chars".to_string())
+        .secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==".to_string())
         .issuer("auth-framework".to_string())
         .audience("auth-framework".to_string());
 
@@ -56,13 +54,13 @@ async fn test_jwt_signature_validation() {
     );
     println!("✅ SECURITY PASS: JWT with wrong signature rejected");
 
-    // Test 2: JWT with CORRECT signature key (should pass)
-    let correct_key = EncodingKey::from_secret(b"test-secret-for-security-validation-32chars");
-    let valid_jwt = encode(&Header::default(), &claims, &correct_key).unwrap();
+    // Test 2: Create a proper JWT using the framework's TokenManager (should pass)
+    let token_manager = auth_framework.token_manager();
+    let valid_jwt = token_manager
+        .create_jwt_token("admin", vec!["read".to_string(), "write".to_string()], None)
+        .unwrap();
 
-    let valid_result = auth_framework
-        .token_manager()
-        .validate_jwt_token(&valid_jwt);
+    let valid_result = token_manager.validate_jwt_token(&valid_jwt);
 
     match &valid_result {
         Ok(claims) => {

@@ -293,5 +293,3 @@ pub struct ProviderInfo {
     pub display_name: String,
     pub auth_url: String,
 }
-
-

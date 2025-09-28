@@ -264,5 +264,3 @@ impl UserManager {
         Ok(!user_id.is_empty())
     }
 }
-
-

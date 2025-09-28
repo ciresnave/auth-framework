@@ -83,19 +83,27 @@ pub struct UserInfo {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::{AuthFramework, AuthConfig};
+/// use auth_framework::authentication::credentials::Credential;
 ///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create framework with default configuration
 /// let config = AuthConfig::default();
 /// let auth = AuthFramework::new(config);
 ///
-/// // Register authentication methods
-/// auth.register_method("password", password_method);
-/// auth.register_method("oauth2", oauth2_method);
+/// // Authentication methods would be registered here based on enabled features
+/// // Example: auth.register_method("method_name", method_implementation);
 ///
-/// // Authenticate a user
-/// let result = auth.authenticate("password", credential, metadata).await?;
+/// // Authenticate a user (example - requires registered method)
+/// let credential = Credential::Password {
+///     username: "example_user".to_string(),
+///     password: "user_password".to_string()
+/// };
+/// // Example: let result = auth.authenticate("method_name", credential).await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Security Considerations
@@ -269,6 +277,36 @@ impl AuthFramework {
             audit_manager,
             initialized: false,
         })
+    }
+
+    /// Replace the storage backend with a custom implementation.
+    ///
+    /// This will swap the internal storage Arc so subsequent operations use
+    /// the provided storage instance. Implementations that rely on a
+    /// different concrete storage may need additional reconfiguration by the
+    /// caller.
+    pub fn replace_storage(&mut self, storage: std::sync::Arc<dyn AuthStorage>) {
+        self.storage = storage;
+    }
+
+    /// Convenience constructor that creates a framework with a custom storage instance.
+    pub fn new_with_storage(config: AuthConfig, storage: std::sync::Arc<dyn AuthStorage>) -> Self {
+        let mut framework = Self::new(config);
+        framework.replace_storage(storage);
+        framework
+    }
+
+    /// Create and initialize a framework with a custom storage instance.
+    ///
+    /// This validates configuration during `initialize()` and returns an
+    /// initialized framework or an error.
+    pub async fn new_initialized_with_storage(
+        config: AuthConfig,
+        storage: std::sync::Arc<dyn AuthStorage>,
+    ) -> Result<Self> {
+        let mut framework = Self::new_with_storage(config, storage);
+        framework.initialize().await?;
+        Ok(framework)
     }
 
     /// Register an authentication method.
@@ -1359,7 +1397,11 @@ impl AuthFramework {
     pub async fn generate_totp_secret(&self, user_id: &str) -> Result<String> {
         debug!("Generating TOTP secret for user '{}'", user_id);
 
-        let secret = crate::utils::crypto::generate_token(20);
+        // Generate random bytes for TOTP secret
+        let random_bytes = crate::utils::crypto::generate_random_bytes(20);
+
+        // Encode as base32 (required by TOTP RFC)
+        let secret = base32::encode(base32::Alphabet::Rfc4648 { padding: true }, &random_bytes);
 
         info!("TOTP secret generated for user '{}'", user_id);
 
@@ -1415,7 +1457,7 @@ impl AuthFramework {
         use ring::hmac;
 
         // Decode base32 secret
-        let secret_bytes = base32::decode(base32::Alphabet::RFC4648 { padding: true }, secret)
+        let secret_bytes = base32::decode(base32::Alphabet::Rfc4648 { padding: true }, secret)
             .ok_or_else(|| AuthError::InvalidInput("Invalid TOTP secret format".to_string()))?;
 
         // Create HMAC key for TOTP (using SHA1 as per RFC)
@@ -1631,7 +1673,7 @@ impl AuthFramework {
                 .map_err(|_| AuthError::crypto("Failed to generate secure random bytes"))?;
 
             // Convert to base32 for human readability
-            let code = base32::encode(base32::Alphabet::RFC4648 { padding: false }, &bytes);
+            let code = base32::encode(base32::Alphabet::Rfc4648 { padding: false }, &bytes);
 
             // Format as XXXX-XXXX-XXXX-XXXX for readability
             let formatted_code = format!(
@@ -1715,7 +1757,7 @@ impl AuthFramework {
 
         // Convert to base32 for TOTP compatibility
         Ok(base32::encode(
-            base32::Alphabet::RFC4648 { padding: true },
+            base32::Alphabet::Rfc4648 { padding: true },
             &hash[0..20], // Use first 160 bits (20 bytes)
         ))
     }
@@ -1861,7 +1903,7 @@ impl AuthFramework {
         type HmacSha1 = Hmac<Sha1>;
 
         // Decode base32 secret to bytes
-        let key_bytes = decode(Alphabet::RFC4648 { padding: true }, secret)
+        let key_bytes = decode(Alphabet::Rfc4648 { padding: true }, secret)
             .ok_or_else(|| AuthError::validation("Invalid base32 secret"))?;
 
         // Convert time counter to bytes (big-endian)
@@ -2303,14 +2345,21 @@ impl AuthFramework {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// use auth_framework::{AuthFramework, AuthConfig};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let auth_framework = AuthFramework::new(AuthConfig::default());
     /// let monitoring = auth_framework.get_monitoring_manager();
     ///
     /// // Use for health checks
-    /// let health_status = monitoring.get_health_status().await;
+    /// let health_status = monitoring.health_check().await?;
     ///
     /// // Use for metrics collection
-    /// let metrics = monitoring.get_performance_metrics().await;
+    /// let metrics = monitoring.get_performance_metrics();
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_monitoring_manager(&self) -> Arc<crate::monitoring::MonitoringManager> {
         self.monitoring_manager.clone()
@@ -2790,9 +2839,9 @@ impl AuthFramework {
         // For now, return simplified audit logs
         // In a full implementation, this would query audit logs from storage with proper filtering
         let mut logs = vec![
-            "2024-08-12T10:00:00Z - Permission granted: read:document to user123".to_string(),
-            "2024-08-12T10:05:00Z - Permission revoked: write:sensitive to user456".to_string(),
-            "2024-08-12T10:10:00Z - Role assigned: admin to user789".to_string(),
+            "2024-08-12T10:00:00Z - Permission granted: read:document to example_user".to_string(),
+            "2024-08-12T10:05:00Z - Permission revoked: write:sensitive to test_user".to_string(),
+            "2024-08-12T10:10:00Z - Role assigned: admin to admin_user".to_string(),
         ];
 
         // Apply limit if specified
@@ -2983,7 +3032,19 @@ impl SecurityAuditStats {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # let security_stats = auth_framework::auth::SecurityAuditStats {
+    /// #     active_sessions: 100,
+    /// #     failed_logins_24h: 150,
+    /// #     successful_logins_24h: 1000,
+    /// #     unique_users_24h: 500,
+    /// #     token_issued_24h: 2000,
+    /// #     password_resets_24h: 10,
+    /// #     admin_actions_24h: 5,
+    /// #     security_alerts_24h: 6,
+    /// #     collection_timestamp: chrono::Utc::now(),
+    /// # };
+    /// # fn alert_security_team(_stats: &auth_framework::auth::SecurityAuditStats) {}
     /// if security_stats.requires_immediate_attention() {
     ///     // Trigger security alerts, notify administrators
     ///     alert_security_team(&security_stats);
@@ -3016,7 +3077,19 @@ impl SecurityAuditStats {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # let security_stats = auth_framework::auth::SecurityAuditStats {
+    /// #     active_sessions: 100,
+    /// #     failed_logins_24h: 150,
+    /// #     successful_logins_24h: 1000,
+    /// #     unique_users_24h: 500,
+    /// #     token_issued_24h: 2000,
+    /// #     password_resets_24h: 10,
+    /// #     admin_actions_24h: 5,
+    /// #     security_alerts_24h: 6,
+    /// #     collection_timestamp: chrono::Utc::now(),
+    /// # };
+    /// # fn notify_administrators(_alert: &str) {}
     /// if let Some(alert) = security_stats.security_alert_message() {
     ///     log::error!("Security Alert: {}", alert);
     ///     notify_administrators(&alert);

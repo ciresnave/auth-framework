@@ -827,5 +827,3 @@ mod tests {
         assert_eq!(result.metrics.roles_migrated, 1);
     }
 }
-
-

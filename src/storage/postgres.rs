@@ -469,5 +469,3 @@ impl AuthStorage for PostgresStorage {
         Ok(count as u64)
     }
 }
-
-

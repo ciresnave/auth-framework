@@ -213,5 +213,3 @@ pub fn check_role(auth_token: &crate::tokens::AuthToken, required_role: &str) ->
     auth_token.roles.contains(&required_role.to_string())
         || auth_token.roles.contains(&"admin".to_string()) // Admin has all roles
 }
-
-

@@ -308,13 +308,18 @@ impl IPSecurityUtils {
 
         match maxminddb::Reader::open_readfile(&db_path) {
             Ok(reader) => match reader.lookup::<maxminddb::geoip2::City>(ip_addr) {
-                Ok(city) => {
+                Ok(Some(city)) => {
                     if let Some(location) = city.location
-                        && let (Some(lat), Some(lon)) = (location.latitude, location.longitude) {
-                            log::debug!("MaxMind lookup for {}: lat={}, lon={}", ip, lat, lon);
-                            return Some((lat, lon));
-                        }
+                        && let (Some(lat), Some(lon)) = (location.latitude, location.longitude)
+                    {
+                        log::debug!("MaxMind lookup for {}: lat={}, lon={}", ip, lat, lon);
+                        return Some((lat, lon));
+                    }
                     log::debug!("MaxMind lookup for {} returned no coordinates", ip);
+                    None
+                }
+                Ok(None) => {
+                    log::debug!("MaxMind lookup for {} returned no data", ip);
                     None
                 }
                 Err(e) => {
@@ -358,8 +363,8 @@ impl UserAgentUtils {
         for (i, row) in matrix.iter_mut().enumerate().take(len1 + 1) {
             row[0] = i;
         }
-        for j in 0..=len2 {
-            matrix[0][j] = j;
+        for (j, item) in matrix[0].iter_mut().enumerate().take(len2 + 1) {
+            *item = j;
         }
         let ua1_chars: Vec<char> = ua1.chars().collect();
         let ua2_chars: Vec<char> = ua2.chars().collect();
@@ -499,5 +504,3 @@ mod tests {
         }
     }
 }
-
-

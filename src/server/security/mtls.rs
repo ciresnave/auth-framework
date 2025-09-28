@@ -531,12 +531,13 @@ impl MutualTlsManager {
         // Additional validation: verify certificate matches registered client
         if let Some(client_config) = clients.get(client_id)
             && let Some(expected_cert) = &client_config.client_certificate
-                && expected_cert != cert_der {
-                    return Err(AuthError::auth_method(
-                        "mtls",
-                        "Client certificate does not match registered certificate",
-                    ));
-                }
+            && expected_cert != cert_der
+        {
+            return Err(AuthError::auth_method(
+                "mtls",
+                "Client certificate does not match registered certificate",
+            ));
+        }
 
         Ok(())
     }
@@ -704,5 +705,3 @@ mod tests {
         assert!(!is_valid);
     }
 }
-
-

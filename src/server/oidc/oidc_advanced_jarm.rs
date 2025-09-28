@@ -23,7 +23,7 @@
 //! # Usage Example
 //!
 //! ```rust,no_run
-//! use auth_framework::server::oidc_advanced_jarm::{
+//! use auth_framework::server::oidc::oidc_advanced_jarm::{
 //!     AdvancedJarmManager, AdvancedJarmConfig, JarmDeliveryMode, AuthorizationResponse
 //! };
 //!
@@ -1074,5 +1074,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-

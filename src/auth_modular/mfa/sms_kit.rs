@@ -227,7 +227,7 @@ impl SmsKitManager {
             challenge_id
         );
 
-        let code = format!("{:06}", rand::thread_rng().gen_range(0..1000000));
+        let code = format!("{:06}", rand::rng().random_range(0..1000000));
 
         let sms_key = format!("smskit_challenge:{}:code", challenge_id);
         self.storage
@@ -415,5 +415,3 @@ impl SmsKitManager {
         Ok(code)
     }
 }
-
-

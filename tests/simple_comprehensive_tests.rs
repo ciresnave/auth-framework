@@ -625,7 +625,7 @@ mod csrf_tests {
         use base64::engine::{Engine as _, general_purpose};
         use rand::RngCore;
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut token_bytes = [0u8; 32];
         rng.fill_bytes(&mut token_bytes);
         let token = general_purpose::STANDARD.encode(token_bytes);
@@ -765,7 +765,7 @@ async fn test_comprehensive_integration() {
     use base64::engine::{Engine as _, general_purpose};
     use rand::RngCore;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut token_bytes = [0u8; 32];
     rng.fill_bytes(&mut token_bytes);
     let csrf_token = general_purpose::STANDARD.encode(token_bytes);

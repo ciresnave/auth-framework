@@ -499,7 +499,7 @@ impl ClientRegistrationManager {
     /// Generate client secret
     fn generate_client_secret(&self) -> String {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
         general_purpose::URL_SAFE_NO_PAD.encode(bytes)
@@ -508,7 +508,7 @@ impl ClientRegistrationManager {
     /// Generate registration access token
     fn generate_registration_access_token(&self) -> String {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
         general_purpose::URL_SAFE_NO_PAD.encode(bytes)
@@ -672,5 +672,3 @@ mod tests {
         assert_eq!(response.client_name, Some("Public Client".to_string()));
     }
 }
-
-

@@ -636,5 +636,3 @@ mod tests {
         assert!(!manager_role.has_permission(&CommonPermissions::system_admin(), &context));
     }
 }
-
-

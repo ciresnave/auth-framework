@@ -272,6 +272,7 @@ impl TieredStorageManager {
         };
     }
 
+    #[allow(dead_code)]
     async fn track_access(&self, key: &str, tier: StorageTier) {
         let mut tracker = self.access_tracker.write().await;
         let now = SystemTime::now();
@@ -399,6 +400,12 @@ impl Default for EventSourcingConfig {
     }
 }
 
+impl Default for EventSourcingManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventSourcingManager {
     pub fn new() -> Self {
         Self::with_config(EventSourcingConfig::default())
@@ -424,7 +431,10 @@ impl EventSourcingManager {
         }
 
         // Check if snapshot is needed
-        if event.event_version % self.config.snapshot_interval == 0 {
+        if event
+            .event_version
+            .is_multiple_of(self.config.snapshot_interval)
+        {
             self.create_snapshot(&event.aggregate_id).await?;
         }
 
@@ -542,10 +552,22 @@ impl ConfigHotReloadManager {
             .await
             .map_err(|e| AuthError::Configuration {
                 message: format!("Failed to read config file: {}", e),
+                source: Some(Box::new(e)),
+                help: Some("Check that the config file exists and is readable".to_string()),
+                docs_url: Some(
+                    "https://docs.rs/auth-framework/latest/auth_framework/config/".to_string(),
+                ),
+                suggested_fix: Some("Verify file path and permissions".to_string()),
             })?;
 
         serde_json::from_str(&content).map_err(|e| AuthError::Configuration {
             message: format!("Failed to parse config: {}", e),
+            source: Some(Box::new(e)),
+            help: Some("Check that the config file contains valid JSON".to_string()),
+            docs_url: Some(
+                "https://docs.rs/auth-framework/latest/auth_framework/config/".to_string(),
+            ),
+            suggested_fix: Some("Validate JSON syntax using a JSON validator".to_string()),
         })
     }
 
@@ -582,12 +604,24 @@ impl ConfigHotReloadManager {
         )
         .map_err(|e| AuthError::Configuration {
             message: format!("Failed to create file watcher: {}", e),
+            source: Some(Box::new(e)),
+            help: Some("Check that the file system supports file watching".to_string()),
+            docs_url: Some(
+                "https://docs.rs/auth-framework/latest/auth_framework/config/".to_string(),
+            ),
+            suggested_fix: Some("Ensure the system has file watching capabilities".to_string()),
         })?;
 
         watcher
             .watch(Path::new(&self.config_path), RecursiveMode::NonRecursive)
             .map_err(|e| AuthError::Configuration {
                 message: format!("Failed to watch config file: {}", e),
+                source: Some(Box::new(e)),
+                help: Some("Check that the config file path exists and is accessible".to_string()),
+                docs_url: Some(
+                    "https://docs.rs/auth-framework/latest/auth_framework/config/".to_string(),
+                ),
+                suggested_fix: Some("Verify the config file path is correct".to_string()),
             })?;
 
         self._watcher = Some(watcher);
@@ -705,7 +739,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_event_sourcing() {
-        let mut manager = EventSourcingManager::new();
+        let manager = EventSourcingManager::new();
 
         let event = DomainEvent {
             event_id: Uuid::new_v4().to_string(),
@@ -724,5 +758,3 @@ mod tests {
         assert_eq!(events[0].event_type, "UserCreated");
     }
 }
-
-

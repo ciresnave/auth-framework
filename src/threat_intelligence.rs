@@ -219,9 +219,10 @@ impl ThreatIntelConfig {
             }
 
             if let Ok(interval) = std::env::var("THREAT_INTEL_UPDATE_INTERVAL")
-                && let Ok(seconds) = interval.parse::<u64>() {
-                    config.update_interval_seconds = seconds;
-                }
+                && let Ok(seconds) = interval.parse::<u64>()
+            {
+                config.update_interval_seconds = seconds;
+            }
 
             if let Ok(feeds_dir) = std::env::var("THREAT_INTEL_FEEDS_DIR") {
                 config.feeds_directory = std::path::PathBuf::from(feeds_dir);
@@ -403,10 +404,11 @@ impl ThreatFeedManager {
     pub fn load_config() -> ThreatIntelConfig {
         // Try to load from config file first
         if let Ok(config_content) = std::fs::read_to_string("threat-intel-config.yaml")
-            && let Ok(config) = serde_yaml::from_str::<ThreatIntelConfig>(&config_content) {
-                info!("Loaded threat intelligence configuration from file");
-                return config;
-            }
+            && let Ok(config) = serde_yaml::from_str::<ThreatIntelConfig>(&config_content)
+        {
+            info!("Loaded threat intelligence configuration from file");
+            return config;
+        }
 
         // Fall back to environment variables for simple on/off switches
         let mut config = ThreatIntelConfig::default();
@@ -430,31 +432,34 @@ impl ThreatFeedManager {
 
         for (env_var, feed_name) in &feed_switches {
             if let Ok(enabled) = std::env::var(env_var)
-                && let Some(feed) = config.feeds.get_mut(*feed_name) {
-                    feed.enabled = enabled.to_lowercase() == "true";
-                    info!(
-                        "Feed {} enabled via {}: {}",
-                        feed_name, env_var, feed.enabled
-                    );
-                }
+                && let Some(feed) = config.feeds.get_mut(*feed_name)
+            {
+                feed.enabled = enabled.to_lowercase() == "true";
+                info!(
+                    "Feed {} enabled via {}: {}",
+                    feed_name, env_var, feed.enabled
+                );
+            }
         }
 
         // API keys from environment
         if let Ok(api_key) = std::env::var("VIRUSTOTAL_API_KEY")
-            && let Some(feed) = config.feeds.get_mut("virustotal_malicious") {
-                feed.api_key = Some(api_key);
-                feed.headers
-                    .insert("X-Apikey".to_string(), feed.api_key.clone().unwrap());
-            }
+            && let Some(feed) = config.feeds.get_mut("virustotal_malicious")
+        {
+            feed.api_key = Some(api_key);
+            feed.headers
+                .insert("X-Apikey".to_string(), feed.api_key.clone().unwrap());
+        }
 
         if let Ok(license_key) = std::env::var("MAXMIND_LICENSE_KEY")
-            && let Some(feed) = config.feeds.get_mut("maxmind_proxy_detection") {
-                feed.api_key = Some(license_key.clone());
-                feed.url = format!(
-                    "{}?edition_id=GeoIP2-Anonymous-IP&license_key={}&suffix=tar.gz",
-                    feed.url, license_key
-                );
-            }
+            && let Some(feed) = config.feeds.get_mut("maxmind_proxy_detection")
+        {
+            feed.api_key = Some(license_key.clone());
+            feed.url = format!(
+                "{}?edition_id=GeoIP2-Anonymous-IP&license_key={}&suffix=tar.gz",
+                feed.url, license_key
+            );
+        }
 
         config
     }
@@ -595,7 +600,7 @@ impl ThreatFeedManager {
             .into());
         }
 
-        let content = response.bytes().await?;
+        let content: bytes::Bytes = response.bytes().await?;
         let file_path = config.feeds_directory.join(&feed_config.filename);
 
         // Handle compressed feeds (like MaxMind)
@@ -869,15 +874,17 @@ impl ThreatFeedManager {
                     match ip {
                         std::net::IpAddr::V4(ipv4) => {
                             if let Ok(network) = line.parse::<ipnetwork::Ipv4Network>()
-                                && network.contains(*ipv4) {
-                                    return true;
-                                }
+                                && network.contains(*ipv4)
+                            {
+                                return true;
+                            }
                         }
                         std::net::IpAddr::V6(ipv6) => {
                             if let Ok(network) = line.parse::<ipnetwork::Ipv6Network>()
-                                && network.contains(*ipv6) {
-                                    return true;
-                                }
+                                && network.contains(*ipv6)
+                            {
+                                return true;
+                            }
                         }
                     }
                 }
@@ -906,5 +913,3 @@ pub enum FeedStatus {
     /// Feed has an error
     Error(String),
 }
-
-

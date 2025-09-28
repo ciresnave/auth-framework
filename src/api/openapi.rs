@@ -314,5 +314,3 @@ mod tests {
         assert!(html.contains("/api/openapi.json"));
     }
 }
-
-

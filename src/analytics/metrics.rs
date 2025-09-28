@@ -64,5 +64,3 @@ impl MetricsCollector {
         &self.current_metrics
     }
 }
-
-

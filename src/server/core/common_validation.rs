@@ -378,9 +378,13 @@ pub mod url {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::server::core::common_validation::collect_validation_errors;
+/// use auth_framework::errors::Result;
 ///
+/// # fn validate_client_id(_client_id: &str) -> Result<()> { Ok(()) }
+/// # fn validate_scope(_scope: &str) -> Result<()> { Ok(()) }
+/// # fn validate_redirect_uri(_uri: &str) -> Result<()> { Ok(()) }
 /// let validations = vec![
 ///     validate_client_id("valid_client"),
 ///     validate_scope("read write"),
@@ -406,5 +410,3 @@ pub fn collect_validation_errors(validations: Vec<Result<()>>) -> Result<()> {
         Err(AuthError::validation(errors.join("; ")))
     }
 }
-
-

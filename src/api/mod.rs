@@ -106,5 +106,3 @@ pub async fn validate_api_token(
         },
     })
 }
-
-

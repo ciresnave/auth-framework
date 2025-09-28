@@ -3,6 +3,7 @@
 use crate::errors::{AuthError, OAuthProviderError, Result};
 use crate::providers::{OAuthProvider, OAuthTokenResponse, UserProfile};
 use crate::tokens::AuthToken;
+#[cfg(feature = "reqwest")]
 use reqwest::Client;
 use serde_json::Value;
 // HashMap is used for token metadata
@@ -269,5 +270,3 @@ fn extract_string_optional_from_value(json: &Value, field: &str) -> Option<Strin
 // Include tests
 // #[cfg(test)]
 // mod tests;
-
-

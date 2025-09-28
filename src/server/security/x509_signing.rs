@@ -441,10 +441,11 @@ impl X509CertificateManager {
 
         // Check for Azure Key Vault configuration
         if let Ok(vault_url) = std::env::var("X509_AZURE_VAULT_URL")
-            && let Ok(cert_name) = std::env::var("X509_AZURE_CERT_NAME") {
-                tracing::info!("Loading CA certificate from Azure Key Vault: {}", vault_url);
-                return self.load_ca_from_azure_vault(&vault_url, &cert_name).await;
-            }
+            && let Ok(cert_name) = std::env::var("X509_AZURE_CERT_NAME")
+        {
+            tracing::info!("Loading CA certificate from Azure Key Vault: {}", vault_url);
+            return self.load_ca_from_azure_vault(&vault_url, &cert_name).await;
+        }
 
         // Check for AWS Secrets Manager configuration
         if let Ok(secret_id) = std::env::var("X509_AWS_SECRET_ID") {
@@ -1278,5 +1279,3 @@ mod tests {
         assert!(filter.matches(&cert));
     }
 }
-
-

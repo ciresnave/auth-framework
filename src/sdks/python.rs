@@ -811,5 +811,3 @@ class RbacManager:
         Ok("# AuthFramework Python SDK - placeholder".to_string())
     }
 }
-
-

@@ -843,32 +843,35 @@ impl DeviceFingerprintGenerator {
         match maxminddb::Reader::open_readfile(&db_path) {
             Ok(reader) => {
                 match reader.lookup::<maxminddb::geoip2::City>((*ip).into()) {
-                    Ok(city) => {
+                    Ok(Some(city)) => {
                         let mut location_parts = Vec::new();
 
                         // Build location string from MaxMind data
                         if let Some(country) = city.country.and_then(|c| c.names)
-                            && let Some(name) = country.get("en") {
-                                location_parts.push(format!("country:{}", name));
-                            }
+                            && let Some(name) = country.get("en")
+                        {
+                            location_parts.push(format!("country:{}", name));
+                        }
 
                         if let Some(subdivisions) = city.subdivisions
                             && let Some(subdivision) = subdivisions.first()
-                                && let Some(names) = &subdivision.names
-                                    && let Some(name) = names.get("en") {
-                                        location_parts.push(format!("region:{}", name));
-                                    }
+                            && let Some(names) = &subdivision.names
+                            && let Some(name) = names.get("en")
+                        {
+                            location_parts.push(format!("region:{}", name));
+                        }
 
                         if let Some(city_data) = city.city.and_then(|c| c.names)
-                            && let Some(name) = city_data.get("en") {
-                                location_parts.push(format!("city:{}", name));
-                            }
+                            && let Some(name) = city_data.get("en")
+                        {
+                            location_parts.push(format!("city:{}", name));
+                        }
 
                         if let Some(location) = city.location
                             && let (Some(lat), Some(lon)) = (location.latitude, location.longitude)
-                            {
-                                location_parts.push(format!("coords:{:.4},{:.4}", lat, lon));
-                            }
+                        {
+                            location_parts.push(format!("coords:{:.4},{:.4}", lat, lon));
+                        }
 
                         // Add threat intelligence from MaxMind
                         if let Some(traits) = city.traits {
@@ -891,6 +894,10 @@ impl DeviceFingerprintGenerator {
                         }
 
                         Some(location_parts.join("|"))
+                    }
+                    Ok(None) => {
+                        log::debug!("MaxMind lookup returned no data for {}", ip);
+                        None
                     }
                     Err(e) => {
                         log::debug!("MaxMind lookup failed for {}: {}", ip, e);
@@ -1136,18 +1143,16 @@ impl RiskCalculator {
 
                 for result in csv_reader.records() {
                     if let Ok(record) = result
-                        && record.len() >= 2 {
-                            let threat_country = record[0].to_lowercase();
-                            if let Ok(risk_score) = record[1].parse::<u32>()
-                                && country.contains(&threat_country) {
-                                    log::debug!(
-                                        "Country threat match: {} -> risk {}",
-                                        country,
-                                        risk_score
-                                    );
-                                    return risk_score;
-                                }
+                        && record.len() >= 2
+                    {
+                        let threat_country = record[0].to_lowercase();
+                        if let Ok(risk_score) = record[1].parse::<u32>()
+                            && country.contains(&threat_country)
+                        {
+                            log::debug!("Country threat match: {} -> risk {}", country, risk_score);
+                            return risk_score;
                         }
+                    }
                 }
             }
         }
@@ -1211,33 +1216,35 @@ impl RiskCalculator {
 
         for feed_path in &feed_paths {
             if Path::new(feed_path).exists()
-                && let Ok(contents) = std::fs::read_to_string(feed_path) {
-                    for line in contents.lines() {
-                        let line = line.trim();
-                        if line.is_empty() || line.starts_with('#') {
-                            continue;
-                        }
+                && let Ok(contents) = std::fs::read_to_string(feed_path)
+            {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
 
-                        // Check exact IP match
-                        if line == ip.to_string() {
-                            log::warn!("Malicious IP detected: {} (source: {})", ip, feed_path);
-                            return true;
-                        }
+                    // Check exact IP match
+                    if line == ip.to_string() {
+                        log::warn!("Malicious IP detected: {} (source: {})", ip, feed_path);
+                        return true;
+                    }
 
-                        // Check CIDR network match
-                        if line.contains('/')
-                            && let Ok(network) = line.parse::<ipnetwork::Ipv4Network>()
-                                && network.contains(*ip) {
-                                    log::warn!(
-                                        "Malicious network detected: {} in {} (source: {})",
-                                        ip,
-                                        network,
-                                        feed_path
-                                    );
-                                    return true;
-                                }
+                    // Check CIDR network match
+                    if line.contains('/')
+                        && let Ok(network) = line.parse::<ipnetwork::Ipv4Network>()
+                        && network.contains(*ip)
+                    {
+                        log::warn!(
+                            "Malicious network detected: {} in {} (source: {})",
+                            ip,
+                            network,
+                            feed_path
+                        );
+                        return true;
                     }
                 }
+            }
         }
 
         false
@@ -1259,56 +1266,59 @@ impl RiskCalculator {
             let db_path = std::env::var(env_var).unwrap_or_else(|_| default_file.to_string());
 
             if Path::new(&db_path).exists()
-                && let Ok(contents) = std::fs::read_to_string(&db_path) {
-                    for line in contents.lines() {
-                        let line = line.trim();
-                        if line.is_empty() || line.starts_with('#') {
-                            continue;
-                        }
+                && let Ok(contents) = std::fs::read_to_string(&db_path)
+            {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
 
-                        // Support multiple formats: IP, CIDR, IP ranges
-                        if line.contains('/') {
-                            // CIDR notation
-                            if let Ok(network) = line.parse::<ipnetwork::Ipv4Network>()
-                                && network.contains(*ip) {
-                                    log::info!(
-                                        "Proxy/VPN detected: {} in {} (source: {})",
-                                        ip,
-                                        network,
-                                        db_path
-                                    );
-                                    return true;
-                                }
-                        } else if line.contains('-') {
-                            // IP range format: 1.2.3.4-1.2.3.10
-                            let parts: Vec<&str> = line.split('-').collect();
-                            if parts.len() == 2
-                                && let (Ok(start_ip), Ok(end_ip)) = (
-                                    parts[0].trim().parse::<std::net::Ipv4Addr>(),
-                                    parts[1].trim().parse::<std::net::Ipv4Addr>(),
-                                ) {
-                                    let ip_u32 = u32::from(*ip);
-                                    let start_u32 = u32::from(start_ip);
-                                    let end_u32 = u32::from(end_ip);
-
-                                    if ip_u32 >= start_u32 && ip_u32 <= end_u32 {
-                                        log::info!(
-                                            "Proxy/VPN range detected: {} in {}-{} (source: {})",
-                                            ip,
-                                            start_ip,
-                                            end_ip,
-                                            db_path
-                                        );
-                                        return true;
-                                    }
-                                }
-                        } else if line == ip.to_string() {
-                            // Exact IP match
-                            log::info!("Proxy/VPN exact match: {} (source: {})", ip, db_path);
+                    // Support multiple formats: IP, CIDR, IP ranges
+                    if line.contains('/') {
+                        // CIDR notation
+                        if let Ok(network) = line.parse::<ipnetwork::Ipv4Network>()
+                            && network.contains(*ip)
+                        {
+                            log::info!(
+                                "Proxy/VPN detected: {} in {} (source: {})",
+                                ip,
+                                network,
+                                db_path
+                            );
                             return true;
                         }
+                    } else if line.contains('-') {
+                        // IP range format: 1.2.3.4-1.2.3.10
+                        let parts: Vec<&str> = line.split('-').collect();
+                        if parts.len() == 2
+                            && let (Ok(start_ip), Ok(end_ip)) = (
+                                parts[0].trim().parse::<std::net::Ipv4Addr>(),
+                                parts[1].trim().parse::<std::net::Ipv4Addr>(),
+                            )
+                        {
+                            let ip_u32 = u32::from(*ip);
+                            let start_u32 = u32::from(start_ip);
+                            let end_u32 = u32::from(end_ip);
+
+                            if ip_u32 >= start_u32 && ip_u32 <= end_u32 {
+                                log::info!(
+                                    "Proxy/VPN range detected: {} in {}-{} (source: {})",
+                                    ip,
+                                    start_ip,
+                                    end_ip,
+                                    db_path
+                                );
+                                return true;
+                            }
+                        }
+                    } else if line == ip.to_string() {
+                        // Exact IP match
+                        log::info!("Proxy/VPN exact match: {} (source: {})", ip, db_path);
+                        return true;
                     }
                 }
+            }
         }
 
         false
@@ -1323,29 +1333,32 @@ impl RiskCalculator {
             .unwrap_or_else(|_| "tor-exits-ipv6.txt".to_string());
 
         if Path::new(&tor_db_path).exists()
-            && let Ok(contents) = std::fs::read_to_string(&tor_db_path) {
-                for line in contents.lines() {
-                    let line = line.trim();
-                    if line.is_empty() || line.starts_with('#') {
-                        continue;
-                    }
+            && let Ok(contents) = std::fs::read_to_string(&tor_db_path)
+        {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
 
-                    // Check IPv6 exact match
-                    if let Ok(tor_ip) = line.parse::<std::net::Ipv6Addr>()
-                        && tor_ip == *ip {
-                            log::warn!("Tor exit node detected: {}", ip);
-                            return true;
-                        }
+                // Check IPv6 exact match
+                if let Ok(tor_ip) = line.parse::<std::net::Ipv6Addr>()
+                    && tor_ip == *ip
+                {
+                    log::warn!("Tor exit node detected: {}", ip);
+                    return true;
+                }
 
-                    // Check IPv6 network match
-                    if line.contains('/')
-                        && let Ok(network) = line.parse::<ipnetwork::Ipv6Network>()
-                            && network.contains(*ip) {
-                                log::warn!("Tor exit network detected: {} in {}", ip, network);
-                                return true;
-                            }
+                // Check IPv6 network match
+                if line.contains('/')
+                    && let Ok(network) = line.parse::<ipnetwork::Ipv6Network>()
+                    && network.contains(*ip)
+                {
+                    log::warn!("Tor exit network detected: {} in {}", ip, network);
+                    return true;
                 }
             }
+        }
 
         // Also check IPv4-mapped IPv6 addresses for Tor
         if let Some(ipv4) = ip.to_ipv4() {
@@ -1353,15 +1366,16 @@ impl RiskCalculator {
                 .unwrap_or_else(|_| "tor-exits-ipv4.txt".to_string());
 
             if Path::new(&tor_v4_path).exists()
-                && let Ok(contents) = std::fs::read_to_string(&tor_v4_path) {
-                    for line in contents.lines() {
-                        let line = line.trim();
-                        if line == ipv4.to_string() {
-                            log::warn!("Tor exit node detected (IPv4-mapped): {}", ip);
-                            return true;
-                        }
+                && let Ok(contents) = std::fs::read_to_string(&tor_v4_path)
+            {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if line == ipv4.to_string() {
+                        log::warn!("Tor exit node detected (IPv4-mapped): {}", ip);
+                        return true;
                     }
                 }
+            }
         }
 
         false
@@ -1441,5 +1455,3 @@ mod tests {
         assert!(risk >= 20); // Should have at least 20 for untrusted device
     }
 }
-
-

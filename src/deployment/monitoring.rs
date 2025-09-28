@@ -829,5 +829,3 @@ mod tests {
         assert!(export.contains("test_gauge 42"));
     }
 }
-
-

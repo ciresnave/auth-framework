@@ -5,7 +5,12 @@ Copyright (c) 2025 AuthFramework. All rights reserved.
 
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Any
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from ._admin import AdminService
 from ._auth import AuthService

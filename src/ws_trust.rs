@@ -355,7 +355,7 @@ impl SecurityTokenService {
     /// Generate a proof token for holder-of-key scenarios
     fn generate_proof_token(&self) -> Result<ProofToken> {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut key_material = vec![0u8; 32]; // 256-bit symmetric key
         rng.fill_bytes(&mut key_material);
 
@@ -635,5 +635,3 @@ mod tests {
         assert!(soap_request.contains("</soap:Envelope>"));
     }
 }
-
-

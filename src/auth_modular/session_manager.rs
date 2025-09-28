@@ -181,5 +181,3 @@ impl SessionManager {
         Ok(metrics)
     }
 }
-
-

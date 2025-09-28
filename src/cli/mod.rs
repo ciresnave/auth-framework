@@ -538,5 +538,3 @@ mod tests {
         assert!(msg.contains("[auth-framework]"));
     }
 }
-
-

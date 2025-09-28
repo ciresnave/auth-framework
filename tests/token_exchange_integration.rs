@@ -3,6 +3,15 @@
 //! These tests verify that both managers work correctly with the common trait
 //! and that the factory pattern provides the right recommendations.
 
+// Standard library imports for Rust 2024 edition
+use std::{
+    assert, assert_eq,
+    default::Default,
+    println,
+    result::Result::{Err, Ok},
+    vec,
+};
+
 use auth_framework::server::{
     ServiceComplexityLevel, TokenExchangeFactory, TokenExchangeManagerFactory,
     TokenExchangeService, TokenExchangeUseCase,

@@ -60,5 +60,3 @@ impl ReportGenerator {
         Ok("Generated report content".to_string())
     }
 }
-
-

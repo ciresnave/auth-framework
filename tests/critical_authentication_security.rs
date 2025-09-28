@@ -3,6 +3,9 @@
 //! Tests to verify that the authentication bypass vulnerability has been fixed
 //! and that proper password validation is enforced.
 
+// Standard library imports for Rust 2024 edition
+use std::{assert, assert_eq, default::Default, println, vec};
+
 use auth_framework::{
     errors::AuthError,
     oauth2_server::{OAuth2Config, OAuth2Server},

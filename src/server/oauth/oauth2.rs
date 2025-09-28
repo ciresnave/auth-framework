@@ -157,5 +157,3 @@ mod tests {
         assert_eq!(retrieved_client.client_id, "test_client");
     }
 }
-
-

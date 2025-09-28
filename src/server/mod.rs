@@ -270,5 +270,3 @@ pub struct ProviderMetadata {
     /// Additional metadata
     pub additional: HashMap<String, serde_json::Value>,
 }
-
-
