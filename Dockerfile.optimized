@@ -4,7 +4,7 @@
 #############################################################################
 # Stage 1: Build Environment
 #############################################################################
-FROM rust:1.75-slim AS builder
+FROM rust:1.90-slim AS builder
 
 # Set build arguments for optimization
 ARG RUST_BACKTRACE=1
