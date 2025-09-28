@@ -324,13 +324,14 @@ jobs:
     steps:
       # Note: Requires SLACK_WEBHOOK_URL secret to be configured in repository settings
       - name: Slack notification
-        uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          channel: "#deployments"
-          fields: repo,message,commit,author,action,eventName,ref,workflow
+        uses: rtCamp/action-slack-notify@v2
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_CHANNEL: "deployments"
+          SLACK_COLOR: ${{ job.status == 'success' && 'good' || job.status == 'failure' && 'danger' || 'warning' }}
+          SLACK_MESSAGE: "Deployment status: ${{ job.status }}"
+          SLACK_TITLE: "AuthFramework CI/CD Pipeline"
+          SLACK_USERNAME: "GitHub Actions"
 
   cleanup:
     name: Cleanup
