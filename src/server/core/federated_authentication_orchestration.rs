@@ -33,9 +33,12 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust,ignore
-//! use auth_framework::server::federated_authentication_orchestration::*;
-//! use auth_framework::server::oidc_session_management::SessionManager;
+//! ```rust,no_run
+//! use auth_framework::server::{
+//!     FederationOrchestrator, FederationOrchestratorConfig, FederationOrchestratorImpl, SessionManager,
+//!     OrchestrationPattern, IdentityProvider, AuthenticationProtocol, TrustLevel,
+//!     IdpCapability, IdpRoutingRule, OrchestrationRequest, OrchestrationPreferences
+//! };
 //! use std::sync::Arc;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -1362,27 +1365,29 @@ impl FederationOrchestratorImpl {
     async fn validate_oidc_session_status(&self, idp_session: &IdpSessionInfo) -> Result<bool> {
         // Check if ID token is present and valid
         if let Some(id_token_value) = idp_session.session_data.get("id_token")
-            && let Some(id_token) = id_token_value.as_str() {
-                // In production, this would validate the JWT signature and expiry
-                // For now, perform basic JWT structure validation
-                let parts: Vec<&str> = id_token.split('.').collect();
-                if parts.len() == 3 {
-                    // Basic JWT structure is valid
-                    tracing::debug!("OIDC session has valid JWT structure");
-                    return Ok(true);
-                }
+            && let Some(id_token) = id_token_value.as_str()
+        {
+            // In production, this would validate the JWT signature and expiry
+            // For now, perform basic JWT structure validation
+            let parts: Vec<&str> = id_token.split('.').collect();
+            if parts.len() == 3 {
+                // Basic JWT structure is valid
+                tracing::debug!("OIDC session has valid JWT structure");
+                return Ok(true);
             }
+        }
 
         // Check session expiry from metadata
         if let Some(expires_at) = idp_session.session_data.get("expires_at")
-            && let Some(expires_timestamp) = expires_at.as_u64() {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
+            && let Some(expires_timestamp) = expires_at.as_u64()
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
 
-                return Ok(expires_timestamp > now);
-            }
+            return Ok(expires_timestamp > now);
+        }
 
         Ok(false)
     }
@@ -1393,26 +1398,28 @@ impl FederationOrchestratorImpl {
         if let Some(_assertion_data) = idp_session.session_data.get("saml_assertion") {
             // Check NotOnOrAfter condition from SAML assertion
             if let Some(not_on_or_after) = idp_session.session_data.get("not_on_or_after")
-                && let Some(expires_timestamp) = not_on_or_after.as_u64() {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                && let Some(expires_timestamp) = not_on_or_after.as_u64()
+            {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
 
-                    return Ok(expires_timestamp > now);
-                }
+                return Ok(expires_timestamp > now);
+            }
 
             // Check AuthnInstant - ensure session isn't too old
             if let Some(authn_instant) = idp_session.session_data.get("authn_instant")
-                && let Some(authn_timestamp) = authn_instant.as_u64() {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                && let Some(authn_timestamp) = authn_instant.as_u64()
+            {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
 
-                    // Consider session invalid if older than 8 hours
-                    return Ok(now - authn_timestamp < 28800);
-                }
+                // Consider session invalid if older than 8 hours
+                return Ok(now - authn_timestamp < 28800);
+            }
         }
 
         Ok(false)
@@ -1424,39 +1431,38 @@ impl FederationOrchestratorImpl {
         if let Some(_access_token_data) = idp_session.session_data.get("access_token") {
             // Check token expiry
             if let Some(expires_at) = idp_session.session_data.get("expires_at")
-                && let Some(expires_timestamp) = expires_at.as_u64() {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                && let Some(expires_timestamp) = expires_at.as_u64()
+            {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
 
-                    if expires_timestamp > now {
-                        tracing::debug!(
-                            "OAuth2 access token is still valid for IdP {}",
-                            idp_session.idp_id
-                        );
+                if expires_timestamp > now {
+                    tracing::debug!(
+                        "OAuth2 access token is still valid for IdP {}",
+                        idp_session.idp_id
+                    );
 
-                        // Additional security check - ensure token isn't too old
-                        if let Some(issued_at) = idp_session.session_data.get("issued_at")
-                            && let Some(issued_timestamp) = issued_at.as_u64() {
-                                // Consider token suspicious if older than 24 hours
-                                if now - issued_timestamp > 86400 {
-                                    tracing::warn!(
-                                        "OAuth2 token is older than 24 hours for IdP {}",
-                                        idp_session.idp_id
-                                    );
-                                    return Ok(false);
-                                }
-                            }
-
-                        return Ok(true);
-                    } else {
-                        tracing::debug!(
-                            "OAuth2 access token expired for IdP {}",
-                            idp_session.idp_id
-                        );
+                    // Additional security check - ensure token isn't too old
+                    if let Some(issued_at) = idp_session.session_data.get("issued_at")
+                        && let Some(issued_timestamp) = issued_at.as_u64()
+                    {
+                        // Consider token suspicious if older than 24 hours
+                        if now - issued_timestamp > 86400 {
+                            tracing::warn!(
+                                "OAuth2 token is older than 24 hours for IdP {}",
+                                idp_session.idp_id
+                            );
+                            return Ok(false);
+                        }
                     }
+
+                    return Ok(true);
+                } else {
+                    tracing::debug!("OAuth2 access token expired for IdP {}", idp_session.idp_id);
                 }
+            }
 
             // Check if refresh token is available for token refresh
             if let Some(_refresh_token) = idp_session.session_data.get("refresh_token") {
@@ -1512,26 +1518,28 @@ impl FederationOrchestratorImpl {
         if let Some(_security_token) = idp_session.session_data.get("security_token") {
             // Check token expiry
             if let Some(expires_at) = idp_session.session_data.get("expires_at")
-                && let Some(expires_timestamp) = expires_at.as_u64() {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                && let Some(expires_timestamp) = expires_at.as_u64()
+            {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
 
-                    return Ok(expires_timestamp > now);
-                }
+                return Ok(expires_timestamp > now);
+            }
 
             // Check created timestamp - ensure token isn't too old
             if let Some(created_at) = idp_session.session_data.get("created_at")
-                && let Some(created_timestamp) = created_at.as_u64() {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                && let Some(created_timestamp) = created_at.as_u64()
+            {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
 
-                    // Consider token invalid if older than 12 hours
-                    return Ok(now - created_timestamp < 43200);
-                }
+                // Consider token invalid if older than 12 hours
+                return Ok(now - created_timestamp < 43200);
+            }
         }
 
         Ok(false)
@@ -1541,22 +1549,24 @@ impl FederationOrchestratorImpl {
     async fn validate_custom_session_status(&self, idp_session: &IdpSessionInfo) -> Result<bool> {
         // For custom protocols, use generic session validation
         if let Some(expires_at) = idp_session.session_data.get("expires_at")
-            && let Some(expires_timestamp) = expires_at.as_u64() {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
+            && let Some(expires_timestamp) = expires_at.as_u64()
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
 
-                return Ok(expires_timestamp > now);
-            }
+            return Ok(expires_timestamp > now);
+        }
 
         // Check if session has required custom protocol fields
         if let SessionProtocol::Custom(protocol_name) = &idp_session.protocol
-            && let Some(_protocol_data) = idp_session.session_data.get(protocol_name) {
-                // Basic check - if protocol-specific data exists, consider session potentially valid
-                tracing::debug!("Custom protocol {} session data found", protocol_name);
-                return Ok(true);
-            }
+            && let Some(_protocol_data) = idp_session.session_data.get(protocol_name)
+        {
+            // Basic check - if protocol-specific data exists, consider session potentially valid
+            tracing::debug!("Custom protocol {} session data found", protocol_name);
+            return Ok(true);
+        }
 
         Ok(false)
     }
@@ -1851,5 +1861,3 @@ mod tests {
         assert_eq!(request.requested_attributes.len(), 2);
     }
 }
-
-

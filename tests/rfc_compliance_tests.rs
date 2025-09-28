@@ -1,6 +1,19 @@
-//! RFC Compliance Test Suite for AuthFramework - Fixed Version
+//! RFC Compliance Tests
 //!
-//! Simple tests that verify the framework compiles and basic functionality works.
+//! These tests ensure that the AuthFramework complies with relevant RFCs
+//! for OAuth 2.0, JWT, and related security standards.
+
+// Standard library imports for Rust 2024 edition
+use std::{
+    assert, assert_eq,
+    default::Default,
+    option::Option::{None, Some},
+    println,
+    result::Result::{Err, Ok},
+    sync::Arc,
+    time::Duration,
+    vec,
+};
 
 use auth_framework::{
     auth::AuthFramework,
@@ -10,7 +23,6 @@ use auth_framework::{
     providers::generate_pkce,
     tokens::TokenManager,
 };
-use std::{sync::Arc, time::Duration};
 
 #[cfg(test)]
 mod oauth2_basic_tests {

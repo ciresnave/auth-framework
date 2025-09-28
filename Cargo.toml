@@ -25,7 +25,7 @@
   jsonwebtoken = "9.2"
 
   # HTTP client for OAuth flows
-  reqwest = { version = "0.12", features = ["json"] }
+  reqwest = { version = "0.12", features = ["json"], optional = true }
 
   # Serialization
   serde      = { version = "1.0", features = ["derive"] }
@@ -74,6 +74,9 @@
 
   # Base64 encoding
   base64 = "0.22"
+
+  # Bytes utilities
+  bytes = "1.5"
 
   # MaxMind GeoIP2 for IP geolocation
   maxminddb = "0.26"
@@ -247,6 +250,13 @@
   sms-web-axum    = { version = "0.2", optional = true }
   sms-web-generic = { version = "0.2", optional = true }
 
+  # Additional optional dependencies that are referenced by features but not declared
+  encoding_rs      = { version = "0.8", optional = true }
+  rustls           = { version = "0.23", optional = true }
+  rustls-pki-types = { version = "1.0", optional = true }
+  schannel         = { version = "0.1", optional = true }
+  webpki           = { version = "0.22", optional = true }
+
 [dev-dependencies]
   axum-test  = "18.0"
   criterion  = { version = "0.7", features = ["async_tokio", "html_reports"] }
@@ -260,6 +270,7 @@
   default = [
     "enhanced-rbac",    # Re-enabled for comprehensive authorization testing
     "postgres-storage",
+    "reqwest",          # HTTP client needed for OAuth flows
   ] # PostgreSQL recommended
   enhanced-device-flow = ["oauth-device-flows"]
   mysql-storage = ["sqlx"]
@@ -271,6 +282,7 @@
   distributed-rate-limiting = ["redis"]
   enhanced-crypto           = ["chacha20poly1305", "ed25519-dalek", "x25519-dalek"]
   fips-compliance           = ["aws-lc-rs"]
+  reqwest                   = ["dep:reqwest"]
 
   # Enterprise RBAC with role-system v1.0
   enhanced-rbac = ["api-server", "role-system"]

@@ -21,8 +21,8 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
-//! use auth_framework::server::stepped_up_auth::{
+//! ```rust,no_run
+//! use auth_framework::server::{
 //!     SteppedUpAuthManager, StepUpConfig, AuthenticationLevel, StepUpContext
 //! };
 //! use std::collections::HashMap;
@@ -893,49 +893,46 @@ impl SteppedUpAuthManager {
 
         if let Some(request) = requests.get(request_id)
             && let Some(challenge_data) = &request.challenge_data
-                && let Some(ciba_auth_req_id) = challenge_data.get("ciba_auth_req_id")
-                    && let Some(ciba_manager) = &self.ciba_manager {
-                        // Convert JSON value to string for CIBA manager
-                        let auth_req_id_str = ciba_auth_req_id.as_str().unwrap_or("");
+            && let Some(ciba_auth_req_id) = challenge_data.get("ciba_auth_req_id")
+            && let Some(ciba_manager) = &self.ciba_manager
+        {
+            // Convert JSON value to string for CIBA manager
+            let auth_req_id_str = ciba_auth_req_id.as_str().unwrap_or("");
 
-                        if !auth_req_id_str.is_empty() {
-                            // Query CIBA authentication request status
-                            match ciba_manager.get_auth_request(auth_req_id_str).await {
-                                Ok(ciba_request) => {
-                                    let status = match ciba_request.consent.as_ref() {
-                                        Some(consent) => format!("{:?}", consent.status),
-                                        None => "pending".to_string(),
-                                    };
+            if !auth_req_id_str.is_empty() {
+                // Query CIBA authentication request status
+                match ciba_manager.get_auth_request(auth_req_id_str).await {
+                    Ok(ciba_request) => {
+                        let status = match ciba_request.consent.as_ref() {
+                            Some(consent) => format!("{:?}", consent.status),
+                            None => "pending".to_string(),
+                        };
 
-                                    tracing::info!(
-                                        "CIBA authentication status for {}: {}",
-                                        auth_req_id_str,
-                                        status
-                                    );
-                                    return Ok(Some(serde_json::json!({
-                                        "ciba_auth_req_id": auth_req_id_str,
-                                        "status": status,
-                                        "mode": format!("{:?}", ciba_request.mode),
-                                        "expires_at": request.expires_at
-                                    })));
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to get CIBA request for {}: {}",
-                                        auth_req_id_str,
-                                        e
-                                    );
-                                    // Continue with pending status as fallback
-                                    return Ok(Some(serde_json::json!({
-                                        "ciba_auth_req_id": auth_req_id_str,
-                                        "status": "error",
-                                        "error": format!("Request check failed: {}", e),
-                                        "expires_at": request.expires_at
-                                    })));
-                                }
-                            }
-                        }
+                        tracing::info!(
+                            "CIBA authentication status for {}: {}",
+                            auth_req_id_str,
+                            status
+                        );
+                        return Ok(Some(serde_json::json!({
+                            "ciba_auth_req_id": auth_req_id_str,
+                            "status": status,
+                            "mode": format!("{:?}", ciba_request.mode),
+                            "expires_at": request.expires_at
+                        })));
                     }
+                    Err(e) => {
+                        tracing::warn!("Failed to get CIBA request for {}: {}", auth_req_id_str, e);
+                        // Continue with pending status as fallback
+                        return Ok(Some(serde_json::json!({
+                            "ciba_auth_req_id": auth_req_id_str,
+                            "status": "error",
+                            "error": format!("Request check failed: {}", e),
+                            "expires_at": request.expires_at
+                        })));
+                    }
+                }
+            }
+        }
 
         Ok(None)
     }
@@ -996,26 +993,27 @@ impl SteppedUpAuthManager {
                 // If this was a CIBA request, notify the CIBA manager
                 if let Some(ref challenge_data) = request.challenge_data
                     && let Some(ciba_auth_req_id) = challenge_data.get("ciba_auth_req_id")
-                        && let Some(ref ciba_manager) = self.ciba_manager {
-                            // Cancel the CIBA request on expiration
-                            if let Some(auth_req_id_str) = ciba_auth_req_id.as_str() {
-                                match ciba_manager.cancel_auth_request(auth_req_id_str).await {
-                                    Ok(()) => {
-                                        tracing::info!(
-                                            "Successfully cancelled expired CIBA request: {}",
-                                            auth_req_id_str
-                                        );
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Failed to cancel expired CIBA request {}: {}",
-                                            auth_req_id_str,
-                                            e
-                                        );
-                                    }
-                                }
+                    && let Some(ref ciba_manager) = self.ciba_manager
+                {
+                    // Cancel the CIBA request on expiration
+                    if let Some(auth_req_id_str) = ciba_auth_req_id.as_str() {
+                        match ciba_manager.cancel_auth_request(auth_req_id_str).await {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "Successfully cancelled expired CIBA request: {}",
+                                    auth_req_id_str
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to cancel expired CIBA request {}: {}",
+                                    auth_req_id_str,
+                                    e
+                                );
                             }
                         }
+                    }
+                }
             }
         }
 
@@ -1133,5 +1131,3 @@ mod tests {
         assert!(response.session_token.is_some());
     }
 }
-
-

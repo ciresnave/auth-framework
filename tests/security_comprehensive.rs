@@ -1,3 +1,13 @@
+// Standard library imports for Rust 2024 edition
+use std::{
+    assert, assert_eq,
+    default::Default,
+    option::Option::{None, Some},
+    println,
+    result::Result::{Err, Ok},
+    vec,
+};
+
 use auth_framework::auth::AuthFramework;
 use auth_framework::authentication::credentials::Credential;
 use auth_framework::config::AuthConfig;
@@ -12,7 +22,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
 async fn test_timing_attack_resistance() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -74,7 +85,8 @@ async fn test_timing_attack_resistance() {
 
 #[tokio::test]
 async fn test_dos_protection_mechanisms() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -129,7 +141,8 @@ async fn test_dos_protection_mechanisms() {
 
 #[tokio::test]
 async fn test_jwt_manipulation_attacks() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -181,7 +194,8 @@ async fn test_jwt_manipulation_attacks() {
 
 #[tokio::test]
 async fn test_session_hijacking_prevention() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -279,7 +293,8 @@ async fn test_session_hijacking_prevention() {
 
 #[tokio::test]
 async fn test_resource_exhaustion_protection() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -328,7 +343,8 @@ async fn test_resource_exhaustion_protection() {
 
 #[tokio::test]
 async fn test_input_injection_attacks() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -361,7 +377,8 @@ async fn test_input_injection_attacks() {
 
 #[tokio::test]
 async fn test_unicode_normalization_attacks() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -400,7 +417,8 @@ async fn test_unicode_normalization_attacks() {
 
 #[tokio::test]
 async fn test_concurrent_session_limits() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -455,7 +473,8 @@ async fn test_concurrent_session_limits() {
 
 #[tokio::test]
 async fn test_error_information_disclosure() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -520,7 +539,8 @@ async fn test_error_information_disclosure() {
 
 #[tokio::test]
 async fn test_rate_limiting_boundary_conditions() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -565,7 +585,8 @@ async fn test_rate_limiting_boundary_conditions() {
 
 #[tokio::test]
 async fn test_session_validation_strictness() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -633,7 +654,8 @@ async fn test_jwt_signature_validation_security() {
     // Test 1: Forged JWT must be rejected
     let forged_jwt =
         "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhdHRhY2tlciJ9.FORGED_SIGNATURE";
-    let decoding_key = DecodingKey::from_secret("test-secret".as_ref());
+    let decoding_key =
+        DecodingKey::from_secret("Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==".as_ref());
 
     let result = validator.validate_token(forged_jwt, &decoding_key, true);
     assert!(
@@ -667,7 +689,7 @@ async fn test_jwt_signature_validation_security() {
         auth_ctx_hash: None,
     };
 
-    let secret = "test-secret";
+    let secret = "Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==";
     let encoding_key = EncodingKey::from_secret(secret.as_ref());
     let valid_jwt = encode(&Header::default(), &claims, &encoding_key).unwrap();
 

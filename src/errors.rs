@@ -32,9 +32,9 @@
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! # let auth_framework = AuthFramework::quick_start().build().await?;
-//! # let credential = Credential::Password { 
+//! # let credential = Credential::Password {
 //! #     username: "user123".to_string(),
-//! #     password: "password".to_string() 
+//! #     password: "password".to_string()
 //! # };
 //! # fn handle_success(_result: auth_framework::AuthResult) { }
 //! # fn respond_with_auth_failure() { }
@@ -824,9 +824,9 @@ impl actix_web::ResponseError for AuthError {
             AuthError::Token(_) => actix_web::http::StatusCode::UNAUTHORIZED,
             AuthError::Permission(_) => actix_web::http::StatusCode::FORBIDDEN,
             AuthError::RateLimit { .. } => actix_web::http::StatusCode::TOO_MANY_REQUESTS,
-            AuthError::Configuration { .. } | AuthError::Storage(_) => {
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
-            }
+            AuthError::Configuration { .. }
+            | AuthError::Storage(_)
+            | AuthError::Internal { .. } => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
             _ => actix_web::http::StatusCode::BAD_REQUEST,
         }
     }
@@ -978,7 +978,7 @@ mod tests {
 
     #[test]
     fn test_actix_web_integration() {
-        #[cfg(feature = "actix-web")]
+        #[cfg(feature = "actix-integration")]
         {
             use actix_web::ResponseError;
 

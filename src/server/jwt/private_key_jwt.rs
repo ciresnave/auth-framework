@@ -16,19 +16,16 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust,ignore
-//! ```rust,ignore
-//! use auth_framework::server::private_key_jwt::{PrivateKeyJwtManager, ClientJwtConfig};
-//! use auth_framework::secure_jwt::{SecureJwtValidator, SecureJwtConfig};
+//! ```rust,no_run
+//! use auth_framework::server::jwt::{PrivateKeyJwtManager, ClientJwtConfig};
+//! use auth_framework::{SecureJwtValidator, SecureJwtConfig};
 //! use chrono::Duration;
 //! use jsonwebtoken::Algorithm;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create JWT validator with enhanced security
-//! let jwt_config = SecureJwtConfig::default();
-//! let jwt_validator = SecureJwtValidator::new(jwt_config);
-//!
 //! // Create manager with custom cleanup interval
+//! # let jwt_config = SecureJwtConfig::default();
+//! # let jwt_validator = SecureJwtValidator::new(jwt_config);
 //! let manager = PrivateKeyJwtManager::new(jwt_validator)
 //!     .with_cleanup_interval(Duration::minutes(30));
 //!

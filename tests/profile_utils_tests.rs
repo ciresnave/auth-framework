@@ -1,5 +1,17 @@
 //! Unit tests for profile utility functions and token-to-profile conversion
 
+// Standard library imports for Rust 2024 edition
+use std::{
+    assert, assert_eq,
+    boxed::Box,
+    default::Default,
+    format,
+    option::Option::{None, Some},
+    println,
+    result::Result::{Err, Ok},
+    vec,
+};
+
 use auth_framework::profile_utils::ExtractProfile;
 use auth_framework::providers::{OAuthProvider, UserProfile};
 use base64::Engine;

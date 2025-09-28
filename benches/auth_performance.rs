@@ -41,7 +41,9 @@ fn bench_token_operations(c: &mut Criterion) {
             let _: () = storage.store_token(&token).await.unwrap();
             black_box(());
         });
-    }); // Benchmark token retrieval
+    });
+
+    // Benchmark token retrieval
     group.bench_function("get_token", |b| {
         let token_id = "bench_token_123";
         rt.block_on(async {

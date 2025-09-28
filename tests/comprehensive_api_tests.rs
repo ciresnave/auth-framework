@@ -1,8 +1,13 @@
-//! Comprehensive API and Integration Tests for AuthFramewo        let mut framework = AuthFramework::new(config);
-// Framework not yet initialized
+//! Comprehensive API and Integration Tests for AuthFramework
 //!
 //! This test suite validates all public APIs, edge cases, and integration scenarios
 //! for the current AuthFramework implementation.
+
+use std::{
+    assert, assert_eq,
+    option::Option::{None, Some},
+    vec,
+};
 
 use auth_framework::{
     auth::AuthFramework,

@@ -98,7 +98,7 @@ pub struct UserInfo {
 ///
 /// // Authenticate a user (example - requires registered method)
 /// let credential = Credential::Password {
-///     username: "user123".to_string(),
+///     username: "example_user".to_string(),
 ///     password: "user_password".to_string()
 /// };
 /// // Example: let result = auth.authenticate("method_name", credential).await?;
@@ -1397,7 +1397,11 @@ impl AuthFramework {
     pub async fn generate_totp_secret(&self, user_id: &str) -> Result<String> {
         debug!("Generating TOTP secret for user '{}'", user_id);
 
-        let secret = crate::utils::crypto::generate_token(20);
+        // Generate random bytes for TOTP secret
+        let random_bytes = crate::utils::crypto::generate_random_bytes(20);
+
+        // Encode as base32 (required by TOTP RFC)
+        let secret = base32::encode(base32::Alphabet::Rfc4648 { padding: true }, &random_bytes);
 
         info!("TOTP secret generated for user '{}'", user_id);
 
@@ -2835,9 +2839,9 @@ impl AuthFramework {
         // For now, return simplified audit logs
         // In a full implementation, this would query audit logs from storage with proper filtering
         let mut logs = vec![
-            "2024-08-12T10:00:00Z - Permission granted: read:document to user123".to_string(),
-            "2024-08-12T10:05:00Z - Permission revoked: write:sensitive to user456".to_string(),
-            "2024-08-12T10:10:00Z - Role assigned: admin to user789".to_string(),
+            "2024-08-12T10:00:00Z - Permission granted: read:document to example_user".to_string(),
+            "2024-08-12T10:05:00Z - Permission revoked: write:sensitive to test_user".to_string(),
+            "2024-08-12T10:10:00Z - Role assigned: admin to admin_user".to_string(),
         ];
 
         // Apply limit if specified

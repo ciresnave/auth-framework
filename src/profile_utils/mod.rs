@@ -3,6 +3,7 @@
 use crate::errors::{AuthError, OAuthProviderError, Result};
 use crate::providers::{OAuthProvider, OAuthTokenResponse, UserProfile};
 use crate::tokens::AuthToken;
+#[cfg(feature = "reqwest")]
 use reqwest::Client;
 use serde_json::Value;
 // HashMap is used for token metadata

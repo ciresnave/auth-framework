@@ -5,6 +5,17 @@
 //! 2. Device Fingerprinting System
 //! 3. Database Migration System
 
+// Standard library imports for Rust 2024 edition
+use std::{
+    assert, assert_eq, 
+    println,
+    vec,
+    default::Default,
+    option::Option::{Some, None},
+    result::Result::{Ok, Err},
+    string::ToString,
+};
+
 use auth_framework::audit::RequestMetadata;
 use auth_framework::permissions::PermissionChecker;
 use auth_framework::session::DeviceFingerprintGenerator;

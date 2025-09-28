@@ -12,18 +12,23 @@
 //!
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
-//! use axum::{Router, routing::get};
+//! use auth_framework::integrations::axum::{AuthenticatedUser, RequireAuth};
 //!
-//! let auth = AuthFramework::quick_start()
-//!     .jwt_auth_from_env()
-//!     .with_axum()
-//!     .build().await?;
-//!
-//! let app = Router::new()
-//!     .route("/public", get(public_handler))
-//!     .route("/protected", get(protected(protected_handler)))
-//!     .route("/admin", get(protected(admin_handler).require_role("admin")))
-//!     .with_state(auth);
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create auth framework
+//!     let _auth = AuthFramework::quick_start()
+//!         .jwt_auth_from_env()
+//!         .build().await?;
+//!     
+//!     // Create authentication middleware
+//!     let _auth_middleware = RequireAuth::new()
+//!         .with_roles(&["user", "admin"])
+//!         .with_permissions(&["read", "write"]);
+//!     
+//!     println!("Auth framework configured for Axum integration");
+//!     Ok(())
+//! }
 //! ```
 //!
 //! # Advanced Usage
@@ -31,19 +36,26 @@
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
 //! use auth_framework::integrations::axum::*;
+//! use std::sync::Arc;
 //!
-//! // Custom auth routes
-//! let auth_routes = AuthRouter::new()
-//!     .login_route("/auth/login")
-//!     .logout_route("/auth/logout")
-//!     .refresh_route("/auth/refresh")
-//!     .build();
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let auth = Arc::new(AuthFramework::quick_start().build().await?);
 //!
-//! let app = Router::new()
-//!     .merge(auth_routes)
-//!     .route("/api/profile", get(profile_handler))
-//!     .layer(RequireAuth::new())
-//!     .with_state(auth);
+//!     // Configure auth routes
+//!     let _auth_routes = AuthRouter::new()
+//!         .login_route("/auth/login")
+//!         .logout_route("/auth/logout")
+//!         .refresh_route("/auth/refresh")
+//!         .build();
+//!
+//!     // Configure middleware
+//!     let _permission_middleware = RequirePermission::new("admin:read")
+//!         .for_resource("user-profiles");
+//!     
+//!     println!("Advanced auth configuration completed");
+//!     Ok(())
+//! }
 //! ```
 
 use crate::{AuthError, AuthFramework, AuthToken};

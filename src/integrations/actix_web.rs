@@ -154,15 +154,20 @@ where
                             };
                             tracing::debug!("AuthToken stored in request extensions");
                             req.extensions_mut().insert(token);
-                            service.call(req).await
                         }
-                        Err(e) => Err(ActixError::from(e)),
+                        Err(e) => {
+                            tracing::debug!("JWT validation failed: {}", e);
+                            // Don't return error from middleware, let extractor handle it
+                        }
                     }
                 }
-                Err(_) => Err(ActixError::from(AuthError::Token(
-                    crate::errors::TokenError::Missing,
-                ))),
+                Err(_) => {
+                    tracing::debug!("No authorization token found");
+                    // Don't return error from middleware, let extractor handle it
+                }
             }
+            // Always proceed to the service - let extractors handle authentication requirements
+            service.call(req).await
         })
     }
 }
@@ -457,14 +462,20 @@ mod tests {
 
     #[actix_web::test]
     async fn test_auth_middleware() {
+        let test_secret = "auth-framework-test-secret-12345678"; // 32+ characters
         unsafe {
-            std::env::set_var("JWT_SECRET", "auth-framework");
+            std::env::set_var("JWT_SECRET", test_secret);
         }
         let config = AuthConfig::new()
-            .secret("auth-framework".to_string())
+            .secret(test_secret.to_string())
             .issuer("auth-framework".to_string())
             .audience("auth-framework".to_string());
-        let auth_framework = Arc::new(AuthFramework::new(config));
+        let mut auth_framework = AuthFramework::new(config);
+        auth_framework
+            .initialize()
+            .await
+            .expect("Failed to initialize auth framework");
+        let auth_framework = Arc::new(auth_framework);
 
         let app = test::init_service(
             App::new()

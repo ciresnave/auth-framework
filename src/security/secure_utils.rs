@@ -155,10 +155,17 @@ impl SecureValidation {
             return Err(AuthError::validation("Username too long".to_string()));
         }
 
-        // Check for potentially dangerous characters
+        // Check for potentially dangerous characters including control characters
         if username.contains('\0') || username.contains('\r') || username.contains('\n') {
             return Err(AuthError::validation(
                 "Username contains invalid characters".to_string(),
+            ));
+        }
+
+        // Check for control characters (0x01-0x1F and 0x7F-0x9F)
+        if username.chars().any(|c| c.is_control()) {
+            return Err(AuthError::validation(
+                "Username contains control characters".to_string(),
             ));
         }
 

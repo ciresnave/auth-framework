@@ -27,9 +27,9 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust,ignore
-//! use auth_framework::server::caep_continuous_access::*;
-//! use auth_framework::server::{SessionManager, oidc_backchannel_logout::BackChannelLogoutManager};
+//! ```rust,no_run
+//! use auth_framework::server::security::caep_continuous_access::*;
+//! use auth_framework::server::{SessionManager, BackChannelLogoutManager, BackChannelLogoutConfig};
 //! use chrono::Duration;
 //! use std::sync::Arc;
 //! use async_trait::async_trait;
@@ -64,7 +64,7 @@
 //! // In real code, create these with proper configuration from your DI container
 //! # let session_config = Default::default();
 //! # let session_manager = Arc::new(SessionManager::new(session_config));
-//! # let logout_config = Default::default();
+//! # let logout_config = BackChannelLogoutConfig::default();
 //! # let logout_manager = Arc::new(BackChannelLogoutManager::new(logout_config, session_manager.as_ref().clone())?);
 //! # let mut caep_manager = CaepManager::new(config, session_manager, logout_manager).await?;
 //!

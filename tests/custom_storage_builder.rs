@@ -1,6 +1,8 @@
-use auth_framework::prelude::*;
+// Standard library imports for Rust 2024 edition
+use std::{assert, option::Option::Some, string::ToString, sync::Arc};
+
 use auth_framework::storage::MemoryStorage;
-use std::sync::Arc;
+use auth_framework::{AuthConfig, AuthFramework};
 
 #[tokio::test]
 async fn build_with_custom_storage() {

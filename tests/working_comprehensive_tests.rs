@@ -345,6 +345,9 @@ async fn test_mfa_operations() {
 
     // Generate TOTP code
     let code_result = framework.generate_totp_code(&secret).await;
+    if let Err(e) = &code_result {
+        println!("TOTP code generation error: {:?}", e);
+    }
     assert!(code_result.is_ok(), "TOTP code generation should succeed");
     let code = code_result.unwrap();
     assert_eq!(code.len(), 6, "TOTP code should be 6 digits");
@@ -624,7 +627,11 @@ async fn test_end_to_end_integration() {
 
     // MFA operations
     let secret = framework.generate_totp_secret("user123").await.unwrap();
-    let _code = framework.generate_totp_code(&secret).await.unwrap();
+    let code_result = framework.generate_totp_code(&secret).await;
+    if let Err(e) = &code_result {
+        println!("TOTP code generation error in end-to-end test: {:?}", e);
+    }
+    let _code = code_result.unwrap();
     // Verification would depend on implementation
 
     // Cleanup

@@ -595,7 +595,7 @@ impl ThreatFeedManager {
             .into());
         }
 
-        let content = response.bytes().await?;
+        let content: bytes::Bytes = response.bytes().await?;
         let file_path = config.feeds_directory.join(&feed_config.filename);
 
         // Handle compressed feeds (like MaxMind)

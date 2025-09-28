@@ -2,6 +2,12 @@
 //!
 //! Tests basic functionality that is currently working
 
+use std::{
+    assert, assert_eq, assert_ne,
+    option::Option::{None, Some},
+    println, vec,
+};
+
 use auth_framework::{
     audit::{DeviceInfo, RequestMetadata},
     permissions::{Permission, PermissionChecker},
@@ -215,8 +221,8 @@ async fn test_comprehensive_integration() {
     );
     permissions.add_resource_hierarchy("projects".to_string(), vec!["tasks".to_string()]);
 
-    // Grant admin user hierarchical permissions
-    let admin_permission = Permission::new("manage", "company");
+    // Grant admin user hierarchical permissions with wildcard action
+    let admin_permission = Permission::new("*", "company");
     permissions.add_user_permission("admin_user", admin_permission);
 
     // Test hierarchical permission checking

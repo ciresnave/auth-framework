@@ -29,9 +29,9 @@
 //!
 //! ## Example Usage
 //!
-//! ```rust,ignore
-//! use auth_framework::server::token_exchange::{TokenExchangeManager, TokenExchangeRequest};
-//! use auth_framework::secure_jwt::{SecureJwtValidator, SecureJwtConfig};
+//! ```rust,no_run
+//! use auth_framework::server::token_exchange::core::*;
+//! use auth_framework::{SecureJwtValidator, SecureJwtConfig};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let jwt_validator = SecureJwtValidator::new(SecureJwtConfig::default());
@@ -1007,5 +1007,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-

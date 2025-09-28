@@ -3,6 +3,18 @@
 //! This test suite covers all edge cases, error conditions, and security scenarios
 //! that could occur in real-world usage of the AuthFramework.
 
+// Standard library imports for Rust 2024 edition
+use std::{
+    assert, assert_eq, assert_ne,
+    println, dbg,
+    vec,
+    default::Default,
+    option::Option::{Some, None},
+    result::Result::{Ok, Err},
+    sync::Arc, 
+    time::Duration,
+};
+
 use auth_framework::{
     auth::AuthFramework,
     authentication::credentials::Credential,
@@ -12,7 +24,6 @@ use auth_framework::{
     },
     methods::{ApiKeyMethod, AuthMethodEnum, JwtMethod, OAuth2Method, PasswordMethod},
 };
-use std::{sync::Arc, time::Duration};
 
 /// Test suite for edge cases in authentication flows
 #[cfg(test)]
@@ -66,7 +77,7 @@ mod authentication_edge_cases {
         // Spawn multiple concurrent authentication attempts
         let handles: Vec<_> = (0..50)
             .map(|i| {
-                let framework = Arc::clone(&framework);
+                let framework: Arc<AuthFramework> = Arc::clone(&framework);
                 tokio::spawn(async move {
                     let credential = Credential::password(format!("user{}", i), "password123");
                     framework.authenticate("password", credential).await
@@ -306,13 +317,13 @@ mod concurrency_tests {
 
     #[tokio::test]
     async fn test_concurrent_token_creation_and_validation() {
-        let framework = Arc::new(setup_framework().await);
+        let framework: Arc<AuthFramework> = Arc::new(setup_framework().await);
 
         let mut handles = Vec::new();
 
         // Spawn multiple tasks creating and validating tokens concurrently
         for i in 0..100 {
-            let framework_clone = Arc::clone(&framework);
+            let framework_clone: Arc<AuthFramework> = Arc::clone(&framework);
             let handle = tokio::spawn(async move {
                 // Create token
                 let token_result = framework_clone
@@ -352,13 +363,13 @@ mod concurrency_tests {
 
     #[tokio::test]
     async fn test_concurrent_mfa_operations() {
-        let framework = Arc::new(setup_framework().await);
+        let framework: Arc<AuthFramework> = Arc::new(setup_framework().await);
 
         let mut handles = Vec::new();
 
         // Spawn multiple MFA operations concurrently
         for i in 0..50 {
-            let framework_clone = Arc::clone(&framework);
+            let framework_clone: Arc<AuthFramework> = Arc::clone(&framework);
             let handle = tokio::spawn(async move {
                 let user_id = format!("user{}", i);
 
@@ -388,7 +399,7 @@ mod concurrency_tests {
 
     #[tokio::test]
     async fn test_concurrent_permission_checking() {
-        let framework = Arc::new(setup_framework().await);
+        let framework: Arc<AuthFramework> = Arc::new(setup_framework().await);
 
         // Create a token to use for permission checking with appropriate scopes
         let token = framework
@@ -415,7 +426,7 @@ mod concurrency_tests {
 
         // Spawn multiple permission checks concurrently - reduce count to avoid overloading
         for i in 0..20 {
-            let framework_clone = Arc::clone(&framework);
+            let framework_clone: Arc<AuthFramework> = Arc::clone(&framework);
             let token_clone = token.clone();
             let handle = tokio::spawn(async move {
                 let permission_type = if i % 2 == 0 { "read" } else { "write" };
@@ -957,7 +968,7 @@ async fn test_comprehensive_edge_case_integration() {
     let mut handles = Vec::new();
 
     for i in 0..20 {
-        let framework_clone = Arc::clone(&framework);
+        let framework_clone: Arc<AuthFramework> = Arc::clone(&framework);
         let handle = tokio::spawn(async move {
             let long_user = "long_user".repeat(100);
             let long_pass = "long_pass".repeat(100);
@@ -1018,7 +1029,7 @@ async fn test_comprehensive_edge_case_integration() {
     let test_operations = vec![
         // Token operations
         tokio::spawn({
-            let framework = Arc::clone(&framework);
+            let framework: Arc<AuthFramework> = Arc::clone(&framework);
             async move {
                 for i in 0..50 {
                     let _ = framework
@@ -1034,7 +1045,7 @@ async fn test_comprehensive_edge_case_integration() {
         }),
         // MFA operations
         tokio::spawn({
-            let framework = Arc::clone(&framework);
+            let framework: Arc<AuthFramework> = Arc::clone(&framework);
             async move {
                 for i in 0..30 {
                     let _ = framework
@@ -1045,7 +1056,7 @@ async fn test_comprehensive_edge_case_integration() {
         }),
         // Validation operations
         tokio::spawn({
-            let framework = Arc::clone(&framework);
+            let framework: Arc<AuthFramework> = Arc::clone(&framework);
             async move {
                 for i in 0..50 {
                     let _ = framework

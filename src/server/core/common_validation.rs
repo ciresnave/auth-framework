@@ -378,7 +378,7 @@ pub mod url {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use auth_framework::server::core::common_validation::collect_validation_errors;
 /// use auth_framework::errors::Result;
 ///
@@ -410,5 +410,3 @@ pub fn collect_validation_errors(validations: Vec<Result<()>>) -> Result<()> {
         Err(AuthError::validation(errors.join("; ")))
     }
 }
-
-

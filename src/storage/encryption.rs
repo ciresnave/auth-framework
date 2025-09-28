@@ -3,7 +3,6 @@ use crate::storage::{AuthStorage, SessionData};
 use crate::tokens::AuthToken;
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce, aead::Aead};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::Duration;
@@ -59,17 +58,16 @@ impl StorageEncryption {
         let cipher = Aes256Gcm::new(key);
         Self { cipher }
     }
-
     /// Generate a new 256-bit encryption key (base64 encoded)
     pub fn generate_key() -> String {
+        use rand::RngCore;
         let mut key_bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut key_bytes);
         BASE64.encode(key_bytes)
     }
-
-    /// Encrypt sensitive data
     pub fn encrypt(&self, plaintext: &str) -> Result<EncryptedData> {
         // Generate random nonce
+        use rand::RngCore;
         let mut nonce_bytes = [0u8; 12]; // 96-bit nonce for GCM
         rand::rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);

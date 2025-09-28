@@ -106,15 +106,15 @@ async fn test_jwt_signature_bypass_prevention() {
         }
     }
 
-    // Test 4: Test properly signed JWT (should pass)
-    let correct_key = EncodingKey::from_secret(b"test-secret-for-security-validation-32chars");
-    let valid_jwt = encode(&Header::default(), &malicious_claims, &correct_key).unwrap();
-
+    // Test 4: Test properly signed JWT using framework's TokenManager (should pass)
     println!("✅ Testing properly signed JWT...");
 
-    let valid_result = auth_framework
-        .token_manager()
-        .validate_jwt_token(&valid_jwt);
+    let token_manager = auth_framework.token_manager();
+    let valid_jwt = token_manager
+        .create_jwt_token("admin", vec!["read".to_string(), "write".to_string()], None)
+        .unwrap();
+
+    let valid_result = token_manager.validate_jwt_token(&valid_jwt);
 
     match valid_result {
         Ok(claims) => {

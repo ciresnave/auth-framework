@@ -528,6 +528,7 @@ dependencies = [
  "base64 0.22.1",
  "bcrypt",
  "bumpalo",
+ "bytes",
  "chacha20poly1305",
  "chrono",
  "clap",
@@ -543,6 +544,7 @@ dependencies = [
  "dialoguer",
  "dirs",
  "ed25519-dalek",
+ "encoding_rs",
  "fastrand",
  "futures",
  "futures-util",
@@ -583,7 +585,10 @@ dependencies = [
  "ring",
  "role-system",
  "rpassword",
+ "rustls 0.23.32",
+ "rustls-pki-types",
  "rustls-webpki 0.103.6",
+ "schannel",
  "secrecy 0.10.3",
  "serde",
  "serde_derive",
@@ -623,6 +628,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "warp",
+ "webpki",
  "x25519-dalek",
  "x509-parser",
  "zeroize",
@@ -7675,6 +7681,16 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki"
+version = "0.22.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed63aea5ce73d0ff405984102c42de94fc55a6b75765d621c65262469b3c9b53"
+dependencies = [
+ "ring",
+ "untrusted 0.9.0",
 ]
 
 [[package]]

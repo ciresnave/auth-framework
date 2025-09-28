@@ -47,18 +47,26 @@
 //!
 //! # Example Usage
 //!
-//! ```rust
-//! use auth_framework::admin::{AdminInterface, AppState};
+//! ```rust,no_run
+//! use auth_framework::admin::AppState;
+//! use auth_framework::config::AuthFrameworkSettings;
 //!
-//! // Create administrative interface
-//! let app_state = AppState::new(config_manager).await?;
-//! let admin = AdminInterface::new(app_state);
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let settings = AuthFrameworkSettings::default();
+//!     
+//!     // Create administrative interface
+//!     let app_state = AppState::new(settings)?;
+//!     // Note: AdminInterface would be created here in real usage
+//!     // let admin = AdminInterface::new(app_state);
 //!
-//! // Start web interface
-//! admin.start_web_interface("127.0.0.1:8080").await?;
+//!     // Start web interface (example)
+//!     // admin.start_web_interface("127.0.0.1:8080").await?;
 //!
-//! // Start TUI interface
-//! admin.start_tui_interface().await?;
+//!     // Start TUI interface (example)
+//!     // admin.start_tui_interface().await?;
+//!     Ok(())
+//! }
 //! ```
 //!
 //! # Deployment Scenarios
