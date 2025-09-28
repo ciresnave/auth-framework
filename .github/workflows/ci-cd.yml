@@ -74,18 +74,18 @@ jobs:
         run: |
           echo "Disk usage before cleanup:"
           df -h
-          
+
           # Remove unnecessary packages and clean package cache
           sudo apt-get autoremove -y
           sudo apt-get autoclean
           sudo apt-get clean
-          
+
           # Remove large unnecessary directories
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          
+
           echo "Disk usage after cleanup:"
           df -h
 
@@ -310,17 +310,17 @@ jobs:
     name: Notify Team
     runs-on: ubuntu-latest
     needs: [publish-crates-io]
-    if: always()
+    if: always() && secrets.SLACK_WEBHOOK_URL != ''
 
     steps:
-      # Note: Requires SLACK_WEBHOOK_URL secret to be configured in repository settings
+      # Note: Only runs if SLACK_WEBHOOK_URL secret is configured in repository settings
       - name: Slack notification
         uses: rtCamp/action-slack-notify@4e5fb42d249be6a45a298f3c9543b111b02f7907 # v2.3.0
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_CHANNEL: "releases"
-          SLACK_COLOR: ${{ job.status == 'success' && 'good' || job.status == 'failure' && 'danger' || 'warning' }}
-          SLACK_MESSAGE: "Library publication status: ${{ job.status }}"
+          SLACK_COLOR: ${{ needs.publish-crates-io.result == 'success' && 'good' || needs.publish-crates-io.result == 'failure' && 'danger' || 'warning' }}
+          SLACK_MESSAGE: "Library publication status: ${{ needs.publish-crates-io.result }}"
           SLACK_TITLE: "AuthFramework Library Release"
           SLACK_USERNAME: "GitHub Actions"
 
