@@ -214,9 +214,13 @@ pub enum AuthError {
     #[error("YAML error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 
-    /// TOML parsing errors
-    #[error("TOML error: {0}")]
-    Toml(#[from] toml::ser::Error),
+    /// TOML serialization errors
+    #[error("TOML serialization error: {0}")]
+    TomlSer(#[from] toml::ser::Error),
+
+    /// TOML deserialization errors  
+    #[error("TOML deserialization error: {0}")]
+    TomlDe(#[from] toml::de::Error),
 
     /// Prometheus metrics errors
     #[cfg(feature = "prometheus")]
