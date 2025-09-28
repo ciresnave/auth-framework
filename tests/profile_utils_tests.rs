@@ -4,12 +4,8 @@
 use std::{
     assert, assert_eq,
     boxed::Box,
-    default::Default,
     format,
     option::Option::{None, Some},
-    println,
-    result::Result::{Err, Ok},
-    vec,
 };
 
 use auth_framework::profile_utils::ExtractProfile;

@@ -6,10 +6,8 @@
 // Standard library imports for Rust 2024 edition
 use std::{
     assert, assert_eq,
-    default::Default,
     option::Option::{None, Some},
     println,
-    result::Result::{Err, Ok},
     vec,
 };
 

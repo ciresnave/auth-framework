@@ -553,7 +553,7 @@ mod tests {
         for byte_len in [8, 16, 32, 64] {
             let token = SecureRandomGen::generate_string(byte_len).unwrap();
             // Base64url encoding: 4 chars per 3 bytes, no padding
-            let expected_len = (byte_len * 4 + 2) / 3;
+            let expected_len = (byte_len * 4).div_ceil(3);
             assert!(
                 token.len() >= expected_len - 2 && token.len() <= expected_len + 2,
                 "Token length {} not in expected range for {} bytes",

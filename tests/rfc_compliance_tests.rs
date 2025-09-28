@@ -5,14 +5,10 @@
 
 // Standard library imports for Rust 2024 edition
 use std::{
-    assert, assert_eq,
-    default::Default,
-    option::Option::{None, Some},
+    assert,
     println,
-    result::Result::{Err, Ok},
     sync::Arc,
     time::Duration,
-    vec,
 };
 
 use auth_framework::{

@@ -39,6 +39,7 @@ pub struct ObservabilityManager {
     security_monitor: Arc<SecurityMonitor>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: ObservabilityConfig,
 }
 
@@ -98,8 +99,11 @@ pub struct PerformanceMetrics {
 
 /// Security event monitoring
 pub struct SecurityMonitor {
+    #[allow(dead_code)]
     failed_attempts: Arc<AtomicU64>,
+    #[allow(dead_code)]
     rate_limit_violations: Arc<AtomicU64>,
+    #[allow(dead_code)]
     suspicious_patterns: Arc<RwLock<HashMap<String, SuspiciousActivity>>>,
     security_events: Arc<RwLock<Vec<SecurityEvent>>>,
     threat_levels: Arc<RwLock<HashMap<String, ThreatLevel>>>,

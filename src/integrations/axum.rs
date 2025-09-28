@@ -145,6 +145,12 @@ pub struct ProtectedHandler<F> {
     required_roles: Vec<String>,
 }
 
+impl Default for RequireAuth {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RequireAuth {
     /// Create a new authentication middleware
     pub fn new() -> Self {
@@ -214,6 +220,12 @@ impl<F> ProtectedHandler<F> {
     pub fn require_role(mut self, role: &str) -> Self {
         self.required_roles = vec![role.to_string()];
         self
+    }
+}
+
+impl Default for AuthRouter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -294,6 +306,7 @@ async fn login_handler(
     Ok(Json(response))
 }
 
+#[allow(dead_code)]
 async fn logout_handler(
     State(_auth): State<Arc<AuthFramework>>,
     user: AuthenticatedUser,
@@ -316,6 +329,7 @@ async fn refresh_handler(
     ))
 }
 
+#[allow(dead_code)]
 async fn profile_handler(user: AuthenticatedUser) -> Result<impl IntoResponse, AuthError> {
     Ok(Json(UserInfo {
         id: user.user_id,
@@ -352,8 +366,8 @@ fn extract_bearer_token(request: &Request) -> Result<String, AuthError> {
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| AuthError::Token(crate::errors::TokenError::Missing))?;
 
-    if auth_header.starts_with("Bearer ") {
-        Ok(auth_header[7..].to_string())
+    if let Some(stripped) = auth_header.strip_prefix("Bearer ") {
+        Ok(stripped.to_string())
     } else {
         Err(AuthError::Token(crate::errors::TokenError::Invalid {
             message: "Authorization header must use Bearer scheme".to_string(),
@@ -421,8 +435,8 @@ fn extract_bearer_token_from_parts(parts: &Parts) -> Result<String, AuthError> {
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| AuthError::Token(crate::errors::TokenError::Missing))?;
 
-    if auth_header.starts_with("Bearer ") {
-        Ok(auth_header[7..].to_string())
+    if let Some(stripped) = auth_header.strip_prefix("Bearer ") {
+        Ok(stripped.to_string())
     } else {
         Err(AuthError::Token(crate::errors::TokenError::Invalid {
             message: "Authorization header must use Bearer scheme".to_string(),

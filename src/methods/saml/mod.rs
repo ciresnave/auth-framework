@@ -106,6 +106,7 @@ pub struct SamlAssertion {
 
 /// SAML response structure with comprehensive validation fields
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SamlResponse {
     #[serde(rename = "Issuer")]
     issuer: Option<SamlIssuer>,
@@ -130,16 +131,20 @@ struct SamlAssertionXml {
     #[serde(rename = "AuthnStatement")]
     authn_statements: Option<Vec<SamlAuthnStatement>>,
     #[serde(rename = "Conditions")]
+    #[allow(dead_code)]
     conditions: Option<SamlConditions>,
     #[serde(rename = "IssueInstant")]
+    #[allow(dead_code)]
     issue_instant: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct SamlConditions {
     #[serde(rename = "NotBefore")]
+    #[allow(dead_code)]
     not_before: Option<String>,
     #[serde(rename = "NotOnOrAfter")]
+    #[allow(dead_code)]
     not_on_or_after: Option<String>,
 }
 
@@ -239,6 +244,7 @@ impl SamlAuthMethod {
 
     /// Parse ISO 8601 timestamp to SystemTime
     /// Used for SAML assertion timestamp validation
+    #[allow(dead_code)]
     fn parse_timestamp(&self, timestamp: &str) -> Result<SystemTime> {
         use chrono::DateTime;
 
@@ -254,6 +260,7 @@ impl SamlAuthMethod {
     }
 
     /// Validate SAML assertion timestamps and issuer
+    #[allow(dead_code)]
     fn validate_assertion_security(
         &self,
         assertion: &SamlAssertionXml,
@@ -287,6 +294,7 @@ impl SamlAuthMethod {
     }
 
     /// Comprehensive SAML response validation using all available fields
+    #[allow(dead_code)]
     async fn validate_saml_response_comprehensive(
         &self,
         saml_response: &str,
@@ -303,6 +311,7 @@ impl SamlAuthMethod {
     }
 
     /// Validate structured SAML response with comprehensive security checks
+    #[allow(dead_code)]
     async fn validate_structured_saml_response(
         &self,
         response: SamlResponse,

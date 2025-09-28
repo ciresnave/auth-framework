@@ -280,14 +280,13 @@ impl<S: AuthorizationStorage + 'static> RequirePermission<S> {
         let user_id = claims.sub;
 
         // PRODUCTION FIX: Validate specific user ID if required
-        if let Some(expected_id) = &self.expected_user_id {
-            if user_id != *expected_id {
+        if let Some(expected_id) = &self.expected_user_id
+            && user_id != *expected_id {
                 return Err(AuthError::access_denied(format!(
                     "Token user ID '{}' does not match expected user ID '{}'",
                     user_id, expected_id
                 )));
             }
-        }
 
         // Check if user has the required permission
         let has_permission = self.check_access(&user_id, request).await?;

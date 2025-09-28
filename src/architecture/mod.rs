@@ -272,6 +272,7 @@ impl TieredStorageManager {
         };
     }
 
+    #[allow(dead_code)]
     async fn track_access(&self, key: &str, tier: StorageTier) {
         let mut tracker = self.access_tracker.write().await;
         let now = SystemTime::now();
@@ -399,6 +400,12 @@ impl Default for EventSourcingConfig {
     }
 }
 
+impl Default for EventSourcingManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventSourcingManager {
     pub fn new() -> Self {
         Self::with_config(EventSourcingConfig::default())
@@ -424,7 +431,7 @@ impl EventSourcingManager {
         }
 
         // Check if snapshot is needed
-        if event.event_version % self.config.snapshot_interval == 0 {
+        if event.event_version.is_multiple_of(self.config.snapshot_interval) {
             self.create_snapshot(&event.aggregate_id).await?;
         }
 

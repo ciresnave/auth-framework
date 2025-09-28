@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Comprehensive edge case testing to ensure bulletproof behavior
-
 // Use a proper 32+ character JWT secret for all tests
 const TEST_JWT_SECRET: &str = "Y3J5cHRvX3JhbmRvbV9zZWNyZXRfMTIzNDU2Nzg5MA==";
 
