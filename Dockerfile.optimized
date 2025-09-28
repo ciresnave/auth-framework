@@ -36,7 +36,8 @@ RUN mkdir -p src && \
   echo 'pub fn main() {}' > src/lib.rs
 
 # Build dependencies only - this layer will be cached unless dependencies change
-RUN cargo build --release --locked && \
+# Only build library dependencies, not examples or binaries
+RUN cargo build --release --locked --lib && \
   rm -rf src/
 
 # Copy actual source code
