@@ -112,11 +112,9 @@ jobs:
       - name: Run cargo-deny security audit
         run: cargo deny check
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
-      - name: Run additional security audit
-        run: cargo audit
+      - name: Clear cargo advisory cache (if exists)
+        run: rm -rf ~/.cargo/advisory-db || true
+        continue-on-error: true
 
   build:
     name: Build and Test Docker Image

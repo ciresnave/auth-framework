@@ -6,8 +6,13 @@ Copyright (c) 2025 AuthFramework. All rights reserved.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, NamedTuple, Self
+from typing import Any, NamedTuple
 from urllib.parse import urljoin
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 import httpx
 

@@ -1,2 +1,7 @@
 /target
 *.profraw
+
+# Cargo audit/advisory database cache
+.cargo/advisory-db/
+advisory-db/
+**/.cargo/advisory-db/

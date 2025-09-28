@@ -1,74 +1,77 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+  build-backend = "hatchling.build"
+  requires      = ["hatchling"]
 
 [project]
-name = "authframework"
-version = "1.0.0"
-description = "Official Python SDK for AuthFramework REST API"
-readme = "README.md"
-license = "MIT"
-requires-python = ">=3.9"
-authors = [{ name = "AuthFramework Team", email = "support@authframework.dev" }]
-keywords = [
-  "auth",
-  "authentication",
-  "authorization",
-  "jwt",
-  "oauth",
-  "mfa",
-  "rest-api",
-  "sdk",
-]
-classifiers = [
-  "Development Status :: 5 - Production/Stable",
-  "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
-  "Operating System :: OS Independent",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Topic :: Software Development :: Libraries :: Python Modules",
-  "Topic :: System :: Systems Administration :: Authentication/Directory",
-]
-dependencies = ["httpx>=0.25.0", "pydantic>=2.0.0"]
+  authors = [
+    { name = "AuthFramework Team", email = "support@authframework.dev" },
+  ]
+  classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.9",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+  ]
+  dependencies = [
+    "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+    "typing_extensions>=4.0.0; python_version<'3.11'",
+  ]
+  description = "Official Python SDK for AuthFramework REST API"
+  keywords = [
+    "auth",
+    "authentication",
+    "authorization",
+    "jwt",
+    "mfa",
+    "oauth",
+    "rest-api",
+    "sdk",
+  ]
+  license = "MIT"
+  name = "authframework"
+  readme = "README.md"
+  requires-python = ">=3.9"
+  version = "1.0.0"
 
-[project.optional-dependencies]
-dev = [
-  "pytest>=7.0.0",
-  "pytest-asyncio>=0.21.0",
-  "pytest-cov>=4.0.0",
-  "black>=23.0.0",
-  "isort>=5.12.0",
-  "flake8>=6.0.0",
-  "mypy>=1.5.0",
-  "pre-commit>=3.4.0",
-]
-docs = [
-  "sphinx>=7.0.0",
-  "sphinx-rtd-theme>=1.3.0",
-  "sphinx-autodoc-typehints>=1.24.0",
-]
+  [project.optional-dependencies]
+    dev = [
+      "black>=23.0.0",
+      "flake8>=6.0.0",
+      "isort>=5.12.0",
+      "mypy>=1.5.0",
+      "pre-commit>=3.4.0",
+      "pytest-asyncio>=0.21.0",
+      "pytest-cov>=4.0.0",
+      "pytest>=7.0.0",
+    ]
+    docs = [
+      "sphinx-autodoc-typehints>=1.24.0",
+      "sphinx-rtd-theme>=1.3.0",
+      "sphinx>=7.0.0",
+    ]
 
-[project.urls]
-Homepage = "https://github.com/cires/AuthFramework"
-Repository = "https://github.com/cires/AuthFramework.git"
-Documentation = "https://github.com/cires/AuthFramework/tree/main/sdks/python"
-Issues = "https://github.com/cires/AuthFramework/issues"
+  [project.urls]
+    Documentation = "https://github.com/cires/AuthFramework/tree/main/sdks/python"
+    Homepage      = "https://github.com/cires/AuthFramework"
+    Issues        = "https://github.com/cires/AuthFramework/issues"
+    Repository    = "https://github.com/cires/AuthFramework.git"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/authframework"]
+  packages = ["src/authframework"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/README.md", "/LICENSE"]
+  include = ["/LICENSE", "/README.md", "/src", "/tests"]
 
 [tool.black]
-line-length = 100
-target-version = ['py39']
-include = '\.pyi?$'
-extend-exclude = '''
+  extend-exclude = '''
 /(
   # directories
   \.eggs
@@ -81,65 +84,68 @@ extend-exclude = '''
   | dist
 )/
 '''
+  include = '\.pyi?$'
+  line-length = 100
+  target-version = ['py39']
 
 [tool.isort]
-profile = "black"
-line_length = 100
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
+  ensure_newline_before_comments = true
+  force_grid_wrap                = 0
+  include_trailing_comma         = true
+  line_length                    = 100
+  multi_line_output              = 3
+  profile                        = "black"
+  use_parentheses                = true
 
 [tool.mypy]
-python_version = "3.9"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
+  check_untyped_defs          = true
+  disallow_incomplete_defs    = true
+  disallow_untyped_decorators = true
+  disallow_untyped_defs       = true
+  no_implicit_optional        = true
+  python_version              = "3.9"
+  strict_equality             = true
+  warn_no_return              = true
+  warn_redundant_casts        = true
+  warn_return_any             = true
+  warn_unreachable            = true
+  warn_unused_configs         = true
+  warn_unused_ignores         = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-  "--strict-markers",
-  "--strict-config",
-  "--cov=authframework",
-  "--cov-report=term-missing",
-  "--cov-report=html",
-  "--cov-report=xml",
-]
-asyncio_mode = "auto"
-markers = [
-  "unit: marks tests as unit tests",
-  "integration: marks tests as integration tests",
-  "slow: marks tests as slow running",
-]
+  addopts = [
+    "--cov-report=html",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--cov=authframework",
+    "--strict-config",
+    "--strict-markers",
+  ]
+  asyncio_mode = "auto"
+  markers = [
+    "integration: marks tests as integration tests",
+    "slow: marks tests as slow running",
+    "unit: marks tests as unit tests",
+  ]
+  python_classes = ["Test*"]
+  python_files = ["test_*.py"]
+  python_functions = ["test_*"]
+  testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["src/authframework"]
-omit = ["*/tests/*", "*/test_*"]
+  omit   = ["*/test_*", "*/tests/*"]
+  source = ["src/authframework"]
 
 [tool.coverage.report]
-exclude_lines = [
-  "pragma: no cover",
-  "def __repr__",
-  "if self.debug:",
-  "if settings.DEBUG",
-  "raise AssertionError",
-  "raise NotImplementedError",
-  "if 0:",
-  "if __name__ == .__main__.:",
-  "class .*\\bProtocol\\):",
-  "@(abc\\.)?abstractmethod",
-]
+  exclude_lines = [
+    "@(abc\\.)?abstractmethod",
+    "class .*\\bProtocol\\):",
+    "def __repr__",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "pragma: no cover",
+    "raise AssertionError",
+    "raise NotImplementedError",
+  ]
