@@ -229,42 +229,8 @@ jobs:
             exit 1
           fi
 
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: [build, performance]
-    if: github.ref == 'refs/heads/develop'
-
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-west-2
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
-
-      - name: Build and push Docker image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: authframework
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker build -f Dockerfile.optimized --target runtime -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
-      - name: Deploy to staging
-        run: |
-          # Update ECS service or Kubernetes deployment
-          aws ecs update-service --cluster staging --service authframework --force-new-deployment
-
-  deploy-production:
-    name: Deploy to Production
+  publish-crates-io:
+    name: Publish to crates.io
     runs-on: ubuntu-latest
     needs: [build]
     if: github.event_name == 'release'
@@ -272,57 +238,43 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      # Note: Requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY secrets to be configured in repository settings
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17 # stable
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-west-2
+          toolchain: stable
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
+      - name: Cache cargo registry
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4.1.2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev libssl-dev pkg-config
 
-      - name: Build and push Docker image
+      - name: Verify version matches release tag
+        run: |
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "Version mismatch: Cargo.toml version ($CARGO_VERSION) != tag version ($TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: Publish to crates.io
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: authframework
-          IMAGE_TAG: ${{ steps.version.outputs.VERSION }}
-        run: |
-          docker build -f Dockerfile.optimized --target runtime -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker build -f Dockerfile.optimized --target runtime -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-      - name: Deploy to production
-        env:
-          VERSION: ${{ steps.version.outputs.VERSION }}
-        run: |
-          # Blue-green deployment with rollback capability
-          aws ecs update-service --cluster production --service authframework --task-definition authframework:$VERSION
-
-      - name: Run smoke tests
-        run: |
-          # Wait for deployment to complete
-          sleep 60
-
-          # Run smoke tests against production
-          curl -f https://api.authframework.com/health || exit 1
-
-          # Test authentication flow
-          curl -f -X POST https://api.authframework.com/auth/login \
-            -H "Content-Type: application/json" \
-            -d '{"username":"test@example.com","password":"test"}' || exit 1
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish --dry-run && cargo publish
 
   notify:
     name: Notify Team
     runs-on: ubuntu-latest
-    needs: [deploy-production]
+    needs: [publish-crates-io]
     if: always()
 
     steps:
@@ -331,10 +283,10 @@ jobs:
         uses: rtCamp/action-slack-notify@4e5fb42d249be6a45a298f3c9543b111b02f7907 # v2.3.0
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_CHANNEL: "deployments"
+          SLACK_CHANNEL: "releases"
           SLACK_COLOR: ${{ job.status == 'success' && 'good' || job.status == 'failure' && 'danger' || 'warning' }}
-          SLACK_MESSAGE: "Deployment status: ${{ job.status }}"
-          SLACK_TITLE: "AuthFramework CI/CD Pipeline"
+          SLACK_MESSAGE: "Library publication status: ${{ job.status }}"
+          SLACK_TITLE: "AuthFramework Library Release"
           SLACK_USERNAME: "GitHub Actions"
 
   cleanup:
