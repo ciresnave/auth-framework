@@ -89,16 +89,16 @@ async fn create_auth_framework() -> AuthFrameworkResult<Arc<AuthFramework>> {
 
 /// Create the Axum application with auth integration
 async fn create_app(auth: Arc<AuthFramework>) -> AuthFrameworkResult<Router> {
-    // Build the main application
-    let app = Router::new()
-        // Public routes
+    // Public routes (no middleware)
+    let public_routes = Router::new()
         .route("/", get(welcome_handler))
-        // Simple auth routes
-        .route("/auth/login", post(login_handler))
-        .route("/auth/logout", post(logout_handler))
-        // Basic protected routes
+        .route("/auth/login", post(login_handler));
+
+    // Protected routes (with auth middleware)
+    let protected_routes = Router::new()
         .route("/protected", get(protected_content_handler))
         .route("/admin", get(admin_only_handler))
+        .route("/auth/logout", post(logout_handler))
         .route(
             "/api/users",
             get(list_users_handler).post(create_user_handler),
@@ -107,12 +107,15 @@ async fn create_app(auth: Arc<AuthFramework>) -> AuthFrameworkResult<Router> {
             "/api/settings",
             get(get_settings_handler).post(update_settings_handler),
         )
-        // Use basic auth middleware
         .layer(axum::middleware::from_fn_with_state(
             auth.clone(),
             simple_auth_middleware,
-        ))
-        // Add auth framework to application state
+        ));
+
+    // Merge routes into single Router
+    let app = Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .with_state(auth);
 
     Ok(app)

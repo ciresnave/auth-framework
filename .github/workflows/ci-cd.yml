@@ -88,7 +88,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --test integration --all-features
+        run: cargo test --test integration_tests --all-features
 
       - name: Run benchmarks
         env:
