@@ -9,12 +9,7 @@ import asyncio
 from typing import Any, NamedTuple
 from urllib.parse import urljoin
 
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
-
-import httpx
+import httpx  # type: ignore[import-untyped]
 
 from .exceptions import (
     AuthFrameworkError,
@@ -73,7 +68,7 @@ class BaseClient:
             headers=headers,
         )
 
-    async def __aenter__(self) -> Self:
+    async def __aenter__(self) -> BaseClient:
         """Async context manager entry.
 
         Returns:

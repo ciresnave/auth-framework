@@ -15,8 +15,10 @@ except ImportError:
 from ._admin import AdminService
 from ._auth import AuthService
 from ._base import BaseClient
+from ._health import HealthService
 from ._mfa import MFAService
 from ._oauth import OAuthService
+from ._tokens import TokenService
 from ._user import UserService
 
 
@@ -53,6 +55,8 @@ class AuthFrameworkClient:
         self.mfa = MFAService(self._client)
         self.oauth = OAuthService(self._client)
         self.admin = AdminService(self._client)
+        self.health = HealthService(self._client)
+        self.tokens = TokenService(self._client)
 
     async def __aenter__(self) -> Self:
         """Async context manager entry.

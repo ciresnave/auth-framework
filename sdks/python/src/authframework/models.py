@@ -299,3 +299,136 @@ class UserListOptions(ListOptions):
     """User list options model."""
 
     role: str | None = None
+
+
+# Health and Metrics Models
+class HealthMetrics(BaseModel):
+    """Health metrics model."""
+
+    uptime_seconds: int
+    memory_usage_bytes: int
+    cpu_usage_percent: float
+    active_connections: int
+    request_count: int
+    error_count: int
+    timestamp: datetime
+
+
+class ReadinessCheck(BaseModel):
+    """Readiness check result model."""
+
+    ready: bool
+    dependencies: dict[str, bool]
+    timestamp: datetime
+
+
+class LivenessCheck(BaseModel):
+    """Liveness check result model."""
+
+    alive: bool
+    timestamp: datetime
+
+
+# Token Management Models
+class TokenValidationResponse(BaseModel):
+    """Token validation response model."""
+
+    valid: bool
+    expired: bool
+    token_type: str | None = None
+    expires_at: datetime | None = None
+    user_id: str | None = None
+    scopes: list[str] | None = None
+
+
+class CreateTokenRequest(BaseModel):
+    """Create token request model."""
+
+    user_id: str
+    scopes: list[str] | None = None
+    expires_in: int | None = None
+    token_type: str | None = "access"
+
+
+class CreateTokenResponse(BaseModel):
+    """Create token response model."""
+
+    token: str
+    token_type: str
+    expires_in: int
+    expires_at: datetime
+
+
+class TokenInfo(BaseModel):
+    """Token information model."""
+
+    id: str
+    user_id: str
+    token_type: str
+    scopes: list[str]
+    expires_at: datetime
+    created_at: datetime
+    last_used: datetime | None = None
+
+
+# Rate Limiting Models
+class RateLimitConfig(BaseModel):
+    """Rate limiting configuration model."""
+
+    enabled: bool
+    requests_per_minute: int
+    requests_per_hour: int
+    burst_size: int
+    whitelist: list[str] | None = None
+    blacklist: list[str] | None = None
+
+
+class RateLimitStats(BaseModel):
+    """Rate limiting statistics model."""
+
+    total_requests: int
+    blocked_requests: int
+    current_minute_requests: int
+    current_hour_requests: int
+    top_ips: list[dict[str, Any]]
+    timestamp: datetime
+
+
+# Admin Models Extensions
+class Permission(BaseModel):
+    """Permission model."""
+
+    id: str
+    name: str
+    description: str | None = None
+    resource: str
+    action: str
+    created_at: datetime
+
+
+class Role(BaseModel):
+    """Role model."""
+
+    id: str
+    name: str
+    description: str | None = None
+    permissions: list[Permission]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreatePermissionRequest(BaseModel):
+    """Create permission request model."""
+
+    name: str
+    description: str | None = None
+    resource: str
+    action: str
+
+
+class CreateRoleRequest(BaseModel):
+    """Create role request model."""
+
+    name: str
+    description: str | None = None
+    permission_ids: list[str] | None = None

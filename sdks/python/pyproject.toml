@@ -22,7 +22,7 @@
   dependencies = [
     "httpx>=0.25.0",
     "pydantic>=2.0.0",
-    "typing_extensions>=4.0.0; python_version<'3.11'",
+    "typing-extensions>=4.5.0; python_version<'3.12'",
   ]
   description = "Official Python SDK for AuthFramework REST API"
   keywords = [
@@ -149,3 +149,9 @@
     "raise AssertionError",
     "raise NotImplementedError",
   ]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.2.0",
+    "respx>=0.22.0",
+]

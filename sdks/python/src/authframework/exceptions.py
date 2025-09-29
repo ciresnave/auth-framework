@@ -137,7 +137,8 @@ def create_error_from_response(
     elif status_code == 409:
         return ConflictError(message_str, details)
     elif status_code == 429:
-        return RateLimitError(message_str, details=details)
+        retry_after = (error_response or {}).get("retry_after")
+        return RateLimitError(message_str, retry_after, details)
     elif status_code >= 500:
         return ServerError(message_str, details, status_code)
     else:

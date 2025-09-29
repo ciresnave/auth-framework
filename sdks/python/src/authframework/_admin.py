@@ -216,3 +216,42 @@ class AdminService:
         return await self._client.make_request(
             "POST", "/admin/permissions", config=config
         )
+
+    async def get_rate_limits(self) -> dict[str, Any]:
+        """Get current rate limiting configuration.
+
+        Note: This endpoint needs to be implemented in the Rust API.
+
+        Returns:
+            Current rate limiting configuration.
+
+        """
+        config = RequestConfig()
+        return await self._client.make_request("GET", "/admin/rate-limits", config=config)
+
+    async def configure_rate_limits(self, rate_config: dict[str, Any]) -> dict[str, Any]:
+        """Update rate limiting configuration.
+
+        Note: This endpoint needs to be implemented in the Rust API.
+
+        Args:
+            rate_config: New rate limiting configuration
+
+        Returns:
+            Updated rate limiting configuration.
+
+        """
+        config = RequestConfig(json_data=rate_config)
+        return await self._client.make_request("PUT", "/admin/rate-limits", config=config)
+
+    async def get_rate_limit_stats(self) -> dict[str, Any]:
+        """Get rate limiting statistics.
+
+        Note: This endpoint needs to be implemented in the Rust API.
+
+        Returns:
+            Rate limiting statistics and metrics.
+
+        """
+        config = RequestConfig()
+        return await self._client.make_request("GET", "/admin/rate-limits/stats", config=config)

@@ -36,4 +36,20 @@ __all__ = [
     "SystemStats",
     "HealthStatus",
     "DetailedHealthStatus",
+    # New Health and Token Models
+    "HealthMetrics",
+    "ReadinessCheck",
+    "LivenessCheck",
+    "TokenValidationResponse",
+    "CreateTokenRequest",
+    "CreateTokenResponse",
+    "TokenInfo",
+    # Rate Limiting Models
+    "RateLimitConfig",
+    "RateLimitStats",
+    # Admin Extensions
+    "Permission",
+    "Role",
+    "CreatePermissionRequest",
+    "CreateRoleRequest",
 ]
