@@ -11,6 +11,12 @@ import pytest
 import respx
 from authframework import AuthFrameworkClient
 
+# Import integration fixtures if available
+try:
+    from .integration_conftest import *
+except ImportError:
+    pass
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
 
