@@ -24,7 +24,7 @@ class AuthFrameworkTestServer:
 
     def __init__(self, port: int | None = None):
         self.port = port or int(os.environ.get("AUTH_FRAMEWORK_TEST_PORT", "8088"))
-        self.base_url = f"http://localhost:{port}"
+        self.base_url = f"http://localhost:{self.port}"
         self.process: subprocess.Popen | None = None
         self.project_root = Path(__file__).parent.parent.parent.parent
 

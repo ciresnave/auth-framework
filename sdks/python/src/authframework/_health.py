@@ -60,18 +60,32 @@ class HealthService:
         """Kubernetes readiness probe.
 
         Returns:
-            Readiness probe status.
+            Readiness probe status wrapped in a consistent format.
 
         """
         config = RequestConfig()
-        return await self._client.make_request("GET", "/readiness", config=config)
+        response = await self._client._make_text_request("GET", "/readiness", config=config)
+        return {
+            "success": True,
+            "data": {
+                "status": response.strip().lower(),
+                "message": response.strip()
+            }
+        }
 
     async def liveness_check(self) -> dict[str, Any]:
         """Kubernetes liveness probe.
 
         Returns:
-            Liveness probe status.
+            Liveness probe status wrapped in a consistent format.
 
         """
         config = RequestConfig()
-        return await self._client.make_request("GET", "/liveness", config=config)
+        response = await self._client._make_text_request("GET", "/liveness", config=config)
+        return {
+            "success": True,
+            "data": {
+                "status": response.strip().lower(), 
+                "message": response.strip()
+            }
+        }

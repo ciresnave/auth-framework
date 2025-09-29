@@ -39,19 +39,23 @@ async def test_health_service_endpoints():
         async with client:
             # Basic health
             health = await client.health.check()
-            assert "status" in health
+            assert health["success"] is True
+            assert "status" in health["data"]
+            assert health["data"]["status"] == "healthy"
             
             # Detailed health 
             detailed = await client.health.detailed_check()
-            assert "status" in detailed
+            assert detailed["success"] is True
+            assert "status" in detailed["data"]
+            assert detailed["data"]["status"] == "healthy"
             
             # Readiness
             readiness = await client.health.readiness_check() 
-            assert "ready" in readiness
+            assert readiness["success"] is True
             
             # Liveness
             liveness = await client.health.liveness_check()
-            assert "alive" in liveness
+            assert liveness["success"] is True
             
             print("✅ All health endpoints working!")
             
