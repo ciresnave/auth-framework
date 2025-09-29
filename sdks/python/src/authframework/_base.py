@@ -6,7 +6,7 @@ Copyright (c) 2025 AuthFramework. All rights reserved.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Callable
 from urllib.parse import urljoin
 
 import httpx  # type: ignore[import-untyped]
@@ -114,6 +114,61 @@ class BaseClient:
         """
         return self._access_token
 
+    async def _make_request_generic(
+        self,
+        method: str,
+        endpoint: str,
+        parser: Callable[[httpx.Response], Any],
+        *,
+        config: RequestConfig | None = None,
+    ) -> Any:
+        """Make an HTTP request with retry logic using a generic parser.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            endpoint: API endpoint path
+            parser: Function to parse the response
+            config: Request configuration
+
+        Returns:
+            Parsed response data.
+
+        Raises:
+            AuthFrameworkError: For authentication/authorization errors
+            NetworkError: For network-related errors
+            AuthTimeoutError: For timeout errors
+
+        """
+        if config is None:
+            config = RequestConfig()
+
+        url = urljoin(self.base_url, endpoint.lstrip("/"))
+        request_timeout = config.timeout or self.timeout
+        request_retries = config.retries if config.retries is not None else self.retries
+
+        headers: dict[str, str] = {}
+        if self._access_token:
+            headers["Authorization"] = f"Bearer {self._access_token}"
+
+        for attempt in range(request_retries + 1):
+            result = await self._attempt_request_generic(
+                method,
+                url,
+                headers,
+                config,
+                request_timeout,
+                parser,
+            )
+            if result is not None:
+                return result
+
+            # Exponential backoff for retries
+            if attempt < request_retries:
+                await asyncio.sleep(min(2**attempt, 10))
+
+        retries_msg = "Max retries exceeded"
+        raise AuthFrameworkError(retries_msg)
+
     async def make_request(
         self,
         method: str,
@@ -137,36 +192,11 @@ class BaseClient:
             AuthTimeoutError: For timeout errors
 
         """
-        if config is None:
-            config = RequestConfig()
+        return await self._make_request_generic(
+            method, endpoint, parser=lambda r: r.json(), config=config
+        )
 
-        url = urljoin(self.base_url, endpoint.lstrip("/"))
-        request_timeout = config.timeout or self.timeout
-        request_retries = config.retries if config.retries is not None else self.retries
-
-        headers: dict[str, str] = {}
-        if self._access_token:
-            headers["Authorization"] = f"Bearer {self._access_token}"
-
-        for attempt in range(request_retries + 1):
-            response = await self._attempt_request(
-                method,
-                url,
-                headers,
-                config,
-                request_timeout,
-            )
-            if response:
-                return response
-
-            # Exponential backoff for retries
-            if attempt < request_retries:
-                await asyncio.sleep(min(2**attempt, 10))
-
-        retries_msg = "Max retries exceeded"
-        raise AuthFrameworkError(retries_msg)
-
-    async def _make_text_request(
+    async def make_text_request(
         self,
         method: str,
         endpoint: str,
@@ -189,47 +219,23 @@ class BaseClient:
             AuthTimeoutError: For timeout errors
 
         """
-        if config is None:
-            config = RequestConfig()
+        return await self._make_request_generic(
+            method, endpoint, parser=lambda r: r.text, config=config
+        )
 
-        url = urljoin(self.base_url, endpoint.lstrip("/"))
-        request_timeout = config.timeout or self.timeout
-        request_retries = config.retries if config.retries is not None else self.retries
-
-        headers: dict[str, str] = {}
-        if self._access_token:
-            headers["Authorization"] = f"Bearer {self._access_token}"
-
-        for attempt in range(request_retries + 1):
-            response = await self._attempt_text_request(
-                method,
-                url,
-                headers,
-                config,
-                request_timeout,
-            )
-            if response is not None:
-                return response
-
-            # Exponential backoff for retries
-            if attempt < request_retries:
-                await asyncio.sleep(min(2**attempt, 10))
-
-        retries_msg = "Max retries exceeded"
-        raise AuthFrameworkError(retries_msg)
-
-    async def _attempt_request(
+    async def _attempt_request_generic(
         self,
         method: str,
         url: str,
         headers: dict[str, str],
         config: RequestConfig,
-        request_timeout: float,
-    ) -> dict[str, Any] | None:
-        """Attempt a single HTTP request.
+        timeout: float,
+        parser: Callable[[httpx.Response], Any],
+    ) -> Any | None:
+        """Attempt a single HTTP request with generic parser.
 
         Returns:
-            Response data if successful, None if retryable error.
+            Parsed response if successful, None if retryable error.
 
         Raises:
             Various errors for non-retryable failures.
@@ -237,33 +243,23 @@ class BaseClient:
         """
         try:
             response = await self._execute_request(
-                method,
-                url,
-                headers,
-                config,
-                request_timeout,
+                method, url, headers, config, timeout
             )
-
             if response.status_code < HTTP_SUCCESS_THRESHOLD:
-                return response.json()
+                return parser(response)
 
-            # Handle error response
             error_info = self._parse_error_response(response)
             self._raise_api_error(response.status_code, error_info)
 
         except httpx.TimeoutException as e:
-            timeout_msg = "Request timeout"
-            raise AuthTimeoutError(timeout_msg) from e
+            raise AuthTimeoutError("Request timeout") from e
         except httpx.NetworkError as e:
-            network_msg = "Network error"
-            raise NetworkError(network_msg) from e
+            raise NetworkError("Network error") from e
         except AuthFrameworkError:
-            # Don't retry AuthFramework errors
             raise
         except Exception as e:
             if not is_retryable_error(e):
-                failed_msg = "Request failed"
-                raise AuthFrameworkError(failed_msg) from e
+                raise AuthFrameworkError("Request failed") from e
             return None
 
         return None
@@ -302,55 +298,7 @@ class BaseClient:
             timeout=timeout,
         )
 
-    async def _attempt_text_request(
-        self,
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        config: RequestConfig,
-        request_timeout: float,
-    ) -> str | None:
-        """Attempt a single HTTP request expecting text response.
 
-        Returns:
-            Response text if successful, None if retryable error.
-
-        Raises:
-            Various errors for non-retryable failures.
-
-        """
-        try:
-            response = await self._execute_request(
-                method,
-                url,
-                headers,
-                config,
-                request_timeout,
-            )
-
-            if response.status_code < HTTP_SUCCESS_THRESHOLD:
-                return response.text
-
-            # Handle error response  
-            error_info = self._parse_error_response(response)
-            self._raise_api_error(response.status_code, error_info)
-
-        except httpx.TimeoutException as e:
-            timeout_msg = "Request timeout"
-            raise AuthTimeoutError(timeout_msg) from e
-        except httpx.NetworkError as e:
-            network_msg = "Network error"
-            raise NetworkError(network_msg) from e
-        except AuthFrameworkError:
-            # Don't retry AuthFramework errors
-            raise
-        except Exception as e:
-            if not is_retryable_error(e):
-                failed_msg = "Request failed"
-                raise AuthFrameworkError(failed_msg) from e
-            return None
-
-        return None
 
     @staticmethod
     def _parse_error_response(response: httpx.Response) -> dict[str, Any]:

@@ -34,20 +34,37 @@ class TokenService:
         """
         config = RequestConfig()
         
-        # If a specific token is provided, we need to temporarily set it
-        original_token = None
+        # If a specific token is provided, pass it directly in headers to avoid race conditions
         if token is not None:
-            original_token = self._client.get_access_token()
-            self._client.set_access_token(token)
+            # Create a custom request with the specific token in headers
+            from urllib.parse import urljoin
+            import httpx
+            
+            url = urljoin(self._client.base_url, "/auth/validate")
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "AuthFramework-Python-SDK/1.0.0"
+            }
+            
+            try:
+                async with httpx.AsyncClient(timeout=self._client.timeout) as client:
+                    response = await client.get(url, headers=headers)
+                    
+                    if response.status_code < 400:
+                        return response.json()
+                    
+                    # Handle error response
+                    error_info = self._client._parse_error_response(response)
+                    self._client._raise_api_error(response.status_code, error_info)
+            except httpx.TimeoutException as e:
+                from .exceptions import AuthTimeoutError
+                raise AuthTimeoutError("Request timeout") from e
+            except httpx.NetworkError as e:
+                from .exceptions import NetworkError
+                raise NetworkError("Network error") from e
         
-        try:
-            return await self._client.make_request("GET", "/auth/validate", config=config)
-        finally:
-            # Restore original token if we temporarily changed it
-            if token is not None and original_token is not None:
-                self._client.set_access_token(original_token)
-            elif token is not None:
-                self._client.clear_access_token()
+        # Use the stored token through normal client flow
+        return await self._client.make_request("GET", "/auth/validate", config=config)
 
     async def refresh(self, refresh_token: str) -> dict[str, Any]:
         """Refresh an access token using a refresh token.

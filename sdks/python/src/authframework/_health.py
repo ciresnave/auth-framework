@@ -50,11 +50,7 @@ class HealthService:
 
         """
         config = RequestConfig()
-        response = await self._client.make_request("GET", "/metrics", config=config)
-        
-        # The metrics endpoint returns raw text, but our base client expects JSON
-        # We'll need to handle this specially
-        return response if isinstance(response, str) else str(response)
+        return await self._client.make_text_request("GET", "/metrics", config=config)
 
     async def readiness_check(self) -> dict[str, Any]:
         """Kubernetes readiness probe.
@@ -64,7 +60,7 @@ class HealthService:
 
         """
         config = RequestConfig()
-        response = await self._client._make_text_request("GET", "/readiness", config=config)
+        response = await self._client.make_text_request("GET", "/readiness", config=config)
         return {
             "success": True,
             "data": {
@@ -81,7 +77,7 @@ class HealthService:
 
         """
         config = RequestConfig()
-        response = await self._client._make_text_request("GET", "/liveness", config=config)
+        response = await self._client.make_text_request("GET", "/liveness", config=config)
         return {
             "success": True,
             "data": {

@@ -103,8 +103,7 @@ async def manage_users_endpoint(
 async def health_check():
     """Health check endpoint using AuthFramework's health service."""
     try:
-        health_status = await client.health.check()
-        return health_status
+        return await client.health.check()
     except Exception as e:
         return JSONResponse(
             status_code=503,
@@ -116,8 +115,7 @@ async def health_check():
 async def detailed_health_check():
     """Detailed health check endpoint."""
     try:
-        detailed_health = await client.health.detailed_check()
-        return detailed_health
+        return await client.health.detailed_check()
     except Exception as e:
         return JSONResponse(
             status_code=503,

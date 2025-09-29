@@ -44,15 +44,14 @@ class AuthFrameworkTestServer:
             raise RuntimeError(f"Failed to build AuthFramework server: {build_result.stderr}")
 
         # Start the server
-        env = os.environ.copy()
-        env.update({
+        env = os.environ.copy() | {
             "AUTH_FRAMEWORK_HOST": "127.0.0.1",
             "AUTH_FRAMEWORK_PORT": str(self.port),
             "AUTH_FRAMEWORK_DATABASE_URL": "sqlite::memory:",
             "AUTH_FRAMEWORK_JWT_SECRET": "test-secret-for-integration-tests-only-not-secure",
             "AUTH_FRAMEWORK_LOG_LEVEL": "info",
             "RUST_LOG": "auth_framework=debug",
-        })
+        }
 
         self.process = subprocess.Popen(
             [self.project_root / "target" / "debug" / "auth-framework"],

@@ -94,11 +94,18 @@ def get_current_user() -> Optional[FlaskAuthUser]:
     return getattr(g, 'current_user', None)
 
 
-def auth_required(auth_framework: AuthFrameworkFlask):
-    """Decorator to require authentication."""
+# Add a single decorator‐factory to capture all common logic:
+def _make_auth_decorator(
+    auth_framework: AuthFrameworkFlask,
+    *,
+    post_check: Callable[[FlaskAuthUser], bool] | None = None,
+    error_builder: Callable[[FlaskAuthUser | None], str] | None = None,
+    error_status: int = 403
+) -> Callable[[Callable], Callable]:
+
     def decorator(f: Callable) -> Callable:
         @functools.wraps(f)
-        async def decorated_function(*args: Any, **kwargs: Any) -> Any:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
             token = auth_framework._get_token_from_request()
             if not token:
                 return auth_framework._handle_auth_error("Authorization header missing")
@@ -106,68 +113,51 @@ def auth_required(auth_framework: AuthFrameworkFlask):
             try:
                 user = await auth_framework._validate_token(token)
                 g.current_user = user
-                return await f(*args, **kwargs)
             except AuthFrameworkError as e:
                 return auth_framework._handle_auth_error(f"Authentication failed: {e}")
 
-        return decorated_function
+            if post_check and not post_check(user):
+                msg = error_builder(user) if error_builder else "Forbidden"
+                return auth_framework._handle_auth_error(msg, error_status)
+
+            return await f(*args, **kwargs)
+        return wrapper
     return decorator
 
 
-def role_required(auth_framework: AuthFrameworkFlask, required_role: str):
+# Then simplify the four public decorators:
+
+def auth_required(auth_framework: AuthFrameworkFlask):
+    """Decorator to require authentication."""
+    return _make_auth_decorator(auth_framework)
+
+
+def role_required(auth_framework: AuthFrameworkFlask, role: str):
     """Decorator to require a specific role."""
-    def decorator(f: Callable) -> Callable:
-        @functools.wraps(f)
-        @auth_required(auth_framework)
-        async def decorated_function(*args: Any, **kwargs: Any) -> Any:
-            user = get_current_user()
-            if not user or not user.has_role(required_role):
-                return auth_framework._handle_auth_error(
-                    f"Role '{required_role}' required", 403
-                )
-            return await f(*args, **kwargs)
-
-        return decorated_function
-    return decorator
+    return _make_auth_decorator(
+        auth_framework,
+        post_check=lambda u: u.has_role(role),
+        error_builder=lambda u: f"Role '{role}' required",
+    )
 
 
-def any_role_required(auth_framework: AuthFrameworkFlask, required_roles: list[str]):
+def any_role_required(auth_framework: AuthFrameworkFlask, roles: list[str]):
     """Decorator to require any of the specified roles."""
-    def decorator(f: Callable) -> Callable:
-        @functools.wraps(f)
-        @auth_required(auth_framework)
-        async def decorated_function(*args: Any, **kwargs: Any) -> Any:
-            user = get_current_user()
-            if not user or not user.has_any_role(required_roles):
-                roles_str = "', '".join(required_roles)
-                return auth_framework._handle_auth_error(
-                    f"One of the following roles required: '{roles_str}'", 403
-                )
-            return await f(*args, **kwargs)
-
-        return decorated_function
-    return decorator
+    return _make_auth_decorator(
+        auth_framework,
+        post_check=lambda u: u.has_any_role(roles),
+        error_builder=lambda u: "One of the following roles required: " + ", ".join(f"'{r}'" for r in roles),
+    )
 
 
-def permission_required(
-    auth_framework: AuthFrameworkFlask, resource: str, action: str
-):
+def permission_required(auth_framework: AuthFrameworkFlask, resource: str, action: str):
     """Decorator to require a specific permission."""
+    # Placeholder: granular permission checks are not yet supported
     def decorator(f: Callable) -> Callable:
         @functools.wraps(f)
-        @auth_required(auth_framework)
-        async def decorated_function(*args: Any, **kwargs: Any) -> Any:
-            user = get_current_user()
-            if not user:
-                return auth_framework._handle_auth_error("Authentication required")
-
-            # Note: This would need to be implemented in the Rust API
-            # For now, we'll check if the user has an 'admin' role as a placeholder
-            if not user.has_role("admin"):
-                return auth_framework._handle_auth_error(
-                    f"Permission '{action}' on '{resource}' required", 403
-                )
-            return await f(*args, **kwargs)
-
-        return decorated_function
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError(
+                f"Permission checks for '{action}' on '{resource}' are not yet implemented."
+            )
+        return wrapper
     return decorator

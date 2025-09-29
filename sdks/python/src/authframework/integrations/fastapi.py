@@ -79,7 +79,7 @@ class AuthFrameworkFastAPI:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Authentication failed: {e}"
-            )
+            ) from e
 
     def get_current_user(self) -> Callable:
         """Get the current authenticated user as a FastAPI dependency."""
@@ -125,14 +125,10 @@ class AuthFrameworkFastAPI:
         async def _require_permission(
             user: AuthUser = Depends(self.get_current_user())
         ) -> AuthUser:
-            # Note: This would need to be implemented in the Rust API
-            # For now, we'll check if the user has an 'admin' role as a placeholder
-            if not user.has_role("admin"):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Permission '{action}' on '{resource}' required"
-                )
-            return user
+            # Placeholder: granular permission checks are not yet supported
+            raise NotImplementedError(
+                f"Permission checks for '{action}' on '{resource}' are not yet implemented."
+            )
         return _require_permission
 
 
