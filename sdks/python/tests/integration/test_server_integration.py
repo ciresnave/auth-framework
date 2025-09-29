@@ -116,9 +116,9 @@ class TestTokenServiceIntegration:
         """Test token validation with invalid token."""
         try:
             result = await integration_client.tokens.validate("invalid-token-12345")
-            # If this succeeds, the token should be marked as invalid
+            # If this succeeds, the response should indicate failure with success=false
             assert isinstance(result, dict)
-            assert result.get("valid", True) is False
+            assert result.get("success", True) is False
         except Exception as e:
             # Some implementations might throw an exception for invalid tokens
             error_msg = str(e).lower()

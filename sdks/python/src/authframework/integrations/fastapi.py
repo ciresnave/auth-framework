@@ -47,30 +47,38 @@ class AuthFrameworkFastAPI:
             # Validate token using the tokens service
             validation_result = await self.client.tokens.validate(credentials.credentials)
             
-            if not validation_result.get("valid", False):
+            # Parse ApiResponse structure: {"success": true, "data": {...}}
+            if not validation_result.get("success", False):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid or expired token"
                 )
 
-            # Get user information
-            user_id = validation_result.get("user_id")
+            # Extract user data from the nested data field
+            user_data = validation_result.get("data")
+            if not user_data:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token validation response missing user data"
+                )
+
+            # Get user information from the nested data
+            user_id = user_data.get("id")
             if not user_id:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token does not contain user information"
                 )
 
-            # This would typically come from the validation response
-            # For now, we'll create a basic user info object
+            # Create user info object from the API response data
             user_info = UserInfo(
                 id=user_id,
-                username=validation_result.get("username", ""),
-                email=validation_result.get("email", ""),
-                roles=validation_result.get("scopes", []),
-                mfa_enabled=validation_result.get("mfa_enabled", False),
-                created_at=validation_result.get("created_at"),
-                last_login=validation_result.get("last_login")
+                username=user_data.get("username", ""),
+                email=user_data.get("email", ""),  # May not be present in auth response
+                roles=user_data.get("roles", []),
+                mfa_enabled=user_data.get("mfa_enabled", False),  # May not be present
+                created_at=user_data.get("created_at"),  # May not be present
+                last_login=user_data.get("last_login")  # May not be present
             )
 
             return AuthUser(user_info, credentials.credentials)
