@@ -4,7 +4,7 @@
 
 ## 🏆 The Most Complete Authentication & Authorization Framework for Rust
 
-Production-ready • Enterprise-grade • Security-first • Bulletproof
+Goals: Production-ready • Enterprise-grade • Security-first • Bulletproof
 
 [![Crates.io](https://img.shields.io/crates/v/auth-framework.svg)](https://crates.io/crates/auth-framework)
 [![Documentation](https://docs.rs/auth-framework/badge.svg)](https://docs.rs/auth-framework)
@@ -12,6 +12,8 @@ Production-ready • Enterprise-grade • Security-first • Bulletproof
 [![Security Audit](https://img.shields.io/badge/security-audited-green.svg)](SECURITY.md)
 
 ---
+
+Note: While the crates.io published version of this crate is fully functional and well documented on docs.rs, this repo's code may or may not be at the current time.  We are in the middle of a lot of changes.  Please wait for the dust to settle.  We've just split the Python and JavaScript SDKs into separate repositories which broke a few things because they were tightly coupled and, although the Python SDK is more or less fixed, the JavaScript SDK still needs work (no one was using it so it is on the proverbial back burner because we need to get the parts companies use fixed first).  We've just added support for 3rd party storage backends and haven't finished updating documentation for that.  We are currently in the process of splitting the project from a monolithic Rust library into a separate server and client design and, while the library still works and the server is functional and all tests pass, the design is still in a state of flux and may not currently match the documentation.  We are also in the process of changing how official releases from this project are made.  When this project was built, it was primarily for use by myself, three companies, and a few friends' projects.  It was built to high standards and worked flawlessly.  However, as time went on, it became obvious that we needed to be able to support multiple versions of this project as a couple of the companies using it are more cautious than we expected about upgrading to new releases with breaking changes and still need fixes put in place for older versions until they are ready to make the jump.  As such, when the next release happens, we will be splitting this repo into branches for each major version and continuing to provide bug fixes for older versions as we find them.  We also decided we need to provide precompiled server releases.  While there is nothing wrong with building the Rust code yourself, developers coding in other languages (using our Python and Javascript SDKs) should not need to build the Rust-based servers before being able to use this project in their language of choice.  As such, we will be providing precompiled binaries starting with the next release.
 
 **Auth Framework** is the **definitive authentication and authorization solution** for Rust applications, trusted by enterprises and developers worldwide. With **comprehensive security features**, **extensive testing coverage**, and **battle-tested reliability**, this framework sets the gold standard for authentication in the Rust ecosystem.
 
@@ -874,7 +876,7 @@ Security is our top priority. Please review our [Security Policy](SECURITY.md) f
 - Supported versions
 - Compliance information
 
-For security issues, please email [security@example.com](mailto:security@example.com) instead of using the issue tracker.
+For security issues, please email [ciresnave@gmail.com](mailto:ciresnave@gmail.com) instead of using the issue tracker.
 
 ## License
 
