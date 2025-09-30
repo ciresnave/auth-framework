@@ -747,5 +747,3 @@ mod tests {
         assert_eq!(retrieved.unwrap().action, "read");
     }
 }
-
-

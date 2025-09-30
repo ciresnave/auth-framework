@@ -62,7 +62,7 @@
 //!
 //! // FAPI compliance validation requires proper manager setup
 //! # let config = todo!(); // FAPI config implementation
-//! # let dpop_manager_arc = Arc::new(dpop_manager);  
+//! # let dpop_manager_arc = Arc::new(dpop_manager);
 //! # let mutual_tls_manager = todo!(); // MutualTlsManager implementation
 //! # let par_manager = todo!(); // PARManager implementation
 //! # let private_key_jwt_manager = todo!(); // PrivateKeyJwtManager implementation

@@ -129,5 +129,3 @@ mod hierarchy_feature_tests {
         println!("✅ API integration with hierarchy features confirmed!");
     }
 }
-
-

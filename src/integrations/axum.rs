@@ -20,12 +20,12 @@
 //!     let _auth = AuthFramework::quick_start()
 //!         .jwt_auth_from_env()
 //!         .build().await?;
-//!     
+//!
 //!     // Create authentication middleware
 //!     let _auth_middleware = RequireAuth::new()
 //!         .with_roles(&["user", "admin"])
 //!         .with_permissions(&["read", "write"]);
-//!     
+//!
 //!     println!("Auth framework configured for Axum integration");
 //!     Ok(())
 //! }
@@ -52,7 +52,7 @@
 //!     // Configure middleware
 //!     let _permission_middleware = RequirePermission::new("admin:read")
 //!         .for_resource("user-profiles");
-//!     
+//!
 //!     println!("Advanced auth configuration completed");
 //!     Ok(())
 //! }

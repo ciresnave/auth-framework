@@ -5,25 +5,25 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(100) UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     salt VARCHAR(255),
-    
+
     -- Profile information
     first_name VARCHAR(100),
     last_name VARCHAR(100),
     phone VARCHAR(20),
     avatar_url TEXT,
-    
+
     -- Account status
     is_active BOOLEAN DEFAULT true,
     is_verified BOOLEAN DEFAULT false,
     is_locked BOOLEAN DEFAULT false,
-    
+
     -- Security metadata
     failed_login_attempts INTEGER DEFAULT 0,
     locked_until TIMESTAMP WITH TIME ZONE,
     last_login_at TIMESTAMP WITH TIME ZONE,
     last_login_ip INET,
     password_changed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
+
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     locale VARCHAR(10),
     preferences JSONB DEFAULT '{}',
     metadata JSONB DEFAULT '{}',
-    
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

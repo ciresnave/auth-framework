@@ -6,10 +6,10 @@ This document explains the security advisories that are currently allowed in the
 
 ### RUSTSEC-2023-0071: RSA Marvin Attack (Medium Severity)
 
-**Status**: Temporarily Allowed  
-**Affected Crate**: `rsa 0.9.8`  
-**Used By**: `sqlx-mysql`, `openidconnect`  
-**Issue**: Potential key recovery through timing sidechannels  
+**Status**: Temporarily Allowed
+**Affected Crate**: `rsa 0.9.8`
+**Used By**: `sqlx-mysql`, `openidconnect`
+**Issue**: Potential key recovery through timing sidechannels
 
 **Risk Assessment**: **LOW**
 - AuthFramework does not directly expose RSA operations to untrusted input
@@ -26,12 +26,12 @@ This document explains the security advisories that are currently allowed in the
 
 ### RUSTSEC-2024-0436: Paste Crate Unmaintained
 
-**Status**: Temporarily Allowed  
-**Affected Crate**: `paste 1.0.15`  
-**Used By**: `ratatui` → `tui-input` (TUI features only)  
-**Issue**: Crate is no longer maintained  
+**Status**: Temporarily Allowed
+**Affected Crate**: `paste 1.0.15`
+**Used By**: `ratatui` → `tui-input` (TUI features only)
+**Issue**: Crate is no longer maintained
 
-**Risk Assessment**: **VERY LOW**  
+**Risk Assessment**: **VERY LOW**
 - Used only in optional TUI admin interface features
 - `paste` is a macro-only crate with minimal security surface
 - Functionality is stable and well-tested
@@ -45,7 +45,7 @@ This document explains the security advisories that are currently allowed in the
 ## Security Policy
 
 1. **Regular Reviews**: Security exceptions are reviewed monthly
-2. **Automatic Updates**: Dependencies are updated automatically when fixes become available  
+2. **Automatic Updates**: Dependencies are updated automatically when fixes become available
 3. **Monitoring**: We actively monitor RustSec advisory database for new issues
 4. **Escalation**: High or critical severity issues require immediate attention
 

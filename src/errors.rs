@@ -218,7 +218,7 @@ pub enum AuthError {
     #[error("TOML serialization error: {0}")]
     TomlSer(#[from] toml::ser::Error),
 
-    /// TOML deserialization errors  
+    /// TOML deserialization errors
     #[error("TOML deserialization error: {0}")]
     TomlDe(#[from] toml::de::Error),
 

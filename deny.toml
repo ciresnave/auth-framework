@@ -39,7 +39,7 @@
     wildcards         = "allow" # Allow wildcard dependencies
 
 [sources]
-    # Source repository settings  
+    # Source repository settings
     allow-git        = []
     allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
     unknown-git      = "warn"                                           # Warn about unknown git sources

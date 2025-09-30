@@ -88,14 +88,17 @@ impl ApiServer {
             .route("/oauth/token", post(oauth::token))
             .route("/oauth/revoke", post(oauth::revoke_token))
             .route("/oauth/introspect", post(oauth::introspect_token))
-            .route("/oauth/clients/:client_id", get(oauth::get_client_info))
+            .route("/oauth/clients/{client_id}", get(oauth::get_client_info))
             // User management endpoints (authenticated)
             .route("/users/profile", get(users::get_profile))
             .route("/users/profile", put(users::update_profile))
             .route("/users/change-password", post(users::change_password))
             .route("/users/sessions", get(users::get_sessions))
-            .route("/users/sessions/:session_id", delete(users::revoke_session))
-            .route("/users/:user_id/profile", get(users::get_user_profile))
+            .route(
+                "/users/sessions/{session_id}",
+                delete(users::revoke_session),
+            )
+            .route("/users/{user_id}/profile", get(users::get_user_profile))
             // Multi-factor authentication endpoints (authenticated)
             .route("/mfa/setup", post(mfa::setup_mfa))
             .route("/mfa/verify", post(mfa::verify_mfa))
@@ -109,9 +112,12 @@ impl ApiServer {
             // Administrative endpoints (admin only)
             .route("/admin/users", get(admin::list_users))
             .route("/admin/users", post(admin::create_user))
-            .route("/admin/users/:user_id/roles", put(admin::update_user_roles))
-            .route("/admin/users/:user_id", delete(admin::delete_user))
-            .route("/admin/users/:user_id/activate", put(admin::activate_user))
+            .route(
+                "/admin/users/{user_id}/roles",
+                put(admin::update_user_roles),
+            )
+            .route("/admin/users/{user_id}", delete(admin::delete_user))
+            .route("/admin/users/{user_id}/activate", put(admin::activate_user))
             .route("/admin/stats", get(admin::get_system_stats))
             .route("/admin/audit-logs", get(admin::get_audit_logs))
             // Set shared state

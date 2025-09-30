@@ -54,7 +54,7 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let settings = AuthFrameworkSettings::default();
-//!     
+//!
 //!     // Create administrative interface
 //!     let app_state = AppState::new(settings)?;
 //!     // Note: AdminInterface would be created here in real usage

@@ -72,7 +72,7 @@
 //!     // PasskeyAuthMethod is now configured and ready for use
 //!     // Registration and authentication flows would be implemented
 //!     // based on the specific passkey implementation requirements
-//!     
+//!
 //!     Ok(())
 //! }
 //! ```
@@ -229,7 +229,7 @@ impl UserValidationMethod for PasskeyUserValidation {
 /// // Register a new passkey - methods would be implemented based on actual API
 /// # // let challenge = passkey_method.start_registration("user123", "user@example.com").await?;
 ///
-/// // Authenticate with passkey - methods would be implemented based on actual API  
+/// // Authenticate with passkey - methods would be implemented based on actual API
 /// # // let auth_challenge = passkey_method.start_authentication("user123").await?;
 /// # Ok(())
 /// # }

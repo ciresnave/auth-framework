@@ -3,27 +3,27 @@ CREATE TABLE IF NOT EXISTS user_mfa (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     method_type VARCHAR(50) NOT NULL, -- totp, sms, email, backup_codes
-    
+
     -- Method-specific data
     secret_key VARCHAR(255), -- For TOTP
     phone_number VARCHAR(20), -- For SMS
     email_address VARCHAR(255), -- For email MFA
     backup_codes JSONB, -- For backup codes
-    
+
     -- Configuration
     is_enabled BOOLEAN DEFAULT true,
     is_verified BOOLEAN DEFAULT false,
     recovery_questions JSONB DEFAULT '{}',
-    
+
     -- Usage tracking
     last_used TIMESTAMP WITH TIME ZONE,
     use_count INTEGER DEFAULT 0,
     failure_count INTEGER DEFAULT 0,
-    
+
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
+
     UNIQUE(user_id, method_type)
 );
 
@@ -33,16 +33,16 @@ CREATE TABLE IF NOT EXISTS mfa_challenges (
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     challenge_code VARCHAR(10) NOT NULL,
     method_type VARCHAR(50) NOT NULL,
-    
+
     -- Challenge state
     is_used BOOLEAN DEFAULT false,
     attempts INTEGER DEFAULT 0,
     max_attempts INTEGER DEFAULT 3,
-    
+
     -- Context
     ip_address INET,
     user_agent TEXT,
-    
+
     -- Lifecycle
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -54,12 +54,12 @@ CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     code_hash VARCHAR(255) NOT NULL,
-    
+
     -- Usage tracking
     is_used BOOLEAN DEFAULT false,
     used_at TIMESTAMP WITH TIME ZONE,
     used_ip INET,
-    
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -85,9 +85,9 @@ RETURNS INTEGER AS $$
 DECLARE
     deleted_count INTEGER;
 BEGIN
-    DELETE FROM mfa_challenges 
+    DELETE FROM mfa_challenges
     WHERE expires_at < NOW();
-    
+
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;

@@ -1008,7 +1008,7 @@ delayed bug: `Res::Err` but no error emitted
   42: BaseThreadInitThunk
   43: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -1108,7 +1108,7 @@ delayed bug: `Res::Err` but no error emitted
   39: BaseThreadInitThunk
   40: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -1266,7 +1266,7 @@ delayed bug: `Res::Err` but no error emitted
   40: BaseThreadInitThunk
   41: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -1364,7 +1364,7 @@ delayed bug: `Res::Err` but no error emitted
   39: BaseThreadInitThunk
   40: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -1463,7 +1463,7 @@ delayed bug: `Res::Err` but no error emitted
   41: BaseThreadInitThunk
   42: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -1563,7 +1563,7 @@ delayed bug: `Res::Err` but no error emitted
   40: BaseThreadInitThunk
   41: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -1723,7 +1723,7 @@ delayed bug: `Res::Err` but no error emitted
   41: BaseThreadInitThunk
   42: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -2419,7 +2419,7 @@ delayed bug: `Res::Err` but no error emitted
   41: BaseThreadInitThunk
   42: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -2863,7 +2863,7 @@ delayed bug: `Res::Err` but no error emitted
   41: BaseThreadInitThunk
   42: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -3761,7 +3761,7 @@ delayed bug: `Res::Err` but no error emitted
   41: BaseThreadInitThunk
   42: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -4512,7 +4512,7 @@ delayed bug: `Res::Err` but no error emitted
   41: BaseThreadInitThunk
   42: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
@@ -5011,7 +5011,7 @@ delayed bug: `Res::Err` but no error emitted
   41: BaseThreadInitThunk
   42: RtlUserThreadStart
 
-delayed bug: 
+delayed bug:
    0: std::backtrace_rs::backtrace::win64::trace
              at /rustc/a454fccb02df9d361f1201b747c01257f58a8b37/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
    1: std::backtrace_rs::backtrace::trace_unsynchronized
