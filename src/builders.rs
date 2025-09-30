@@ -17,7 +17,7 @@
 //!     .jwt_auth_from_env()
 //!     .build().await?;
 //!
-//! // Web app with database  
+//! // Web app with database
 //! let auth2 = AuthFramework::quick_start()
 //!     .jwt_auth("your-secret-key")
 //!     .with_postgres("postgresql://...")

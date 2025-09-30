@@ -32,7 +32,7 @@ pub trait AuthStorage: Send + Sync {
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()>;
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>>;
     async fn delete_kv(&self, key: &str) -> Result<()>;
-    
+
     // Cleanup operations
     async fn cleanup_expired(&self) -> Result<()>;
 
@@ -278,7 +278,7 @@ impl SurrealStorage {
 impl AuthStorage for SurrealStorage {
     async fn store_token(&self, token: &AuthToken) -> Result<()> {
         let record = Self::token_to_record(token);
-        
+
         self.db
             .create(("tokens", &token.token_id))
             .content(record)
@@ -338,7 +338,7 @@ impl AuthStorage for SurrealStorage {
 
     async fn update_token(&self, token: &AuthToken) -> Result<()> {
         let record = Self::token_to_record(token);
-        
+
         self.db
             .update(("tokens", &token.token_id))
             .content(record)
@@ -403,7 +403,7 @@ impl AuthStorage for SurrealStorage {
         match record {
             Some(record) => {
                 use chrono::{DateTime, Utc};
-                
+
                 Ok(Some(SessionData {
                     user_id: record.user_id,
                     data: record.data,
@@ -440,7 +440,7 @@ impl AuthStorage for SurrealStorage {
         let mut sessions = Vec::new();
         for record in records {
             use chrono::{DateTime, Utc};
-            
+
             sessions.push(SessionData {
                 user_id: record.user_id,
                 data: record.data,
@@ -608,21 +608,21 @@ mod tests {
     #[tokio::test]
     async fn test_token_operations() {
         let storage = setup_test_storage().await;
-        
+
         // Create a test token
         let token = helpers::create_test_token("user123", "test-token");
-        
+
         // Store token
         storage.store_token(&token).await.unwrap();
-        
+
         // Retrieve token
         let retrieved = storage.get_token(&token.token_id).await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().user_id, "user123");
-        
+
         // Delete token
         storage.delete_token(&token.token_id).await.unwrap();
-        
+
         // Verify deletion
         let deleted = storage.get_token(&token.token_id).await.unwrap();
         assert!(deleted.is_none());
@@ -631,21 +631,21 @@ mod tests {
     #[tokio::test]
     async fn test_session_operations() {
         let storage = setup_test_storage().await;
-        
+
         let session_data = helpers::create_test_session_data("user123");
         let session_id = "test-session-id";
-        
+
         // Store session
         storage.store_session(session_id, &session_data).await.unwrap();
-        
+
         // Retrieve session
         let retrieved = storage.get_session(session_id).await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().user_id, "user123");
-        
+
         // Delete session
         storage.delete_session(session_id).await.unwrap();
-        
+
         // Verify deletion
         let deleted = storage.get_session(session_id).await.unwrap();
         assert!(deleted.is_none());
@@ -654,21 +654,21 @@ mod tests {
     #[tokio::test]
     async fn test_kv_operations() {
         let storage = setup_test_storage().await;
-        
+
         let key = "test-key";
         let value = b"test-value";
-        
+
         // Store key-value
         storage.store_kv(key, value, None).await.unwrap();
-        
+
         // Retrieve value
         let retrieved = storage.get_kv(key).await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap(), value);
-        
+
         // Delete key
         storage.delete_kv(key).await.unwrap();
-        
+
         // Verify deletion
         let deleted = storage.get_kv(key).await.unwrap();
         assert!(deleted.is_none());
@@ -677,21 +677,21 @@ mod tests {
     #[tokio::test]
     async fn test_ttl_expiration() {
         let storage = setup_test_storage().await;
-        
+
         let key = "ttl-key";
         let value = b"ttl-value";
         let short_ttl = Duration::from_millis(100);
-        
+
         // Store with short TTL
         storage.store_kv(key, value, Some(short_ttl)).await.unwrap();
-        
+
         // Should be available immediately
         let retrieved = storage.get_kv(key).await.unwrap();
         assert!(retrieved.is_some());
-        
+
         // Wait for expiration
         tokio::time::sleep(Duration::from_millis(150)).await;
-        
+
         // Should be expired now
         let expired = storage.get_kv(key).await.unwrap();
         assert!(expired.is_none());
@@ -711,11 +711,11 @@ use std::sync::Arc;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create your custom storage
     let storage = Arc::new(SurrealStorage::connect("ws://localhost:8000").await?);
-    
+
     // Create AuthFramework with your custom storage
     let mut config = AuthConfig::default();
     config.security.secret_key = Some("your-jwt-secret-key-32-chars-min".to_string());
-    
+
     let auth = AuthFramework::builder()
         .customize(|c| {
             c.secret = config.security.secret_key;
@@ -726,10 +726,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .done()
         .build()
         .await?;
-    
+
     // Use the auth framework normally
     // All storage operations will use your SurrealDB backend
-    
+
     Ok(())
 }
 ```

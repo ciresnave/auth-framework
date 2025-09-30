@@ -6,21 +6,21 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     event_category VARCHAR(50) NOT NULL,
     resource VARCHAR(100),
     resource_id VARCHAR(255),
-    
+
     -- Event details
     description TEXT,
     outcome VARCHAR(20) NOT NULL, -- success, failure, pending
     risk_level VARCHAR(20) DEFAULT 'low', -- low, medium, high, critical
-    
+
     -- Context information
     ip_address INET,
     user_agent TEXT,
     session_id UUID,
     request_id VARCHAR(100),
-    
+
     -- Additional metadata
     metadata JSONB DEFAULT '{}',
-    
+
     -- Timestamp
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip_address ON audit_logs(ip_address);
 
 -- Create audit statistics view
 CREATE OR REPLACE VIEW audit_statistics AS
-SELECT 
+SELECT
     event_type,
     COUNT(*) as total_events,
     COUNT(CASE WHEN outcome = 'success' THEN 1 END) as successful_events,

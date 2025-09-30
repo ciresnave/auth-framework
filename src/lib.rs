@@ -225,9 +225,9 @@ pub mod permissions;
 pub mod profile_utils;
 pub mod providers;
 
-// SDK generation for multiple languages
-#[cfg(feature = "enhanced-rbac")]
-pub mod sdks;
+// SDK generation removed - use standalone SDK repositories:
+// - Python SDK: https://github.com/ciresnave/authframework-python
+// - JavaScript SDK: https://github.com/ciresnave/authframework-js
 
 pub mod server;
 pub mod storage;

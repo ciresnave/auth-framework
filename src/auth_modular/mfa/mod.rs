@@ -80,7 +80,7 @@ pub use sms_kit::SmsKitManager as SmsManager;
 /// // Generate challenge - example of typical usage patterns
 /// # // let challenge = mfa_manager.create_challenge("user123", MfaMethodType::Totp).await?;
 ///
-/// // Verify user's response - example of typical usage patterns  
+/// // Verify user's response - example of typical usage patterns
 /// # // let verification = mfa_manager.verify_challenge(&challenge.id, "123456").await?;
 /// # Ok(())
 /// # }

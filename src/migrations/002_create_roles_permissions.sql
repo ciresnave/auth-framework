@@ -5,11 +5,11 @@ CREATE TABLE IF NOT EXISTS roles (
     description TEXT,
     parent_role_id UUID REFERENCES roles(id),
     is_system BOOLEAN DEFAULT false,
-    
+
     -- Role metadata
     priority INTEGER DEFAULT 0,
     max_users INTEGER,
-    
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -21,11 +21,11 @@ CREATE TABLE IF NOT EXISTS permissions (
     description TEXT,
     resource VARCHAR(100) NOT NULL,
     action VARCHAR(50) NOT NULL,
-    
+
     -- Permission metadata
     is_system BOOLEAN DEFAULT false,
     conditions JSONB DEFAULT '{}',
-    
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
     granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     granted_by UUID REFERENCES users(id),
-    
+
     PRIMARY KEY (role_id, permission_id)
 );
 
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
     assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     assigned_by UUID REFERENCES users(id),
     expires_at TIMESTAMP WITH TIME ZONE,
-    
+
     PRIMARY KEY (user_id, role_id)
 );
 
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS user_permissions (
     granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     granted_by UUID REFERENCES users(id),
     expires_at TIMESTAMP WITH TIME ZONE,
-    
+
     PRIMARY KEY (user_id, permission_id)
 );
 
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS permission_groups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(100) UNIQUE NOT NULL,
     description TEXT,
-    
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS permission_groups (
 CREATE TABLE IF NOT EXISTS permission_group_permissions (
     group_id UUID REFERENCES permission_groups(id) ON DELETE CASCADE,
     permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
-    
+
     PRIMARY KEY (group_id, permission_id)
 );
 
@@ -129,7 +129,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT admin_role.id, p.id FROM admin_role, permissions p WHERE p.is_system = true
 UNION ALL
 SELECT user_role.id, p.id FROM user_role, permissions p WHERE p.name = 'user.read'
-UNION ALL  
-SELECT moderator_role.id, p.id FROM moderator_role, permissions p 
+UNION ALL
+SELECT moderator_role.id, p.id FROM moderator_role, permissions p
 WHERE p.name IN ('user.read', 'user.write', 'audit.read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;

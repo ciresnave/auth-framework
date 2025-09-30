@@ -20,11 +20,11 @@ use std::sync::Arc;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Create your storage backend
     let storage = Arc::new(YourCustomStorage::connect("connection-string").await?);
-    
+
     // Step 2: Configure AuthFramework
     let mut config = AuthConfig::default();
     config.security.secret_key = Some("your-jwt-secret-32-chars-or-more".to_string());
-    
+
     // Step 3: Build with custom storage
     let auth = AuthFramework::builder()
         .customize(|c| {
@@ -36,10 +36,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .done()
         .build()
         .await?;
-    
+
     // Step 4: Use normally - all operations will use your storage
     println!("AuthFramework initialized with custom storage!");
-    
+
     Ok(())
 }
 ```
@@ -57,12 +57,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = Arc::new(YourCustomStorage::connect("connection-string").await?);
     let mut config = AuthConfig::default();
     config.security.secret_key = Some("your-jwt-secret-32-chars-or-more".to_string());
-    
+
     // This returns an initialized AuthFramework instance
     let auth = AuthFramework::new_initialized_with_storage(config, storage).await?;
-    
+
     println!("AuthFramework ready to use!");
-    
+
     Ok(())
 }
 ```
@@ -95,7 +95,7 @@ impl AuthService {
             username: std::env::var("SURREAL_USER").ok(),
             password: std::env::var("SURREAL_PASS").ok(),
         };
-        
+
         // Create storage backend
         let storage = Arc::new(
             SurrealStorage::new(storage_config)
@@ -104,7 +104,7 @@ impl AuthService {
                     format!("Failed to initialize SurrealDB: {}", e)
                 ))?
         );
-        
+
         // Configure authentication
         let mut config = AuthConfig::default();
         config.security.secret_key = Some(std::env::var("JWT_SECRET").map_err(|_| {
@@ -112,7 +112,7 @@ impl AuthService {
                 "JWT_SECRET environment variable is required"
             )
         })?);
-        
+
         // Build the authentication framework
         let auth = Arc::new(
             AuthFramework::builder()
@@ -126,10 +126,10 @@ impl AuthService {
                 .build()
                 .await?
         );
-        
+
         Ok(Self { auth })
     }
-    
+
     pub async fn authenticate_user(
         &self,
         email: &str,
@@ -140,7 +140,7 @@ impl AuthService {
             username: email.to_string(),
             password: password.to_string(),
         };
-        
+
         // This will use your SurrealDB backend for all storage operations
         match self.auth.authenticate("password", credential).await? {
             auth_framework::authentication::AuthResult::Success(token) => {
@@ -191,11 +191,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build()
             .await?
     );
-    
+
     // Configure AuthFramework
     let mut config = AuthConfig::default();
     config.security.secret_key = Some(std::env::var("JWT_SECRET")?);
-    
+
     // Build with advanced configuration
     let auth = Arc::new(
         AuthFramework::builder()
@@ -209,20 +209,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build()
             .await?
     );
-    
+
     let state = AppState { auth };
-    
+
     // Create Axum router
     let app = Router::new()
         .route("/login", post(login_handler))
         .route("/profile", get(profile_handler))
         .with_state(state);
-    
+
     // Start server
     println!("Server starting on http://localhost:3000");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     axum::serve(listener, app).await?;
-    
+
     Ok(())
 }
 
@@ -234,7 +234,7 @@ async fn login_handler(
         username: payload.email,
         password: payload.password,
     };
-    
+
     match state.auth.authenticate("password", credential).await {
         Ok(auth_framework::authentication::AuthResult::Success(token)) => {
             Ok(Json(LoginResponse {
@@ -302,15 +302,15 @@ impl AuthService {
             datacenter: "dc1".to_string(),
             replication_factor: 3,
         };
-        
+
         let storage = Arc::new(
             DistributedStorage::with_service_discovery(storage_config).await?
         );
-        
+
         // Configure for microservice use
         let mut config = AuthConfig::default();
         config.security.secret_key = Some(std::env::var("JWT_SECRET")?);
-        
+
         let auth = Arc::new(
             AuthFramework::builder()
                 .customize(|c| {
@@ -323,10 +323,10 @@ impl AuthService {
                 .build()
                 .await?
         );
-        
+
         Ok(Self { auth })
     }
-    
+
     pub async fn validate_service_token(&self, token: &str) -> Result<bool, Status> {
         match self.auth.validate_token(token).await {
             Ok(true) => Ok(true),
@@ -351,10 +351,10 @@ use std::time::Duration;
 
 pub fn create_auth_config() -> Result<AuthConfig, Box<dyn std::error::Error>> {
     let environment = env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
-    
+
     let mut base_config = AuthConfig::default();
     base_config.security.secret_key = Some(env::var("JWT_SECRET")?);
-    
+
     let config = match environment.as_str() {
         "production" => {
             // Production configuration
@@ -369,7 +369,7 @@ pub fn create_auth_config() -> Result<AuthConfig, Box<dyn std::error::Error>> {
             base_config
         }
     };
-    
+
     Ok(config)
 }
 ```
@@ -381,7 +381,7 @@ use your_storage_crate::{StorageConfig, ConnectionPool};
 
 pub async fn create_storage_backend() -> Result<Arc<dyn auth_framework::storage::AuthStorage>, Box<dyn std::error::Error>> {
     let storage_type = std::env::var("STORAGE_TYPE").unwrap_or_else(|_| "memory".to_string());
-    
+
     match storage_type.as_str() {
         "postgresql" => {
             let config = StorageConfig::postgresql()
@@ -393,7 +393,7 @@ pub async fn create_storage_backend() -> Result<Arc<dyn auth_framework::storage:
                 )
                 .enable_ssl(true)
                 .ssl_ca_cert_path(&std::env::var("SSL_CA_CERT")?);
-            
+
             Ok(Arc::new(YourPostgresStorage::new(config).await?))
         }
         "redis" => {
@@ -405,7 +405,7 @@ pub async fn create_storage_backend() -> Result<Arc<dyn auth_framework::storage:
                 ])
                 .enable_cluster_mode(true)
                 .connection_pool_size(20);
-            
+
             Ok(Arc::new(YourRedisStorage::new(config).await?))
         }
         "surrealdb" => {
@@ -417,7 +417,7 @@ pub async fn create_storage_backend() -> Result<Arc<dyn auth_framework::storage:
                     &std::env::var("SURREAL_USER")?,
                     &std::env::var("SURREAL_PASS")?
                 );
-            
+
             Ok(Arc::new(YourSurrealStorage::new(config).await?))
         }
         _ => {
@@ -443,7 +443,7 @@ pub async fn initialize_auth_service() -> AuthResult<Arc<AuthFramework>> {
             Some("Ensure your database is running and accessible".to_string())
         )
     })?;
-    
+
     let config = create_auth_config().map_err(|e| {
         AuthError::config_with_help(
             format!("Invalid configuration: {}", e),
@@ -451,7 +451,7 @@ pub async fn initialize_auth_service() -> AuthResult<Arc<AuthFramework>> {
             Some("Run 'env | grep JWT_SECRET' to verify JWT secret is set".to_string())
         )
     })?;
-    
+
     AuthFramework::builder()
         .customize(|c| {
             c.secret = config.security.secret_key.clone();
@@ -482,13 +482,13 @@ pub async fn create_resilient_storage() -> Arc<dyn auth_framework::storage::Auth
         tracing::info!("Connected to primary storage");
         return Arc::new(storage);
     }
-    
+
     // Fall back to secondary storage
     if let Ok(storage) = YourSecondaryStorage::connect(&secondary_url).await {
         tracing::warn!("Primary storage unavailable, using secondary");
         return Arc::new(storage);
     }
-    
+
     // Last resort: memory storage with warning
     tracing::error!("All persistent storage backends unavailable, using memory storage");
     Arc::new(MemoryStorage::new())
@@ -504,12 +504,12 @@ pub async fn create_resilient_storage() -> Arc<dyn auth_framework::storage::Auth
 mod integration_tests {
     use super::*;
     use auth_framework::testing::helpers;
-    
+
     async fn setup_test_auth() -> AuthFramework {
         let storage = Arc::new(YourStorage::new_for_testing().await.unwrap());
         let mut config = AuthConfig::default();
         config.security.secret_key = Some("test-secret-32-characters-long!".to_string());
-        
+
         AuthFramework::builder()
             .customize(|c| {
                 c.secret = config.security.secret_key.clone();
@@ -522,19 +522,19 @@ mod integration_tests {
             .await
             .unwrap()
     }
-    
+
     #[tokio::test]
     async fn test_full_auth_flow() {
         let auth = setup_test_auth().await;
-        
+
         // Register authentication method
         let jwt_method = auth_framework::methods::JwtMethod::new()
             .secret_key("test-secret-32-characters-long!");
-        
-        auth.register_method("jwt", 
+
+        auth.register_method("jwt",
             auth_framework::methods::AuthMethodEnum::Jwt(jwt_method)
         );
-        
+
         // Test token creation and validation
         let token = auth.create_auth_token(
             "test-user",
@@ -542,22 +542,22 @@ mod integration_tests {
             "jwt",
             None
         ).await.unwrap();
-        
+
         assert!(!token.access_token.is_empty());
-        
+
         // Test token validation
         let is_valid = auth.validate_token(&token.access_token).await.unwrap();
         assert!(is_valid);
     }
-    
+
     #[tokio::test]
     async fn test_storage_persistence() {
         let auth = setup_test_auth().await;
-        
+
         // Create and store a token
         let token = helpers::create_test_token("user123", "test-token-id");
         auth.storage.store_token(&token).await.unwrap();
-        
+
         // Verify it can be retrieved
         let retrieved = auth.storage.get_token(&token.token_id).await.unwrap();
         assert!(retrieved.is_some());
@@ -653,19 +653,19 @@ use auth_framework::storage::StorageMigration;
 pub async fn migrate_storage() -> Result<(), Box<dyn std::error::Error>> {
     let old_storage = Arc::new(OldStorage::connect(&old_config).await?);
     let new_storage = Arc::new(NewStorage::connect(&new_config).await?);
-    
+
     let migration = StorageMigration::new(old_storage, new_storage)
         .with_batch_size(1000)
         .with_verify_data(true)
         .with_preserve_ttl(true);
-    
+
     println!("Starting storage migration...");
-    
+
     let result = migration.migrate_all().await?;
-    
-    println!("Migration completed: {} tokens, {} sessions migrated", 
+
+    println!("Migration completed: {} tokens, {} sessions migrated",
              result.tokens_migrated, result.sessions_migrated);
-    
+
     Ok(())
 }
 ```

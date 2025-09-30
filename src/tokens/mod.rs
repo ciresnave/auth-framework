@@ -468,7 +468,7 @@ impl TokenManager {
     /// use auth_framework::tokens::TokenManager;
     ///
     /// // Both PKCS#1 and PKCS#8 formats work
-    /// let private_key = include_bytes!("../../tests/fixtures/test_private_key.pem");  // Test key  
+    /// let private_key = include_bytes!("../../tests/fixtures/test_private_key.pem");  // Test key
     /// let public_key = include_bytes!("../../tests/fixtures/test_public_key.pem");   // Test key
     ///
     /// let manager = TokenManager::new_rsa(

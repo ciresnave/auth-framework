@@ -18,7 +18,7 @@ delayed bug: path with `Res::Err` but no error emitted
 disabled backtrace
 delayed bug: `Res::Err` but no error emitted
 disabled backtrace
-delayed bug: 
+delayed bug:
 disabled backtrace
 delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace
@@ -26,7 +26,7 @@ delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace
 delayed bug: `Res::Err` but no error emitted
 disabled backtrace
-delayed bug: 
+delayed bug:
 disabled backtrace
 delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace
@@ -34,7 +34,7 @@ delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace
 delayed bug: `Res::Err` but no error emitted
 disabled backtrace
-delayed bug: 
+delayed bug:
 disabled backtrace
 delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace
@@ -42,7 +42,7 @@ delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace
 delayed bug: `Res::Err` but no error emitted
 disabled backtrace
-delayed bug: 
+delayed bug:
 disabled backtrace
 delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace
@@ -50,7 +50,7 @@ delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace
 delayed bug: `Res::Err` but no error emitted
 disabled backtrace
-delayed bug: 
+delayed bug:
 disabled backtrace
 delayed bug: TyKind::Error constructed but no error reported
 disabled backtrace

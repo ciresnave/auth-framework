@@ -31,16 +31,16 @@ use auth_framework::{
 async fn main() -> std::io::Result<()> {
     // Initialize storage
     let storage = InMemoryStorage::new();
-    
+
     // Create auth configuration
     let config = AuthConfig::builder()
         .jwt_secret("your-secret-key-here".to_string())
         .token_expiry(chrono::Duration::hours(24))
         .build();
-    
+
     // Create auth framework instance
     let auth = AuthFramework::new(storage, config).await.unwrap();
-    
+
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(auth.clone()))
@@ -223,23 +223,23 @@ async fn main() {
     let storage = InMemoryStorage::new();
     let config = AuthConfig::default();
     let auth = AuthFramework::new(storage, config).await.unwrap();
-    
+
     // Create auth filter
     let auth_filter = with_auth(auth.clone());
-    
+
     // Public routes
     let login = warp::path("login")
         .and(warp::post())
         .and(warp::body::json())
         .and(warp::any().map(move || auth.clone()))
         .and_then(login_handler);
-    
+
     let register = warp::path("register")
         .and(warp::post())
         .and(warp::body::json())
         .and(warp::any().map(move || auth.clone()))
         .and_then(register_handler);
-    
+
     // Protected routes
     let profile = warp::path("profile")
         .and(warp::get())
@@ -250,7 +250,7 @@ async fn main() {
                 "permissions": user.permissions,
             }))
         });
-    
+
     let admin = warp::path("admin")
         .and(warp::get())
         .and(auth_filter.clone())
@@ -258,7 +258,7 @@ async fn main() {
         .map(|user: AuthenticatedUser| {
             format!("Welcome, admin {}!", user.user_id)
         });
-    
+
     let moderator = warp::path("moderator")
         .and(warp::get())
         .and(auth_filter)
@@ -266,7 +266,7 @@ async fn main() {
         .map(|user: AuthenticatedUser| {
             "Moderator panel"
         });
-    
+
     let routes = login
         .or(register)
         .or(profile)
@@ -274,7 +274,7 @@ async fn main() {
         .or(moderator)
         .with(warp::cors().allow_any_origin())
         .recover(handle_rejection);
-    
+
     warp::serve(routes)
         .run(([127, 0, 0, 1], 3030))
         .await;
@@ -382,7 +382,7 @@ async fn rocket() -> _ {
     let storage = InMemoryStorage::new();
     let config = AuthConfig::default();
     let auth = AuthFramework::new(storage, config).await.unwrap();
-    
+
     rocket::build()
         .manage(auth)
         .attach(AuthFairing::default())
@@ -489,12 +489,12 @@ impl RateLimiter {
     fn is_allowed(&self, client_ip: &str) -> bool {
         let mut requests = self.requests.lock().unwrap();
         let now = Instant::now();
-        
+
         let client_requests = requests.entry(client_ip.to_string()).or_insert_with(Vec::new);
-        
+
         // Remove old requests
         client_requests.retain(|&time| now.duration_since(time) < self.window);
-        
+
         if client_requests.len() < self.max_requests {
             client_requests.push(now);
             true
@@ -521,10 +521,10 @@ async fn create_session_handler(
         created_at: chrono::Utc::now(),
         last_accessed: chrono::Utc::now(),
     };
-    
+
     let session_id = uuid::Uuid::new_v4().to_string();
     auth.storage.store_session(&session_id, &session_data).await.unwrap();
-    
+
     Ok(HttpResponse::Ok().json(serde_json::json!({"session_id": session_id})))
 }
 ```
@@ -550,7 +550,7 @@ async fn custom_protected_handler(
 ) -> Result<HttpResponse> {
     let token = extract_token_from_request(&req)?;
     let claims: CustomClaims = auth.verify_custom_token(&token).await?;
-    
+
     if claims.custom_field == "special_value" {
         Ok(HttpResponse::Ok().json("Special access granted"))
     } else {
@@ -566,29 +566,29 @@ async fn custom_protected_handler(
 mod tests {
     use super::*;
     use actix_web::{test, App};
-    
+
     #[actix_web::test]
     async fn test_protected_route() {
         let storage = InMemoryStorage::new();
         let config = AuthConfig::default();
         let auth = AuthFramework::new(storage, config).await.unwrap();
-        
+
         // Create test user
         auth.register_user("testuser", "password").await.unwrap();
         let token = auth.authenticate("testuser", "password").await.unwrap();
-        
+
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(auth))
                 .wrap(AuthMiddleware::new())
                 .route("/protected", web::get().to(get_profile))
         ).await;
-        
+
         let req = test::TestRequest::get()
             .uri("/protected")
             .insert_header(("Authorization", format!("Bearer {}", token.access_token)))
             .to_request();
-        
+
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
     }

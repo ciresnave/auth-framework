@@ -186,10 +186,19 @@ Configurable Cross-Origin Resource Sharing support for web applications.
 
 ## Client SDKs
 
+AuthFramework provides professional, production-ready SDKs in separate repositories:
+
 ### JavaScript/TypeScript SDK
 
+📦 **Repository**: https://github.com/ciresnave/authframework-js  
+📚 **Documentation**: See repository README for full documentation
+
+```bash
+npm install @authframework/client
+```
+
 ```typescript
-import { AuthFrameworkClient } from '@authframework/js-sdk';
+import { AuthFrameworkClient } from '@authframework/client';
 
 const client = new AuthFrameworkClient({
   baseUrl: 'http://localhost:8080',
@@ -210,6 +219,10 @@ const profile = await client.users.getProfile();
 ```
 
 ### Python SDK
+
+📦 **Repository**: https://github.com/ciresnave/authframework-python  
+📊 **PyPI**: `pip install authframework`  
+📚 **Documentation**: See repository README for full documentation
 
 ```python
 from authframework import AuthFrameworkClient
@@ -234,32 +247,32 @@ profile = client.users.get_profile()
 
 ## Error Codes
 
-| Code | Description |
-|------|-------------|
-| `INVALID_CREDENTIALS` | Username or password is incorrect |
-| `TOKEN_EXPIRED` | Access token has expired |
-| `TOKEN_INVALID` | Access token is malformed or invalid |
-| `INSUFFICIENT_PERMISSIONS` | User lacks required permissions |
-| `RATE_LIMIT_EXCEEDED` | Too many requests in time window |
-| `MFA_REQUIRED` | Multi-factor authentication required |
-| `MFA_INVALID_CODE` | Invalid MFA verification code |
-| `USER_NOT_FOUND` | Requested user does not exist |
-| `EMAIL_ALREADY_EXISTS` | Email address already registered |
-| `VALIDATION_ERROR` | Request validation failed |
-| `INTERNAL_ERROR` | Internal server error |
+| Code                       | Description                          |
+| -------------------------- | ------------------------------------ |
+| `INVALID_CREDENTIALS`      | Username or password is incorrect    |
+| `TOKEN_EXPIRED`            | Access token has expired             |
+| `TOKEN_INVALID`            | Access token is malformed or invalid |
+| `INSUFFICIENT_PERMISSIONS` | User lacks required permissions      |
+| `RATE_LIMIT_EXCEEDED`      | Too many requests in time window     |
+| `MFA_REQUIRED`             | Multi-factor authentication required |
+| `MFA_INVALID_CODE`         | Invalid MFA verification code        |
+| `USER_NOT_FOUND`           | Requested user does not exist        |
+| `EMAIL_ALREADY_EXISTS`     | Email address already registered     |
+| `VALIDATION_ERROR`         | Request validation failed            |
+| `INTERNAL_ERROR`           | Internal server error                |
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AUTH_API_HOST` | API server host | `127.0.0.1` |
-| `AUTH_API_PORT` | API server port | `8080` |
-| `AUTH_API_CORS_ENABLED` | Enable CORS | `true` |
-| `AUTH_API_MAX_BODY_SIZE` | Max request body size | `1048576` (1MB) |
-| `AUTH_JWT_SECRET` | JWT signing secret | *(required)* |
-| `AUTH_TOKEN_EXPIRY` | Access token lifetime | `3600` (1 hour) |
+| Variable                    | Description            | Default           |
+| --------------------------- | ---------------------- | ----------------- |
+| `AUTH_API_HOST`             | API server host        | `127.0.0.1`       |
+| `AUTH_API_PORT`             | API server port        | `8080`            |
+| `AUTH_API_CORS_ENABLED`     | Enable CORS            | `true`            |
+| `AUTH_API_MAX_BODY_SIZE`    | Max request body size  | `1048576` (1MB)   |
+| `AUTH_JWT_SECRET`           | JWT signing secret     | *(required)*      |
+| `AUTH_TOKEN_EXPIRY`         | Access token lifetime  | `3600` (1 hour)   |
 | `AUTH_REFRESH_TOKEN_EXPIRY` | Refresh token lifetime | `604800` (7 days) |
 
 ### Programmatic Configuration
@@ -774,15 +787,20 @@ X-RateLimit-Reset: 1640995200
 
 ## SDKs and Libraries
 
-### JavaScript/Node.js
+### JavaScript/TypeScript SDK
+
+**Repository**: [authframework-js](https://github.com/ciresnave/authframework-js)
+
+```bash
+npm install @authframework/client
+```
 
 ```javascript
-import { AuthFrameworkClient } from '@auth-framework/client';
+import { AuthFrameworkClient } from '@authframework/client';
 
 const client = new AuthFrameworkClient({
   baseUrl: 'https://api.yourdomain.com',
-  clientId: 'your_client_id',
-  clientSecret: 'your_client_secret'
+  apiKey: 'your_api_key'
 });
 
 // Login
@@ -792,18 +810,23 @@ const tokens = await client.auth.login({
 });
 
 // Get profile
-const profile = await client.users.getProfile(tokens.access_token);
+const profile = await client.users.getProfile();
 ```
 
-### Python
+### Python SDK
+
+**Repository**: [authframework-python](https://github.com/ciresnave/authframework-python)
+
+```bash
+pip install authframework
+```
 
 ```python
-from auth_framework import AuthFrameworkClient
+from authframework import AuthFrameworkClient
 
 client = AuthFrameworkClient(
     base_url='https://api.yourdomain.com',
-    client_id='your_client_id',
-    client_secret='your_client_secret'
+    api_key='your_api_key'
 )
 
 # Login
@@ -813,28 +836,22 @@ tokens = client.auth.login(
 )
 
 # Get profile
-profile = client.users.get_profile(tokens['access_token'])
+profile = client.users.get_profile()
 ```
 
-### Rust
+### Rust (Core Library)
+
+AuthFramework provides the complete server-side implementation in Rust:
 
 ```rust
-use auth_framework_client::AuthFrameworkClient;
+use auth_framework::{AuthFramework, AuthConfig};
 
-let client = AuthFrameworkClient::new(
-    "https://api.yourdomain.com",
-    "your_client_id",
-    "your_client_secret"
-);
+let config = AuthConfig::new()
+    .secret("your-jwt-secret".to_string());
 
-// Login
-let tokens = client.auth().login(
-    "user@example.com",
-    "password",
-    None
-).await?;
+let auth = AuthFramework::new(config);
 
-// Get profile
+// Full server implementation - see main documentation
 let profile = client.users().get_profile(&tokens.access_token).await?;
 ```
 

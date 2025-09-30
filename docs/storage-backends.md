@@ -77,14 +77,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = InMemoryStorage::new();
     let config = AuthConfig::default();
     let auth = AuthFramework::new(storage, config).await?;
-    
+
     // Register and authenticate
     auth.register_user("user123", "password").await?;
     let token = auth.authenticate("user123", "password").await?;
-    
+
     // Token is stored in memory and will be automatically cleaned up
     println!("Token: {}", token.access_token);
-    
+
     Ok(())
 }
 ```
@@ -150,7 +150,7 @@ use auth_framework::storage::RedisConfig;
 let config = RedisConfig::new()
     .with_cluster_urls(vec![
         "redis://node1:6379",
-        "redis://node2:6379", 
+        "redis://node2:6379",
         "redis://node3:6379",
     ])
     .with_cluster_mode(true)
@@ -215,10 +215,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = RedisStorage::new("redis://localhost:6379").await?;
     let config = AuthConfig::default();
     let auth = Arc::new(AuthFramework::new(storage, config).await?);
-    
+
     // Simulate concurrent operations
     let mut handles = vec![];
-    
+
     for i in 0..100 {
         let auth_clone = auth.clone();
         let handle = tokio::spawn(async move {
@@ -229,12 +229,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         handles.push(handle);
     }
-    
+
     // Wait for all operations to complete
     for handle in handles {
         handle.await?;
     }
-    
+
     Ok(())
 }
 ```
@@ -414,7 +414,7 @@ println!("Database size: {} MB", stats.database_size_mb);
 PostgreSQL storage provides robust performance for production applications:
 
 - **Token verification**: ~10,000 ops/sec
-- **Storage operations**: ~5,000 ops/sec  
+- **Storage operations**: ~5,000 ops/sec
 - **Query latency**: 1-10ms typical
 - **Concurrent connections**: 100+ supported
 
@@ -479,29 +479,29 @@ migration.migrate_kv_data().await?;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     async fn test_with_storage<S: AuthStorage + Clone>(storage: S) {
         let config = AuthConfig::default();
         let auth = AuthFramework::new(storage, config).await.unwrap();
-        
+
         // Test operations
         auth.register_user("test", "password").await.unwrap();
         let token = auth.authenticate("test", "password").await.unwrap();
         assert!(!token.access_token.is_empty());
     }
-    
+
     #[tokio::test]
     async fn test_in_memory_storage() {
         let storage = InMemoryStorage::new();
         test_with_storage(storage).await;
     }
-    
+
     #[tokio::test]
     async fn test_redis_storage() {
         let storage = RedisStorage::new("redis://localhost:6379").await.unwrap();
         test_with_storage(storage).await;
     }
-    
+
     #[tokio::test]
     async fn test_postgres_storage() {
         let storage = PostgresStorage::new("postgresql://localhost/test_db").await.unwrap();
