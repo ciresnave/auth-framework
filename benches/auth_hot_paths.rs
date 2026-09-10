@@ -16,7 +16,7 @@
 
 use auth_framework::security::secure_jwt::{SecureJwtClaims, SecureJwtConfig, SecureJwtValidator};
 use auth_framework::security::secure_utils::constant_time_compare;
-use auth_framework::utils::password::{hash_password, verify_password};
+use auth_framework::utils::password::{hash_password_argon2id, verify_password_argon2id};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use std::collections::HashSet;
@@ -99,7 +99,7 @@ fn bench_password_hashing(c: &mut Criterion) {
             password,
             |b, pw| {
                 b.iter(|| {
-                    let _ = black_box(hash_password(black_box(pw)).unwrap());
+                    let _ = black_box(hash_password_argon2id(black_box(pw)).unwrap());
                 });
             },
         );
@@ -125,7 +125,7 @@ fn bench_password_verification(c: &mut Criterion) {
     ];
     let hashes: Vec<(&str, String)> = passwords
         .iter()
-        .map(|&pw| (pw, hash_password(pw).unwrap()))
+        .map(|&pw| (pw, hash_password_argon2id(pw).unwrap()))
         .collect();
 
     for (pw, hash) in &hashes {
@@ -134,7 +134,7 @@ fn bench_password_verification(c: &mut Criterion) {
             &(pw, hash.as_str()),
             |b, &(pw, hash)| {
                 b.iter(|| {
-                    let _ = black_box(verify_password(black_box(pw), black_box(hash)).unwrap());
+                    let _ = black_box(verify_password_argon2id(black_box(pw), black_box(hash)).unwrap());
                 });
             },
         );

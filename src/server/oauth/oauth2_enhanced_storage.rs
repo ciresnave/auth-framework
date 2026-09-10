@@ -125,11 +125,11 @@ impl EnhancedClientCredentials {
         allowed_scopes: Vec<String>,
         grant_types: Vec<String>,
     ) -> Result<Self> {
-        use crate::security::secure_utils::hash_password;
+        use crate::security::secure_utils::hash_password_bcrypt;
 
         Ok(Self {
             client_id,
-            client_secret_hash: hash_password(client_secret)?,
+            client_secret_hash: hash_password_bcrypt(client_secret)?,
             client_type: ClientType::Confidential,
             redirect_uris,
             allowed_scopes,
@@ -161,8 +161,8 @@ impl EnhancedClientCredentials {
         match self.client_type {
             ClientType::Public => Ok(true), // Public clients don't need secret validation
             ClientType::Confidential => {
-                use crate::security::secure_utils::verify_password;
-                verify_password(provided_secret, &self.client_secret_hash)
+                use crate::security::secure_utils::verify_password_bcrypt;
+                verify_password_bcrypt(provided_secret, &self.client_secret_hash)
             }
         }
     }

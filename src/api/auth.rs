@@ -752,7 +752,7 @@ pub async fn register(
     }
 
     // Hash the password
-    let password_hash = match crate::utils::password::hash_password(&req.password) {
+    let password_hash = match crate::utils::password::hash_password_argon2id(&req.password) {
         Ok(hash) => hash,
         Err(e) => {
             tracing::error!("Password hashing failed: {:?}", e);

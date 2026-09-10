@@ -376,13 +376,13 @@ pub fn generate_secure_token(byte_length: usize) -> Result<String> {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::security::secure_utils::hash_password;
+/// use auth_framework::security::secure_utils::hash_password_bcrypt;
 ///
 /// let password = "user_password_123";
-/// let hash = hash_password(password).unwrap();
+/// let hash = hash_password_bcrypt(password).unwrap();
 /// println!("Password hash: {}", hash);
 /// ```
-pub fn hash_password(password: &str) -> Result<String> {
+pub fn hash_password_bcrypt(password: &str) -> Result<String> {
     if password.is_empty() {
         return Err(AuthError::validation(
             "Password cannot be empty".to_string(),
@@ -419,15 +419,15 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::security::secure_utils::{hash_password, verify_password};
+/// use auth_framework::security::secure_utils::{hash_password_bcrypt, verify_password_bcrypt};
 ///
 /// let password = "user_password_123";
-/// let hash = hash_password(password).unwrap();
+/// let hash = hash_password_bcrypt(password).unwrap();
 ///
-/// assert!(verify_password(password, &hash).unwrap());
-/// assert!(!verify_password("wrong_password", &hash).unwrap());
+/// assert!(verify_password_bcrypt(password, &hash).unwrap());
+/// assert!(!verify_password_bcrypt("wrong_password", &hash).unwrap());
 /// ```
-pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
+pub fn verify_password_bcrypt(password: &str, hash: &str) -> Result<bool> {
     bcrypt::verify(password, hash)
         .map_err(|e| AuthError::crypto(format!("Password verification failed: {}", e)))
 }
@@ -654,8 +654,8 @@ mod tests {
         let password = "test_password_123";
 
         // Hash the same password multiple times
-        let hash1 = hash_password(password).unwrap();
-        let hash2 = hash_password(password).unwrap();
+        let hash1 = hash_password_bcrypt(password).unwrap();
+        let hash2 = hash_password_bcrypt(password).unwrap();
 
         // Hashes should be different (due to salt)
         assert_ne!(
@@ -664,34 +664,34 @@ mod tests {
         );
 
         // Both hashes should verify correctly
-        assert!(verify_password(password, &hash1).unwrap());
-        assert!(verify_password(password, &hash2).unwrap());
+        assert!(verify_password_bcrypt(password, &hash1).unwrap());
+        assert!(verify_password_bcrypt(password, &hash2).unwrap());
 
         // Wrong password should not verify
-        assert!(!verify_password("wrong_password", &hash1).unwrap());
-        assert!(!verify_password("wrong_password", &hash2).unwrap());
+        assert!(!verify_password_bcrypt("wrong_password", &hash1).unwrap());
+        assert!(!verify_password_bcrypt("wrong_password", &hash2).unwrap());
     }
 
     #[test]
     fn test_password_hashing_edge_cases() {
         // Test empty password
-        let result = hash_password("");
+        let result = hash_password_bcrypt("");
         assert!(result.is_err(), "Should reject empty password");
 
         // Test very long password
         let long_password = "a".repeat(100);
-        let hash = hash_password(&long_password).unwrap();
-        assert!(verify_password(&long_password, &hash).unwrap());
+        let hash = hash_password_bcrypt(&long_password).unwrap();
+        assert!(verify_password_bcrypt(&long_password, &hash).unwrap());
 
         // Test password with special characters
         let special_password = "p@ssw0rd!#$%^&*()";
-        let hash = hash_password(special_password).unwrap();
-        assert!(verify_password(special_password, &hash).unwrap());
+        let hash = hash_password_bcrypt(special_password).unwrap();
+        assert!(verify_password_bcrypt(special_password, &hash).unwrap());
 
         // Test password with Unicode
         let unicode_password = "пароль123测试";
-        let hash = hash_password(unicode_password).unwrap();
-        assert!(verify_password(unicode_password, &hash).unwrap());
+        let hash = hash_password_bcrypt(unicode_password).unwrap();
+        assert!(verify_password_bcrypt(unicode_password, &hash).unwrap());
     }
 
     #[test]
