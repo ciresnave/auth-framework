@@ -134,7 +134,9 @@ fn bench_password_verification(c: &mut Criterion) {
             &(pw, hash.as_str()),
             |b, &(pw, hash)| {
                 b.iter(|| {
-                    let _ = black_box(verify_password_argon2id(black_box(pw), black_box(hash)).unwrap());
+                    let _ = black_box(
+                        verify_password_argon2id(black_box(pw), black_box(hash)).unwrap(),
+                    );
                 });
             },
         );
