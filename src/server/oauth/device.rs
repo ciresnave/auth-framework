@@ -294,8 +294,8 @@ impl DeviceAuthManager {
         // Check for slow_down (polling too frequently) — RFC 8628 §3.5
         // The required interval increases by 5 seconds each time the client
         // polls too fast, implementing exponential backoff.
-        let effective_interval = self.min_interval
-            + Duration::from_secs(5 * u64::from(stored.slow_down_count));
+        let effective_interval =
+            self.min_interval + Duration::from_secs(5 * u64::from(stored.slow_down_count));
         if let Some(last_poll) = stored.last_poll {
             let elapsed = now.duration_since(last_poll).unwrap_or(Duration::ZERO);
             if elapsed < effective_interval {

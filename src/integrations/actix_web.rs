@@ -595,8 +595,7 @@ mod tests {
     async fn test_skip_path_health() {
         let _env = crate::testing::test_infrastructure::TestEnvironmentGuard::new()
             .with_jwt_secret("auth-framework");
-        let config = AuthConfig::new()
-            .secret("auth-framework".to_string());
+        let config = AuthConfig::new().secret("auth-framework".to_string());
         let auth_framework = Arc::new(AuthFramework::new(config));
 
         let middleware = AuthMiddleware::new(auth_framework.clone());
@@ -617,12 +616,11 @@ mod tests {
     async fn test_skip_paths_custom() {
         let _env = crate::testing::test_infrastructure::TestEnvironmentGuard::new()
             .with_jwt_secret("auth-framework");
-        let config = AuthConfig::new()
-            .secret("auth-framework".to_string());
+        let config = AuthConfig::new().secret("auth-framework".to_string());
         let auth_framework = Arc::new(AuthFramework::new(config));
 
-        let middleware = AuthMiddleware::new(auth_framework.clone())
-            .skip_path("/public".to_string());
+        let middleware =
+            AuthMiddleware::new(auth_framework.clone()).skip_path("/public".to_string());
 
         let app = test::init_service(
             App::new()
@@ -640,8 +638,7 @@ mod tests {
     async fn test_invalid_bearer_token() {
         let _env = crate::testing::test_infrastructure::TestEnvironmentGuard::new()
             .with_jwt_secret("auth-framework");
-        let config = AuthConfig::new()
-            .secret("auth-framework".to_string());
+        let config = AuthConfig::new().secret("auth-framework".to_string());
         let auth_framework = Arc::new(AuthFramework::new(config));
 
         let app = test::init_service(
@@ -664,8 +661,7 @@ mod tests {
     async fn test_missing_bearer_prefix() {
         let _env = crate::testing::test_infrastructure::TestEnvironmentGuard::new()
             .with_jwt_secret("auth-framework");
-        let config = AuthConfig::new()
-            .secret("auth-framework".to_string());
+        let config = AuthConfig::new().secret("auth-framework".to_string());
         let auth_framework = Arc::new(AuthFramework::new(config));
 
         let app = test::init_service(

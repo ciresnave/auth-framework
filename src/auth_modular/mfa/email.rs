@@ -3,10 +3,10 @@
 use crate::errors::{AuthError, Result};
 use crate::storage::AuthStorage;
 use serde::{Deserialize, Serialize};
-use subtle::ConstantTimeEq;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 use tracing::{debug, error, info};
 
 /// Email provider configuration for production email sending

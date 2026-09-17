@@ -3,10 +3,10 @@
 use crate::errors::{AuthError, Result};
 use crate::storage::AuthStorage;
 use ring::rand::SecureRandom;
-use subtle::ConstantTimeEq;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 

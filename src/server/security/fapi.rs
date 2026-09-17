@@ -1518,12 +1518,17 @@ mod tests {
 
     #[test]
     fn test_fapi_session_builder() {
-        let session = FapiSession::builder("sess_123", "client_456", "user_789", Duration::try_hours(1).unwrap())
-            .dpop_proof("proof_abc")
-            .add_scope("openid")
-            .add_scopes(vec!["profile", "email"])
-            .add_metadata("custom_flag", json!(true))
-            .build();
+        let session = FapiSession::builder(
+            "sess_123",
+            "client_456",
+            "user_789",
+            Duration::try_hours(1).unwrap(),
+        )
+        .dpop_proof("proof_abc")
+        .add_scope("openid")
+        .add_scopes(vec!["profile", "email"])
+        .add_metadata("custom_flag", json!(true))
+        .build();
 
         assert_eq!(session.session_id, "sess_123");
         assert_eq!(session.client_id, "client_456");

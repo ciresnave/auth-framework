@@ -214,7 +214,11 @@ impl StepUpConfigBuilder {
     }
 
     /// Set allowed authentication methods for a given level.
-    pub fn level_methods(mut self, level: AuthenticationLevel, methods: Vec<AuthenticationMethod>) -> Self {
+    pub fn level_methods(
+        mut self,
+        level: AuthenticationLevel,
+        methods: Vec<AuthenticationMethod>,
+    ) -> Self {
         self.inner.level_methods.insert(level, methods);
         self
     }
@@ -1291,7 +1295,12 @@ mod tests {
         let config = StepUpConfig::default();
         let manager = SteppedUpAuthManager::new(config);
 
-        let context = StepUpContext::new("test_user", "basic-resource", "session123", AuthenticationLevel::Basic);
+        let context = StepUpContext::new(
+            "test_user",
+            "basic-resource",
+            "session123",
+            AuthenticationLevel::Basic,
+        );
 
         let result = manager
             .evaluate_step_up_requirement(&context)
@@ -1306,8 +1315,13 @@ mod tests {
         let config = StepUpConfig::default();
         let manager = SteppedUpAuthManager::new(config);
 
-        let context = StepUpContext::new("test_user", "sensitive-resource", "session123", AuthenticationLevel::Basic)
-            .with_risk_score(0.8);
+        let context = StepUpContext::new(
+            "test_user",
+            "sensitive-resource",
+            "session123",
+            AuthenticationLevel::Basic,
+        )
+        .with_risk_score(0.8);
 
         let result = manager
             .evaluate_step_up_requirement(&context)

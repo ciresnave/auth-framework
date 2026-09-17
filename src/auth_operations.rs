@@ -493,9 +493,7 @@ impl UserOperations<'_> {
     /// # }
     /// ```
     pub async fn list_with_query(&self, query: UserListQuery) -> Result<Vec<UserInfo>> {
-        self.framework
-            .list_users_with_query(query)
-            .await
+        self.framework.list_users_with_query(query).await
     }
 
     /// Fetch a user record by canonical user ID.
@@ -1497,7 +1495,11 @@ mod tests {
     #[tokio::test]
     async fn test_user_ops_list_empty() {
         let fw = make_fw().await;
-        let list = fw.users().list_with_query(UserListQuery::new().limit(10)).await.unwrap();
+        let list = fw
+            .users()
+            .list_with_query(UserListQuery::new().limit(10))
+            .await
+            .unwrap();
         assert!(list.is_empty());
     }
 

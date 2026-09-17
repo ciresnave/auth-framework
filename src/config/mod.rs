@@ -417,7 +417,11 @@ impl std::fmt::Display for AuthConfig {
             self.token_lifetime.as_secs(),
             self.refresh_token_lifetime.as_secs(),
             self.storage,
-            if self.enable_multi_factor { "on" } else { "off" },
+            if self.enable_multi_factor {
+                "on"
+            } else {
+                "off"
+            },
             if self.enable_rbac { "on" } else { "off" },
             self.rate_limiting,
             self.security,
@@ -452,7 +456,11 @@ impl std::fmt::Display for SecurityConfig {
             self.min_password_length,
             self.password_hash_algorithm,
             self.jwt_algorithm,
-            if self.secure_cookies { "secure" } else { "plain" },
+            if self.secure_cookies {
+                "secure"
+            } else {
+                "plain"
+            },
             if self.csrf_protection { "on" } else { "off" },
             self.session_timeout.as_secs(),
         )

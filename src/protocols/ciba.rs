@@ -296,11 +296,7 @@ impl CibaProvider {
         }
 
         // Generate tokens
-        let token_response = (self.token_generator)(
-            auth_req_id,
-            subject,
-            &entry.request.scope,
-        );
+        let token_response = (self.token_generator)(auth_req_id, subject, &entry.request.scope);
 
         entry.status = CibaRequestStatus::Approved;
         entry.subject = Some(subject.to_string());
@@ -386,9 +382,10 @@ impl CibaProvider {
     /// Clean up expired requests.
     pub async fn cleanup_expired(&self) {
         let now = Self::now_secs();
-        self.pending.write().await.retain(|_, entry| {
-            now <= entry.expires_at
-        });
+        self.pending
+            .write()
+            .await
+            .retain(|_, entry| now <= entry.expires_at);
     }
 
     /// Get the status of an auth request.
@@ -476,9 +473,7 @@ mod tests {
     #[tokio::test]
     async fn test_auth_request_push_mode_requires_notification_token() {
         let provider = CibaProvider::new(test_config(), test_token_gen());
-        let result = provider
-            .authenticate(poll_request(), CibaMode::Push)
-            .await;
+        let result = provider.authenticate(poll_request(), CibaMode::Push).await;
         assert!(result.is_err());
     }
 
@@ -487,10 +482,7 @@ mod tests {
         let provider = CibaProvider::new(test_config(), test_token_gen());
         let mut req = poll_request();
         req.client_notification_token = Some("cnt_abc123".to_string());
-        let resp = provider
-            .authenticate(req, CibaMode::Push)
-            .await
-            .unwrap();
+        let resp = provider.authenticate(req, CibaMode::Push).await.unwrap();
         assert!(!resp.auth_req_id.is_empty());
         assert!(resp.interval.is_none()); // Push mode has no polling interval
     }
@@ -590,7 +582,12 @@ mod tests {
             .approve(&resp.auth_req_id, "user:alice")
             .await
             .unwrap();
-        assert!(provider.approve(&resp.auth_req_id, "user:bob").await.is_err());
+        assert!(
+            provider
+                .approve(&resp.auth_req_id, "user:bob")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -631,20 +628,14 @@ mod tests {
         let provider = CibaProvider::new(test_config(), test_token_gen());
         let mut req = poll_request();
         req.client_notification_token = Some("cnt_xyz".to_string());
-        let resp = provider
-            .authenticate(req, CibaMode::Push)
-            .await
-            .unwrap();
+        let resp = provider.authenticate(req, CibaMode::Push).await.unwrap();
 
         provider
             .approve(&resp.auth_req_id, "user:alice")
             .await
             .unwrap();
 
-        let (mode, cnt, token) = provider
-            .get_notification(&resp.auth_req_id)
-            .await
-            .unwrap();
+        let (mode, cnt, token) = provider.get_notification(&resp.auth_req_id).await.unwrap();
         assert_eq!(mode, CibaMode::Push);
         assert_eq!(cnt.unwrap(), "cnt_xyz");
         assert!(token.is_some());

@@ -77,7 +77,12 @@ impl AuthorizationManager {
                     if let Ok(roles) = serde_json::from_slice::<Vec<String>>(&bytes) {
                         for role_name in roles {
                             if let Err(e) = c.assign_role_to_user(user_id, &role_name) {
-                                tracing::warn!("Failed to assign role '{}' to user '{}': {}", role_name, user_id, e);
+                                tracing::warn!(
+                                    "Failed to assign role '{}' to user '{}': {}",
+                                    role_name,
+                                    user_id,
+                                    e
+                                );
                             }
                         }
                     }

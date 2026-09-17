@@ -157,8 +157,7 @@ pub use crate::client::ClientType;
 
 /// Minimal server configuration for working components
 #[derive(Debug, Clone, Default)]
-pub struct WorkingServerConfig {
-}
+pub struct WorkingServerConfig {}
 
 /// Trait for server-side authentication providers
 #[async_trait]

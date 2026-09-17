@@ -309,7 +309,9 @@ pub async fn authorize(
 
     // RFC 8707: Validate resource indicators if present.
     if let Some(ref resources) = params.resource {
-        if let Err(e) = crate::server::oauth::resource_indicators::validate_resource_indicators(resources) {
+        if let Err(e) =
+            crate::server::oauth::resource_indicators::validate_resource_indicators(resources)
+        {
             let error = OAuthError::new("invalid_target")
                 .description(e.to_string())
                 .maybe_state(params.state);
@@ -336,8 +338,8 @@ pub async fn authorize(
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Failed to serialize OAuth authorization code data: {:?}", e);
-            let error = OAuthError::new("server_error")
-                .description("Authorization server internal error");
+            let error =
+                OAuthError::new("server_error").description("Authorization server internal error");
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
         }
     };
@@ -554,14 +556,23 @@ async fn handle_authorization_code_grant(
     // RFC 8707: Validate resource indicators on the token request.
     let authz_resources: Vec<String> = code_data["resource"]
         .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     if let Some(ref token_resources) = req.resource {
-        if let Err(e) = crate::server::oauth::resource_indicators::validate_resource_indicators(token_resources) {
+        if let Err(e) =
+            crate::server::oauth::resource_indicators::validate_resource_indicators(token_resources)
+        {
             return ApiResponse::error_typed("invalid_target", &e.to_string());
         }
-        if let Err(e) = crate::server::oauth::resource_indicators::validate_token_resource_subset(token_resources, &authz_resources) {
+        if let Err(e) = crate::server::oauth::resource_indicators::validate_token_resource_subset(
+            token_resources,
+            &authz_resources,
+        ) {
             return ApiResponse::error_typed("invalid_target", &e.to_string());
         }
     }

@@ -223,7 +223,11 @@ impl ClientRegistrationRequestBuilder {
     }
 
     /// Set the software metadata.
-    pub fn software(mut self, software_id: impl Into<String>, software_version: impl Into<String>) -> Self {
+    pub fn software(
+        mut self,
+        software_id: impl Into<String>,
+        software_version: impl Into<String>,
+    ) -> Self {
         self.software_id = Some(software_id.into());
         self.software_version = Some(software_version.into());
         self
@@ -708,7 +712,11 @@ impl ClientRegistrationManager {
     fn verify_registration_token(&self, client: &RegisteredClient, token: &str) -> Result<bool> {
         use subtle::ConstantTimeEq;
         let token_hash = self.hash_secret(token)?;
-        Ok(client.registration_access_token_hash.as_bytes().ct_eq(token_hash.as_bytes()).into())
+        Ok(client
+            .registration_access_token_hash
+            .as_bytes()
+            .ct_eq(token_hash.as_bytes())
+            .into())
     }
 
     /// Validate URI — only HTTPS is allowed, with an exception for localhost
@@ -801,22 +809,20 @@ mod tests {
         let config = ClientRegistrationConfig::default();
         let manager = ClientRegistrationManager::new(config, storage);
 
-        let request = ClientRegistrationRequest::builder(
-            "https://client.example.com/callback",
-        )
-        .auth_method("client_secret_basic")
-        .grant_types(["authorization_code"])
-        .response_types(["code"])
-        .client_name("Test Client")
-        .client_uri("https://client.example.com")
-        .logo_uri("https://client.example.com/logo.png")
-        .scope("read write")
-        .contacts(["admin@client.example.com"])
-        .tos_uri("https://client.example.com/tos")
-        .policy_uri("https://client.example.com/privacy")
-        .jwks_uri("https://client.example.com/jwks")
-        .software("test-client", "1.0.0")
-        .build();
+        let request = ClientRegistrationRequest::builder("https://client.example.com/callback")
+            .auth_method("client_secret_basic")
+            .grant_types(["authorization_code"])
+            .response_types(["code"])
+            .client_name("Test Client")
+            .client_uri("https://client.example.com")
+            .logo_uri("https://client.example.com/logo.png")
+            .scope("read write")
+            .contacts(["admin@client.example.com"])
+            .tos_uri("https://client.example.com/tos")
+            .policy_uri("https://client.example.com/privacy")
+            .jwks_uri("https://client.example.com/jwks")
+            .software("test-client", "1.0.0")
+            .build();
 
         let response = manager
             .register_client(request.clone(), None)
@@ -839,15 +845,13 @@ mod tests {
         let config = ClientRegistrationConfig::default();
         let manager = ClientRegistrationManager::new(config, storage);
 
-        let request = ClientRegistrationRequest::builder(
-            "https://client.example.com/callback",
-        )
-        .public_client()
-        .grant_types(["authorization_code"])
-        .response_types(["code"])
-        .client_name("Public Client")
-        .scope("read")
-        .build();
+        let request = ClientRegistrationRequest::builder("https://client.example.com/callback")
+            .public_client()
+            .grant_types(["authorization_code"])
+            .response_types(["code"])
+            .client_name("Public Client")
+            .scope("read")
+            .build();
 
         let response = manager.register_client(request, None).await.unwrap();
 

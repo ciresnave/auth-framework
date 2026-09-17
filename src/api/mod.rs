@@ -4,6 +4,7 @@
 //! that exposes all AuthFramework functionality through HTTP endpoints.
 
 pub mod admin;
+pub mod advanced_protocols;
 pub mod auth;
 pub mod email_verification;
 pub mod error_codes;
@@ -12,7 +13,7 @@ pub mod metrics;
 pub mod mfa;
 pub mod middleware;
 pub mod oauth2;
-pub mod oauth_advanced; pub mod advanced_protocols;
+pub mod oauth_advanced;
 pub mod openapi;
 pub mod responses;
 pub mod saml;

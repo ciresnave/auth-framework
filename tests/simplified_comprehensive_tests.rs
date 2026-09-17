@@ -289,7 +289,10 @@ mod token_tests {
         assert!(token.access_token.starts_with("access_token_"));
         assert!(token.refresh_token.is_some());
         assert_eq!(token.token_type.as_ref().unwrap(), "Bearer");
-        assert_eq!(token.scopes, auth_framework::types::Scopes::new(vec!["read".to_string(), "write".to_string()]));
+        assert_eq!(
+            token.scopes,
+            auth_framework::types::Scopes::new(vec!["read".to_string(), "write".to_string()])
+        );
     }
 
     #[test]

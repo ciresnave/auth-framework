@@ -185,10 +185,8 @@ impl RarConfig {
         if !self.supported_types.contains(&name) {
             self.supported_types.push(name.clone());
         }
-        self.type_action_mapping.insert(
-            name,
-            actions.iter().map(|a| a.to_string()).collect(),
-        );
+        self.type_action_mapping
+            .insert(name, actions.iter().map(|a| a.to_string()).collect());
         self
     }
 

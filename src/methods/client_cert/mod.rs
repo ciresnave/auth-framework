@@ -563,12 +563,7 @@ impl CrlStore {
 
     /// Total count of revoked serial numbers across all issuers.
     pub fn revoked_count(&self) -> usize {
-        self.revoked
-            .read()
-            .unwrap()
-            .values()
-            .map(|s| s.len())
-            .sum()
+        self.revoked.read().unwrap().values().map(|s| s.len()).sum()
     }
 
     /// Remove all entries for an issuer.

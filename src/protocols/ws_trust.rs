@@ -723,7 +723,9 @@ mod tests {
             auth_context: None,
         };
 
-        let soap_request = sts.create_rst_soap_request(&request, "test_user", Some("test_pass")).unwrap();
+        let soap_request = sts
+            .create_rst_soap_request(&request, "test_user", Some("test_pass"))
+            .unwrap();
 
         assert!(soap_request.contains("<soap:Envelope"));
         assert!(soap_request.contains("<wsse:Security"));

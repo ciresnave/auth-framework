@@ -828,8 +828,7 @@ mod tests {
         let claims = valid_claims();
         // Sign with HS384 but config only allows HS256
         let key = EncodingKey::from_secret(config.jwt_secret.as_bytes());
-        let token =
-            jsonwebtoken::encode(&Header::new(Algorithm::HS384), &claims, &key).unwrap();
+        let token = jsonwebtoken::encode(&Header::new(Algorithm::HS384), &claims, &key).unwrap();
         let validator = SecureJwtValidator::new(config).unwrap();
         assert!(validator.validate(&token).is_err());
     }

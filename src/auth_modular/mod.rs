@@ -1177,10 +1177,12 @@ mod tests {
             )
             .await;
         assert!(second.is_err(), "second request should be rate limited");
-        assert!(second
-            .unwrap_err()
-            .to_string()
-            .contains("Too many authentication attempts"));
+        assert!(
+            second
+                .unwrap_err()
+                .to_string()
+                .contains("Too many authentication attempts")
+        );
     }
 
     #[tokio::test]
@@ -1215,12 +1217,14 @@ mod tests {
         let result = framework.complete_mfa(challenge.clone(), "123456").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("expired"));
-        assert!(framework
-            .mfa_manager
-            .get_challenge(&challenge.id)
-            .await
-            .expect("challenge lookup should succeed")
-            .is_none());
+        assert!(
+            framework
+                .mfa_manager
+                .get_challenge(&challenge.id)
+                .await
+                .expect("challenge lookup should succeed")
+                .is_none()
+        );
     }
 
     #[tokio::test]

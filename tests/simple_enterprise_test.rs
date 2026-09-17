@@ -226,7 +226,9 @@ fn test_ws_trust_soap_request_generation() {
         auth_context: None,
     };
 
-    let soap_request = sts.create_rst_soap_request(&request, "test_user", Some("test_pass")).unwrap();
+    let soap_request = sts
+        .create_rst_soap_request(&request, "test_user", Some("test_pass"))
+        .unwrap();
 
     assert!(soap_request.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
     assert!(soap_request.contains("<soap:Envelope"));
@@ -318,16 +320,22 @@ fn test_complete_enterprise_workflow() {
 
     // 4. Generate complete SOAP message for service call
     let soap_message = sts
-        .create_rst_soap_request(&RequestSecurityToken {
-            request_type: "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue".to_string(),
-            token_type: "urn:oasis:names:tc:SAML:2.0:assertion".to_string(),
-            applies_to: Some("https://backend.service.com".to_string()),
-            lifetime: None,
-            key_type: Some("http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer".to_string()),
-            key_size: None,
-            existing_token: None,
-            auth_context: None,
-        }, "employee@corp.com", Some("employee_pass"))
+        .create_rst_soap_request(
+            &RequestSecurityToken {
+                request_type: "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue".to_string(),
+                token_type: "urn:oasis:names:tc:SAML:2.0:assertion".to_string(),
+                applies_to: Some("https://backend.service.com".to_string()),
+                lifetime: None,
+                key_type: Some(
+                    "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer".to_string(),
+                ),
+                key_size: None,
+                existing_token: None,
+                auth_context: None,
+            },
+            "employee@corp.com",
+            Some("employee_pass"),
+        )
         .unwrap();
 
     assert!(soap_message.contains("<soap:Envelope"));

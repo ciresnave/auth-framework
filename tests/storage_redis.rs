@@ -17,12 +17,15 @@ use auth_framework::tokens::AuthToken;
 use std::time::Duration;
 
 async fn setup() -> RedisStorage {
-    let url = std::env::var("REDIS_URL")
-        .expect("REDIS_URL must be set to run Redis integration tests");
+    let url =
+        std::env::var("REDIS_URL").expect("REDIS_URL must be set to run Redis integration tests");
     let storage = RedisStorage::new(&url)
         .await
         .expect("Failed to connect to Redis");
-    storage.health_check().await.expect("Redis health check failed");
+    storage
+        .health_check()
+        .await
+        .expect("Redis health check failed");
     storage
 }
 
@@ -39,7 +42,11 @@ async fn redis_token_crud() {
     let got = storage.get_token(&tid).await.unwrap().unwrap();
     assert_eq!(got.user_id, "rd_user1");
 
-    let got = storage.get_token_by_access_token(&at).await.unwrap().unwrap();
+    let got = storage
+        .get_token_by_access_token(&at)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(got.token_id, tid);
 
     let tokens = storage.list_user_tokens("rd_user1").await.unwrap();
@@ -54,7 +61,10 @@ async fn redis_token_crud() {
 async fn redis_session_crud() {
     let storage = setup().await;
     let session = SessionData::new("rd_sess1", "rd_user_s", Duration::from_secs(3600))
-        .with_metadata(Some("10.0.0.3".to_string()), Some("RedisBot/1.0".to_string()));
+        .with_metadata(
+            Some("10.0.0.3".to_string()),
+            Some("RedisBot/1.0".to_string()),
+        );
 
     storage.store_session("rd_sess1", &session).await.unwrap();
 
@@ -85,7 +95,10 @@ async fn redis_kv_crud() {
 #[ignore]
 async fn redis_kv_no_ttl() {
     let storage = setup().await;
-    storage.store_kv("rd_persist", b"forever", None).await.unwrap();
+    storage
+        .store_kv("rd_persist", b"forever", None)
+        .await
+        .unwrap();
     let got = storage.get_kv("rd_persist").await.unwrap().unwrap();
     assert_eq!(got, b"forever");
     storage.delete_kv("rd_persist").await.unwrap();

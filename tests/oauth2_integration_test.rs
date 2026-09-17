@@ -284,7 +284,11 @@ mod oauth2_integration_tests {
             .token_manager()
             .create_auth_token(
                 &user_id,
-                vec!["openid".to_string(), "profile".to_string(), "email".to_string()],
+                vec![
+                    "openid".to_string(),
+                    "profile".to_string(),
+                    "email".to_string(),
+                ],
                 "oauth2",
                 None,
             )

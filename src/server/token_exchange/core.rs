@@ -1268,7 +1268,11 @@ mod tests {
         let policy = TokenExchangePolicy::jwt_only();
         assert_eq!(policy.allowed_subject_token_types.len(), 2);
         assert!(policy.allowed_subject_token_types.contains(&TokenType::Jwt));
-        assert!(policy.allowed_subject_token_types.contains(&TokenType::AccessToken));
+        assert!(
+            policy
+                .allowed_subject_token_types
+                .contains(&TokenType::AccessToken)
+        );
         assert!(policy.require_actor_for_delegation);
     }
 
@@ -1276,7 +1280,10 @@ mod tests {
     async fn test_token_exchange_policy_builder_register() {
         let manager = create_test_manager();
         let policy = TokenExchangePolicy::builder()
-            .scenarios(vec![ExchangeScenario::OnBehalfOf, ExchangeScenario::AudienceRestriction])
+            .scenarios(vec![
+                ExchangeScenario::OnBehalfOf,
+                ExchangeScenario::AudienceRestriction,
+            ])
             .max_token_lifetime(Duration::minutes(15))
             .build();
         manager

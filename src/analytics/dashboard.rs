@@ -710,14 +710,8 @@ impl DashboardManager {
                 if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
                 {
                     // Match events whose action or resource contains the query string
-                    let matches = event
-                        .action
-                        .as_deref()
-                        .is_some_and(|a| a.contains(query))
-                        || event
-                            .resource
-                            .as_deref()
-                            .is_some_and(|r| r.contains(query));
+                    let matches = event.action.as_deref().is_some_and(|a| a.contains(query))
+                        || event.resource.as_deref().is_some_and(|r| r.contains(query));
                     if matches {
                         count += 1;
                     }

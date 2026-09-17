@@ -1006,23 +1006,19 @@ impl AuthError {
             | Self::PasswordVerification(_) => 401,
 
             // 403 Forbidden
-            Self::Permission(_)
-            | Self::StepUpRequired { .. } => 403,
+            Self::Permission(_) | Self::StepUpRequired { .. } => 403,
 
             // 404 Not Found
-            Self::UserNotFound
-            | Self::ProviderNotConfigured { .. } => 404,
+            Self::UserNotFound | Self::ProviderNotConfigured { .. } => 404,
 
             // 408 Request Timeout
             Self::Timeout { .. } => 408,
 
             // 429 Too Many Requests
-            Self::RateLimit { .. }
-            | Self::TooManyConcurrentSessions => 429,
+            Self::RateLimit { .. } | Self::TooManyConcurrentSessions => 429,
 
             // 502 Bad Gateway (upstream provider errors)
-            Self::OAuthProvider(_)
-            | Self::Network(_) => 502,
+            Self::OAuthProvider(_) | Self::Network(_) => 502,
 
             // 503 Service Unavailable (storage / infra)
             Self::Storage(_) => 503,

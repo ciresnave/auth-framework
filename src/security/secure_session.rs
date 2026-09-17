@@ -894,7 +894,9 @@ mod tests {
         assert!(config.enable_geolocation);
         // Should still create a working manager
         let manager = SecureSessionManager::new(config);
-        let session = manager.create_session("u1", "10.0.0.1", "UA", None, true).unwrap();
+        let session = manager
+            .create_session("u1", "10.0.0.1", "UA", None, true)
+            .unwrap();
         assert_eq!(session.user_id, "u1");
     }
 
@@ -905,7 +907,9 @@ mod tests {
         assert_eq!(config.max_concurrent_sessions, 5);
         assert!(!config.validate_ip_address);
         let manager = SecureSessionManager::new(config);
-        let session = manager.create_session("u2", "10.0.0.2", "iOS", None, true).unwrap();
+        let session = manager
+            .create_session("u2", "10.0.0.2", "iOS", None, true)
+            .unwrap();
         assert_eq!(session.user_id, "u2");
     }
 }

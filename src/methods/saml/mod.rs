@@ -331,7 +331,8 @@ impl SamlAuthMethod {
             return Err(AuthError::validation("XML signature validation failed"));
         }
 
-        self.validate_structured_saml_response(parsed_response).await
+        self.validate_structured_saml_response(parsed_response)
+            .await
     }
 
     /// Validate structured SAML response with comprehensive security checks
@@ -362,7 +363,9 @@ impl SamlAuthMethod {
             .as_ref()
             .ok_or_else(|| AuthError::validation("No assertions found in SAML response"))?;
         if assertions.is_empty() {
-            return Err(AuthError::validation("No assertions found in SAML response"));
+            return Err(AuthError::validation(
+                "No assertions found in SAML response",
+            ));
         }
 
         let assertion = &assertions[0];
@@ -451,20 +454,13 @@ impl SamlAuthMethod {
                     "SAML assertion is too old - potential replay attack",
                 ));
             }
-        } else if issue_instant
-            .duration_since(now)
-            .unwrap_or_default()
-            > skew
-        {
+        } else if issue_instant.duration_since(now).unwrap_or_default() > skew {
             return Err(AuthError::validation("SAML assertion issued in the future"));
         }
 
         // Validate not_before constraint
         if let Some(not_before_time) = not_before
-            && not_before_time
-                .duration_since(now)
-                .unwrap_or_default()
-                > skew
+            && not_before_time.duration_since(now).unwrap_or_default() > skew
         {
             return Err(AuthError::validation(
                 "SAML assertion is not yet valid (before NotBefore time)",
@@ -792,7 +788,10 @@ mod tests {
             }]),
         };
 
-        let validated = saml.validate_structured_saml_response(response).await.unwrap();
+        let validated = saml
+            .validate_structured_saml_response(response)
+            .await
+            .unwrap();
 
         assert_eq!(validated.subject, "user-123");
         assert_eq!(validated.issuer, "https://idp.example.com");

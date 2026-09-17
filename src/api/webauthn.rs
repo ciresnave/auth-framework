@@ -743,7 +743,11 @@ pub async fn webauthn_authentication_complete(
         )
         .await
     {
-        tracing::warn!("Failed to update WebAuthn credential counter for {}: {}", username, e);
+        tracing::warn!(
+            "Failed to update WebAuthn credential counter for {}: {}",
+            username,
+            e
+        );
     }
 
     // Generate authentication token for the verified user
@@ -880,7 +884,11 @@ pub async fn delete_webauthn_credential(
     match storage.get_kv(&credential_key).await {
         Ok(Some(_)) => {
             if let Err(e) = storage.delete_kv(&credential_key).await {
-                tracing::warn!("Failed to delete WebAuthn credential {}: {}", credential_id, e);
+                tracing::warn!(
+                    "Failed to delete WebAuthn credential {}: {}",
+                    credential_id,
+                    e
+                );
             }
 
             // Update the credentials index
@@ -897,7 +905,11 @@ pub async fn delete_webauthn_credential(
                     )
                     .await
                 {
-                    tracing::warn!("Failed to update WebAuthn credentials index for {}: {}", username, e);
+                    tracing::warn!(
+                        "Failed to update WebAuthn credentials index for {}: {}",
+                        username,
+                        e
+                    );
                 }
             }
 
