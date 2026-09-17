@@ -373,12 +373,12 @@ impl SessionConfigBuilder {
     pub fn for_web_app() -> Self {
         Self {
             config: SessionConfig {
-                default_duration: Duration::from_secs(3600),     // 1 hour
-                max_duration: Duration::from_secs(86400),        // 24 hours
-                idle_timeout: Duration::from_secs(1800),         // 30 minutes
+                default_duration: Duration::from_secs(3600), // 1 hour
+                max_duration: Duration::from_secs(86400),    // 24 hours
+                idle_timeout: Duration::from_secs(1800),     // 30 minutes
                 rotate_on_privilege_escalation: true,
                 rotate_periodically: true,
-                rotation_interval: Duration::from_secs(1800),    // 30 minutes
+                rotation_interval: Duration::from_secs(1800), // 30 minutes
                 max_concurrent_sessions: Some(5),
                 track_device_fingerprints: true,
                 enforce_geographic_restrictions: false,
@@ -401,13 +401,13 @@ impl SessionConfigBuilder {
     pub fn for_api_service() -> Self {
         Self {
             config: SessionConfig {
-                default_duration: Duration::from_secs(900),      // 15 minutes
-                max_duration: Duration::from_secs(3600),         // 1 hour
-                idle_timeout: Duration::from_secs(600),          // 10 minutes
+                default_duration: Duration::from_secs(900), // 15 minutes
+                max_duration: Duration::from_secs(3600),    // 1 hour
+                idle_timeout: Duration::from_secs(600),     // 10 minutes
                 rotate_on_privilege_escalation: true,
                 rotate_periodically: false,
                 rotation_interval: Duration::from_secs(3600),
-                max_concurrent_sessions: None,                   // unlimited
+                max_concurrent_sessions: None, // unlimited
                 track_device_fingerprints: false,
                 enforce_geographic_restrictions: false,
                 allowed_countries: vec![],
@@ -436,20 +436,20 @@ impl SessionConfigBuilder {
     pub fn for_high_security() -> Self {
         Self {
             config: SessionConfig {
-                default_duration: Duration::from_secs(1800),     // 30 minutes
-                max_duration: Duration::from_secs(7200),         // 2 hours
-                idle_timeout: Duration::from_secs(300),          // 5 minutes
+                default_duration: Duration::from_secs(1800), // 30 minutes
+                max_duration: Duration::from_secs(7200),     // 2 hours
+                idle_timeout: Duration::from_secs(300),      // 5 minutes
                 rotate_on_privilege_escalation: true,
                 rotate_periodically: true,
-                rotation_interval: Duration::from_secs(900),     // 15 minutes
+                rotation_interval: Duration::from_secs(900), // 15 minutes
                 max_concurrent_sessions: Some(1),
                 track_device_fingerprints: true,
                 enforce_geographic_restrictions: true,
-                allowed_countries: vec![],                       // caller must set
+                allowed_countries: vec![], // caller must set
                 security_policy: SessionSecurityPolicy {
                     require_mfa_for_new_devices: true,
                     require_reauth_for_sensitive_ops: true,
-                    reauth_timeout: Duration::from_secs(120),   // 2 minutes
+                    reauth_timeout: Duration::from_secs(120), // 2 minutes
                     max_risk_score: 40,
                     auto_suspend_suspicious: true,
                     verify_location_changes: true,

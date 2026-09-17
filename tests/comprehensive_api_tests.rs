@@ -180,10 +180,7 @@ mod authentication_tests {
 
         assert!(result.is_err());
         assert!(
-            matches!(
-                result.unwrap_err(),
-                AuthError::Configuration { .. }
-            ),
+            matches!(result.unwrap_err(), AuthError::Configuration { .. }),
             "Uninitialized framework should return Configuration error"
         );
     }
@@ -326,7 +323,10 @@ mod token_management_tests {
         assert!(result.is_ok());
         let token = result.unwrap();
         assert_eq!(token.user_id, "user123");
-        assert_eq!(token.scopes, auth_framework::types::Scopes::new(vec!["read".to_string(), "write".to_string()]));
+        assert_eq!(
+            token.scopes,
+            auth_framework::types::Scopes::new(vec!["read".to_string(), "write".to_string()])
+        );
         assert_eq!(token.auth_method, "password");
     }
 
@@ -359,10 +359,7 @@ mod token_management_tests {
 
         assert!(result.is_err());
         assert!(
-            matches!(
-                result.unwrap_err(),
-                AuthError::Configuration { .. }
-            ),
+            matches!(result.unwrap_err(), AuthError::Configuration { .. }),
             "Uninitialized framework should return Configuration error"
         );
     }

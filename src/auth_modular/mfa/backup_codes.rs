@@ -51,7 +51,10 @@ impl BackupCodesManager {
             let codes_str = std::str::from_utf8(&codes_data).unwrap_or("[]");
             let mut backup_codes: Vec<String> = serde_json::from_str(codes_str).unwrap_or_default();
 
-            if let Some(index) = backup_codes.iter().position(|c| bool::from(c.as_bytes().ct_eq(code.as_bytes()))) {
+            if let Some(index) = backup_codes
+                .iter()
+                .position(|c| bool::from(c.as_bytes().ct_eq(code.as_bytes())))
+            {
                 // Mark code as used by removing it
                 backup_codes.remove(index);
                 let updated_codes =

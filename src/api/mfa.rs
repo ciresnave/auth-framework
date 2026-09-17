@@ -259,22 +259,38 @@ pub async fn verify_mfa(
                     if let Ok(Some(data)) = storage.get_kv(&pending_backup_key).await {
                         let active_backup_key = format!("mfa_backup_codes:{}", auth_token.user_id);
                         if let Err(e) = storage.store_kv(&active_backup_key, &data, None).await {
-                            tracing::warn!("Failed to promote MFA backup codes for user {}: {}", auth_token.user_id, e);
+                            tracing::warn!(
+                                "Failed to promote MFA backup codes for user {}: {}",
+                                auth_token.user_id,
+                                e
+                            );
                         }
                         if let Err(e) = storage.delete_kv(&pending_backup_key).await {
-                            tracing::warn!("Failed to clean up pending MFA backup codes for user {}: {}", auth_token.user_id, e);
+                            tracing::warn!(
+                                "Failed to clean up pending MFA backup codes for user {}: {}",
+                                auth_token.user_id,
+                                e
+                            );
                         }
                     }
 
                     // Clean up pending secret.
                     if let Err(e) = storage.delete_kv(&pending_key).await {
-                        tracing::warn!("Failed to clean up pending MFA secret for user {}: {}", auth_token.user_id, e);
+                        tracing::warn!(
+                            "Failed to clean up pending MFA secret for user {}: {}",
+                            auth_token.user_id,
+                            e
+                        );
                     }
 
                     // Set the enabled flag.
                     let flag_key = format!("mfa_enabled:{}", auth_token.user_id);
                     if let Err(e) = storage.store_kv(&flag_key, b"true", None).await {
-                        tracing::warn!("Failed to set MFA enabled flag for user {}: {}", auth_token.user_id, e);
+                        tracing::warn!(
+                            "Failed to set MFA enabled flag for user {}: {}",
+                            auth_token.user_id,
+                            e
+                        );
                     }
 
                     tracing::info!("MFA enabled for user: {}", auth_token.user_id);
@@ -361,13 +377,25 @@ pub async fn disable_mfa(
                     let flag_key = format!("mfa_enabled:{}", auth_token.user_id);
 
                     if let Err(e) = storage.delete_kv(&active_key).await {
-                        tracing::warn!("Failed to delete MFA secret for user {}: {}", auth_token.user_id, e);
+                        tracing::warn!(
+                            "Failed to delete MFA secret for user {}: {}",
+                            auth_token.user_id,
+                            e
+                        );
                     }
                     if let Err(e) = storage.delete_kv(&backup_key).await {
-                        tracing::warn!("Failed to delete MFA backup codes for user {}: {}", auth_token.user_id, e);
+                        tracing::warn!(
+                            "Failed to delete MFA backup codes for user {}: {}",
+                            auth_token.user_id,
+                            e
+                        );
                     }
                     if let Err(e) = storage.delete_kv(&flag_key).await {
-                        tracing::warn!("Failed to delete MFA enabled flag for user {}: {}", auth_token.user_id, e);
+                        tracing::warn!(
+                            "Failed to delete MFA enabled flag for user {}: {}",
+                            auth_token.user_id,
+                            e
+                        );
                     }
 
                     tracing::info!("MFA disabled for user: {}", auth_token.user_id);

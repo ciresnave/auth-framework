@@ -619,8 +619,7 @@ impl MonitoringManager {
                 HealthCheckResult {
                     component: "monitoring".to_string(),
                     status: HealthStatus::Healthy,
-                    message: "Health checks disabled; monitoring subsystem not active"
-                        .to_string(),
+                    message: "Health checks disabled; monitoring subsystem not active".to_string(),
                     timestamp,
                     response_time: 0,
                 },
@@ -880,11 +879,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_security_event_builder_minimal() {
-        let event = SecurityEvent::builder(
-            SecurityEventType::SystemError,
-            SecurityEventSeverity::Low,
-        )
-        .build();
+        let event =
+            SecurityEvent::builder(SecurityEventType::SystemError, SecurityEventSeverity::Low)
+                .build();
 
         assert_eq!(event.event_type, SecurityEventType::SystemError);
         assert!(event.user_id.is_none());

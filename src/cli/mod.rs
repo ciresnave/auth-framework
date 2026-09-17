@@ -697,7 +697,10 @@ impl CliHandler {
                         }
                     }
                 } else {
-                    let users = framework.users().list_with_query(UserListQuery::new()).await?;
+                    let users = framework
+                        .users()
+                        .list_with_query(UserListQuery::new())
+                        .await?;
                     let mut found_any = false;
                     for user in users {
                         let sessions = framework.sessions().list_for_user(&user.id).await?;

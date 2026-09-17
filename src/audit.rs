@@ -415,14 +415,17 @@ impl<S: AuditStorage> AuditLogger<S> {
         session_id: &str,
         metadata: RequestMetadata,
     ) -> Result<()> {
-        let event = AuditEvent::builder(AuditEventType::LoginSuccess, "User successfully authenticated")
-            .user_id(user_id)
-            .session_id(session_id)
-            .outcome(EventOutcome::Success)
-            .request_metadata(metadata)
-            .with_actor("user", user_id)
-            .correlation_id(self.correlation_generator.generate())
-            .build();
+        let event = AuditEvent::builder(
+            AuditEventType::LoginSuccess,
+            "User successfully authenticated",
+        )
+        .user_id(user_id)
+        .session_id(session_id)
+        .outcome(EventOutcome::Success)
+        .request_metadata(metadata)
+        .with_actor("user", user_id)
+        .correlation_id(self.correlation_generator.generate())
+        .build();
 
         self.log_event(event).await
     }
@@ -466,7 +469,10 @@ impl<S: AuditStorage> AuditLogger<S> {
 
         let event = AuditEvent::builder(
             AuditEventType::PermissionDenied,
-            format!("Permission denied: {} on {}", permission, resource.resource_type),
+            format!(
+                "Permission denied: {} on {}",
+                permission, resource.resource_type
+            ),
         )
         .user_id(user_id)
         .outcome(EventOutcome::Failure)
@@ -705,16 +711,15 @@ impl<S: AuditStorage> AuditLogger<S> {
         resource: Option<&str>,
         limit: Option<usize>,
     ) -> Result<Vec<String>> {
-        let mut builder = AuditQuery::builder()
-            .event_types(vec![
-                AuditEventType::PermissionGranted,
-                AuditEventType::PermissionDenied,
-                AuditEventType::RoleAssigned,
-                AuditEventType::RoleRevoked,
-                AuditEventType::RoleCreated,
-                AuditEventType::RoleUpdated,
-                AuditEventType::RoleDeleted,
-            ]);
+        let mut builder = AuditQuery::builder().event_types(vec![
+            AuditEventType::PermissionGranted,
+            AuditEventType::PermissionDenied,
+            AuditEventType::RoleAssigned,
+            AuditEventType::RoleRevoked,
+            AuditEventType::RoleCreated,
+            AuditEventType::RoleUpdated,
+            AuditEventType::RoleDeleted,
+        ]);
         if let Some(uid) = user_id {
             builder = builder.user_id(uid);
         }
@@ -1051,7 +1056,11 @@ impl AuditEventBuilder {
     }
 
     /// Set actor information.
-    pub fn with_actor(mut self, actor_type: impl Into<String>, actor_id: impl Into<String>) -> Self {
+    pub fn with_actor(
+        mut self,
+        actor_type: impl Into<String>,
+        actor_id: impl Into<String>,
+    ) -> Self {
         self.event.actor = ActorInfo {
             actor_type: actor_type.into(),
             actor_id: actor_id.into(),
@@ -1331,7 +1340,11 @@ mod tests {
         assert_eq!(event.event_type, AuditEventType::LoginSuccess);
         assert_eq!(event.description, "User logged in");
         assert!(!event.id.is_empty(), "id should be auto-generated");
-        assert_ne!(event.timestamp, SystemTime::UNIX_EPOCH, "timestamp should be auto-set");
+        assert_ne!(
+            event.timestamp,
+            SystemTime::UNIX_EPOCH,
+            "timestamp should be auto-set"
+        );
         assert_eq!(event.outcome, EventOutcome::Unknown);
         assert_eq!(event.risk_level, RiskLevel::Low);
     }
@@ -1354,7 +1367,10 @@ mod tests {
         assert_eq!(event.risk_level, RiskLevel::High);
         assert_eq!(event.actor.actor_type, "user");
         assert_eq!(event.actor.actor_id, "u123");
-        assert_eq!(event.details.get("resource"), Some(&"admin_panel".to_string()));
+        assert_eq!(
+            event.details.get("resource"),
+            Some(&"admin_panel".to_string())
+        );
         assert_eq!(event.correlation_id, Some("corr_xyz".to_string()));
     }
 
@@ -1366,10 +1382,7 @@ mod tests {
             .offset(10)
             .build();
 
-        assert_eq!(
-            query.event_types,
-            Some(vec![AuditEventType::LoginFailure])
-        );
+        assert_eq!(query.event_types, Some(vec![AuditEventType::LoginFailure]));
         assert_eq!(query.limit, Some(50));
         assert_eq!(query.offset, Some(10));
         assert!(query.user_id.is_none());

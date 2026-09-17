@@ -770,7 +770,10 @@ mod tests {
         ] {
             let ac = preset.to_audit_config();
             // All presets produce a valid config; HighSecurity+ enable logging
-            if matches!(preset, SecurityPreset::HighSecurity | SecurityPreset::Paranoid) {
+            if matches!(
+                preset,
+                SecurityPreset::HighSecurity | SecurityPreset::Paranoid
+            ) {
                 assert!(ac.enabled);
             }
         }

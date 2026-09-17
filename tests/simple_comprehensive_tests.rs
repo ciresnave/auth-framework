@@ -260,7 +260,10 @@ mod token_tests {
 
         let token = result.unwrap();
         assert_eq!(token.user_id, "test_user");
-        assert_eq!(token.scopes, auth_framework::types::Scopes(vec!["read".to_string(), "write".to_string()]));
+        assert_eq!(
+            token.scopes,
+            auth_framework::types::Scopes(vec!["read".to_string(), "write".to_string()])
+        );
         assert_eq!(token.auth_method, "jwt");
     }
 

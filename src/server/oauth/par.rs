@@ -405,7 +405,10 @@ mod tests {
         assert_eq!(req.state, Some("state123".to_string()));
         assert_eq!(req.code_challenge, Some("challenge_abc".to_string()));
         assert_eq!(req.code_challenge_method, Some("S256".to_string()));
-        assert_eq!(req.additional_params.get("custom").map(String::as_str), Some("value"));
+        assert_eq!(
+            req.additional_params.get("custom").map(String::as_str),
+            Some("value")
+        );
     }
 
     fn create_test_request() -> PushedAuthorizationRequest {

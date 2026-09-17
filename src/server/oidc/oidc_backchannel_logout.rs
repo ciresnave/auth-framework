@@ -259,10 +259,8 @@ impl BackChannelLogoutManager {
                 .lines()
                 .filter(|l| !l.starts_with("-----"))
                 .collect::<String>();
-            let der_bytes = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                &der,
-            ).ok()?;
+            let der_bytes =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &der).ok()?;
             ring::signature::RsaKeyPair::from_pkcs8(&der_bytes)
                 .or_else(|_| ring::signature::RsaKeyPair::from_der(&der_bytes))
                 .ok()

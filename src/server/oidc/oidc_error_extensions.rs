@@ -112,7 +112,9 @@ impl std::fmt::Display for OidcErrorCode {
             Self::RequestUriNotSupported => "request_uri_not_supported",
             Self::RegistrationNotSupported => "registration_not_supported",
             Self::UnmetAuthenticationRequirements => "unmet_authentication_requirements",
-            Self::UnmetAuthenticationContextRequirements => "unmet_authentication_context_requirements",
+            Self::UnmetAuthenticationContextRequirements => {
+                "unmet_authentication_context_requirements"
+            }
             Self::SessionSelectionRequired => "session_selection_required",
             Self::AuthenticationMethodRequired => "authentication_method_required",
             Self::InsufficientIdentityAssurance => "insufficient_identity_assurance",
@@ -146,7 +148,9 @@ impl std::str::FromStr for OidcErrorCode {
             "request_uri_not_supported" => Ok(Self::RequestUriNotSupported),
             "registration_not_supported" => Ok(Self::RegistrationNotSupported),
             "unmet_authentication_requirements" => Ok(Self::UnmetAuthenticationRequirements),
-            "unmet_authentication_context_requirements" => Ok(Self::UnmetAuthenticationContextRequirements),
+            "unmet_authentication_context_requirements" => {
+                Ok(Self::UnmetAuthenticationContextRequirements)
+            }
             "session_selection_required" => Ok(Self::SessionSelectionRequired),
             "authentication_method_required" => Ok(Self::AuthenticationMethodRequired),
             "insufficient_identity_assurance" => Ok(Self::InsufficientIdentityAssurance),
@@ -154,7 +158,9 @@ impl std::str::FromStr for OidcErrorCode {
             "registration_required" => Ok(Self::RegistrationRequired),
             "unsupported_prompt_value" => Ok(Self::UnsupportedPromptValue),
             "user_selection_required" => Ok(Self::UserSelectionRequired),
-            other => Err(AuthError::validation(format!("Unknown OIDC error code: {other}"))),
+            other => Err(AuthError::validation(format!(
+                "Unknown OIDC error code: {other}"
+            ))),
         }
     }
 }

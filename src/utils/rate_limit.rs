@@ -342,9 +342,7 @@ mod tests {
         // Each thread made 10 requests under its own key
         for i in 0..10 {
             assert_eq!(
-                limiter
-                    .get_request_count(&format!("thread-{}", i))
-                    .unwrap(),
+                limiter.get_request_count(&format!("thread-{}", i)).unwrap(),
                 10
             );
         }

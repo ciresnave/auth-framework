@@ -675,23 +675,22 @@ mod tests {
     #[test]
     fn test_validate_token_non_json_payload() {
         use base64::Engine;
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let header =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"not-json");
         let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"sig");
         let jwt = format!("{header}.{payload}.{sig}");
         let result = validate_token_secure(&jwt);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("Invalid JSON"),
-            "Expected JSON error: {msg}"
-        );
+        assert!(msg.contains("Invalid JSON"), "Expected JSON error: {msg}");
     }
 
     #[test]
     fn test_validate_token_missing_sub_claim() {
         use base64::Engine;
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let header =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(format!("{{\"exp\":{}}}", chrono::Utc::now().timestamp() + 3600).as_bytes());
         let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"sig");
@@ -705,9 +704,10 @@ mod tests {
     #[test]
     fn test_validate_token_missing_exp_claim() {
         use base64::Engine;
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(b"{\"sub\":\"user1\"}");
+        let header =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let payload =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"sub\":\"user1\"}");
         let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"sig");
         let jwt = format!("{header}.{payload}.{sig}");
         let result = validate_token_secure(&jwt);
@@ -719,7 +719,8 @@ mod tests {
     #[test]
     fn test_validate_token_expired() {
         use base64::Engine;
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let header =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
         let past = chrono::Utc::now().timestamp() - 3600;
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(format!("{{\"sub\":\"user1\",\"exp\":{past}}}").as_bytes());
@@ -734,7 +735,8 @@ mod tests {
     #[test]
     fn test_validate_token_exp_as_string() {
         use base64::Engine;
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let header =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(b"{\"sub\":\"user1\",\"exp\":\"not-a-number\"}");
         let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"sig");
@@ -748,7 +750,8 @@ mod tests {
     #[test]
     fn test_validate_token_valid_with_optional_claims() {
         use base64::Engine;
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let header =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
         let exp = chrono::Utc::now().timestamp() + 3600;
         let payload_json = serde_json::json!({
             "sub": "user1",
@@ -765,7 +768,11 @@ mod tests {
         let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"sig");
         let jwt = format!("{header}.{payload}.{sig}");
         let result = validate_token_secure(&jwt);
-        assert!(result.is_ok(), "Valid token should parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Valid token should parse: {:?}",
+            result.err()
+        );
         let token = result.unwrap();
         assert_eq!(token.user_id, "user1");
         assert_eq!(token.client_id.as_deref(), Some("my-client"));
@@ -777,7 +784,8 @@ mod tests {
     #[test]
     fn test_validate_token_valid_without_optional_claims() {
         use base64::Engine;
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let header =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
         let exp = chrono::Utc::now().timestamp() + 3600;
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(format!("{{\"sub\":\"user1\",\"exp\":{exp}}}").as_bytes());

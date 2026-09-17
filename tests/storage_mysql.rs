@@ -17,8 +17,8 @@ use sqlx::MySqlPool;
 use std::time::Duration;
 
 async fn setup() -> MySqlStorage {
-    let url = std::env::var("MYSQL_URL")
-        .expect("MYSQL_URL must be set to run MySQL integration tests");
+    let url =
+        std::env::var("MYSQL_URL").expect("MYSQL_URL must be set to run MySQL integration tests");
     let pool = MySqlPool::connect(&url)
         .await
         .expect("Failed to connect to MySQL");
@@ -40,7 +40,11 @@ async fn mysql_token_crud() {
     let got = storage.get_token(&tid).await.unwrap().unwrap();
     assert_eq!(got.user_id, "my_user1");
 
-    let got = storage.get_token_by_access_token(&at).await.unwrap().unwrap();
+    let got = storage
+        .get_token_by_access_token(&at)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(got.token_id, tid);
 
     let tokens = storage.list_user_tokens("my_user1").await.unwrap();
@@ -55,7 +59,10 @@ async fn mysql_token_crud() {
 async fn mysql_session_crud() {
     let storage = setup().await;
     let session = SessionData::new("my_sess1", "my_user_s", Duration::from_secs(3600))
-        .with_metadata(Some("10.0.0.2".to_string()), Some("TestBot/2.0".to_string()));
+        .with_metadata(
+            Some("10.0.0.2".to_string()),
+            Some("TestBot/2.0".to_string()),
+        );
 
     storage.store_session("my_sess1", &session).await.unwrap();
 
@@ -103,18 +110,27 @@ async fn mysql_kv_list_prefix() {
 async fn mysql_cleanup_expired() {
     let storage = setup().await;
 
-    let mut expired =
-        AuthToken::new("my_exp_user", "my_exp_at", Duration::from_secs(1), "test");
+    let mut expired = AuthToken::new("my_exp_user", "my_exp_at", Duration::from_secs(1), "test");
     expired.expires_at = chrono::Utc::now() - chrono::Duration::seconds(120);
     storage.store_token(&expired).await.unwrap();
 
-    let valid =
-        AuthToken::new("my_exp_user", "my_valid_at", Duration::from_secs(3600), "test");
+    let valid = AuthToken::new(
+        "my_exp_user",
+        "my_valid_at",
+        Duration::from_secs(3600),
+        "test",
+    );
     storage.store_token(&valid).await.unwrap();
 
     storage.cleanup_expired().await.unwrap();
 
-    assert!(storage.get_token(&expired.token_id).await.unwrap().is_none());
+    assert!(
+        storage
+            .get_token(&expired.token_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert!(storage.get_token(&valid.token_id).await.unwrap().is_some());
 
     storage.delete_token(&valid.token_id).await.unwrap();

@@ -33,8 +33,8 @@
 //! ```
 
 use crate::errors::{AuthError, Result};
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -167,11 +167,8 @@ impl SdJwtIssuer {
     /// Generate a cryptographically random salt.
     fn generate_salt(&self) -> Result<String> {
         let mut salt = vec![0u8; self.config.salt_length];
-        ring::rand::SecureRandom::fill(
-            &ring::rand::SystemRandom::new(),
-            &mut salt,
-        )
-        .map_err(|_| AuthError::crypto("Failed to generate random salt"))?;
+        ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut salt)
+            .map_err(|_| AuthError::crypto("Failed to generate random salt"))?;
         Ok(URL_SAFE_NO_PAD.encode(&salt))
     }
 
@@ -287,10 +284,7 @@ impl SdJwtVerifier {
         let (disclosure_parts, kb_jwt) = if last.is_empty() {
             (&parts[1..parts.len() - 1], None)
         } else if last.chars().filter(|&c| c == '.').count() == 2 {
-            (
-                &parts[1..parts.len() - 1],
-                Some(last.to_string()),
-            )
+            (&parts[1..parts.len() - 1], Some(last.to_string()))
         } else {
             (&parts[1..], None)
         };
@@ -308,11 +302,7 @@ impl SdJwtVerifier {
     ///
     /// * `sd_jwt_str` — the compact SD-JWT string.
     /// * `verification_key` — the symmetric key or public key for signature verification.
-    pub fn verify(
-        &self,
-        sd_jwt_str: &str,
-        verification_key: &str,
-    ) -> Result<VerifiedSdJwt> {
+    pub fn verify(&self, sd_jwt_str: &str, verification_key: &str) -> Result<VerifiedSdJwt> {
         let (jwt, disclosure_strings, kb_jwt) = Self::parse(sd_jwt_str)?;
 
         // Verify JWT signature and decode payload.
@@ -350,18 +340,14 @@ impl SdJwtVerifier {
         for disclosure_str in &disclosure_strings {
             let decoded_bytes = URL_SAFE_NO_PAD
                 .decode(disclosure_str.as_bytes())
-                .map_err(|e| {
-                    AuthError::validation(format!("Invalid disclosure encoding: {e}"))
-                })?;
+                .map_err(|e| AuthError::validation(format!("Invalid disclosure encoding: {e}")))?;
 
-            let disclosure_array: serde_json::Value =
-                serde_json::from_slice(&decoded_bytes).map_err(|e| {
-                    AuthError::validation(format!("Invalid disclosure JSON: {e}"))
-                })?;
+            let disclosure_array: serde_json::Value = serde_json::from_slice(&decoded_bytes)
+                .map_err(|e| AuthError::validation(format!("Invalid disclosure JSON: {e}")))?;
 
-            let arr = disclosure_array.as_array().ok_or_else(|| {
-                AuthError::validation("Disclosure must be a JSON array")
-            })?;
+            let arr = disclosure_array
+                .as_array()
+                .ok_or_else(|| AuthError::validation("Disclosure must be a JSON array"))?;
 
             if arr.len() != 3 {
                 return Err(AuthError::validation(
@@ -369,9 +355,9 @@ impl SdJwtVerifier {
                 ));
             }
 
-            let claim_name = arr[1].as_str().ok_or_else(|| {
-                AuthError::validation("Disclosure claim name must be a string")
-            })?;
+            let claim_name = arr[1]
+                .as_str()
+                .ok_or_else(|| AuthError::validation("Disclosure claim name must be a string"))?;
             let claim_value = &arr[2];
 
             // Verify the disclosure hash is in the `_sd` array.
@@ -454,7 +440,9 @@ mod tests {
     fn test_issue_and_serialize() {
         let issuer = SdJwtIssuer::new(test_config());
         let claims = sample_claims();
-        let sd_jwt = issuer.issue(&claims, &["email", "address"], TEST_KEY).unwrap();
+        let sd_jwt = issuer
+            .issue(&claims, &["email", "address"], TEST_KEY)
+            .unwrap();
 
         assert!(!sd_jwt.jwt.is_empty());
         assert_eq!(sd_jwt.disclosures.len(), 2);
@@ -554,7 +542,11 @@ mod tests {
         let sd_jwt = issuer.issue(&claims, &["email"], TEST_KEY).unwrap();
         let serialized = sd_jwt.serialize();
 
-        assert!(verifier.verify(&serialized, "wrong-key-wrong-key-wrong-key!!!").is_err());
+        assert!(
+            verifier
+                .verify(&serialized, "wrong-key-wrong-key-wrong-key!!!")
+                .is_err()
+        );
     }
 
     #[test]
@@ -601,7 +593,10 @@ mod tests {
         let sd_jwt2 = issuer.issue(&claims, &["email"], TEST_KEY).unwrap();
 
         // Different salts produce different disclosures
-        assert_ne!(sd_jwt1.disclosures[0].encoded, sd_jwt2.disclosures[0].encoded);
+        assert_ne!(
+            sd_jwt1.disclosures[0].encoded,
+            sd_jwt2.disclosures[0].encoded
+        );
         assert_ne!(sd_jwt1.disclosures[0].digest, sd_jwt2.disclosures[0].digest);
     }
 

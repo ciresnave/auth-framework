@@ -333,56 +333,57 @@ impl AdvancedJarmManager {
         }
 
         // Each arm returns (encoding_key, decoding_key, validator_jwt_secret, validator_rsa_public_key_pem).
-        let (encoding_key, decoding_key, validator_jwt_secret, rsa_pub_pem) = match (private_pem, public_pem) {
-            (Some(priv_pem), Some(pub_pem)) => {
-                match (
-                    EncodingKey::from_rsa_pem(priv_pem.as_bytes()),
-                    DecodingKey::from_rsa_pem(pub_pem.as_bytes()),
-                ) {
-                    (Ok(enc), Ok(dec)) => {
-                        info!("JARM: loaded RSA signing/verification keys from configuration");
-                        // For the internal validator, prefer an explicit env-var secret;
-                        // otherwise generate a fresh random value per instance.
-                        let secret = std::env::var("JARM_JWT_SECRET")
-                            .unwrap_or_else(|_| make_validator_secret());
-                        (enc, dec, secret, Some(pub_pem))
-                    }
-                    (Err(e), _) | (_, Err(e)) => {
-                        warn!(
-                            "JARM: failed to parse provided RSA keys ({}). \
+        let (encoding_key, decoding_key, validator_jwt_secret, rsa_pub_pem) =
+            match (private_pem, public_pem) {
+                (Some(priv_pem), Some(pub_pem)) => {
+                    match (
+                        EncodingKey::from_rsa_pem(priv_pem.as_bytes()),
+                        DecodingKey::from_rsa_pem(pub_pem.as_bytes()),
+                    ) {
+                        (Ok(enc), Ok(dec)) => {
+                            info!("JARM: loaded RSA signing/verification keys from configuration");
+                            // For the internal validator, prefer an explicit env-var secret;
+                            // otherwise generate a fresh random value per instance.
+                            let secret = std::env::var("JARM_JWT_SECRET")
+                                .unwrap_or_else(|_| make_validator_secret());
+                            (enc, dec, secret, Some(pub_pem))
+                        }
+                        (Err(e), _) | (_, Err(e)) => {
+                            warn!(
+                                "JARM: failed to parse provided RSA keys ({}). \
                                  Falling back to development-only symmetric key — \
                                  DO NOT use in production.",
-                            e
-                        );
-                        (
-                            EncodingKey::from_secret(b"test_key_for_development_only_123456"),
-                            DecodingKey::from_secret(b"test_key_for_development_only_123456"),
-                            "test_key_for_development_only_123456".to_string(),
-                            None,
-                        )
+                                e
+                            );
+                            (
+                                EncodingKey::from_secret(b"test_key_for_development_only_123456"),
+                                DecodingKey::from_secret(b"test_key_for_development_only_123456"),
+                                "test_key_for_development_only_123456".to_string(),
+                                None,
+                            )
+                        }
                     }
                 }
-            }
-            _ => {
-                // SECURITY: No RSA key is bundled. Production deployments MUST supply real
-                // RSA keys via AdvancedJarmConfig or environment configuration.
-                // The symmetric fallback below is intentionally weak — it triggers visible
-                // warnings so an operator knows the service is not production-ready.
-                warn!(
-                    "SECURITY WARNING: AdvancedJarmManager is using a development-only \
+                _ => {
+                    // SECURITY: No RSA key is bundled. Production deployments MUST supply real
+                    // RSA keys via AdvancedJarmConfig or environment configuration.
+                    // The symmetric fallback below is intentionally weak — it triggers visible
+                    // warnings so an operator knows the service is not production-ready.
+                    warn!(
+                        "SECURITY WARNING: AdvancedJarmManager is using a development-only \
                          symmetric fallback key for JARM signing. This is NOT secure. Supply \
                          an RSA private key via AdvancedJarmConfig::rsa_private_key_pem or \
                          the JARM_RSA_PRIVATE_KEY_PEM environment variable before deploying \
                          to production."
-                );
-                (
-                    EncodingKey::from_secret(b"test_key_for_development_only_123456"),
-                    DecodingKey::from_secret(b"test_key_for_development_only_123456"),
-                    "test_key_for_development_only_123456".to_string(),
-                    None,
-                )
-            }
-        };
+                    );
+                    (
+                        EncodingKey::from_secret(b"test_key_for_development_only_123456"),
+                        DecodingKey::from_secret(b"test_key_for_development_only_123456"),
+                        "test_key_for_development_only_123456".to_string(),
+                        None,
+                    )
+                }
+            };
 
         // Resolve JWE key pair: config field → environment variable → None.
         let jwe_pub_pem = config

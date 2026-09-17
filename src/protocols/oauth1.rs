@@ -150,7 +150,8 @@ impl OAuth1Client {
 
         let signature = match self.signature_method {
             SignatureMethod::HmacSha1 => {
-                let key = hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, signing_key.as_bytes());
+                let key =
+                    hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, signing_key.as_bytes());
                 let tag = hmac::sign(&key, base_string.as_bytes());
                 base64::engine::general_purpose::STANDARD.encode(tag.as_ref())
             }
@@ -184,11 +185,7 @@ impl OAuth1Client {
 
     /// Build the authorization URL for the user to visit.
     pub fn build_authorize_url(&self, base_url: &str, request_token: &str) -> String {
-        format!(
-            "{}?oauth_token={}",
-            base_url,
-            percent_encode(request_token)
-        )
+        format!("{}?oauth_token={}", base_url, percent_encode(request_token))
     }
 
     /// Parse a request token response body (form-encoded).
@@ -360,18 +357,18 @@ mod tests {
             .sign_request("GET", "https://api.example.com/1/resource", None, None)
             .unwrap();
         assert!(signed.signature_base_string.starts_with("GET&"));
-        assert!(signed
-            .signature_base_string
-            .contains("https%3A%2F%2Fapi.example.com%2F1%2Fresource"));
+        assert!(
+            signed
+                .signature_base_string
+                .contains("https%3A%2F%2Fapi.example.com%2F1%2Fresource")
+        );
     }
 
     #[test]
     fn test_build_authorize_url() {
         let client = OAuth1Client::new(test_consumer(), SignatureMethod::HmacSha1).unwrap();
-        let url = client.build_authorize_url(
-            "https://api.example.com/authorize",
-            "hh5s93j4hdidpola",
-        );
+        let url =
+            client.build_authorize_url("https://api.example.com/authorize", "hh5s93j4hdidpola");
         assert_eq!(
             url,
             "https://api.example.com/authorize?oauth_token=hh5s93j4hdidpola"

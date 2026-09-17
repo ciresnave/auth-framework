@@ -978,7 +978,10 @@ mod tests {
 
         let events = manager.get_security_events(Some(10)).await;
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].action_taken.as_deref(), Some("Suspicious login attempt"));
+        assert_eq!(
+            events[0].action_taken.as_deref(),
+            Some("Suspicious login attempt")
+        );
     }
 
     #[tokio::test]
@@ -1062,9 +1065,7 @@ mod tests {
         manager
             .record_session_operation("create", Some(Duration::from_secs(3600)))
             .await;
-        manager
-            .record_session_operation("destroy", None)
-            .await;
+        manager.record_session_operation("destroy", None).await;
         // Should not panic
     }
 
@@ -1085,7 +1086,12 @@ mod tests {
         let monitor = SecurityMonitor::new();
         // Should not panic
         monitor.clear_suspicious_activity("nonexistent").await;
-        assert!(monitor.get_suspicious_activity("nonexistent").await.is_none());
+        assert!(
+            monitor
+                .get_suspicious_activity("nonexistent")
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]

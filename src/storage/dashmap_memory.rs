@@ -171,15 +171,16 @@ impl DashMapMemoryStorage {
 
         AuditEvent::builder(
             event_type.clone(),
-            format!("{:?} operation on {} {}", event_type, resource_type, resource_id),
+            format!(
+                "{:?} operation on {} {}",
+                event_type, resource_type, resource_id
+            ),
         )
         .user_id(user_id)
         .outcome(outcome)
         .risk_level(risk_level)
         .details(details)
-        .request_metadata(
-            RequestMetadata::new().with_endpoint("storage"),
-        )
+        .request_metadata(RequestMetadata::new().with_endpoint("storage"))
         .resource(ResourceInfo {
             resource_type: resource_type.to_string(),
             resource_id: resource_id.to_string(),

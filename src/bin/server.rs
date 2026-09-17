@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use auth_framework::{
-    ApiKeyMethod, ApiServer, ApiServerSettings, AuthConfig, AuthFramework,
-    AuthFrameworkSettings, JwtMethod, LayeredConfigBuilder, OAuth2Method, PasswordMethod,
+    ApiKeyMethod, ApiServer, ApiServerSettings, AuthConfig, AuthFramework, AuthFrameworkSettings,
+    JwtMethod, LayeredConfigBuilder, OAuth2Method, PasswordMethod,
 };
 use std::{env, path::PathBuf, sync::Arc};
 use tracing::info;

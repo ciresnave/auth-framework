@@ -884,9 +884,7 @@ impl SessionData {
     /// has already expired.
     pub fn time_until_expiry(&self) -> std::time::Duration {
         let remaining = self.expires_at - chrono::Utc::now();
-        remaining
-            .to_std()
-            .unwrap_or(std::time::Duration::ZERO)
+        remaining.to_std().unwrap_or(std::time::Duration::ZERO)
     }
 
     /// Check if the session is still active (not expired).
@@ -1156,8 +1154,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_update() {
         let storage = MemoryStorage::new();
-        let mut token =
-            AuthToken::new("user1", "access_original", Duration::from_secs(3600), "pw");
+        let mut token = AuthToken::new("user1", "access_original", Duration::from_secs(3600), "pw");
         storage.store_token(&token).await.unwrap();
 
         token.auth_method = "mfa".to_string();
@@ -1297,8 +1294,14 @@ mod tests {
     async fn test_store_sessions_bulk() {
         let storage = MemoryStorage::new();
         let sessions = vec![
-            ("bs1".to_string(), SessionData::new("bs1", "u1", Duration::from_secs(3600))),
-            ("bs2".to_string(), SessionData::new("bs2", "u2", Duration::from_secs(3600))),
+            (
+                "bs1".to_string(),
+                SessionData::new("bs1", "u1", Duration::from_secs(3600)),
+            ),
+            (
+                "bs2".to_string(),
+                SessionData::new("bs2", "u2", Duration::from_secs(3600)),
+            ),
         ];
 
         storage.store_sessions_bulk(&sessions).await.unwrap();
@@ -1397,10 +1400,7 @@ mod tests {
             .store_kv("user:1:email", b"alice@x.com", None)
             .await
             .unwrap();
-        storage
-            .store_kv("user:2:name", b"bob", None)
-            .await
-            .unwrap();
+        storage.store_kv("user:2:name", b"bob", None).await.unwrap();
         storage
             .store_kv("session:abc", b"data", None)
             .await
@@ -1423,10 +1423,7 @@ mod tests {
     async fn test_kv_binary_data() {
         let storage = MemoryStorage::new();
         let binary = vec![0u8, 1, 2, 255, 254, 253, 0, 128];
-        storage
-            .store_kv("binary_key", &binary, None)
-            .await
-            .unwrap();
+        storage.store_kv("binary_key", &binary, None).await.unwrap();
 
         let retrieved = storage.get_kv("binary_key").await.unwrap().unwrap();
         assert_eq!(retrieved, binary);

@@ -244,7 +244,9 @@ impl RpInitiatedLogoutManager {
                 .collect();
 
             if sessions.is_empty() {
-                return Err(AuthError::validation("No active sessions found for subject"));
+                return Err(AuthError::validation(
+                    "No active sessions found for subject",
+                ));
             }
 
             return Ok(sessions);
@@ -280,7 +282,8 @@ impl RpInitiatedLogoutManager {
             .filter(|session| session.client_id != request.client_id)
             .filter_map(|session| {
                 let config = self.client_configs.get(&session.client_id)?;
-                if config.frontchannel_logout_uri.is_none() && config.backchannel_logout_uri.is_none()
+                if config.frontchannel_logout_uri.is_none()
+                    && config.backchannel_logout_uri.is_none()
                 {
                     return None;
                 }
@@ -315,25 +318,33 @@ mod tests {
             .create_session("user-1".to_string(), "client-b".to_string(), HashMap::new())
             .unwrap();
 
-        let mut manager = RpInitiatedLogoutManager::new(
-            RpInitiatedLogoutConfig::default(),
-            session_manager,
-        );
+        let mut manager =
+            RpInitiatedLogoutManager::new(RpInitiatedLogoutConfig::default(), session_manager);
 
         manager
             .register_client_config(ClientLogoutConfig {
                 client_id: "client-a".to_string(),
-                post_logout_redirect_uris: vec!["https://client-a.example.com/logout-complete".to_string()],
-                frontchannel_logout_uri: Some("https://client-a.example.com/frontchannel-logout".to_string()),
+                post_logout_redirect_uris: vec![
+                    "https://client-a.example.com/logout-complete".to_string(),
+                ],
+                frontchannel_logout_uri: Some(
+                    "https://client-a.example.com/frontchannel-logout".to_string(),
+                ),
                 backchannel_logout_uri: None,
             })
             .unwrap();
         manager
             .register_client_config(ClientLogoutConfig {
                 client_id: "client-b".to_string(),
-                post_logout_redirect_uris: vec!["https://client-b.example.com/logout-complete".to_string()],
-                frontchannel_logout_uri: Some("https://client-b.example.com/frontchannel-logout".to_string()),
-                backchannel_logout_uri: Some("https://client-b.example.com/backchannel-logout".to_string()),
+                post_logout_redirect_uris: vec![
+                    "https://client-b.example.com/logout-complete".to_string(),
+                ],
+                frontchannel_logout_uri: Some(
+                    "https://client-b.example.com/frontchannel-logout".to_string(),
+                ),
+                backchannel_logout_uri: Some(
+                    "https://client-b.example.com/backchannel-logout".to_string(),
+                ),
             })
             .unwrap();
 
@@ -385,9 +396,11 @@ mod tests {
             })
             .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("post_logout_redirect_uri not registered for client"));
+        assert!(
+            error
+                .to_string()
+                .contains("post_logout_redirect_uri not registered for client")
+        );
     }
 
     #[test]
@@ -407,8 +420,10 @@ mod tests {
             })
             .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("id_token_hint required for post_logout_redirect_uri validation"));
+        assert!(
+            error
+                .to_string()
+                .contains("id_token_hint required for post_logout_redirect_uri validation")
+        );
     }
 }

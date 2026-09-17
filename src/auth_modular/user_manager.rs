@@ -486,7 +486,10 @@ impl UserManager {
                 .delete_kv(&format!("user:email:{}", email))
                 .await
             {
-                warn!("Failed to delete email index for user '{}': {}", username, e);
+                warn!(
+                    "Failed to delete email index for user '{}': {}",
+                    username, e
+                );
             }
         }
 
@@ -497,7 +500,10 @@ impl UserManager {
             ids.retain(|id| id != &user_id);
             if let Ok(idx_json) = serde_json::to_vec(&ids) {
                 if let Err(e) = self.storage.store_kv(index_key, &idx_json, None).await {
-                    warn!("Failed to update user index during deletion of '{}': {}", username, e);
+                    warn!(
+                        "Failed to update user index during deletion of '{}': {}",
+                        username, e
+                    );
                 }
             }
         }
