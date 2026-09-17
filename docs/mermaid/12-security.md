@@ -128,8 +128,8 @@ classDiagram
         +validate_password(pwd) PasswordValidation
         +check_password_strength(pwd) PasswordStrength
         +validate_jwt(token) Result~SecureJwtClaims~
-        +hash_password(pwd) Result~String~
-        +verify_password(pwd, hash) Result~bool~
+        +hash_password_argon2id(pwd) Result~String~
+        +verify_password_argon2id(pwd, hash) Result~bool~
     }
     class MfaConfig {
         +bool enabled

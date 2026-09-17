@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- Renamed the two pairs of password functions so each name states its algorithm. They previously shared names and identical signatures, so importing the wrong one compiled cleanly:
+  - `utils::password::hash_password` → `utils::password::hash_password_argon2id`
+  - `utils::password::verify_password` → `utils::password::verify_password_argon2id`
+  - `security::secure_utils::hash_password` → `security::secure_utils::hash_password_bcrypt`
+  - `security::secure_utils::verify_password` → `security::secure_utils::verify_password_bcrypt`
+
+  No behaviour change. No deprecated aliases are provided, since keeping the old names would preserve the collision. Prefer the Argon2id pair for new code.
+
+### Changed
+
+- CI: the Test Suite matrix sets `fail-fast: false`, so a `stable` failure no longer cancels the `beta` job before it reports.
+
 ## [0.5.0-rc24] - 2026-04-14
 
 ### Fixed
