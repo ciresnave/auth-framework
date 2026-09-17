@@ -429,7 +429,7 @@ impl UserManager {
 
         // Store Argon2 credentials record for authenticate_password_builtin.
         let creds_key = format!("user:credentials:{}", username);
-        let creds_hash = match crate::utils::password::hash_password(password) {
+        let creds_hash = match crate::utils::password::hash_password_argon2id(password) {
             Ok(h) => h,
             Err(e) => {
                 warn!("Failed to hash credentials for user '{}': {}", username, e);
@@ -845,7 +845,7 @@ impl UserManager {
         username: &str,
         password: &str,
     ) -> Result<Option<CredentialCheckResult>> {
-        use crate::utils::password::verify_password;
+        use crate::utils::password::verify_password_argon2id;
 
         if username.is_empty() || password.is_empty() {
             return Ok(None);
@@ -856,7 +856,7 @@ impl UserManager {
             Some(bytes) => bytes,
             None => {
                 // Constant-time: always do real work even for missing users.
-                let _ = verify_password(
+                let _ = verify_password_argon2id(
                     password,
                     "$argon2id$v=19$m=19456,t=2,p=1$dGVzdHNhbHRmb3J0aW1pbmc$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 );
@@ -873,7 +873,7 @@ impl UserManager {
             AuthError::internal("Missing password hash in user record".to_string())
         })?;
 
-        if !verify_password(password, password_hash).unwrap_or(false) {
+        if !verify_password_argon2id(password, password_hash).unwrap_or(false) {
             return Ok(None);
         }
 
@@ -945,7 +945,7 @@ impl UserManager {
 
         // Update Argon2 credentials record used by the login endpoint.
         let creds_key = format!("user:credentials:{}", username);
-        let creds_hash = crate::utils::password::hash_password(new_password)
+        let creds_hash = crate::utils::password::hash_password_argon2id(new_password)
             .map_err(|e| AuthError::crypto(format!("Failed to hash login credentials: {e}")))?;
         let creds_bytes =
             self.storage.get_kv(&creds_key).await?.ok_or_else(|| {

@@ -26,7 +26,7 @@ pub struct PasswordStrength {
 }
 
 /// Hash a password using Argon2id with OWASP-minimum parameters.
-pub fn hash_password(password: &str) -> Result<String> {
+pub fn hash_password_argon2id(password: &str) -> Result<String> {
     if password.len() > MAX_PASSWORD_LENGTH {
         return Err(AuthError::validation(format!(
             "Password exceeds maximum length of {} bytes",
@@ -50,7 +50,7 @@ pub fn hash_password(password: &str) -> Result<String> {
 ///
 /// The Argon2 parameters are read from the hash itself, so verification
 /// works for hashes created with any parameter set.
-pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
+pub fn verify_password_argon2id(password: &str, hash: &str) -> Result<bool> {
     if password.len() > MAX_PASSWORD_LENGTH {
         return Ok(false);
     }
@@ -127,10 +127,10 @@ mod tests {
     #[test]
     fn test_password_hashing() {
         let password = "testpassword123";
-        let hash = hash_password(password).unwrap();
+        let hash = hash_password_argon2id(password).unwrap();
 
-        assert!(verify_password(password, &hash).unwrap());
-        assert!(!verify_password("wrongpassword", &hash).unwrap());
+        assert!(verify_password_argon2id(password, &hash).unwrap());
+        assert!(!verify_password_argon2id("wrongpassword", &hash).unwrap());
     }
 
     #[test]
