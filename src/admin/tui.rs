@@ -344,7 +344,7 @@ async fn handle_key_event(
                 app.input.reset();
             }
             _ => {
-                app.input.handle_event(&crossterm::event::Event::Key(key));
+                app.input.handle_event(&Event::Key(key));
             }
         }
         return Ok(());
@@ -841,5 +841,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
-
-

@@ -83,8 +83,8 @@ impl XmlCanonicalizer {
                         .map_err(|e| AuthError::validation(&format!("XML write error: {}", e)))?;
                 }
                 Ok(Event::Text(ref e)) => {
-                    let text = e.unescape().map_err(|e| {
-                        AuthError::validation(&format!("XML text unescape error: {}", e))
+                    let text = e.xml_content().map_err(|e| {
+                        AuthError::validation(&format!("XML text decode error: {}", e))
                     })?;
                     if !text.trim().is_empty() {
                         writer
@@ -105,6 +105,7 @@ impl XmlCanonicalizer {
                 Ok(Event::Comment(_)) | Ok(Event::PI(_)) | Ok(Event::CData(_)) => continue,
                 Ok(Event::Decl(_)) => continue, // Skip XML declaration
                 Ok(Event::DocType(_)) => continue, // Skip DOCTYPE declarations
+                Ok(Event::GeneralRef(_)) => continue, // Skip general references
                 Err(e) => return Err(AuthError::validation(&format!("XML parsing error: {}", e))),
             }
         }
@@ -302,8 +303,8 @@ impl SamlSignatureValidator {
                     }
                 }
                 Ok(Event::Text(ref e)) if inside_signed_info => {
-                    let text = e.unescape().map_err(|e| {
-                        AuthError::validation(&format!("XML text unescape error: {}", e))
+                    let text = e.xml_content().map_err(|e| {
+                        AuthError::validation(&format!("XML text decode error: {}", e))
                     })?;
                     signed_info.push_str(&text);
                 }
@@ -358,8 +359,8 @@ impl SamlSignatureValidator {
                     inside_signature_value = true;
                 }
                 Ok(Event::Text(ref e)) if inside_signature_value => {
-                    let text = e.unescape().map_err(|e| {
-                        AuthError::validation(&format!("XML text unescape error: {}", e))
+                    let text = e.xml_content().map_err(|e| {
+                        AuthError::validation(&format!("XML text decode error: {}", e))
                     })?;
                     signature_value.push_str(&text);
                 }
@@ -470,5 +471,3 @@ mod tests {
         assert_eq!(signature_value, "YmFzZTY0c2lnbmF0dXJl");
     }
 }
-
-

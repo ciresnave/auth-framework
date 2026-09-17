@@ -894,7 +894,7 @@ impl OAuthProvider {
 pub fn generate_state() -> String {
     let mut bytes = [0u8; 32];
     use rand::RngCore;
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -904,7 +904,7 @@ pub fn generate_pkce() -> (String, String) {
     use ring::digest;
 
     // Generate code verifier (43-128 characters)
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut bytes = [0u8; 96]; // 96 bytes = 128 base64 characters
     rng.fill_bytes(&mut bytes);
     let code_verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
@@ -1386,5 +1386,3 @@ mod tests {
         assert_ne!(challenge1, challenge2);
     }
 }
-
-

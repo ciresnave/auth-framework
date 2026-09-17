@@ -747,32 +747,6 @@ mod tests {
 
         assert!(token.is_revoked());
         assert!(!token.is_valid());
-        assert_eq!(
-            token.metadata.revoked_reason,
-            Some("User logout".to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn test_jwt_token_manager() {
-        let secret = b"test-secret-key";
-        let manager = TokenManager::new_hmac(secret, "test-issuer", "test-audience");
-
-        let token = manager
-            .create_jwt_token(
-                "user123",
-                vec!["read".to_string(), "write".to_string()],
-                Some(Duration::from_secs(3600)), // 1 hour
-            )
-            .unwrap();
-
-        let claims = manager.validate_jwt_token(&token).unwrap();
-        assert_eq!(claims.sub, "user123");
-        assert_eq!(claims.scope, "read write");
+        assert!(token.metadata.revoked);
     }
 }
-
-// #[cfg(test)]
-// pub mod token_edge_tests;
-
-

@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates the successfully implemented optimizations.
 
-use auth_framework::Result;
+use auth_framework::{Result, storage::AuthStorage};
 
 #[cfg(feature = "performance-optimization")]
 use auth_framework::storage::unified::UnifiedStorage;

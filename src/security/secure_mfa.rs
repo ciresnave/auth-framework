@@ -315,7 +315,7 @@ impl SecureMfaService {
             self.rng.fill(&mut code_bytes)?;
 
             // Convert to base32 for human readability (no ambiguous characters)
-            let code = base32::encode(base32::Alphabet::RFC4648 { padding: false }, &code_bytes);
+            let code = base32::encode(base32::Alphabet::Rfc4648 { padding: false }, &code_bytes);
 
             // Format as XXXX-XXXX-XXXX-XXXX for readability
             let formatted_code = format!(
@@ -512,5 +512,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-

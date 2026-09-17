@@ -45,6 +45,8 @@ async fn main() -> Result<()> {
 
 #[cfg(feature = "performance-optimization")]
 async fn test_unified_storage() -> Result<()> {
+    use auth_framework::storage::AuthStorage;
+
     let storage = UnifiedStorage::new();
 
     println!("  🔄 Creating test tokens...");
