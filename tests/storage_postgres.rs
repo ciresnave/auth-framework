@@ -42,7 +42,11 @@ async fn pg_token_crud() {
     let got = storage.get_token(&tid).await.unwrap().unwrap();
     assert_eq!(got.user_id, "pg_user1");
 
-    let got = storage.get_token_by_access_token(&at).await.unwrap().unwrap();
+    let got = storage
+        .get_token_by_access_token(&at)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(got.token_id, tid);
 
     let tokens = storage.list_user_tokens("pg_user1").await.unwrap();
@@ -72,7 +76,10 @@ async fn pg_token_update() {
 async fn pg_session_crud() {
     let storage = setup().await;
     let session = SessionData::new("pg_sess1", "pg_user_s", Duration::from_secs(3600))
-        .with_metadata(Some("10.0.0.1".to_string()), Some("TestBot/1.0".to_string()));
+        .with_metadata(
+            Some("10.0.0.1".to_string()),
+            Some("TestBot/1.0".to_string()),
+        );
 
     storage.store_session("pg_sess1", &session).await.unwrap();
 
@@ -151,8 +158,12 @@ async fn pg_cleanup_expired() {
     expired_token.expires_at = chrono::Utc::now() - chrono::Duration::seconds(120);
     storage.store_token(&expired_token).await.unwrap();
 
-    let valid_token =
-        AuthToken::new("pg_exp_user", "pg_valid_at", Duration::from_secs(3600), "test");
+    let valid_token = AuthToken::new(
+        "pg_exp_user",
+        "pg_valid_at",
+        Duration::from_secs(3600),
+        "test",
+    );
     storage.store_token(&valid_token).await.unwrap();
 
     storage.cleanup_expired().await.unwrap();

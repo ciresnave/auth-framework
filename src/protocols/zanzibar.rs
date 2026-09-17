@@ -56,7 +56,10 @@ impl RelationTuple {
     /// `"group:eng#member"` → `("group", "eng", Some("member"))`
     pub fn parse_subject(&self) -> Option<(&str, &str, Option<&str>)> {
         let (ns_id, userset) = if let Some(hash_pos) = self.subject.find('#') {
-            (&self.subject[..hash_pos], Some(&self.subject[hash_pos + 1..]))
+            (
+                &self.subject[..hash_pos],
+                Some(&self.subject[hash_pos + 1..]),
+            )
         } else {
             (self.subject.as_str(), None)
         };
@@ -181,11 +184,7 @@ impl ZanzibarStore {
     }
 
     /// Read all tuples for an object, optionally filtered by relation.
-    pub async fn read_tuples(
-        &self,
-        object: &str,
-        relation: Option<&str>,
-    ) -> Vec<RelationTuple> {
+    pub async fn read_tuples(&self, object: &str, relation: Option<&str>) -> Vec<RelationTuple> {
         let tuples = self.tuples.read().await;
         match tuples.get(object) {
             Some(list) => {
@@ -203,12 +202,7 @@ impl ZanzibarStore {
     ///
     /// Determines whether `subject` has the `relation` on `object` by
     /// traversing direct tuples, union rewrites, and tuple-to-userset paths.
-    pub async fn check(
-        &self,
-        object: &str,
-        relation: &str,
-        subject: &str,
-    ) -> Result<bool> {
+    pub async fn check(&self, object: &str, relation: &str, subject: &str) -> Result<bool> {
         let mut visited = HashSet::new();
         self.check_internal(object, relation, subject, 0, &mut visited)
             .await
@@ -224,87 +218,82 @@ impl ZanzibarStore {
         visited: &'a mut HashSet<String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>> {
         Box::pin(async move {
-        if depth > self.max_depth {
-            return Err(AuthError::internal(
-                "Zanzibar check exceeded maximum traversal depth",
-            ));
-        }
-
-        let visit_key = format!("{object}#{relation}@{subject}");
-        if !visited.insert(visit_key) {
-            return Ok(false); // Cycle detected
-        }
-
-        // 1. Direct check
-        let direct_tuples = self.read_tuples(object, Some(relation)).await;
-        for t in &direct_tuples {
-            if t.subject == subject {
-                return Ok(true);
+            if depth > self.max_depth {
+                return Err(AuthError::internal(
+                    "Zanzibar check exceeded maximum traversal depth",
+                ));
             }
 
-            // Userset reference: e.g. subject = "group:eng#member"
-            if let Some((_, sub_id, Some(sub_rel))) = t.parse_subject() {
-                let (sub_ns, _) = t.subject.split_once('#').unwrap_or((&t.subject, ""));
-                // Check if `subject` has `sub_rel` on the referenced object
-                if self
-                    .check_internal(sub_ns, sub_rel, subject, depth + 1, visited)
-                    .await?
-                {
-                    let _ = sub_id; // used for the userset resolution
+            let visit_key = format!("{object}#{relation}@{subject}");
+            if !visited.insert(visit_key) {
+                return Ok(false); // Cycle detected
+            }
+
+            // 1. Direct check
+            let direct_tuples = self.read_tuples(object, Some(relation)).await;
+            for t in &direct_tuples {
+                if t.subject == subject {
                     return Ok(true);
                 }
-            }
-        }
 
-        // 2. Union rewrites
-        if let Some((ns, _)) = object.split_once(':') {
-            let namespaces = self.namespaces.read().await;
-            if let Some(ns_config) = namespaces.get(ns) {
-                if let Some(rel_def) = ns_config.relations.get(relation) {
-                    // Check union relations
-                    for union_rel in &rel_def.union {
-                        if self
-                            .check_internal(object, union_rel, subject, depth + 1, visited)
-                            .await?
-                        {
-                            return Ok(true);
-                        }
+                // Userset reference: e.g. subject = "group:eng#member"
+                if let Some((_, sub_id, Some(sub_rel))) = t.parse_subject() {
+                    let (sub_ns, _) = t.subject.split_once('#').unwrap_or((&t.subject, ""));
+                    // Check if `subject` has `sub_rel` on the referenced object
+                    if self
+                        .check_internal(sub_ns, sub_rel, subject, depth + 1, visited)
+                        .await?
+                    {
+                        let _ = sub_id; // used for the userset resolution
+                        return Ok(true);
                     }
+                }
+            }
 
-                    // 3. Tuple-to-userset rewrites
-                    for ttu in &rel_def.tuple_to_userset {
-                        let parent_tuples = self
-                            .read_tuples(object, Some(&ttu.tupleset_relation))
-                            .await;
-                        for pt in &parent_tuples {
+            // 2. Union rewrites
+            if let Some((ns, _)) = object.split_once(':') {
+                let namespaces = self.namespaces.read().await;
+                if let Some(ns_config) = namespaces.get(ns) {
+                    if let Some(rel_def) = ns_config.relations.get(relation) {
+                        // Check union relations
+                        for union_rel in &rel_def.union {
                             if self
-                                .check_internal(
-                                    &pt.subject,
-                                    &ttu.computed_userset_relation,
-                                    subject,
-                                    depth + 1,
-                                    visited,
-                                )
+                                .check_internal(object, union_rel, subject, depth + 1, visited)
                                 .await?
                             {
                                 return Ok(true);
                             }
                         }
+
+                        // 3. Tuple-to-userset rewrites
+                        for ttu in &rel_def.tuple_to_userset {
+                            let parent_tuples =
+                                self.read_tuples(object, Some(&ttu.tupleset_relation)).await;
+                            for pt in &parent_tuples {
+                                if self
+                                    .check_internal(
+                                        &pt.subject,
+                                        &ttu.computed_userset_relation,
+                                        subject,
+                                        depth + 1,
+                                        visited,
+                                    )
+                                    .await?
+                                {
+                                    return Ok(true);
+                                }
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        Ok(false)
-    })
+            Ok(false)
+        })
     }
 
     /// **Expand** — list all subjects that have a given relation on an object.
-    pub async fn expand(
-        &self,
-        object: &str,
-        relation: &str,
-    ) -> Result<Vec<String>> {
+    pub async fn expand(&self, object: &str, relation: &str) -> Result<Vec<String>> {
         let mut result = Vec::new();
         let mut visited = HashSet::new();
         self.expand_internal(object, relation, 0, &mut result, &mut visited)
@@ -321,57 +310,56 @@ impl ZanzibarStore {
         visited: &'a mut HashSet<String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-        if depth > self.max_depth {
-            return Ok(());
-        }
-
-        let visit_key = format!("{object}#{relation}");
-        if !visited.insert(visit_key) {
-            return Ok(());
-        }
-
-        // Direct subjects
-        let tuples = self.read_tuples(object, Some(relation)).await;
-        for t in &tuples {
-            if t.subject.contains('#') {
-                // Userset: expand the referenced object's relation
-                let (ref_obj, ref_rel) = t.subject.split_once('#').unwrap();
-                self.expand_internal(ref_obj, ref_rel, depth + 1, result, visited)
-                    .await?;
-            } else if !result.contains(&t.subject) {
-                result.push(t.subject.clone());
+            if depth > self.max_depth {
+                return Ok(());
             }
-        }
 
-        // Union rewrites
-        if let Some((ns, _)) = object.split_once(':') {
-            let namespaces = self.namespaces.read().await;
-            if let Some(ns_config) = namespaces.get(ns) {
-                if let Some(rel_def) = ns_config.relations.get(relation) {
-                    for union_rel in &rel_def.union {
-                        self.expand_internal(object, union_rel, depth + 1, result, visited)
-                            .await?;
-                    }
-                    for ttu in &rel_def.tuple_to_userset {
-                        let parent_tuples = self
-                            .read_tuples(object, Some(&ttu.tupleset_relation))
-                            .await;
-                        for pt in &parent_tuples {
-                            self.expand_internal(
-                                &pt.subject,
-                                &ttu.computed_userset_relation,
-                                depth + 1,
-                                result,
-                                visited,
-                            )
-                            .await?;
+            let visit_key = format!("{object}#{relation}");
+            if !visited.insert(visit_key) {
+                return Ok(());
+            }
+
+            // Direct subjects
+            let tuples = self.read_tuples(object, Some(relation)).await;
+            for t in &tuples {
+                if t.subject.contains('#') {
+                    // Userset: expand the referenced object's relation
+                    let (ref_obj, ref_rel) = t.subject.split_once('#').unwrap();
+                    self.expand_internal(ref_obj, ref_rel, depth + 1, result, visited)
+                        .await?;
+                } else if !result.contains(&t.subject) {
+                    result.push(t.subject.clone());
+                }
+            }
+
+            // Union rewrites
+            if let Some((ns, _)) = object.split_once(':') {
+                let namespaces = self.namespaces.read().await;
+                if let Some(ns_config) = namespaces.get(ns) {
+                    if let Some(rel_def) = ns_config.relations.get(relation) {
+                        for union_rel in &rel_def.union {
+                            self.expand_internal(object, union_rel, depth + 1, result, visited)
+                                .await?;
+                        }
+                        for ttu in &rel_def.tuple_to_userset {
+                            let parent_tuples =
+                                self.read_tuples(object, Some(&ttu.tupleset_relation)).await;
+                            for pt in &parent_tuples {
+                                self.expand_internal(
+                                    &pt.subject,
+                                    &ttu.computed_userset_relation,
+                                    depth + 1,
+                                    result,
+                                    visited,
+                                )
+                                .await?;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
         })
     }
 
@@ -431,12 +419,7 @@ impl ZanzibarStore {
 
     /// Get the count of stored tuples.
     pub async fn tuple_count(&self) -> usize {
-        self.tuples
-            .read()
-            .await
-            .values()
-            .map(|v| v.len())
-            .sum()
+        self.tuples.read().await.values().map(|v| v.len()).sum()
     }
 }
 
@@ -492,13 +475,32 @@ mod tests {
     async fn test_direct_relation_check() {
         let store = ZanzibarStore::default();
         store
-            .write_tuple(RelationTuple::new("document:readme", "viewer", "user:alice"))
+            .write_tuple(RelationTuple::new(
+                "document:readme",
+                "viewer",
+                "user:alice",
+            ))
             .await
             .unwrap();
 
-        assert!(store.check("document:readme", "viewer", "user:alice").await.unwrap());
-        assert!(!store.check("document:readme", "viewer", "user:bob").await.unwrap());
-        assert!(!store.check("document:readme", "editor", "user:alice").await.unwrap());
+        assert!(
+            store
+                .check("document:readme", "viewer", "user:alice")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .check("document:readme", "viewer", "user:bob")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .check("document:readme", "editor", "user:alice")
+                .await
+                .unwrap()
+        );
     }
 
     // ── Union relation ──────────────────────────────────────────
@@ -533,16 +535,35 @@ mod tests {
             .await;
 
         store
-            .write_tuple(RelationTuple::new("document:readme", "editor", "user:alice"))
+            .write_tuple(RelationTuple::new(
+                "document:readme",
+                "editor",
+                "user:alice",
+            ))
             .await
             .unwrap();
 
         // Alice is an editor, viewer includes editor via union
-        assert!(store.check("document:readme", "viewer", "user:alice").await.unwrap());
+        assert!(
+            store
+                .check("document:readme", "viewer", "user:alice")
+                .await
+                .unwrap()
+        );
         // Alice is also directly an editor
-        assert!(store.check("document:readme", "editor", "user:alice").await.unwrap());
+        assert!(
+            store
+                .check("document:readme", "editor", "user:alice")
+                .await
+                .unwrap()
+        );
         // Bob has no relation
-        assert!(!store.check("document:readme", "viewer", "user:bob").await.unwrap());
+        assert!(
+            !store
+                .check("document:readme", "viewer", "user:bob")
+                .await
+                .unwrap()
+        );
     }
 
     // ── Tuple-to-userset (parent folder) ────────────────────────
@@ -601,14 +622,28 @@ mod tests {
 
         // document:readme has parent folder:docs
         store
-            .write_tuple(RelationTuple::new("document:readme", "parent", "folder:docs"))
+            .write_tuple(RelationTuple::new(
+                "document:readme",
+                "parent",
+                "folder:docs",
+            ))
             .await
             .unwrap();
 
         // Alice should be able to view document:readme via folder:docs
-        assert!(store.check("document:readme", "viewer", "user:alice").await.unwrap());
+        assert!(
+            store
+                .check("document:readme", "viewer", "user:alice")
+                .await
+                .unwrap()
+        );
         // Bob cannot
-        assert!(!store.check("document:readme", "viewer", "user:bob").await.unwrap());
+        assert!(
+            !store
+                .check("document:readme", "viewer", "user:bob")
+                .await
+                .unwrap()
+        );
     }
 
     // ── Group membership (userset reference) ────────────────────
@@ -662,9 +697,19 @@ mod tests {
             .unwrap();
 
         // Alice can view via group membership
-        assert!(store.check("document:readme", "viewer", "user:alice").await.unwrap());
+        assert!(
+            store
+                .check("document:readme", "viewer", "user:alice")
+                .await
+                .unwrap()
+        );
         // Bob cannot
-        assert!(!store.check("document:readme", "viewer", "user:bob").await.unwrap());
+        assert!(
+            !store
+                .check("document:readme", "viewer", "user:bob")
+                .await
+                .unwrap()
+        );
     }
 
     // ── Expand ──────────────────────────────────────────────────
@@ -674,7 +719,11 @@ mod tests {
         let store = ZanzibarStore::default();
 
         store
-            .write_tuple(RelationTuple::new("document:readme", "viewer", "user:alice"))
+            .write_tuple(RelationTuple::new(
+                "document:readme",
+                "viewer",
+                "user:alice",
+            ))
             .await
             .unwrap();
         store
@@ -682,7 +731,11 @@ mod tests {
             .await
             .unwrap();
         store
-            .write_tuple(RelationTuple::new("document:readme", "editor", "user:carol"))
+            .write_tuple(RelationTuple::new(
+                "document:readme",
+                "editor",
+                "user:carol",
+            ))
             .await
             .unwrap();
 
@@ -700,10 +753,20 @@ mod tests {
         let tuple = RelationTuple::new("document:readme", "viewer", "user:alice");
 
         store.write_tuple(tuple.clone()).await.unwrap();
-        assert!(store.check("document:readme", "viewer", "user:alice").await.unwrap());
+        assert!(
+            store
+                .check("document:readme", "viewer", "user:alice")
+                .await
+                .unwrap()
+        );
 
         assert!(store.delete_tuple(&tuple).await);
-        assert!(!store.check("document:readme", "viewer", "user:alice").await.unwrap());
+        assert!(
+            !store
+                .check("document:readme", "viewer", "user:alice")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

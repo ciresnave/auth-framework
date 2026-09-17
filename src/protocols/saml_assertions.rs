@@ -620,7 +620,10 @@ impl SamlAssertion {
         ));
 
         // Issuer
-        xml.push_str(&format!("<saml:Issuer>{}</saml:Issuer>", xml_escape(&self.issuer)));
+        xml.push_str(&format!(
+            "<saml:Issuer>{}</saml:Issuer>",
+            xml_escape(&self.issuer)
+        ));
 
         // Subject
         if let Some(ref subject) = self.subject {
@@ -686,11 +689,17 @@ impl SamlNameId {
         }
 
         if let Some(ref name_qualifier) = self.name_qualifier {
-            xml.push_str(&format!(" NameQualifier=\"{}\"", xml_escape(name_qualifier)));
+            xml.push_str(&format!(
+                " NameQualifier=\"{}\"",
+                xml_escape(name_qualifier)
+            ));
         }
 
         if let Some(ref sp_name_qualifier) = self.sp_name_qualifier {
-            xml.push_str(&format!(" SPNameQualifier=\"{}\"", xml_escape(sp_name_qualifier)));
+            xml.push_str(&format!(
+                " SPNameQualifier=\"{}\"",
+                xml_escape(sp_name_qualifier)
+            ));
         }
 
         xml.push_str(&format!(">{}</saml:NameID>", xml_escape(&self.value)));
@@ -807,7 +816,10 @@ impl SamlAudienceRestriction {
         xml.push_str("<saml:AudienceRestriction>");
 
         for audience in &self.audiences {
-            xml.push_str(&format!("<saml:Audience>{}</saml:Audience>", xml_escape(audience)));
+            xml.push_str(&format!(
+                "<saml:Audience>{}</saml:Audience>",
+                xml_escape(audience)
+            ));
         }
 
         xml.push_str("</saml:AudienceRestriction>");
@@ -830,7 +842,10 @@ impl SamlProxyRestriction {
         xml.push('>');
 
         for audience in &self.audiences {
-            xml.push_str(&format!("<saml:Audience>{}</saml:Audience>", xml_escape(audience)));
+            xml.push_str(&format!(
+                "<saml:Audience>{}</saml:Audience>",
+                xml_escape(audience)
+            ));
         }
 
         xml.push_str("</saml:ProxyRestriction>");
@@ -866,14 +881,23 @@ impl SamlAttribute {
     pub fn to_xml(&self) -> Result<String> {
         let mut xml = String::new();
 
-        xml.push_str(&format!("<saml:Attribute Name=\"{}\">", xml_escape(&self.name)));
+        xml.push_str(&format!(
+            "<saml:Attribute Name=\"{}\">",
+            xml_escape(&self.name)
+        ));
 
         if let Some(ref name_format) = self.name_format {
-            xml = xml.replace(">", &format!(" NameFormat=\"{}\">", xml_escape(name_format)));
+            xml = xml.replace(
+                ">",
+                &format!(" NameFormat=\"{}\">", xml_escape(name_format)),
+            );
         }
 
         if let Some(ref friendly_name) = self.friendly_name {
-            xml = xml.replace(">", &format!(" FriendlyName=\"{}\">", xml_escape(friendly_name)));
+            xml = xml.replace(
+                ">",
+                &format!(" FriendlyName=\"{}\">", xml_escape(friendly_name)),
+            );
         }
 
         for value in &self.values {
@@ -897,7 +921,10 @@ impl SamlAttributeValue {
             xml.push_str(&format!(" xsi:type=\"{}\"", xml_escape(type_info)));
         }
 
-        xml.push_str(&format!(">{}</saml:AttributeValue>", xml_escape(&self.value)));
+        xml.push_str(&format!(
+            ">{}</saml:AttributeValue>",
+            xml_escape(&self.value)
+        ));
 
         Ok(xml)
     }
@@ -1013,7 +1040,8 @@ impl SamlAuthzDecisionStatement {
 
         xml.push_str(&format!(
             "<saml:AuthzDecisionStatement Decision=\"{}\" Resource=\"{}\">",
-            decision_str, xml_escape(&self.resource)
+            decision_str,
+            xml_escape(&self.resource)
         ));
 
         for action in &self.actions {
@@ -1148,8 +1176,8 @@ mod tests {
 
     #[test]
     fn test_untrusted_issuer_rejected() {
-        let validator = SamlAssertionValidator::new()
-            .with_trusted_issuer("https://trusted-idp.example.com");
+        let validator =
+            SamlAssertionValidator::new().with_trusted_issuer("https://trusted-idp.example.com");
 
         let assertion = SamlAssertionBuilder::new("https://evil-idp.example.com")
             .with_validity_period(
@@ -1196,8 +1224,7 @@ mod tests {
 
     #[test]
     fn test_not_yet_valid_assertion_rejected() {
-        let validator = SamlAssertionValidator::new()
-            .with_clock_skew(Duration::seconds(0)); // strict, no skew
+        let validator = SamlAssertionValidator::new().with_clock_skew(Duration::seconds(0)); // strict, no skew
 
         let assertion = SamlAssertionBuilder::new("https://idp.example.com")
             .with_validity_period(
@@ -1227,8 +1254,8 @@ mod tests {
 
     #[test]
     fn test_multiple_audience_restrictions() {
-        let validator = SamlAssertionValidator::new()
-            .with_expected_audience("https://sp-b.example.com");
+        let validator =
+            SamlAssertionValidator::new().with_expected_audience("https://sp-b.example.com");
 
         let assertion = SamlAssertionBuilder::new("https://idp.example.com")
             .with_validity_period(
@@ -1329,8 +1356,7 @@ mod tests {
 
     #[test]
     fn test_expired_subject_confirmation_rejected() {
-        let validator = SamlAssertionValidator::new()
-            .with_clock_skew(Duration::seconds(0));
+        let validator = SamlAssertionValidator::new().with_clock_skew(Duration::seconds(0));
 
         let mut assertion = SamlAssertionBuilder::new("https://idp.example.com")
             .with_validity_period(
@@ -1363,8 +1389,8 @@ mod tests {
 
     #[test]
     fn test_recipient_mismatch_rejected() {
-        let validator = SamlAssertionValidator::new()
-            .with_expected_audience("https://sp.example.com");
+        let validator =
+            SamlAssertionValidator::new().with_expected_audience("https://sp.example.com");
 
         let mut assertion = SamlAssertionBuilder::new("https://idp.example.com")
             .with_validity_period(
@@ -1390,18 +1416,14 @@ mod tests {
 
         let err = validator.validate(&assertion).unwrap_err();
         let msg = format!("{err}");
-        assert!(
-            msg.contains("recipient does not match"),
-            "got: {msg}"
-        );
+        assert!(msg.contains("recipient does not match"), "got: {msg}");
     }
 
     #[test]
     fn test_clock_skew_tolerance() {
         // With default 5-minute skew, an assertion that expired 3 minutes ago
         // should still be accepted
-        let validator = SamlAssertionValidator::new()
-            .with_clock_skew(Duration::minutes(5));
+        let validator = SamlAssertionValidator::new().with_clock_skew(Duration::minutes(5));
 
         let assertion = SamlAssertionBuilder::new("https://idp.example.com")
             .with_validity_period(
@@ -1420,15 +1442,17 @@ mod tests {
     fn test_authz_decision_statement_xml() {
         let mut assertion = SamlAssertionBuilder::new("https://idp.example.com").build();
 
-        assertion.authz_decision_statements.push(SamlAuthzDecisionStatement {
-            resource: "https://api.example.com/data".to_string(),
-            decision: SamlDecision::Permit,
-            actions: vec![SamlAction {
-                value: "GET".to_string(),
-                namespace: Some("urn:oasis:names:tc:SAML:1.0:action:rwedc".to_string()),
-            }],
-            evidence: None,
-        });
+        assertion
+            .authz_decision_statements
+            .push(SamlAuthzDecisionStatement {
+                resource: "https://api.example.com/data".to_string(),
+                decision: SamlDecision::Permit,
+                actions: vec![SamlAction {
+                    value: "GET".to_string(),
+                    namespace: Some("urn:oasis:names:tc:SAML:1.0:action:rwedc".to_string()),
+                }],
+                evidence: None,
+            });
 
         let xml = assertion.to_xml().unwrap();
         assert!(xml.contains("AuthzDecisionStatement"));

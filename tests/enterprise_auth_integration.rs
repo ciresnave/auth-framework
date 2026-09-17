@@ -145,18 +145,23 @@ mod tests {
 
         // 5. Create complete SOAP request with WS-Security and WS-Trust
         let soap_request = sts
-            .create_rst_soap_request(&RequestSecurityToken {
-                request_type: "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue".to_string(),
-                token_type: "urn:oasis:names:tc:SAML:2.0:assertion".to_string(),
-                applies_to: Some("https://service.enterprise.com".to_string()),
-                lifetime: None,
-                key_type: Some(
-                    "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer".to_string(),
-                ),
-                key_size: None,
-                existing_token: None,
-                auth_context: None,
-            }, "admin@enterprise.com", Some("admin_pass"))
+            .create_rst_soap_request(
+                &RequestSecurityToken {
+                    request_type: "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue"
+                        .to_string(),
+                    token_type: "urn:oasis:names:tc:SAML:2.0:assertion".to_string(),
+                    applies_to: Some("https://service.enterprise.com".to_string()),
+                    lifetime: None,
+                    key_type: Some(
+                        "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer".to_string(),
+                    ),
+                    key_size: None,
+                    existing_token: None,
+                    auth_context: None,
+                },
+                "admin@enterprise.com",
+                Some("admin_pass"),
+            )
             .unwrap();
 
         // Verify complete SOAP request

@@ -418,7 +418,10 @@ impl ApiServer {
 
         info!("🚀 AuthFramework API server starting on http://{}", addr);
         info!("📖 API documentation available at http://{}/docs", addr);
-        info!("📘 OpenAPI JSON available at http://{}/api/openapi.json", addr);
+        info!(
+            "📘 OpenAPI JSON available at http://{}/api/openapi.json",
+            addr
+        );
         info!("🏥 Health check available at http://{}/health", addr);
         info!("📊 Metrics available at http://{}/metrics", addr);
 

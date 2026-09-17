@@ -192,9 +192,7 @@ pub fn parse_siwe_message(text: &str) -> Result<SiweMessage> {
             request_id = Some(v.to_string());
         } else if line == "Resources:" {
             in_resources = true;
-        } else if statement.is_none()
-            && !line.starts_with("URI:")
-            && !line.starts_with("Version:")
+        } else if statement.is_none() && !line.starts_with("URI:") && !line.starts_with("Version:")
         {
             statement = Some(line.to_string());
         }
@@ -287,7 +285,8 @@ mod tests {
 
     #[test]
     fn test_create_siwe_message() {
-        let msg = SiweMessage::new("example.com", TEST_ADDR, "https://example.com/login", 1).unwrap();
+        let msg =
+            SiweMessage::new("example.com", TEST_ADDR, "https://example.com/login", 1).unwrap();
         assert_eq!(msg.domain, "example.com");
         assert_eq!(msg.address, TEST_ADDR);
         assert_eq!(msg.version, "1");
@@ -302,13 +301,16 @@ mod tests {
 
     #[test]
     fn test_invalid_address_rejected() {
-        assert!(SiweMessage::new("example.com", "not-an-address", "https://example.com", 1).is_err());
+        assert!(
+            SiweMessage::new("example.com", "not-an-address", "https://example.com", 1).is_err()
+        );
         assert!(SiweMessage::new("example.com", "0xZZZZ", "https://example.com", 1).is_err());
     }
 
     #[test]
     fn test_message_string_format() {
-        let msg = SiweMessage::new("example.com", TEST_ADDR, "https://example.com/login", 1).unwrap();
+        let msg =
+            SiweMessage::new("example.com", TEST_ADDR, "https://example.com/login", 1).unwrap();
         let text = msg.to_message_string();
         assert!(text.contains("example.com wants you to sign in with your Ethereum account:"));
         assert!(text.contains(TEST_ADDR));
@@ -341,7 +343,8 @@ mod tests {
 
     #[test]
     fn test_parse_siwe_message_roundtrip() {
-        let msg = SiweMessage::new("example.com", TEST_ADDR, "https://example.com/login", 1).unwrap();
+        let msg =
+            SiweMessage::new("example.com", TEST_ADDR, "https://example.com/login", 1).unwrap();
         let text = msg.to_message_string();
         let parsed = parse_siwe_message(&text).unwrap();
         assert_eq!(parsed.domain, "example.com");

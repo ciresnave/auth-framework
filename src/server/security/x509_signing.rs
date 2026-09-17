@@ -1894,8 +1894,10 @@ impl<'a> AwsSigV4Request<'a> {
             payload_hash = sha256hex(self.payload),
         );
 
-        let credential_scope =
-            format!("{}/{}/{}/aws4_request", self.date_stamp, self.region, self.service);
+        let credential_scope = format!(
+            "{}/{}/{}/aws4_request",
+            self.date_stamp, self.region, self.service
+        );
         let string_to_sign = format!(
             "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{canonical_hash}",
             amz_date = self.amz_date,

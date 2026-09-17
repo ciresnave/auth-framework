@@ -674,7 +674,10 @@ impl OrchestrationRequest {
     ///     .add_scope("openid")
     ///     .build();
     /// ```
-    pub fn builder(request_id: impl Into<String>, client_id: impl Into<String>) -> OrchestrationRequestBuilder {
+    pub fn builder(
+        request_id: impl Into<String>,
+        client_id: impl Into<String>,
+    ) -> OrchestrationRequestBuilder {
         OrchestrationRequestBuilder {
             inner: Self {
                 request_id: request_id.into(),

@@ -319,12 +319,22 @@ pub async fn create_user(
                                     .update_user_roles(&user_id, &req.roles)
                                     .await
                                 {
-                                    tracing::warn!("Failed to set roles for new user {}: {}", user_id, e);
+                                    tracing::warn!(
+                                        "Failed to set roles for new user {}: {}",
+                                        user_id,
+                                        e
+                                    );
                                 }
                             }
                             if !req.active {
-                                if let Err(e) = state.auth_framework.set_user_active(&user_id, false).await {
-                                    tracing::warn!("Failed to deactivate new user {}: {}", user_id, e);
+                                if let Err(e) =
+                                    state.auth_framework.set_user_active(&user_id, false).await
+                                {
+                                    tracing::warn!(
+                                        "Failed to deactivate new user {}: {}",
+                                        user_id,
+                                        e
+                                    );
                                 }
                             }
                             let new_user = UserListItem {

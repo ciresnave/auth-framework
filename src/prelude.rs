@@ -123,8 +123,7 @@ pub use crate::auth_operations::{
 // Re-export configuration types
 pub use crate::config::app_config::{AppConfig, ConfigBuilder as AppConfigBuilder};
 pub use crate::config::config_manager::{
-    ApiServerSettings, AuthFrameworkSettings, ConfigBuilder as LayeredConfigBuilder,
-    ConfigManager,
+    ApiServerSettings, AuthFrameworkSettings, ConfigBuilder as LayeredConfigBuilder, ConfigManager,
 };
 pub use crate::config::{
     AuditConfig, AuthConfig, AuthConfigBuilder, CookieSameSite, CorsConfig, JwtAlgorithm,

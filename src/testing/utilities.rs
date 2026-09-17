@@ -645,10 +645,7 @@ mod edge_tests {
     async fn test_mock_refresh_success() {
         let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
         let mock = MockAuthMethod::new_success();
-        let token = mock
-            .refresh_token("old_refresh".to_string())
-            .await
-            .unwrap();
+        let token = mock.refresh_token("old_refresh".to_string()).await.unwrap();
         assert_eq!(token.user_id, "refreshed_user");
         assert!(token.refresh_token.is_some());
     }
@@ -674,10 +671,7 @@ mod edge_tests {
         let token = helpers::create_test_token("user1");
         let access = token.access_token.clone();
         storage.store_token(&token).await.unwrap();
-        let found = storage
-            .get_token_by_access_token(&access)
-            .await
-            .unwrap();
+        let found = storage.get_token_by_access_token(&access).await.unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().user_id, "user1");
     }
@@ -800,10 +794,7 @@ mod edge_tests {
     async fn test_storage_kv_crud() {
         let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
         let storage = MockStorage::new();
-        storage
-            .store_kv("key1", b"value1", None)
-            .await
-            .unwrap();
+        storage.store_kv("key1", b"value1", None).await.unwrap();
         let val = storage.get_kv("key1").await.unwrap();
         assert_eq!(val.unwrap(), b"value1");
 

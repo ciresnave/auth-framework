@@ -173,11 +173,11 @@ async fn test_database_migration_integration() {
 async fn test_oidc_rp_initiated_logout_integration() {
     println!("🔍 Testing OIDC RP-Initiated Logout Integration");
 
+    use auth_framework::server::oidc::oidc_session_management::SessionManagementConfig;
     use auth_framework::server::{
         ClientLogoutConfig, RpInitiatedLogoutConfig, RpInitiatedLogoutManager,
         RpInitiatedLogoutRequest, SessionManager,
     };
-    use auth_framework::server::oidc::oidc_session_management::SessionManagementConfig;
     use std::collections::HashMap;
 
     let mut session_manager = SessionManager::new(SessionManagementConfig::default());
@@ -189,11 +189,7 @@ async fn test_oidc_rp_initiated_logout_integration() {
         )
         .unwrap();
     let sibling_session = session_manager
-        .create_session(
-            "user-1".to_string(),
-            "reports".to_string(),
-            HashMap::new(),
-        )
+        .create_session("user-1".to_string(), "reports".to_string(), HashMap::new())
         .unwrap();
 
     let mut manager =
@@ -240,8 +236,16 @@ async fn test_oidc_rp_initiated_logout_integration() {
 
     assert!(response.success);
     assert_eq!(response.ended_sessions.len(), 2);
-    assert!(response.ended_sessions.contains(&current_session.session_id));
-    assert!(response.ended_sessions.contains(&sibling_session.session_id));
+    assert!(
+        response
+            .ended_sessions
+            .contains(&current_session.session_id)
+    );
+    assert!(
+        response
+            .ended_sessions
+            .contains(&sibling_session.session_id)
+    );
     assert_eq!(response.logout_notifications.len(), 1);
     assert_eq!(response.logout_notifications[0].client_id, "reports");
     assert_eq!(
