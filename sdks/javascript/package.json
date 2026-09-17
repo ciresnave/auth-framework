@@ -8,7 +8,8 @@
   "files": [
     "dist/**/*",
     "README.md",
-    "LICENSE"
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "scripts": {
     "build": "rollup -c",
@@ -35,7 +36,7 @@
     "javascript"
   ],
   "author": "AuthFramework Team",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/cires/AuthFramework.git",
