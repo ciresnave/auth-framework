@@ -5,6 +5,14 @@ All notable changes to the AuthFramework project will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-09-17
+
+### Security
+
+- Fixed GHSA-cc4x-p872-64jg: `MfaManager::complete_cross_method_step` could mark a
+  step-up MFA method as completed without a valid code. All users of 0.4.0-0.4.2
+  should upgrade.
+
 ## [0.4.2] - 2025-08-24
 
 ### 🛠️ Fixed

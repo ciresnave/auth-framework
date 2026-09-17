@@ -324,7 +324,8 @@ impl MfaManager {
             }
         };
 
-        let success = verification_result.is_ok();
+        // `verify_code` returns Ok(false) for a wrong code, so `is_ok()` is NOT success.
+        let success = matches!(verification_result, Ok(true));
 
         if success {
             // Mark method as completed
@@ -364,10 +365,10 @@ impl MfaManager {
             error: if success {
                 None
             } else {
-                Some(format!(
-                    "Verification failed: {:?}",
-                    verification_result.unwrap_err()
-                ))
+                Some(match &verification_result {
+                    Ok(_) => "Verification failed: invalid code".to_string(),
+                    Err(e) => format!("Verification failed: {:?}", e),
+                })
             },
         })
     }
@@ -702,4 +703,58 @@ pub struct MethodFallbackResult {
     pub fallback_method: MfaMethod,
     pub challenge: MethodChallenge,
     pub remaining_fallbacks: Vec<MfaMethod>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::MemoryStorage;
+
+    fn make_mfa() -> MfaManager {
+        let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+        MfaManager::new(storage)
+    }
+
+    #[tokio::test]
+    async fn test_cross_method_step_rejects_invalid_code() {
+        let mfa = make_mfa();
+        let _secret = mfa.totp.generate_secret("bypass_user").await.unwrap();
+        let cross = mfa
+            .initiate_step_up_authentication("bypass_user", &[MfaMethod::Totp], RiskLevel::Medium)
+            .await
+            .unwrap();
+        let res = mfa
+            .complete_cross_method_step(&cross.id, MfaMethod::Totp, "garbage")
+            .await
+            .unwrap();
+        assert!(
+            !res.success,
+            "an invalid TOTP code must NOT complete a step-up MFA step (success={})",
+            res.success
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cross_method_step_accepts_valid_code() {
+        // 0.4.x's `generate_secret` emits a non-base32 token that `generate_code` rejects
+        // (a separate, pre-existing TOTP issue), so seed a known-valid base32 secret directly
+        // at the key `verify_code` reads. This keeps the happy path independent of that bug.
+        let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+        let mfa = MfaManager::new(storage.clone());
+        let secret = "JBSWY3DPEHPK3PXP".to_string();
+        storage
+            .store_kv("user:ok_user:totp_secret", secret.as_bytes(), None)
+            .await
+            .unwrap();
+        let cross = mfa
+            .initiate_step_up_authentication("ok_user", &[MfaMethod::Totp], RiskLevel::Medium)
+            .await
+            .unwrap();
+        let code = mfa.totp.generate_code(&secret).await.unwrap();
+        let res = mfa
+            .complete_cross_method_step(&cross.id, MfaMethod::Totp, &code)
+            .await
+            .unwrap();
+        assert!(res.success, "a valid TOTP code must complete the step (error={:?})", res.error);
+    }
 }
