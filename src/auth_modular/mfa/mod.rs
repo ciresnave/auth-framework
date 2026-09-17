@@ -429,7 +429,8 @@ impl MfaManager {
             }
         };
 
-        let success = verification_result.is_ok();
+        // `verify_code` returns Ok(false) for a wrong code, so `is_ok()` is NOT success.
+        let success = matches!(verification_result, Ok(true));
 
         if success {
             // Mark method as completed
@@ -469,10 +470,10 @@ impl MfaManager {
             error: if success {
                 None
             } else {
-                Some(format!(
-                    "Verification failed: {:?}",
-                    verification_result.unwrap_err()
-                ))
+                Some(match &verification_result {
+                    Ok(_) => "Verification failed: invalid code".to_string(),
+                    Err(e) => format!("Verification failed: {:?}", e),
+                })
             },
         })
     }
@@ -1110,6 +1111,43 @@ mod tests {
     }
 
     // ── step-up authentication ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_cross_method_step_accepts_valid_code() {
+        let mfa = make_mfa();
+        let secret = mfa.totp.generate_secret("ok_user").await.unwrap();
+        let cross = mfa
+            .initiate_step_up_authentication("ok_user", &[MfaMethod::Totp], RiskLevel::Medium)
+            .await
+            .unwrap();
+        let code = mfa.totp.generate_code(&secret).await.unwrap();
+        let res = mfa
+            .complete_cross_method_step(&cross.id, MfaMethod::Totp, &code)
+            .await
+            .unwrap();
+        assert!(res.success, "a valid TOTP code must complete the step (error={:?})", res.error);
+    }
+
+    #[tokio::test]
+    async fn test_cross_method_step_rejects_invalid_code() {
+        let mfa = make_mfa();
+        let _secret = mfa.totp.generate_secret("bypass_user").await.unwrap();
+        let cross = mfa
+            .initiate_step_up_authentication("bypass_user", &[MfaMethod::Totp], RiskLevel::Medium)
+            .await
+            .unwrap();
+        // Malformed on purpose: TOTP verify_code returns Ok(false) for any non-6-char code,
+        // so this is deterministic and cannot collide with a real TOTP value.
+        let res = mfa
+            .complete_cross_method_step(&cross.id, MfaMethod::Totp, "garbage")
+            .await
+            .unwrap();
+        assert!(
+            !res.success,
+            "an invalid TOTP code must NOT complete a step-up MFA step (success={})",
+            res.success
+        );
+    }
 
     #[tokio::test]
     async fn test_initiate_step_up_authentication() {
