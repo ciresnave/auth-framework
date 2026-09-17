@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.5.0-rc24"
+  version       = "0.5.0-rc25"
 
 [[bin]]
   name              = "auth-framework"

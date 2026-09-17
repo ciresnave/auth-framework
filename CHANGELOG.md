@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc25] - 2026-09-17
+
+### Security
+
+- Fixed GHSA-cc4x-p872-64jg: `MfaManager::complete_cross_method_step` could mark a
+  step-up MFA method as completed without a valid code. All users of 0.5.0-rc1 through
+  0.5.0-rc19 should upgrade.
+
 ### Breaking
 
 - Renamed the two pairs of password functions so each name states its algorithm. They previously shared names and identical signatures, so importing the wrong one compiled cleanly:
