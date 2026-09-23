@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc30] - 2026-09-23
+
+### Security
+
+Continuing item 4 (23 open RUSTSEC findings; RUSTSEC-2026-0141/lettre is a
+separate PR). 7 fixed here, all reachable under the crate's common/default
+feature combinations (Test Suite's own feature set: enhanced-rbac,
+postgres-storage, mysql-storage, redis-storage, openid-connect,
+axum-integration) — verified with `cargo tree -i` before and after.
+
+- `astral-tokio-tar` 0.6.0 → 0.6.2 (RUSTSEC-2026-0112, -0113, -0145).
+- `bcrypt` 0.19.0 → 0.19.2 (RUSTSEC-2026-0199, panic on non-ASCII hash input).
+- `crossbeam-epoch` 0.9.18 → 0.9.20 (RUSTSEC-2026-0204, invalid pointer
+  dereference in a `Debug`/`Pointer` impl).
+- `postgres-protocol` 0.6.11 → 0.6.12 (RUSTSEC-2026-0179 unbounded SCRAM
+  iteration count DoS, RUSTSEC-2026-0180 panic decoding malformed `hstore`).
+- `tokio-postgres` 0.7.17 → 0.7.18 (RUSTSEC-2026-0178, panic on a `DataRow`
+  with fewer fields than columns).
+- `quinn-proto` 0.11.14 → 0.11.15 (RUSTSEC-2026-0185, remote memory
+  exhaustion from unbounded out-of-order stream reassembly).
+- `cryptoki` 0.12.0 → 0.12.1 (RUSTSEC-2026-0286, out-of-bounds read decoding
+  `CKA_ALLOWED_MECHANISMS`).
+- `rustls` 0.23.37 → 0.23.45 and `rustls-webpki` 0.103.11 → 0.103.15
+  (RUSTSEC-2026-0285 TLS 1.3 handshake messages accepted across encryption
+  boundaries; RUSTSEC-2026-0098/-0099/-0104 name-constraint and CRL-parsing
+  issues on the `rustls-webpki` side reachable via this crate's default
+  `reqwest`/`sqlx` TLS stack).
+- `quick-xml` 0.39.2 → 0.41.0 (RUSTSEC-2026-0194 quadratic-time duplicate
+  attribute check, RUSTSEC-2026-0195 unbounded namespace-declaration
+  allocation) — a real breaking API change, not just a lockfile bump:
+  `BytesText::xml_content()` now takes an `XmlVersion` argument. This crate
+  never tracks a parsed document's declared XML version at the four call
+  sites (`methods/saml/xml_signature.rs`), so uses `XmlVersion::Implicit1_0`
+  per quick-xml's own documented default for "version unknown" — correct
+  for SAML XML in practice.
+
+### Not fixed here — two separate open decisions, not edits
+
+- **`rustls-webpki` 0.101.7`** (needs >=0.103.12): pulled in only via
+  `sms-aws-sns` (the `smskit`/AWS-SNS feature, i.e. the `crypto-sms-test`
+  feature combination only — confirmed unreachable under Test Suite's
+  feature set via `cargo tree -i`) through `aws-smithy-http-client`'s
+  legacy `hyper-rustls 0.24.2` path. **Tested directly: this does NOT clear
+  by bumping `aws-smithy-http-client`, even to 1.4.2 (latest) — the legacy
+  `rustls 0.21.12` dependency is present in that crate's own manifest at
+  every version checked.** A version bump costs a Rust 1.94.1 MSRV floor
+  for every downstream consumer and fixes nothing. Open decision: accept
+  (scoped `deny.toml` entry, same shape as the existing `rsa` acceptance)
+  or drop the `sms-aws-sns` feature.
+- **`h2` 0.3.27** (needs >=0.4.16): a *different*, unrelated source —
+  `actix-http` (via the `actix-integration` feature, pulled in through
+  `hyper 0.14.32`) depends on it directly, nothing to do with AWS SNS. This
+  path is not obscure: `Feature Matrix (api-integrations)` in CI enables
+  `actix-integration` and is a green job today. `h2 0.3.27` is the latest
+  released `0.3.x` version — there is no in-branch security backport. The
+  only fix is `actix-web`'s own ecosystem migrating off `hyper 0.14` to
+  `hyper 1.x`, which this crate does not control. Open decision: accept
+  with a re-check trigger, or drop `actix-integration`.
+
 ## [0.5.0-rc29] - 2026-09-23
 
 ### Security

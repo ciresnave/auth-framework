@@ -6,7 +6,7 @@
 
 use crate::errors::{AuthError, Result};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use quick_xml::{Reader, Writer, events::Event};
+use quick_xml::{Reader, Writer, XmlVersion, events::Event};
 use ring::signature;
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -86,7 +86,10 @@ impl XmlCanonicalizer {
                         .map_err(|e| AuthError::validation(&format!("XML write error: {}", e)))?;
                 }
                 Ok(Event::Text(ref e)) => {
-                    let text = e.xml_content().map_err(|e| {
+                    // No XML declaration is tracked here; quick-xml's own docs say to
+                    // assume 1.0 when the version is unknown, which matches SAML XML
+                    // in practice.
+                    let text = e.xml_content(XmlVersion::Implicit1_0).map_err(|e| {
                         AuthError::validation(&format!("XML text decode error: {}", e))
                     })?;
                     if !text.trim().is_empty() {
@@ -310,7 +313,10 @@ impl SamlSignatureValidator {
                     }
                 }
                 Ok(Event::Text(ref e)) if inside_signed_info => {
-                    let text = e.xml_content().map_err(|e| {
+                    // No XML declaration is tracked here; quick-xml's own docs say to
+                    // assume 1.0 when the version is unknown, which matches SAML XML
+                    // in practice.
+                    let text = e.xml_content(XmlVersion::Implicit1_0).map_err(|e| {
                         AuthError::validation(&format!("XML text decode error: {}", e))
                     })?;
                     signed_info.push_str(&text);
@@ -368,7 +374,10 @@ impl SamlSignatureValidator {
                     inside_signature_value = true;
                 }
                 Ok(Event::Text(ref e)) if inside_signature_value => {
-                    let text = e.xml_content().map_err(|e| {
+                    // No XML declaration is tracked here; quick-xml's own docs say to
+                    // assume 1.0 when the version is unknown, which matches SAML XML
+                    // in practice.
+                    let text = e.xml_content(XmlVersion::Implicit1_0).map_err(|e| {
                         AuthError::validation(&format!("XML text decode error: {}", e))
                     })?;
                     signature_value.push_str(&text);
@@ -409,7 +418,10 @@ impl SamlSignatureValidator {
                     inside_certificate = true;
                 }
                 Ok(Event::Text(ref e)) if inside_certificate => {
-                    let text = e.xml_content().map_err(|e| {
+                    // No XML declaration is tracked here; quick-xml's own docs say to
+                    // assume 1.0 when the version is unknown, which matches SAML XML
+                    // in practice.
+                    let text = e.xml_content(XmlVersion::Implicit1_0).map_err(|e| {
                         AuthError::validation(&format!("XML text decode error: {}", e))
                     })?;
                     certificate.push_str(&text);
