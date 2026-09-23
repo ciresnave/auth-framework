@@ -322,9 +322,8 @@ impl ZanzibarStore {
             // Direct subjects
             let tuples = self.read_tuples(object, Some(relation)).await;
             for t in &tuples {
-                if t.subject.contains('#') {
+                if let Some((ref_obj, ref_rel)) = t.subject.split_once('#') {
                     // Userset: expand the referenced object's relation
-                    let (ref_obj, ref_rel) = t.subject.split_once('#').unwrap();
                     self.expand_internal(ref_obj, ref_rel, depth + 1, result, visited)
                         .await?;
                 } else if !result.contains(&t.subject) {
