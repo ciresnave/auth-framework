@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.5.0-rc33"
+  version       = "0.5.0-rc34"
 
 [[bin]]
   name              = "auth-framework"
@@ -117,7 +117,7 @@
   thiserror = "2.0.17"
 
   # Async trait support
-  async-trait = "0.1.89"
+  async-trait = "0.1.92"
 
   # Cryptography
   rand = { version = "0.10.0", features = ["std_rng"] }
