@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc26] - 2026-09-22
+
+### Fixed
+
+- CI: `Feature Matrix (crypto-sms-test)` referenced a `testing` cargo feature that
+  does not exist in `Cargo.toml`; dropped it from the feature list.
+- CI: `MSRV Verification` pinned the toolchain to `1.85.0` while `rust-version`
+  has been `1.88` since this release; repinned to `1.88.0`.
+- CI: `Notify Team` failed on every run because `secrets.SLACK_WEBHOOK` was never
+  configured, and separately passed an unsupported `webhook_url` input to
+  `action-slack@v3` instead of the `SLACK_WEBHOOK_URL` env var it actually reads.
+  The step now skips cleanly when the secret is absent and uses the correct env
+  var so it will work once/if the secret is added.
+
 ## [0.5.0-rc25] - 2026-09-17
 
 ### Security
