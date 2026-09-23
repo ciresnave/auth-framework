@@ -152,13 +152,13 @@ impl ZanzibarStore {
         // Validate namespace/relation
         if let Some((ns, _)) = tuple.parse_object() {
             let namespaces = self.namespaces.read().await;
-            if let Some(ns_config) = namespaces.get(ns) {
-                if !ns_config.relations.contains_key(&tuple.relation) {
-                    return Err(AuthError::validation(&format!(
-                        "Relation '{}' not defined in namespace '{}'",
-                        tuple.relation, ns
-                    )));
-                }
+            if let Some(ns_config) = namespaces.get(ns)
+                && !ns_config.relations.contains_key(&tuple.relation)
+            {
+                return Err(AuthError::validation(format!(
+                    "Relation '{}' not defined in namespace '{}'",
+                    tuple.relation, ns
+                )));
             }
         }
 
@@ -253,35 +253,35 @@ impl ZanzibarStore {
             // 2. Union rewrites
             if let Some((ns, _)) = object.split_once(':') {
                 let namespaces = self.namespaces.read().await;
-                if let Some(ns_config) = namespaces.get(ns) {
-                    if let Some(rel_def) = ns_config.relations.get(relation) {
-                        // Check union relations
-                        for union_rel in &rel_def.union {
+                if let Some(ns_config) = namespaces.get(ns)
+                    && let Some(rel_def) = ns_config.relations.get(relation)
+                {
+                    // Check union relations
+                    for union_rel in &rel_def.union {
+                        if self
+                            .check_internal(object, union_rel, subject, depth + 1, visited)
+                            .await?
+                        {
+                            return Ok(true);
+                        }
+                    }
+
+                    // 3. Tuple-to-userset rewrites
+                    for ttu in &rel_def.tuple_to_userset {
+                        let parent_tuples =
+                            self.read_tuples(object, Some(&ttu.tupleset_relation)).await;
+                        for pt in &parent_tuples {
                             if self
-                                .check_internal(object, union_rel, subject, depth + 1, visited)
+                                .check_internal(
+                                    &pt.subject,
+                                    &ttu.computed_userset_relation,
+                                    subject,
+                                    depth + 1,
+                                    visited,
+                                )
                                 .await?
                             {
                                 return Ok(true);
-                            }
-                        }
-
-                        // 3. Tuple-to-userset rewrites
-                        for ttu in &rel_def.tuple_to_userset {
-                            let parent_tuples =
-                                self.read_tuples(object, Some(&ttu.tupleset_relation)).await;
-                            for pt in &parent_tuples {
-                                if self
-                                    .check_internal(
-                                        &pt.subject,
-                                        &ttu.computed_userset_relation,
-                                        subject,
-                                        depth + 1,
-                                        visited,
-                                    )
-                                    .await?
-                                {
-                                    return Ok(true);
-                                }
                             }
                         }
                     }
@@ -335,25 +335,25 @@ impl ZanzibarStore {
             // Union rewrites
             if let Some((ns, _)) = object.split_once(':') {
                 let namespaces = self.namespaces.read().await;
-                if let Some(ns_config) = namespaces.get(ns) {
-                    if let Some(rel_def) = ns_config.relations.get(relation) {
-                        for union_rel in &rel_def.union {
-                            self.expand_internal(object, union_rel, depth + 1, result, visited)
-                                .await?;
-                        }
-                        for ttu in &rel_def.tuple_to_userset {
-                            let parent_tuples =
-                                self.read_tuples(object, Some(&ttu.tupleset_relation)).await;
-                            for pt in &parent_tuples {
-                                self.expand_internal(
-                                    &pt.subject,
-                                    &ttu.computed_userset_relation,
-                                    depth + 1,
-                                    result,
-                                    visited,
-                                )
-                                .await?;
-                            }
+                if let Some(ns_config) = namespaces.get(ns)
+                    && let Some(rel_def) = ns_config.relations.get(relation)
+                {
+                    for union_rel in &rel_def.union {
+                        self.expand_internal(object, union_rel, depth + 1, result, visited)
+                            .await?;
+                    }
+                    for ttu in &rel_def.tuple_to_userset {
+                        let parent_tuples =
+                            self.read_tuples(object, Some(&ttu.tupleset_relation)).await;
+                        for pt in &parent_tuples {
+                            self.expand_internal(
+                                &pt.subject,
+                                &ttu.computed_userset_relation,
+                                depth + 1,
+                                result,
+                                visited,
+                            )
+                            .await?;
                         }
                     }
                 }

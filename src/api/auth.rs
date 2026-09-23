@@ -293,22 +293,20 @@ pub async fn login(
     let lockout_key = format!("login_failures:{}", req.username);
     const MAX_FAILED_ATTEMPTS: u64 = 5;
     const LOCKOUT_WINDOW_SECS: u64 = 900; // 15 minutes
-    if let Ok(Some(count_bytes)) = state.auth_framework.storage().get_kv(&lockout_key).await {
-        if let Ok(count_str) = std::str::from_utf8(&count_bytes) {
-            if let Ok(count) = count_str.parse::<u64>() {
-                if count >= MAX_FAILED_ATTEMPTS {
-                    tracing::warn!(
-                        username = %req.username,
-                        failed_attempts = count,
-                        "Login rejected — account temporarily locked due to repeated failures"
-                    );
-                    return ApiResponse::error_typed(
-                        "ACCOUNT_LOCKED",
-                        "Too many failed login attempts. Please try again later.",
-                    );
-                }
-            }
-        }
+    if let Ok(Some(count_bytes)) = state.auth_framework.storage().get_kv(&lockout_key).await
+        && let Ok(count_str) = std::str::from_utf8(&count_bytes)
+        && let Ok(count) = count_str.parse::<u64>()
+        && count >= MAX_FAILED_ATTEMPTS
+    {
+        tracing::warn!(
+            username = %req.username,
+            failed_attempts = count,
+            "Login rejected — account temporarily locked due to repeated failures"
+        );
+        return ApiResponse::error_typed(
+            "ACCOUNT_LOCKED",
+            "Too many failed login attempts. Please try again later.",
+        );
     }
 
     // Create credential for authentication
@@ -864,15 +862,14 @@ pub async fn register(
         _ => vec![],
     };
     ids.push(user_id.clone());
-    if let Ok(idx_json) = serde_json::to_vec(&ids) {
-        if let Err(e) = state
+    if let Ok(idx_json) = serde_json::to_vec(&ids)
+        && let Err(e) = state
             .auth_framework
             .storage()
             .store_kv(index_key, &idx_json, None)
             .await
-        {
-            tracing::warn!("Failed to update user index after registration: {}", e);
-        }
+    {
+        tracing::warn!("Failed to update user index after registration: {}", e);
     }
 
     tracing::info!("New user registered: {} ({})", req.username, user_id);

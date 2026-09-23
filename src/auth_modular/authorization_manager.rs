@@ -59,10 +59,10 @@ impl AuthorizationManager {
         if !role_keys.is_empty() {
             let mut c = self.checker.write().await;
             for key in &role_keys {
-                if let Some(bytes) = self.storage.get_kv(key).await? {
-                    if let Ok(role) = serde_json::from_slice::<Role>(&bytes) {
-                        c.add_role(role);
-                    }
+                if let Some(bytes) = self.storage.get_kv(key).await?
+                    && let Ok(role) = serde_json::from_slice::<Role>(&bytes)
+                {
+                    c.add_role(role);
                 }
             }
         }
@@ -73,17 +73,17 @@ impl AuthorizationManager {
             let mut c = self.checker.write().await;
             for key in &assignment_keys {
                 let user_id = key.strip_prefix("rbac:user_roles:").unwrap_or(key);
-                if let Some(bytes) = self.storage.get_kv(key).await? {
-                    if let Ok(roles) = serde_json::from_slice::<Vec<String>>(&bytes) {
-                        for role_name in roles {
-                            if let Err(e) = c.assign_role_to_user(user_id, &role_name) {
-                                tracing::warn!(
-                                    "Failed to assign role '{}' to user '{}': {}",
-                                    role_name,
-                                    user_id,
-                                    e
-                                );
-                            }
+                if let Some(bytes) = self.storage.get_kv(key).await?
+                    && let Ok(roles) = serde_json::from_slice::<Vec<String>>(&bytes)
+                {
+                    for role_name in roles {
+                        if let Err(e) = c.assign_role_to_user(user_id, &role_name) {
+                            tracing::warn!(
+                                "Failed to assign role '{}' to user '{}': {}",
+                                role_name,
+                                user_id,
+                                e
+                            );
                         }
                     }
                 }

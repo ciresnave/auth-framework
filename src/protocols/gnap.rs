@@ -532,10 +532,10 @@ impl GnapService {
 
         // If proof material is provided and the proof method requires
         // cryptographic verification, verify the signature now.
-        if key.proof != "test" {
-            if let (Some(msg), Some(sig)) = (proof_message, proof_signature) {
-                Self::verify_jwk_signature(&key.jwk, msg, sig)?;
-            }
+        if key.proof != "test"
+            && let (Some(msg), Some(sig)) = (proof_message, proof_signature)
+        {
+            Self::verify_jwk_signature(&key.jwk, msg, sig)?;
         }
 
         Ok(Some(thumbprint))

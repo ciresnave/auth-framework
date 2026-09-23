@@ -289,41 +289,35 @@ impl AuthMethod for AuthMethodEnum {
                     if username.is_empty() || password.is_empty() {
                         return Self::failure("Username or password cannot be empty");
                     }
-                    return Self::failure(
+                    Self::failure(
                         "Password authentication is handled by AuthFramework's built-in storage-backed password flow",
-                    );
+                    )
                 }
-                _ => {
-                    return Self::failure("Password authentication expects Credential::password");
-                }
+                _ => Self::failure("Password authentication expects Credential::password"),
             },
             AuthMethodEnum::Jwt(_) => match credential {
                 Credential::Jwt { token } | Credential::Bearer { token } => {
                     if token.is_empty() {
                         return Self::failure("JWT token cannot be empty");
                     }
-                    return Self::failure(
+                    Self::failure(
                         "JWT authentication must be performed through AuthFramework so the active TokenManager can validate the token signature",
-                    );
+                    )
                 }
-                _ => {
-                    return Self::failure(
-                        "JWT authentication expects Credential::jwt or Credential::bearer",
-                    );
-                }
+                _ => Self::failure(
+                    "JWT authentication expects Credential::jwt or Credential::bearer",
+                ),
             },
             AuthMethodEnum::ApiKey(_) => match credential {
                 Credential::ApiKey { key } => {
                     if key.is_empty() {
                         return Self::failure("API key cannot be empty");
                     }
-                    return Self::failure(
+                    Self::failure(
                         "API key authentication must be performed through AuthFramework so the stored key can be resolved to a user and session token",
-                    );
+                    )
                 }
-                _ => {
-                    return Self::failure("API key authentication expects Credential::api_key");
-                }
+                _ => Self::failure("API key authentication expects Credential::api_key"),
             },
             AuthMethodEnum::OAuth2(_) => match credential {
                 Credential::OAuth {
@@ -332,17 +326,17 @@ impl AuthMethod for AuthMethodEnum {
                     if authorization_code.is_empty() {
                         return Self::failure("OAuth authorization code cannot be empty");
                     }
-                    return Self::failure(
+                    Self::failure(
                         "OAuth 2.0 authorization codes must be exchanged through an OAuth provider or server endpoint before authentication completes",
-                    );
+                    )
                 }
                 Credential::OAuthRefresh { refresh_token } => {
                     if refresh_token.is_empty() {
                         return Self::failure("OAuth refresh token cannot be empty");
                     }
-                    return Self::failure(
+                    Self::failure(
                         "OAuth 2.0 refresh tokens must be exchanged through an OAuth provider or server endpoint before authentication completes",
-                    );
+                    )
                 }
                 Credential::Jwt { token }
                 | Credential::Bearer { token }
@@ -352,15 +346,13 @@ impl AuthMethod for AuthMethodEnum {
                     if token.is_empty() {
                         return Self::failure("OAuth token cannot be empty");
                     }
-                    return Self::failure(
+                    Self::failure(
                         "OAuth 2.0 token authentication must be performed through AuthFramework so token validation and auditing use the active framework state",
-                    );
+                    )
                 }
-                _ => {
-                    return Self::failure(
-                        "OAuth2 authentication expects Credential::oauth_code, Credential::oauth_refresh, Credential::jwt, Credential::bearer, or Credential::openid_connect",
-                    );
-                }
+                _ => Self::failure(
+                    "OAuth2 authentication expects Credential::oauth_code, Credential::oauth_refresh, Credential::jwt, Credential::bearer, or Credential::openid_connect",
+                ),
             },
             #[cfg(feature = "ldap-auth")]
             AuthMethodEnum::Ldap(_) => {
@@ -368,26 +360,18 @@ impl AuthMethod for AuthMethodEnum {
                     "LDAP authentication requires a concrete LDAP integration and cannot use the generic AuthMethodEnum fallback",
                 );
             }
-            AuthMethodEnum::HardwareOtpToken(_) => {
-                return Self::failure(
-                    "Hardware token authentication requires the concrete hardware token flow rather than the generic AuthMethodEnum fallback",
-                );
-            }
-            AuthMethodEnum::ClientCert(_) => {
-                return Self::failure(
-                    "Client certificate authentication requires the concrete client certificate flow rather than the generic AuthMethodEnum fallback",
-                );
-            }
-            AuthMethodEnum::OpenIdConnect(_) => {
-                return Self::failure(
-                    "OpenID Connect authentication should be performed through the OIDC provider or AuthFramework integrations",
-                );
-            }
-            AuthMethodEnum::AdvancedMfa(_) => {
-                return Self::failure(
-                    "Advanced MFA authentication requires the concrete MFA flow rather than the generic AuthMethodEnum fallback",
-                );
-            }
+            AuthMethodEnum::HardwareOtpToken(_) => Self::failure(
+                "Hardware token authentication requires the concrete hardware token flow rather than the generic AuthMethodEnum fallback",
+            ),
+            AuthMethodEnum::ClientCert(_) => Self::failure(
+                "Client certificate authentication requires the concrete client certificate flow rather than the generic AuthMethodEnum fallback",
+            ),
+            AuthMethodEnum::OpenIdConnect(_) => Self::failure(
+                "OpenID Connect authentication should be performed through the OIDC provider or AuthFramework integrations",
+            ),
+            AuthMethodEnum::AdvancedMfa(_) => Self::failure(
+                "Advanced MFA authentication requires the concrete MFA flow rather than the generic AuthMethodEnum fallback",
+            ),
         }
     }
 

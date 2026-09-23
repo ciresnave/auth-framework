@@ -272,6 +272,9 @@ impl IndieAuthMetadata {
 
 // ── IndieAuth Server (authorization + token exchange) ───────────────
 
+/// Access token record: `(me, scope, created_at)`.
+type TokenRecord = (String, Option<String>, u64);
+
 /// Stored authorization code with associated metadata.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -292,7 +295,7 @@ pub struct IndieAuthServer {
     /// Authorization code store: code → StoredAuthCode
     codes: Arc<RwLock<HashMap<String, StoredAuthCode>>>,
     /// Access token store: token → (me, scope, created_at)
-    tokens: Arc<RwLock<HashMap<String, (String, Option<String>, u64)>>>,
+    tokens: Arc<RwLock<HashMap<String, TokenRecord>>>,
     /// Authorization code lifetime (seconds).
     code_lifetime: u64,
     /// Access token lifetime (seconds).

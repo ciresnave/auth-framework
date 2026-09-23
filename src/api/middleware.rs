@@ -28,6 +28,10 @@ fn sanitize_header_for_log(value: &str) -> String {
 /// Uses the client IP address (from `X-Forwarded-For`, then `X-Real-IP`, falling back to
 /// `"unknown"`) as the rate-limiting key.  Returns **429 Too Many Requests** when the limit
 /// is exceeded and adds standard `X-RateLimit-*` response headers on every response.
+// Boxing the Err variant would require `Box<Response>` to implement Axum's
+// `IntoResponse`, which it does not by default; both arms are already the
+// same `Response` type this middleware pattern requires.
+#[allow(clippy::result_large_err)]
 pub async fn rate_limit_middleware_with_state(
     state: ApiState,
     request: Request,
@@ -222,6 +226,8 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
 }
 
 /// Request timeout middleware
+// See the allow rationale on `rate_limit_middleware_with_state` above.
+#[allow(clippy::result_large_err)]
 pub async fn timeout_middleware(request: Request, next: Next) -> Result<Response, Response> {
     // Set a 30-second timeout for all requests
     match tokio::time::timeout(Duration::from_secs(30), next.run(request)).await {
@@ -264,8 +270,7 @@ pub fn check_permission(auth_token: &crate::tokens::AuthToken, required_permissi
 /// }
 /// ```
 pub fn check_role(auth_token: &crate::tokens::AuthToken, required_role: &str) -> bool {
-    auth_token.roles.contains(&required_role.to_string())
-        || auth_token.roles.contains(&"admin".to_string()) // Admin has all roles
+    auth_token.roles.contains(required_role) || auth_token.roles.contains("admin") // Admin has all roles
 }
 
 #[cfg(test)]

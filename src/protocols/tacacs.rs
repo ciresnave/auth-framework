@@ -270,15 +270,16 @@ impl AuthorRequestBody {
         let arg_count = self.args.len() as u8;
 
         // Fixed header: 8 bytes + arg_count * 1 (arg lengths) + variable fields
-        let mut buf = Vec::new();
-        buf.push(self.authen_method);
-        buf.push(0x01); // priv_lvl
-        buf.push(self.authen_type as u8);
-        buf.push(self.authen_service as u8);
-        buf.push(user_bytes.len() as u8);
-        buf.push(port_bytes.len() as u8);
-        buf.push(rem_bytes.len() as u8);
-        buf.push(arg_count);
+        let mut buf = vec![
+            self.authen_method,
+            0x01, // priv_lvl
+            self.authen_type as u8,
+            self.authen_service as u8,
+            user_bytes.len() as u8,
+            port_bytes.len() as u8,
+            rem_bytes.len() as u8,
+            arg_count,
+        ];
 
         // Argument lengths
         for arg in &self.args {
@@ -406,16 +407,17 @@ impl AcctRequestBody {
         let rem_bytes = self.remote_address.as_bytes();
         let arg_count = self.args.len() as u8;
 
-        let mut buf = Vec::new();
-        buf.push(self.flags.0);
-        buf.push(self.authen_method);
-        buf.push(0x01); // priv_lvl
-        buf.push(self.authen_type as u8);
-        buf.push(self.authen_service as u8);
-        buf.push(user_bytes.len() as u8);
-        buf.push(port_bytes.len() as u8);
-        buf.push(rem_bytes.len() as u8);
-        buf.push(arg_count);
+        let mut buf = vec![
+            self.flags.0,
+            self.authen_method,
+            0x01, // priv_lvl
+            self.authen_type as u8,
+            self.authen_service as u8,
+            user_bytes.len() as u8,
+            port_bytes.len() as u8,
+            rem_bytes.len() as u8,
+            arg_count,
+        ];
 
         // Argument lengths
         for arg in &self.args {

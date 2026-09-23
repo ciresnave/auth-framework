@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc27] - 2026-09-23
+
+### Fixed
+
+- Clippy (stable): reduced `cargo clippy --all-targets -- -D warnings` lib-level
+  errors from 248 to 17 by fixing the mechanical majority — `cargo clippy --fix`
+  applied 200 of them automatically; the rest (empty-line-after-doc-comment,
+  redundant-pattern-matching, unnecessary-sort-by, field-reassign-with-default,
+  vec-init-then-push, doc-overindented-list-items, a missing `Default` impl, a
+  builder-style `new` returning a non-`Self` type, a remaining collapsible-if,
+  match-like-matches-macro, six `type_complexity` sites given named type
+  aliases, and five Axum-middleware `result_large_err` sites) were fixed or,
+  where the lint doesn't cleanly apply, given a scoped and commented
+  `#[allow]` (never for `unwrap_used`).
+- `src/protocols/kerberos.rs`: `aes_cbc_decrypt` used `chunks_exact(...).try_into().unwrap()`
+  to rebuild a fixed-size array from a slice already known to be exactly that
+  size; switched to `slice::as_chunks`, which removes the `unwrap()` entirely
+  instead of just reformatting it.
+
+The remaining 17 `clippy::unwrap_used` sites in non-test library code are
+deliberately left for individual review (each needs real error handling, not
+`.expect()` or `#[allow]`) and are not part of this change.
+
 ## [0.5.0-rc26] - 2026-09-22
 
 ### Fixed

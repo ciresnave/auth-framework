@@ -14,6 +14,10 @@ use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 /// Enhanced RBAC middleware using role-system v1.0
+// Boxing the Err variant would require `Box<Response>` to implement Axum's
+// `IntoResponse`, which it does not by default; both arms are already the
+// same `Response` type this middleware pattern requires.
+#[allow(clippy::result_large_err)]
 pub async fn rbac_middleware(
     State(state): State<ApiState>,
     request: Request,
@@ -64,6 +68,8 @@ pub async fn rbac_middleware(
 }
 
 /// Conditional permission middleware for time/location-based access
+// See the allow rationale on `rbac_middleware` above.
+#[allow(clippy::result_large_err)]
 pub async fn conditional_permission_middleware(
     State(state): State<ApiState>,
     request: Request,
@@ -107,6 +113,8 @@ pub async fn conditional_permission_middleware(
 }
 
 /// Role elevation middleware for administrative actions
+// See the allow rationale on `rbac_middleware` above.
+#[allow(clippy::result_large_err)]
 pub async fn role_elevation_middleware(
     State(state): State<ApiState>,
     request: Request,
@@ -320,7 +328,7 @@ pub fn require_permission(
 /// Basic permission check using auth token (fallback)
 fn check_token_permission(auth_token: &AuthToken, action: &str, resource: &str) -> bool {
     // Check for admin role (has all permissions)
-    if auth_token.roles.contains(&"admin".to_string()) {
+    if auth_token.roles.contains("admin") {
         return true;
     }
 

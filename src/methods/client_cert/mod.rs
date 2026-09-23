@@ -542,10 +542,10 @@ impl CrlStore {
     /// Check if a certificate (by issuer DN and serial hex) is revoked.
     pub fn check(&self, issuer_dn: &str, serial_hex: &str) -> RevocationStatus {
         let store = self.revoked.read().unwrap();
-        if let Some(serials) = store.get(issuer_dn) {
-            if serials.contains(&serial_hex.to_lowercase()) {
-                return RevocationStatus::Revoked { reason: None };
-            }
+        if let Some(serials) = store.get(issuer_dn)
+            && serials.contains(&serial_hex.to_lowercase())
+        {
+            return RevocationStatus::Revoked { reason: None };
         }
         RevocationStatus::Good
     }

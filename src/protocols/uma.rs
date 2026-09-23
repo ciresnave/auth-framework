@@ -154,7 +154,7 @@ impl UmaService {
         // Verify requested scopes are valid for this resource
         for scope in &requested_scopes {
             if !resource.scopes.contains(scope) {
-                return Err(AuthError::validation(&format!(
+                return Err(AuthError::validation(format!(
                     "Scope '{}' is not valid for resource '{}'",
                     scope, resource_id
                 )));
@@ -222,7 +222,7 @@ impl UmaService {
         // Evaluate claims against resource policies
         if !resource.required_claims.is_empty() {
             let provided_claims = claims.as_ref().ok_or_else(|| {
-                AuthError::validation(&format!(
+                AuthError::validation(format!(
                     "UMA need_info: Redirect to {} with ticket {}",
                     self.config.claims_interaction_endpoint, ticket
                 ))
@@ -232,13 +232,13 @@ impl UmaService {
                 match provided_claims.get(required_claim) {
                     Some(actual_value) if actual_value == expected_value => {}
                     Some(_) => {
-                        return Err(AuthError::validation(&format!(
+                        return Err(AuthError::validation(format!(
                             "Claim '{}' does not match required policy",
                             required_claim
                         )));
                     }
                     None => {
-                        return Err(AuthError::validation(&format!(
+                        return Err(AuthError::validation(format!(
                             "UMA need_info: Missing required claim '{}'",
                             required_claim
                         )));
@@ -567,7 +567,7 @@ impl RptStore {
         self.tokens
             .write()
             .await
-            .retain(|_, r| r.exp.map_or(true, |exp| now < exp));
+            .retain(|_, r| r.exp.is_none_or(|exp| now < exp));
     }
 
     /// Number of stored RPTs.

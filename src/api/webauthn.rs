@@ -807,7 +807,7 @@ pub async fn list_webauthn_credentials(
     };
 
     // Authorize: user can only list their own credentials (admins can list any)
-    if auth_token.user_id != username && !auth_token.roles.contains(&"admin".to_string()) {
+    if auth_token.user_id != username && !auth_token.roles.contains("admin") {
         return Json(ApiResponse::error_typed(
             "FORBIDDEN",
             "You can only view your own credentials",
@@ -870,7 +870,7 @@ pub async fn delete_webauthn_credential(
     };
 
     // Authorize: user can only delete their own credentials (admins can delete any)
-    if auth_token.user_id != username && !auth_token.roles.contains(&"admin".to_string()) {
+    if auth_token.user_id != username && !auth_token.roles.contains("admin") {
         return Json(ApiResponse::error(
             "FORBIDDEN",
             "You can only delete your own credentials",

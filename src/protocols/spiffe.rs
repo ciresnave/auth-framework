@@ -67,7 +67,7 @@ impl SpiffeId {
 
         for ch in trust_domain.chars() {
             if !ch.is_ascii_alphanumeric() && ch != '-' && ch != '.' && ch != '_' {
-                return Err(AuthError::validation(&format!(
+                return Err(AuthError::validation(format!(
                     "SPIFFE ID trust domain contains invalid character: '{ch}'"
                 )));
             }
@@ -396,7 +396,7 @@ impl SpiffeTrustManager {
 
         // Verify the trust domain has a registered bundle
         if !self.has_trust_bundle(&result.spiffe_id.trust_domain).await {
-            return Err(AuthError::validation(&format!(
+            return Err(AuthError::validation(format!(
                 "No trust bundle for domain '{}'",
                 result.spiffe_id.trust_domain
             )));

@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 /// return from any admin handler.
 #[allow(clippy::result_large_err)]
 fn verify_admin_role<T: Serialize>(auth_token: &AuthToken) -> Result<(), ApiResponse<T>> {
-    if auth_token.roles.contains(&"admin".to_string()) {
+    if auth_token.roles.contains("admin") {
         Ok(())
     } else {
         Err(ApiResponse::<T>::forbidden_typed())
@@ -313,29 +313,22 @@ pub async fn create_user(
                         Ok(user_id) => {
                             if !(req.roles.is_empty()
                                 || req.roles.len() == 1 && req.roles[0] == "user")
-                            {
-                                if let Err(e) = state
+                                && let Err(e) = state
                                     .auth_framework
                                     .update_user_roles(&user_id, &req.roles)
                                     .await
-                                {
-                                    tracing::warn!(
-                                        "Failed to set roles for new user {}: {}",
-                                        user_id,
-                                        e
-                                    );
-                                }
+                            {
+                                tracing::warn!(
+                                    "Failed to set roles for new user {}: {}",
+                                    user_id,
+                                    e
+                                );
                             }
-                            if !req.active {
-                                if let Err(e) =
+                            if !req.active
+                                && let Err(e) =
                                     state.auth_framework.set_user_active(&user_id, false).await
-                                {
-                                    tracing::warn!(
-                                        "Failed to deactivate new user {}: {}",
-                                        user_id,
-                                        e
-                                    );
-                                }
+                            {
+                                tracing::warn!("Failed to deactivate new user {}: {}", user_id, e);
                             }
                             let new_user = UserListItem {
                                 id: user_id.clone(),
@@ -477,7 +470,7 @@ pub async fn activate_user(
             match validate_api_token(&state.auth_framework, &token).await {
                 Ok(auth_token) => {
                     // Check admin permissions
-                    if !auth_token.roles.contains(&"admin".to_string()) {
+                    if !auth_token.roles.contains("admin") {
                         return ApiResponse::forbidden();
                     }
 
@@ -519,7 +512,7 @@ pub async fn get_system_stats(
             match validate_api_token(&state.auth_framework, &token).await {
                 Ok(auth_token) => {
                     // Check admin permissions
-                    if !auth_token.roles.contains(&"admin".to_string()) {
+                    if !auth_token.roles.contains("admin") {
                         return ApiResponse::forbidden_typed();
                     }
 
@@ -641,7 +634,7 @@ pub async fn get_audit_logs(
             match validate_api_token(&state.auth_framework, &token).await {
                 Ok(auth_token) => {
                     // Check admin permissions
-                    if !auth_token.roles.contains(&"admin".to_string()) {
+                    if !auth_token.roles.contains("admin") {
                         return ApiResponse::forbidden_typed();
                     }
 
@@ -832,7 +825,7 @@ pub async fn get_audit_log_stats(
     match extract_bearer_token(&headers) {
         Some(token) => match validate_api_token(&state.auth_framework, &token).await {
             Ok(auth_token) => {
-                if !auth_token.roles.contains(&"admin".to_string()) {
+                if !auth_token.roles.contains("admin") {
                     return ApiResponse::forbidden_typed();
                 }
 
@@ -975,7 +968,7 @@ pub async fn get_config(
     match extract_bearer_token(&headers) {
         Some(token) => match validate_api_token(&state.auth_framework, &token).await {
             Ok(auth_token) => {
-                if !auth_token.roles.contains(&"admin".to_string()) {
+                if !auth_token.roles.contains("admin") {
                     return ApiResponse::forbidden_typed();
                 }
                 let cfg = state.auth_framework.runtime_config().await;
@@ -1007,7 +1000,7 @@ pub async fn update_config(
     match extract_bearer_token(&headers) {
         Some(token) => match validate_api_token(&state.auth_framework, &token).await {
             Ok(auth_token) => {
-                if !auth_token.roles.contains(&"admin".to_string()) {
+                if !auth_token.roles.contains("admin") {
                     return ApiResponse::forbidden_typed();
                 }
 

@@ -319,7 +319,7 @@ impl AcmeClient {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()
-            .map_err(|e| AuthError::internal(&format!("HTTP client init failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("HTTP client init failed: {e}")))?;
 
         // Generate ECDSA P-256 key pair for account operations
         let rng = SystemRandom::new();
@@ -334,12 +334,12 @@ impl AcmeClient {
             .get(&config.directory_url)
             .send()
             .await
-            .map_err(|e| AuthError::internal(&format!("ACME directory fetch failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("ACME directory fetch failed: {e}")))?;
 
         let directory: AcmeDirectory = resp
             .json()
             .await
-            .map_err(|e| AuthError::internal(&format!("Invalid ACME directory response: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Invalid ACME directory response: {e}")))?;
 
         Ok(Self {
             config,
@@ -379,7 +379,7 @@ impl AcmeClient {
             .head(&self.directory.new_nonce)
             .send()
             .await
-            .map_err(|e| AuthError::internal(&format!("Nonce fetch failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Nonce fetch failed: {e}")))?;
 
         let nonce = resp
             .headers()
@@ -418,7 +418,7 @@ impl AcmeClient {
             .json(&jws)
             .send()
             .await
-            .map_err(|e| AuthError::internal(&format!("ACME request failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("ACME request failed: {e}")))?;
 
         // Capture the new nonce from the response
         if let Some(new_nonce) = resp
@@ -458,7 +458,7 @@ impl AcmeClient {
         let account: AcmeAccount = resp
             .json()
             .await
-            .map_err(|e| AuthError::internal(&format!("Invalid account response: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Invalid account response: {e}")))?;
 
         Ok(account)
     }
@@ -490,7 +490,7 @@ impl AcmeClient {
         let order: AcmeOrder = resp
             .json()
             .await
-            .map_err(|e| AuthError::internal(&format!("Invalid order response: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Invalid order response: {e}")))?;
 
         Ok(order)
     }
@@ -501,7 +501,7 @@ impl AcmeClient {
         let authz: AcmeAuthorization = resp
             .json()
             .await
-            .map_err(|e| AuthError::internal(&format!("Invalid authorization response: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Invalid authorization response: {e}")))?;
         Ok(authz)
     }
 
@@ -528,7 +528,7 @@ impl AcmeClient {
         let challenge: AcmeChallenge = resp
             .json()
             .await
-            .map_err(|e| AuthError::internal(&format!("Challenge response error: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Challenge response error: {e}")))?;
         Ok(challenge)
     }
 
@@ -546,7 +546,7 @@ impl AcmeClient {
         let order: AcmeOrder = resp
             .json()
             .await
-            .map_err(|e| AuthError::internal(&format!("Finalize response error: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Finalize response error: {e}")))?;
 
         Ok(order)
     }
@@ -557,7 +557,7 @@ impl AcmeClient {
         let pem = resp
             .text()
             .await
-            .map_err(|e| AuthError::internal(&format!("Certificate download error: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Certificate download error: {e}")))?;
         Ok(pem)
     }
 
@@ -592,7 +592,7 @@ impl AcmeClient {
             Ok(())
         } else {
             let body = resp.text().await.unwrap_or_default();
-            Err(AuthError::internal(&format!(
+            Err(AuthError::internal(format!(
                 "Certificate revocation failed (HTTP {status}): {body}"
             )))
         }

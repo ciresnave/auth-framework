@@ -117,7 +117,6 @@ fn is_hmac_algorithm(alg: Algorithm) -> bool {
 ///
 /// [`cleanup_revoked_tokens`] enforces a hard cap of 10 000 entries and time-based eviction
 /// to prevent unbounded memory growth.
-
 impl SecureJwtConfig {
     /// Create a new builder with secure default configurations.
     pub fn builder() -> SecureJwtConfigBuilder {
@@ -126,16 +125,9 @@ impl SecureJwtConfig {
 }
 
 /// A builder for SecureJwtConfig
+#[derive(Default)]
 pub struct SecureJwtConfigBuilder {
     config: SecureJwtConfig,
-}
-
-impl Default for SecureJwtConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: SecureJwtConfig::default(),
-        }
-    }
 }
 
 impl SecureJwtConfigBuilder {
@@ -205,8 +197,11 @@ pub struct SecureJwtValidator {
     /// Use [`set_on_revoke`] to register a closure that persists the revocation to durable
     /// storage (database, KV store, etc.). The callback is invoked **after** the in-memory
     /// insertion succeeds.
-    on_revoke: std::sync::Mutex<Option<Box<dyn Fn(&str) + Send + Sync>>>,
+    on_revoke: std::sync::Mutex<Option<RevokeCallback>>,
 }
+
+/// Callback invoked with a JTI string when a token is revoked.
+type RevokeCallback = Box<dyn Fn(&str) + Send + Sync>;
 
 impl std::fmt::Debug for SecureJwtValidator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -506,13 +501,14 @@ impl SecureJwtValidator {
         }
 
         // Token type restriction.
-        if !self.config.allowed_token_types.is_empty() && !claims.typ.is_empty() {
-            if !self.config.allowed_token_types.contains(&claims.typ) {
-                return Err(AuthError::Unauthorized(format!(
-                    "Token type '{}' is not permitted",
-                    claims.typ
-                )));
-            }
+        if !self.config.allowed_token_types.is_empty()
+            && !claims.typ.is_empty()
+            && !self.config.allowed_token_types.contains(&claims.typ)
+        {
+            return Err(AuthError::Unauthorized(format!(
+                "Token type '{}' is not permitted",
+                claims.typ
+            )));
         }
 
         Ok(claims)
@@ -589,13 +585,14 @@ impl SecureJwtValidator {
             ));
         }
 
-        if !self.config.allowed_token_types.is_empty() && !claims.typ.is_empty() {
-            if !self.config.allowed_token_types.contains(&claims.typ) {
-                return Err(AuthError::Unauthorized(format!(
-                    "Token type '{}' is not permitted",
-                    claims.typ
-                )));
-            }
+        if !self.config.allowed_token_types.is_empty()
+            && !claims.typ.is_empty()
+            && !self.config.allowed_token_types.contains(&claims.typ)
+        {
+            return Err(AuthError::Unauthorized(format!(
+                "Token type '{}' is not permitted",
+                claims.typ
+            )));
         }
 
         Ok(claims)

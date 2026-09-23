@@ -232,10 +232,12 @@ impl ThreatIntelConfig {
     /// let config = ThreatIntelConfig::aggressive();
     /// ```
     pub fn aggressive() -> Self {
-        let mut base = Self::default();
-        base.auto_update_enabled = true;
-        base.update_interval_seconds = 300; // 5 minutes
-        base.download_timeout_seconds = 10;
+        let mut base = Self {
+            auto_update_enabled: true,
+            update_interval_seconds: 300, // 5 minutes
+            download_timeout_seconds: 10,
+            ..Default::default()
+        };
         // Enable all pre-configured feeds
         for feed in base.feeds.values_mut() {
             feed.enabled = true;

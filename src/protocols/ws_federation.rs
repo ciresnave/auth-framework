@@ -25,6 +25,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Parsed assertion fields: `(subject, issuer, audience, not_before, not_on_or_after, claims)`.
+type ParsedAssertion = (
+    String,
+    String,
+    String,
+    u64,
+    u64,
+    HashMap<String, Vec<String>>,
+);
+
 // ─── WS-Federation Constants ─────────────────────────────────────────────────
 
 /// WS-Federation action values.
@@ -402,10 +412,10 @@ fn extract_assertion(rstr: &str) -> Result<String> {
 
     for (open_tag, close_tag) in &assertion_tags {
         let open = format!("<{open_tag}");
-        if let Some(start) = rstr.find(&open) {
-            if let Some(end) = rstr[start..].find(close_tag) {
-                return Ok(rstr[start..start + end + close_tag.len()].to_string());
-            }
+        if let Some(start) = rstr.find(&open)
+            && let Some(end) = rstr[start..].find(close_tag)
+        {
+            return Ok(rstr[start..start + end + close_tag.len()].to_string());
         }
     }
 
@@ -415,16 +425,7 @@ fn extract_assertion(rstr: &str) -> Result<String> {
 }
 
 /// Parse a SAML 2.0 assertion.
-fn parse_saml20_assertion(
-    xml: &str,
-) -> Result<(
-    String,
-    String,
-    String,
-    u64,
-    u64,
-    HashMap<String, Vec<String>>,
-)> {
+fn parse_saml20_assertion(xml: &str) -> Result<ParsedAssertion> {
     let subject = extract_xml_text(xml, "NameID")
         .or_else(|| extract_xml_text(xml, "saml:NameID"))
         .unwrap_or_default();
@@ -460,16 +461,7 @@ fn parse_saml20_assertion(
 }
 
 /// Parse a SAML 1.1 assertion.
-fn parse_saml11_assertion(
-    xml: &str,
-) -> Result<(
-    String,
-    String,
-    String,
-    u64,
-    u64,
-    HashMap<String, Vec<String>>,
-)> {
+fn parse_saml11_assertion(xml: &str) -> Result<ParsedAssertion> {
     let subject = extract_xml_text(xml, "NameIdentifier")
         .or_else(|| extract_xml_text(xml, "saml:NameIdentifier"))
         .unwrap_or_default();
@@ -507,16 +499,7 @@ fn parse_saml11_assertion(
 /// NOTE: This performs payload extraction and validation of standard claims
 /// without cryptographic signature verification. Signature verification
 /// requires the IdP's public keys (from federation metadata JWKS).
-fn parse_jwt_token(
-    jwt_str: &str,
-) -> Result<(
-    String,
-    String,
-    String,
-    u64,
-    u64,
-    HashMap<String, Vec<String>>,
-)> {
+fn parse_jwt_token(jwt_str: &str) -> Result<ParsedAssertion> {
     use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -643,7 +626,7 @@ fn extract_saml_attributes(xml: &str) -> HashMap<String, Vec<String>> {
 
         // Find the closing </Attribute> or </saml:Attribute>
         let close_tag = "</Attribute>";
-        let alt_close = format!("</saml:Attribute>");
+        let alt_close = "</saml:Attribute>".to_string();
         let end_pos = xml[tag_end..]
             .find(close_tag)
             .or_else(|| xml[tag_end..].find(&alt_close))
