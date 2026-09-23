@@ -140,7 +140,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: "1.88.0"
 
       - name: Install system dependencies
         run: |
@@ -256,7 +256,7 @@ jobs:
           - name: observability-performance
             features: api-server,postgres-storage,redis-storage,config-hot-reload,enhanced-observability,event-sourcing,performance-optimization
           - name: crypto-sms-test
-            features: api-server,postgres-storage,redis-storage,axum-integration,enhanced-crypto,fips-compliance,smskit,smskit-web-axum,docker-tests,testing
+            features: api-server,postgres-storage,redis-storage,axum-integration,enhanced-crypto,fips-compliance,smskit,smskit-web-axum,docker-tests
 
     steps:
       - uses: actions/checkout@v4
@@ -510,12 +510,23 @@ jobs:
     if: always()
 
     steps:
+      - name: Check Slack webhook configured
+        id: slack_check
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Slack notification
+        if: steps.slack_check.outputs.configured == 'true'
         uses: 8398a7/action-slack@v3
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
         with:
           status: ${{ job.status }}
           channel: "#deployments"
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
           fields: repo,message,commit,author,action,eventName,ref,workflow
 
   cleanup:
