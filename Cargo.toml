@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.5.0-rc29"
+  version       = "0.5.0-rc30"
 
 [[bin]]
   name              = "auth-framework"
@@ -302,7 +302,7 @@
   # Note: askama_axum was removed in askama 0.13+ - axum integration is now built into askama
 
   # XML processing for SAML
-  quick-xml = { version = "0.39.2", features = ["serialize"], optional = true }
+  quick-xml = { version = "0.41.0", features = ["serialize"], optional = true }
 
   # XML-DSig signature validation for SAML
   bergshamra = { version = "0.3", optional = true }
