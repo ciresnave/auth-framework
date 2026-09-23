@@ -356,7 +356,7 @@ pub async fn get_user_profile(
         Some(token) => {
             match validate_api_token(&state.auth_framework, &token).await {
                 Ok(auth_token) => {
-                    if !auth_token.roles.contains(&"admin".to_string()) {
+                    if !auth_token.roles.contains("admin") {
                         return ApiResponse::<UserProfile>::forbidden_typed();
                     }
 

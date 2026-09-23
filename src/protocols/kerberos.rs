@@ -704,7 +704,7 @@ fn derive_key_aes(base_key: &[u8], usage: u32, key_type: u8) -> Vec<u8> {
 /// AES-CBC decrypt with a zero IV. Returns the full plaintext (same length as
 /// ciphertext, which must be a multiple of 16).
 fn aes_cbc_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
-    if ciphertext.len() % AES_BLOCK != 0 || ciphertext.is_empty() {
+    if !ciphertext.len().is_multiple_of(AES_BLOCK) || ciphertext.is_empty() {
         return Err(AuthError::crypto(
             "AES-CBC ciphertext must be a non-empty multiple of block size",
         ));
@@ -713,8 +713,9 @@ fn aes_cbc_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
     let mut plaintext = Vec::with_capacity(ciphertext.len());
     let mut prev = [0u8; AES_BLOCK]; // IV = all zeros for Kerberos
 
-    for chunk in ciphertext.chunks_exact(AES_BLOCK) {
-        let ct_block: [u8; AES_BLOCK] = chunk.try_into().unwrap();
+    let (chunks, _remainder) = ciphertext.as_chunks::<AES_BLOCK>();
+    for chunk in chunks {
+        let ct_block: [u8; AES_BLOCK] = *chunk;
         let decrypted = aes_ecb_decrypt(key, &ct_block);
         let pt_block = xor_bytes(&decrypted, &prev);
         plaintext.extend_from_slice(&pt_block);
@@ -742,7 +743,7 @@ fn aes_cts_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
         return Ok(aes_ecb_decrypt(key, &ct).to_vec());
     }
 
-    if n % AES_BLOCK == 0 {
+    if n.is_multiple_of(AES_BLOCK) {
         // Exact multiple: standard CBC
         return aes_cbc_decrypt(key, ciphertext);
     }
@@ -1331,10 +1332,10 @@ impl KerberosManager {
             return Err(AuthError::validation("Kerberos ticket has expired"));
         }
 
-        if let Some(start) = ticket_part.start_time {
-            if now + self.config.max_clock_skew_secs < start {
-                return Err(AuthError::validation("Kerberos ticket is not yet valid"));
-            }
+        if let Some(start) = ticket_part.start_time
+            && now + self.config.max_clock_skew_secs < start
+        {
+            return Err(AuthError::validation("Kerberos ticket is not yet valid"));
         }
 
         // ── Step 5: Decrypt the authenticator using the session key ──
@@ -1364,11 +1365,7 @@ impl KerberosManager {
         }
 
         // ── Step 7: Check clock skew ──
-        let time_diff = if now > authenticator.ctime {
-            now - authenticator.ctime
-        } else {
-            authenticator.ctime - now
-        };
+        let time_diff = now.abs_diff(authenticator.ctime);
 
         if time_diff > self.config.max_clock_skew_secs {
             return Err(AuthError::validation(format!(

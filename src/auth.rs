@@ -1507,7 +1507,7 @@ impl AuthFramework {
     /// * `scopes`      — OAuth-style scopes (accepts `Vec<String>`, `Scopes`, or `&[&str]`).
     /// * `method_name` — the auth method to record (must be registered).
     /// * `lifetime`    — override the default token TTL; `None` uses the
-    ///                   framework-configured default.
+    ///   framework-configured default.
     ///
     /// # Errors
     ///

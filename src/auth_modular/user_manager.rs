@@ -421,10 +421,10 @@ impl UserManager {
             None => vec![],
         };
         ids.push(user_id.clone());
-        if let Ok(idx_json) = serde_json::to_vec(&ids) {
-            if let Err(e) = self.storage.store_kv(index_key, &idx_json, None).await {
-                warn!("Failed to update user index during registration: {}", e);
-            }
+        if let Ok(idx_json) = serde_json::to_vec(&ids)
+            && let Err(e) = self.storage.store_kv(index_key, &idx_json, None).await
+        {
+            warn!("Failed to update user index during registration: {}", e);
         }
 
         // Store Argon2 credentials record for authenticate_password_builtin.
@@ -480,17 +480,15 @@ impl UserManager {
             && let Ok(user_json_str) = String::from_utf8(user_data_bytes)
             && let Ok(user_data) = serde_json::from_str::<serde_json::Value>(&user_json_str)
             && let Some(email) = user_data.get("email").and_then(|v| v.as_str())
-        {
-            if let Err(e) = self
+            && let Err(e) = self
                 .storage
                 .delete_kv(&format!("user:email:{}", email))
                 .await
-            {
-                warn!(
-                    "Failed to delete email index for user '{}': {}",
-                    username, e
-                );
-            }
+        {
+            warn!(
+                "Failed to delete email index for user '{}': {}",
+                username, e
+            );
         }
 
         // Remove from global index.
@@ -498,13 +496,13 @@ impl UserManager {
         if let Ok(Some(bytes)) = self.storage.get_kv(index_key).await {
             let mut ids: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
             ids.retain(|id| id != &user_id);
-            if let Ok(idx_json) = serde_json::to_vec(&ids) {
-                if let Err(e) = self.storage.store_kv(index_key, &idx_json, None).await {
-                    warn!(
-                        "Failed to update user index during deletion of '{}': {}",
-                        username, e
-                    );
-                }
+            if let Ok(idx_json) = serde_json::to_vec(&ids)
+                && let Err(e) = self.storage.store_kv(index_key, &idx_json, None).await
+            {
+                warn!(
+                    "Failed to update user index during deletion of '{}': {}",
+                    username, e
+                );
             }
         }
 

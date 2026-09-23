@@ -88,7 +88,7 @@ impl SecureMfaService {
             &mut out,
         );
 
-        Ok(base64::engine::general_purpose::STANDARD.encode(&out))
+        Ok(base64::engine::general_purpose::STANDARD.encode(out))
     }
 
     /// Generate secure salt

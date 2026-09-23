@@ -90,37 +90,35 @@ impl ComplianceMonitor {
         let mut escalation_users = std::collections::HashSet::new();
 
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
-                {
-                    total_events += 1;
-                    if let Some(action) = &event.action {
-                        if action.contains("Violation") || action.contains("Denied") {
-                            policy_violations += 1;
-                        }
-                        if action.contains("Incident") {
-                            security_incidents += 1;
-                        }
-                        // Track access revocation timing from metadata
-                        if action.contains("Revoked") || action.contains("Revocation") {
-                            if let Some(hours_str) = event.metadata.get("revocation_hours") {
-                                if let Ok(hours) = hours_str.parse::<f64>() {
-                                    revocation_durations.push(hours);
-                                }
-                            }
-                        }
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+            {
+                total_events += 1;
+                if let Some(action) = &event.action {
+                    if action.contains("Violation") || action.contains("Denied") {
+                        policy_violations += 1;
                     }
-                    if event.event_type == crate::analytics::RbacEventType::PermissionCheck
-                        && event.action.as_deref() == Some("Orphaned")
+                    if action.contains("Incident") {
+                        security_incidents += 1;
+                    }
+                    // Track access revocation timing from metadata
+                    if (action.contains("Revoked") || action.contains("Revocation"))
+                        && let Some(hours_str) = event.metadata.get("revocation_hours")
+                        && let Ok(hours) = hours_str.parse::<f64>()
                     {
-                        orphaned_permissions += 1;
+                        revocation_durations.push(hours);
                     }
-                    // Track over-privileged users from escalation events
-                    if event.event_type == crate::analytics::RbacEventType::PrivilegeEscalation {
-                        if let Some(ref user) = event.user_id {
-                            escalation_users.insert(user.clone());
-                        }
-                    }
+                }
+                if event.event_type == crate::analytics::RbacEventType::PermissionCheck
+                    && event.action.as_deref() == Some("Orphaned")
+                {
+                    orphaned_permissions += 1;
+                }
+                // Track over-privileged users from escalation events
+                if event.event_type == crate::analytics::RbacEventType::PrivilegeEscalation
+                    && let Some(ref user) = event.user_id
+                {
+                    escalation_users.insert(user.clone());
                 }
             }
         }
@@ -152,10 +150,10 @@ impl ComplianceMonitor {
                     .unwrap_or_default();
                 let mut set = std::collections::HashSet::new();
                 for key in &user_role_keys {
-                    if let Ok(Some(data)) = self.storage.get_kv(key).await {
-                        if let Ok(roles) = serde_json::from_slice::<Vec<String>>(&data) {
-                            set.extend(roles);
-                        }
+                    if let Ok(Some(data)) = self.storage.get_kv(key).await
+                        && let Ok(roles) = serde_json::from_slice::<Vec<String>>(&data)
+                    {
+                        set.extend(roles);
                     }
                 }
                 set

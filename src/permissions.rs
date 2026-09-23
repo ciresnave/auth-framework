@@ -28,6 +28,12 @@ pub struct AbacRule {
     pub permission: Permission,
 }
 
+impl Default for AbacPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AbacPolicy {
     /// Create a new empty ABAC policy.
     pub fn new() -> Self {

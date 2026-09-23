@@ -486,10 +486,7 @@ impl CredentialIssuer {
             .unwrap_or_default()
             .as_secs();
         let mut nonces = self.nonces.write().await;
-        match nonces.remove(nonce) {
-            Some(exp) if exp > now => true,
-            _ => false,
-        }
+        matches!(nonces.remove(nonce), Some(exp) if exp > now)
     }
 
     /// Create a credential offer with a pre-authorized code.
@@ -511,7 +508,7 @@ impl CredentialIssuer {
                 .credential_configurations_supported
                 .contains_key(id)
             {
-                return Err(AuthError::validation(&format!(
+                return Err(AuthError::validation(format!(
                     "Unknown credential configuration: {id}"
                 )));
             }
@@ -562,7 +559,7 @@ impl CredentialIssuer {
             .values()
             .any(|c| c.format == request.format);
         if !supported {
-            return Err(AuthError::validation(&format!(
+            return Err(AuthError::validation(format!(
                 "Unsupported credential format: {:?}",
                 request.format
             )));
@@ -606,7 +603,7 @@ impl CredentialIssuer {
     /// - c_nonce claim is present and matches a live nonce (consumed on success)
     async fn validate_proof(&self, proof: &CredentialProof) -> Result<()> {
         if proof.proof_type != "jwt" {
-            return Err(AuthError::validation(&format!(
+            return Err(AuthError::validation(format!(
                 "Unsupported proof type: {}",
                 proof.proof_type
             )));
@@ -629,12 +626,12 @@ impl CredentialIssuer {
         let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)
             .map_err(|e| AuthError::validation(format!("Invalid proof JWT payload: {e}")))?;
 
-        if let Some(nonce) = payload.get("nonce").and_then(|v| v.as_str()) {
-            if !self.consume_nonce(nonce).await {
-                return Err(AuthError::validation(
-                    "Proof JWT nonce is invalid or expired",
-                ));
-            }
+        if let Some(nonce) = payload.get("nonce").and_then(|v| v.as_str())
+            && !self.consume_nonce(nonce).await
+        {
+            return Err(AuthError::validation(
+                "Proof JWT nonce is invalid or expired",
+            ));
         }
 
         Ok(())

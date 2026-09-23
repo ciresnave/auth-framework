@@ -356,32 +356,31 @@ impl AnalyticsManager {
             .unwrap_or_default();
         let mut stats: HashMap<String, RoleUsageStats> = HashMap::new();
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data) {
-                    if let Some(ref role) = event.role_id {
-                        let entry = stats.entry(role.clone()).or_insert_with(|| RoleUsageStats {
-                            role_id: role.clone(),
-                            role_name: role.clone(),
-                            user_count: 1,
-                            permission_checks: 0,
-                            successful_access: 0,
-                            denied_access: 0,
-                            last_used: None,
-                            avg_response_time_ms: 0.0,
-                            top_resources: Vec::new(),
-                        });
-                        if event.event_type == RbacEventType::PermissionCheck {
-                            entry.permission_checks += 1;
-                            if let Some(action) = &event.action {
-                                if action == "Granted" {
-                                    entry.successful_access += 1;
-                                } else {
-                                    entry.denied_access += 1;
-                                }
-                            }
-                            entry.last_used = Some(event.timestamp);
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data)
+                && let Some(ref role) = event.role_id
+            {
+                let entry = stats.entry(role.clone()).or_insert_with(|| RoleUsageStats {
+                    role_id: role.clone(),
+                    role_name: role.clone(),
+                    user_count: 1,
+                    permission_checks: 0,
+                    successful_access: 0,
+                    denied_access: 0,
+                    last_used: None,
+                    avg_response_time_ms: 0.0,
+                    top_resources: Vec::new(),
+                });
+                if event.event_type == RbacEventType::PermissionCheck {
+                    entry.permission_checks += 1;
+                    if let Some(action) = &event.action {
+                        if action == "Granted" {
+                            entry.successful_access += 1;
+                        } else {
+                            entry.denied_access += 1;
                         }
                     }
+                    entry.last_used = Some(event.timestamp);
                 }
             }
         }
@@ -401,24 +400,22 @@ impl AnalyticsManager {
             .unwrap_or_default();
         let mut stats: HashMap<String, PermissionUsageStats> = HashMap::new();
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data) {
-                    if let Some(ref perm) = event.resource {
-                        let entry =
-                            stats
-                                .entry(perm.clone())
-                                .or_insert_with(|| PermissionUsageStats {
-                                    permission_id: perm.clone(),
-                                    check_count: 0,
-                                    success_rate: 1.0,
-                                    used_by_roles: crate::types::Roles::empty(),
-                                    top_users: Vec::new(),
-                                    peak_hours: Vec::new(),
-                                });
-                        if event.event_type == RbacEventType::PermissionCheck {
-                            entry.check_count += 1;
-                        }
-                    }
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data)
+                && let Some(ref perm) = event.resource
+            {
+                let entry = stats
+                    .entry(perm.clone())
+                    .or_insert_with(|| PermissionUsageStats {
+                        permission_id: perm.clone(),
+                        check_count: 0,
+                        success_rate: 1.0,
+                        used_by_roles: crate::types::Roles::empty(),
+                        top_users: Vec::new(),
+                        peak_hours: Vec::new(),
+                    });
+                if event.event_type == RbacEventType::PermissionCheck {
+                    entry.check_count += 1;
                 }
             }
         }
@@ -445,47 +442,45 @@ impl AnalyticsManager {
         let mut escalation_users = std::collections::HashSet::new();
 
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data) {
-                    total_events += 1;
-                    if let Some(action) = &event.action {
-                        if action.contains("Violation") || action.contains("Denied") {
-                            policy_violations += 1;
-                        }
-                    }
-                    if event.event_type == RbacEventType::PermissionCheck
-                        && event.action.as_deref() == Some("Orphaned")
-                    {
-                        orphaned_permissions += 1;
-                    }
-                    if matches!(
-                        event.event_type,
-                        RbacEventType::PolicyViolation
-                            | RbacEventType::PrivilegeEscalation
-                            | RbacEventType::AccessAnomaly
-                    ) || event
-                        .action
-                        .as_deref()
-                        .is_some_and(|action| action.contains("Incident"))
-                    {
-                        security_incidents += 1;
-                    }
-                    // Track over-privileged users from escalation events
-                    if event.event_type == RbacEventType::PrivilegeEscalation {
-                        if let Some(ref user) = event.user_id {
-                            escalation_users.insert(user.clone());
-                        }
-                    }
-                    // Track access revocation timing from metadata
-                    if let Some(ref action) = event.action {
-                        if action.contains("Revoked") || action.contains("Revocation") {
-                            if let Some(hours_str) = event.metadata.get("revocation_hours") {
-                                if let Ok(hours) = hours_str.parse::<f64>() {
-                                    revocation_durations.push(hours);
-                                }
-                            }
-                        }
-                    }
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data)
+            {
+                total_events += 1;
+                if let Some(action) = &event.action
+                    && (action.contains("Violation") || action.contains("Denied"))
+                {
+                    policy_violations += 1;
+                }
+                if event.event_type == RbacEventType::PermissionCheck
+                    && event.action.as_deref() == Some("Orphaned")
+                {
+                    orphaned_permissions += 1;
+                }
+                if matches!(
+                    event.event_type,
+                    RbacEventType::PolicyViolation
+                        | RbacEventType::PrivilegeEscalation
+                        | RbacEventType::AccessAnomaly
+                ) || event
+                    .action
+                    .as_deref()
+                    .is_some_and(|action| action.contains("Incident"))
+                {
+                    security_incidents += 1;
+                }
+                // Track over-privileged users from escalation events
+                if event.event_type == RbacEventType::PrivilegeEscalation
+                    && let Some(ref user) = event.user_id
+                {
+                    escalation_users.insert(user.clone());
+                }
+                // Track access revocation timing from metadata
+                if let Some(ref action) = event.action
+                    && (action.contains("Revoked") || action.contains("Revocation"))
+                    && let Some(hours_str) = event.metadata.get("revocation_hours")
+                    && let Ok(hours) = hours_str.parse::<f64>()
+                {
+                    revocation_durations.push(hours);
                 }
             }
         }
@@ -517,10 +512,10 @@ impl AnalyticsManager {
                     .unwrap_or_default();
                 let mut set = std::collections::HashSet::new();
                 for key in &user_role_keys {
-                    if let Ok(Some(data)) = self.storage.get_kv(key).await {
-                        if let Ok(roles) = serde_json::from_slice::<Vec<String>>(&data) {
-                            set.extend(roles);
-                        }
+                    if let Ok(Some(data)) = self.storage.get_kv(key).await
+                        && let Ok(roles) = serde_json::from_slice::<Vec<String>>(&data)
+                    {
+                        set.extend(roles);
                     }
                 }
                 set
@@ -563,19 +558,19 @@ impl AnalyticsManager {
         let mut permission_check_timestamps = Vec::new();
 
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data) {
-                    total_events += 1;
-                    if let Some(duration_ms) = event.duration_ms {
-                        total_duration_ms += duration_ms as f64;
-                        duration_samples.push(duration_ms);
-                    }
-                    if event.event_type == RbacEventType::PermissionCheck {
-                        permission_check_timestamps.push(event.timestamp);
-                    }
-                    if matches!(event.result, EventResult::Failure | EventResult::Error) {
-                        errors += 1;
-                    }
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data)
+            {
+                total_events += 1;
+                if let Some(duration_ms) = event.duration_ms {
+                    total_duration_ms += duration_ms as f64;
+                    duration_samples.push(duration_ms);
+                }
+                if event.event_type == RbacEventType::PermissionCheck {
+                    permission_check_timestamps.push(event.timestamp);
+                }
+                if matches!(event.result, EventResult::Failure | EventResult::Error) {
+                    errors += 1;
                 }
             }
         }
@@ -689,14 +684,14 @@ impl AnalyticsManager {
         let mut data_points = Vec::new();
 
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data) {
-                    data_points.push(TimeSeriesData {
-                        timestamp: event.timestamp,
-                        value: 1.0,
-                        tags: event.metadata.clone(),
-                    });
-                }
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<AnalyticsEvent>(&data)
+            {
+                data_points.push(TimeSeriesData {
+                    timestamp: event.timestamp,
+                    value: 1.0,
+                    tags: event.metadata.clone(),
+                });
             }
         }
 

@@ -145,7 +145,7 @@ impl DeviceInfo {
 }
 
 /// Security metadata for sessions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SecurityMetadata {
     /// IP address when session was created
     pub creation_ip: String,
@@ -165,22 +165,6 @@ pub struct SecurityMetadata {
     pub ip_changed: bool,
     /// Number of failed authentication attempts
     pub failed_auth_attempts: u32,
-}
-
-impl Default for SecurityMetadata {
-    fn default() -> Self {
-        Self {
-            creation_ip: String::new(),
-            current_ip: String::new(),
-            creation_location: None,
-            current_location: None,
-            security_flags: Vec::new(),
-            risk_score: 0,
-            location_changed: false,
-            ip_changed: false,
-            failed_auth_attempts: 0,
-        }
-    }
 }
 
 /// Security flags for sessions
@@ -237,7 +221,6 @@ pub struct SessionConfig {
 }
 
 /// Session security policy
-
 impl SessionConfig {
     /// Create a new builder for SessionConfig
     pub fn builder() -> SessionConfigBuilder {
@@ -246,16 +229,9 @@ impl SessionConfig {
 }
 
 /// A builder for SessionConfig
+#[derive(Default)]
 pub struct SessionConfigBuilder {
     config: SessionConfig,
-}
-
-impl Default for SessionConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: SessionConfig::default(),
-        }
-    }
 }
 
 impl SessionConfigBuilder {
@@ -719,12 +695,12 @@ impl<S: SessionStorage, A: AuditStorage> SessionManager<S, A> {
         let now = SystemTime::now();
 
         // Check absolute maximum session lifetime
-        if let Ok(age) = now.duration_since(session.created_at) {
-            if age > self.config.max_duration {
-                session.state = SessionState::Expired;
-                self.storage.update_session(&session).await?;
-                return Ok(None);
-            }
+        if let Ok(age) = now.duration_since(session.created_at)
+            && age > self.config.max_duration
+        {
+            session.state = SessionState::Expired;
+            self.storage.update_session(&session).await?;
+            return Ok(None);
         }
 
         // Check if session is expired

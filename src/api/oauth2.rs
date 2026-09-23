@@ -277,7 +277,7 @@ pub async fn authorize(
             let is_public_client = client_data
                 .get("client_secret")
                 .and_then(|v| v.as_str())
-                .map_or(true, |s| s.is_empty());
+                .is_none_or(|s| s.is_empty());
             if is_public_client && params.code_challenge.is_none() {
                 let error = OAuthError::new("invalid_request")
                     .description("Public clients must use PKCE: code_challenge is required")
@@ -308,15 +308,14 @@ pub async fn authorize(
     let auth_code = format!("ac_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
 
     // RFC 8707: Validate resource indicators if present.
-    if let Some(ref resources) = params.resource {
-        if let Err(e) =
+    if let Some(ref resources) = params.resource
+        && let Err(e) =
             crate::server::oauth::resource_indicators::validate_resource_indicators(resources)
-        {
-            let error = OAuthError::new("invalid_target")
-                .description(e.to_string())
-                .maybe_state(params.state);
-            return (StatusCode::BAD_REQUEST, Json(error)).into_response();
-        }
+    {
+        let error = OAuthError::new("invalid_target")
+            .description(e.to_string())
+            .maybe_state(params.state);
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
     }
 
     let code_data = serde_json::json!({
@@ -567,13 +566,13 @@ async fn handle_authorization_code_grant(
         if let Err(e) =
             crate::server::oauth::resource_indicators::validate_resource_indicators(token_resources)
         {
-            return ApiResponse::error_typed("invalid_target", &e.to_string());
+            return ApiResponse::error_typed("invalid_target", e.to_string());
         }
         if let Err(e) = crate::server::oauth::resource_indicators::validate_token_resource_subset(
             token_resources,
             &authz_resources,
         ) {
-            return ApiResponse::error_typed("invalid_target", &e.to_string());
+            return ApiResponse::error_typed("invalid_target", e.to_string());
         }
     }
 
@@ -1075,27 +1074,26 @@ pub async fn end_session(
     Query(params): Query<EndSessionRequest>,
 ) -> impl IntoResponse {
     // If an id_token_hint is provided, revoke it
-    if let Some(ref token) = params.id_token_hint {
-        if let Ok(claims) = state
+    if let Some(ref token) = params.id_token_hint
+        && let Ok(claims) = state
             .auth_framework
             .token_manager()
             .validate_jwt_token(token)
+    {
+        let revoked_key = format!("oauth2_revoked_token:{}", token);
+        if let Err(e) = state
+            .auth_framework
+            .storage()
+            .store_kv(
+                &revoked_key,
+                b"revoked",
+                Some(std::time::Duration::from_secs(86400 * 7)),
+            )
+            .await
         {
-            let revoked_key = format!("oauth2_revoked_token:{}", token);
-            if let Err(e) = state
-                .auth_framework
-                .storage()
-                .store_kv(
-                    &revoked_key,
-                    b"revoked",
-                    Some(std::time::Duration::from_secs(86400 * 7)),
-                )
-                .await
-            {
-                tracing::warn!("Failed to revoke token during OIDC end_session: {}", e);
-            }
-            tracing::info!("OIDC end_session: revoked token for user {}", claims.sub);
+            tracing::warn!("Failed to revoke token during OIDC end_session: {}", e);
         }
+        tracing::info!("OIDC end_session: revoked token for user {}", claims.sub);
     }
 
     // Redirect to post_logout_redirect_uri only if it matches a registered URI for the
@@ -1112,10 +1110,10 @@ pub async fn end_session(
                 .ok()
                 .and_then(|claims| {
                     // client_id claim identifies the OAuth client
-                    if let Some(ref cid) = claims.client_id {
-                        if !cid.is_empty() {
-                            return Some(cid.clone());
-                        }
+                    if let Some(ref cid) = claims.client_id
+                        && !cid.is_empty()
+                    {
+                        return Some(cid.clone());
                     }
                     // Fallback: aud may contain the client_id
                     if !claims.aud.is_empty() {
@@ -1257,7 +1255,7 @@ pub async fn register_client(
     // Option 2: validate as a normal JWT and check for admin role
     let is_admin = if !is_initial_access_token {
         match validate_api_token(&state.auth_framework, &token_str).await {
-            Ok(auth_token) => auth_token.roles.contains(&"admin".to_string()),
+            Ok(auth_token) => auth_token.roles.contains("admin"),
             Err(_) => false,
         }
     } else {

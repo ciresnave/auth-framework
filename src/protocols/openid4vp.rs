@@ -213,7 +213,7 @@ pub async fn resolve_did(did: &str) -> Result<DidDocument> {
     } else {
         Err(AuthError::invalid_credential(
             "openid4vp",
-            &format!("Unsupported DID method: {did}"),
+            format!("Unsupported DID method: {did}"),
         ))
     }
 }
@@ -237,7 +237,7 @@ fn resolve_did_key(did: &str) -> Result<DidDocument> {
     }
 
     let decoded = bs58::decode(&key_part[1..]).into_vec().map_err(|e| {
-        AuthError::invalid_credential("openid4vp", &format!("Base58 decode failed: {e}"))
+        AuthError::invalid_credential("openid4vp", format!("Base58 decode failed: {e}"))
     })?;
 
     if decoded.len() < 2 {
@@ -253,7 +253,7 @@ fn resolve_did_key(did: &str) -> Result<DidDocument> {
         if decoded.len() != 34 {
             return Err(AuthError::invalid_credential(
                 "openid4vp",
-                &format!(
+                format!(
                     "Ed25519 key must be 34 bytes (prefix+key), got {}",
                     decoded.len()
                 ),
@@ -265,7 +265,7 @@ fn resolve_did_key(did: &str) -> Result<DidDocument> {
         if decoded.len() != 35 {
             return Err(AuthError::invalid_credential(
                 "openid4vp",
-                &format!(
+                format!(
                     "P-256 key must be 35 bytes (prefix+key), got {}",
                     decoded.len()
                 ),
@@ -275,7 +275,7 @@ fn resolve_did_key(did: &str) -> Result<DidDocument> {
     } else {
         return Err(AuthError::invalid_credential(
             "openid4vp",
-            &format!(
+            format!(
                 "Unsupported multicodec prefix: 0x{:02x}{:02x}",
                 decoded[0],
                 decoded.get(1).copied().unwrap_or(0)
@@ -330,29 +330,29 @@ async fn resolve_did_web(did: &str) -> Result<DidDocument> {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| {
-            AuthError::invalid_credential("openid4vp", &format!("HTTP client error: {e}"))
+            AuthError::invalid_credential("openid4vp", format!("HTTP client error: {e}"))
         })?;
 
     let resp = client.get(&url).send().await.map_err(|e| {
-        AuthError::invalid_credential("openid4vp", &format!("Failed to fetch DID document: {e}"))
+        AuthError::invalid_credential("openid4vp", format!("Failed to fetch DID document: {e}"))
     })?;
 
     if !resp.status().is_success() {
         return Err(AuthError::invalid_credential(
             "openid4vp",
-            &format!("DID document fetch returned HTTP {}", resp.status()),
+            format!("DID document fetch returned HTTP {}", resp.status()),
         ));
     }
 
     let doc: DidDocument = resp.json().await.map_err(|e| {
-        AuthError::invalid_credential("openid4vp", &format!("Invalid DID document JSON: {e}"))
+        AuthError::invalid_credential("openid4vp", format!("Invalid DID document JSON: {e}"))
     })?;
 
     // Verify the document ID matches the DID
     if doc.id != did {
         return Err(AuthError::invalid_credential(
             "openid4vp",
-            &format!(
+            format!(
                 "DID document id '{}' does not match requested DID '{did}'",
                 doc.id
             ),
@@ -388,7 +388,7 @@ fn extract_public_key(vm: &VerificationMethod) -> Result<Vec<u8>> {
     if let Some(multibase) = &vm.public_key_multibase {
         if let Some(data) = multibase.strip_prefix('z') {
             return bs58::decode(data).into_vec().map_err(|e| {
-                AuthError::invalid_credential("openid4vp", &format!("Multibase decode failed: {e}"))
+                AuthError::invalid_credential("openid4vp", format!("Multibase decode failed: {e}"))
             });
         }
         return Err(AuthError::invalid_credential(
@@ -426,7 +426,7 @@ fn extract_public_key(vm: &VerificationMethod) -> Result<Vec<u8>> {
                 _ => {
                     return Err(AuthError::invalid_credential(
                         "openid4vp",
-                        &format!("Unsupported JWK curve: {crv}"),
+                        format!("Unsupported JWK curve: {crv}"),
                     ));
                 }
             }
@@ -444,7 +444,7 @@ fn base64_url_decode(input: &str) -> Result<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(input)
         .map_err(|e| {
-            AuthError::invalid_credential("openid4vp", &format!("Base64url decode error: {e}"))
+            AuthError::invalid_credential("openid4vp", format!("Base64url decode error: {e}"))
         })
 }
 
@@ -463,7 +463,7 @@ fn verify_jws(jws: &str, public_key_bytes: &[u8], key_type: &str) -> Result<bool
     let header_json = base64_url_decode(parts[0])?;
     let header: HashMap<String, serde_json::Value> =
         serde_json::from_slice(&header_json).map_err(|e| {
-            AuthError::invalid_credential("openid4vp", &format!("Invalid JWS header: {e}"))
+            AuthError::invalid_credential("openid4vp", format!("Invalid JWS header: {e}"))
         })?;
 
     let alg = header.get("alg").and_then(|v| v.as_str()).unwrap_or("none");
@@ -516,7 +516,7 @@ fn verify_jws(jws: &str, public_key_bytes: &[u8], key_type: &str) -> Result<bool
         }
         _ => Err(AuthError::invalid_credential(
             "openid4vp",
-            &format!("Unsupported JWS algorithm: {alg}"),
+            format!("Unsupported JWS algorithm: {alg}"),
         )),
     }
 }
@@ -639,23 +639,23 @@ impl OpenId4vpService {
         }
 
         // Validate challenge/nonce if present (recommended by OpenID4VP spec)
-        if let Some(challenge) = proof.get("challenge") {
-            if challenge.as_str().unwrap_or("").is_empty() {
-                return Err(AuthError::invalid_credential(
-                    "openid4vp",
-                    "Proof challenge must not be empty",
-                ));
-            }
+        if let Some(challenge) = proof.get("challenge")
+            && challenge.as_str().unwrap_or("").is_empty()
+        {
+            return Err(AuthError::invalid_credential(
+                "openid4vp",
+                "Proof challenge must not be empty",
+            ));
         }
 
         // Validate domain binding if present
-        if let Some(domain) = proof.get("domain") {
-            if domain.as_str().unwrap_or("").is_empty() {
-                return Err(AuthError::invalid_credential(
-                    "openid4vp",
-                    "Proof domain must not be empty",
-                ));
-            }
+        if let Some(domain) = proof.get("domain")
+            && domain.as_str().unwrap_or("").is_empty()
+        {
+            return Err(AuthError::invalid_credential(
+                "openid4vp",
+                "Proof domain must not be empty",
+            ));
         }
 
         // Resolve the DID to get the public key for signature verification

@@ -231,12 +231,13 @@ impl AppConfig {
 
     /// Convert to SecurityConfig
     pub fn to_security_config(&self) -> SecurityConfig {
-        let mut config = SecurityConfig::default();
-        config.min_password_length = self.security.password_min_length;
-        config.require_password_complexity = self.security.password_require_special_chars;
-        config.secret_key = Some(self.jwt.secret_key.clone());
-        config.session_timeout = Duration::from_secs(self.security.session_timeout_hours * 3600);
-        config
+        SecurityConfig {
+            min_password_length: self.security.password_min_length,
+            require_password_complexity: self.security.password_require_special_chars,
+            secret_key: Some(self.jwt.secret_key.clone()),
+            session_timeout: Duration::from_secs(self.security.session_timeout_hours * 3600),
+            ..Default::default()
+        }
     }
 
     /// Build an initialized AuthFramework using the configured storage backend.

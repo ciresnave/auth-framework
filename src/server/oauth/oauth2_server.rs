@@ -52,7 +52,7 @@ impl std::str::FromStr for GrantType {
             "urn:ietf:params:oauth:grant-type:token-exchange" => Ok(Self::TokenExchange),
             other => Err(AuthError::auth_method(
                 "oauth2",
-                &format!("Unsupported grant type: {other}"),
+                format!("Unsupported grant type: {other}"),
             )),
         }
     }
@@ -86,7 +86,7 @@ impl std::str::FromStr for ResponseType {
             "id_token" => Ok(Self::IdToken),
             other => Err(AuthError::auth_method(
                 "oauth2",
-                &format!("Unsupported response type: {other}"),
+                format!("Unsupported response type: {other}"),
             )),
         }
     }
@@ -158,17 +158,9 @@ impl OAuth2Config {
 ///
 /// Obtain via [`OAuth2Config::builder()`]. All fields start with secure
 /// defaults; override only what you need.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OAuth2ConfigBuilder {
     config: OAuth2Config,
-}
-
-impl Default for OAuth2ConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: OAuth2Config::default(),
-        }
-    }
 }
 
 impl OAuth2ConfigBuilder {

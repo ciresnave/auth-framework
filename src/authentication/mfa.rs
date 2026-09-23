@@ -695,7 +695,7 @@ fn mask_email(email: &str) -> String {
     if let Some(at_pos) = email.find('@') {
         let (local, domain) = email.split_at(at_pos);
         if local.len() > 2 {
-            format!("{}***{}", &local[0..1], &domain)
+            format!("{}***{}", &local[0..1], domain)
         } else {
             format!("***{}", domain)
         }

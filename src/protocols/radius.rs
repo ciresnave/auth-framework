@@ -543,7 +543,7 @@ fn encrypt_pap_password(
 ) -> Vec<u8> {
     let pwd_bytes = password.as_bytes();
     // Pad to 16-byte boundary
-    let padded_len = ((pwd_bytes.len() + 15) / 16) * 16;
+    let padded_len = pwd_bytes.len().div_ceil(16) * 16;
     let padded_len = padded_len.max(16);
     let mut padded = vec![0u8; padded_len];
     padded[..pwd_bytes.len()].copy_from_slice(pwd_bytes);
@@ -625,7 +625,7 @@ fn compute_response_authenticator(
 fn compute_accounting_authenticator(packet_bytes: &[u8], secret: &[u8]) -> [u8; AUTHENTICATOR_LEN] {
     let mut hasher = md5::Md5::new();
     hasher.update(&packet_bytes[..4]); // Code, ID, Length
-    hasher.update(&[0u8; AUTHENTICATOR_LEN]); // Zero authenticator
+    hasher.update([0u8; AUTHENTICATOR_LEN]); // Zero authenticator
     if packet_bytes.len() > HEADER_LEN {
         hasher.update(&packet_bytes[HEADER_LEN..]); // Attributes
     }

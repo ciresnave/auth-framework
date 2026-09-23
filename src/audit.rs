@@ -312,9 +312,10 @@ pub struct TimeRange {
 }
 
 /// Sort order for queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum SortOrder {
     TimestampAsc,
+    #[default]
     TimestampDesc,
     RiskLevelDesc,
 }
@@ -1139,12 +1140,6 @@ impl Default for AuditQuery {
             offset: None,
             sort_order: SortOrder::TimestampDesc,
         }
-    }
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        SortOrder::TimestampDesc
     }
 }
 

@@ -148,17 +148,9 @@ impl OidcConfig {
 ///
 /// Obtain via [`OidcConfig::builder()`]. All fields start with sensible
 /// defaults; override only what you need.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OidcConfigBuilder {
     config: OidcConfig,
-}
-
-impl Default for OidcConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: OidcConfig::default(),
-        }
-    }
 }
 
 impl OidcConfigBuilder {
@@ -988,17 +980,17 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
     /// Get registered post-logout redirect URIs for a client
     async fn get_client_registered_post_logout_uris(&self, client_id: &str) -> Result<Vec<String>> {
         // Look up post-logout redirect URIs from client registry storage
-        if let Some(client_registry) = &self.client_registry {
-            if let Some(client) = client_registry.get_client(client_id).await? {
-                // Post-logout redirect URIs are stored in client metadata
-                if let Some(uris) = client.metadata.get("post_logout_redirect_uris") {
-                    if let Some(arr) = uris.as_array() {
-                        return Ok(arr
-                            .iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect());
-                    }
-                }
+        if let Some(client_registry) = &self.client_registry
+            && let Some(client) = client_registry.get_client(client_id).await?
+        {
+            // Post-logout redirect URIs are stored in client metadata
+            if let Some(uris) = client.metadata.get("post_logout_redirect_uris")
+                && let Some(arr) = uris.as_array()
+            {
+                return Ok(arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect());
             }
         }
         // Unknown client or no registry — return empty list so all redirect URIs

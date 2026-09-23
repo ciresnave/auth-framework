@@ -172,8 +172,12 @@ pub struct CibaProvider {
     /// `auth_req_id → PendingAuth`
     pending: Arc<RwLock<HashMap<String, PendingAuth>>>,
     /// Token generator function (auth_req_id, subject, scope) → CibaTokenResponse.
-    token_generator: Arc<dyn Fn(&str, &str, &str) -> CibaTokenResponse + Send + Sync>,
+    token_generator: Arc<CibaTokenGenerator>,
 }
+
+/// Signature of the callback that mints a [`CibaTokenResponse`] for
+/// `(auth_req_id, subject, scope)`.
+type CibaTokenGenerator = dyn Fn(&str, &str, &str) -> CibaTokenResponse + Send + Sync;
 
 impl CibaProvider {
     /// Create a provider with the given config and token generator.
@@ -209,19 +213,19 @@ impl CibaProvider {
     ) -> Result<CibaAuthResponse> {
         // Validate mode is supported
         if !self.config.modes_supported.contains(&mode) {
-            return Err(AuthError::validation(&format!(
+            return Err(AuthError::validation(format!(
                 "CIBA mode {:?} not supported",
                 mode
             )));
         }
 
         // Validate binding message length
-        if let Some(ref msg) = request.binding_message {
-            if msg.is_empty() || msg.len() > 256 {
-                return Err(AuthError::validation(
-                    "Binding message must be 1-256 characters",
-                ));
-            }
+        if let Some(ref msg) = request.binding_message
+            && (msg.is_empty() || msg.len() > 256)
+        {
+            return Err(AuthError::validation(
+                "Binding message must be 1-256 characters",
+            ));
         }
 
         // Ping/push requires client_notification_token
@@ -283,7 +287,7 @@ impl CibaProvider {
             .ok_or_else(|| AuthError::validation("Unknown auth_req_id"))?;
 
         if entry.status != CibaRequestStatus::Pending {
-            return Err(AuthError::validation(&format!(
+            return Err(AuthError::validation(format!(
                 "Request already {:?}",
                 entry.status
             )));
@@ -312,7 +316,7 @@ impl CibaProvider {
             .ok_or_else(|| AuthError::validation("Unknown auth_req_id"))?;
 
         if entry.status != CibaRequestStatus::Pending {
-            return Err(AuthError::validation(&format!(
+            return Err(AuthError::validation(format!(
                 "Request already {:?}",
                 entry.status
             )));
@@ -346,10 +350,10 @@ impl CibaProvider {
         }
 
         // Slow-down check
-        if let Some(last) = entry.last_polled {
-            if now - last < self.config.default_interval {
-                return Err(CibaError::SlowDown);
-            }
+        if let Some(last) = entry.last_polled
+            && now - last < self.config.default_interval
+        {
+            return Err(CibaError::SlowDown);
         }
         entry.last_polled = Some(now);
 

@@ -73,7 +73,6 @@ impl Default for ApiServerConfig {
 }
 
 /// REST API Server
-
 impl ApiServerConfig {
     /// Create a new builder for `ApiServerConfig`
     pub fn builder() -> ApiServerConfigBuilder {
@@ -85,16 +84,9 @@ impl ApiServerConfig {
 ///
 /// Obtain via [`ApiServerConfig::builder()`].  All fields start with the same
 /// defaults as `ApiServerConfig::default()`.
+#[derive(Default)]
 pub struct ApiServerConfigBuilder {
     config: ApiServerConfig,
-}
-
-impl Default for ApiServerConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: ApiServerConfig::default(),
-        }
-    }
 }
 
 impl ApiServerConfigBuilder {
