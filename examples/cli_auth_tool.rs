@@ -398,7 +398,7 @@ impl AuthCli {
         match &self.current_user {
             Some(token) => {
                 // Check if user has admin scope
-                if !token.scopes.contains(&"admin".to_string()) {
+                if !token.scopes.iter().any(|s| s == "admin") {
                     println!("❌ Access denied. Admin privileges required.");
                     return Ok(());
                 }

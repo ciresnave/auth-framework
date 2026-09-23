@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc32] - 2026-09-23
+
+### Fixed
+
+- Clippy: resolved every non-`unwrap_used` `cargo clippy --all-targets`
+  error reachable across the crate's Test Suite feature set (confirmed
+  with `cargo clippy --keep-going`, which compiles every target in one
+  pass instead of stopping at the first failure — the only way to get an
+  honest completion count, since `--all-targets` without `--keep-going`
+  reports a different partial subset almost every run). 24 fixes across
+  17 files:
+  - `unnecessary_to_owned` (11): `api/rbac_endpoints.rs`, `api/mod.rs`,
+    `auth_modular/user_manager.rs`, `auth_operations.rs`,
+    `server/oauth/oauth21.rs`, `examples/cli_auth_tool.rs`.
+  - `needless_borrows_for_generic_args` (4): `protocols/openid4vp.rs`.
+  - `field_reassign_with_default` (7): `protocols/ws_trust.rs`,
+    `tests/oidc_ciba_jarm_tests.rs`, `tests/monitoring_comprehensive_tests.rs`.
+  - `for_kv_map` (2): `tests/threat_intelligence_tests.rs`,
+    `tests/monitoring_comprehensive_tests.rs`.
+  - `unneeded_wildcard_pattern` (2): `tests/comprehensive_api_tests.rs`.
+  - `int_plus_one`, `items_after_test_module`, `len_zero`, `single_match`,
+    `collapsible_if` (1 each): `auth_modular/session_manager.rs`,
+    `auth_operations.rs`, `protocols/uma.rs`, `protocols/zanzibar.rs`,
+    `src/bin/server.rs`.
+
+  `src/lib.rs` and every `clippy::unwrap_used` site are untouched — those
+  remain a separate, deliberate decision (see project tracking), not
+  something this cleanup pass should quietly relax.
+
+  The one remaining `cargo clippy --all-targets` failure,
+  `benches/auth_performance.rs`'s `E0063` (missing `AuthConfig` fields),
+  is a hard compile error, not a lint, and is fixed by a separate
+  already-open PR — not duplicated here.
+
+  Five of the touched files are integration tests CI has never executed
+  (only compiled). Ran all five test binaries locally on both this branch
+  and the pre-change base: 50/40/16/17/26 tests pass identically on both
+  sides, 0 failures either way — the lint fixes changed no test behavior.
+
 ## [0.5.0-rc31] - 2026-09-23
 
 ### Security

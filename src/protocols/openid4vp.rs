@@ -863,7 +863,7 @@ mod tests {
     #[test]
     fn test_extract_public_key_jwk_ed25519() {
         use base64::Engine;
-        let x = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0xAB; 32]);
+        let x = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0xAB; 32]);
         let vm = VerificationMethod {
             id: "key1".to_string(),
             method_type: "Ed25519VerificationKey2020".to_string(),
@@ -882,8 +882,8 @@ mod tests {
     #[test]
     fn test_extract_public_key_jwk_p256() {
         use base64::Engine;
-        let x = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0x01; 32]);
-        let y = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0x02; 32]);
+        let x = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x01; 32]);
+        let y = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x02; 32]);
         let vm = VerificationMethod {
             id: "key1".to_string(),
             method_type: "EcdsaSecp256r1VerificationKey2019".to_string(),
@@ -971,7 +971,7 @@ mod tests {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"alg":"EdDSA"}"#.as_bytes());
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"test");
-        let bad_sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0u8; 64]);
+        let bad_sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0u8; 64]);
 
         let jws = format!("{header}.{payload}.{bad_sig}");
         let err = verify_jws(&jws, &public_key, "Ed25519VerificationKey2020");

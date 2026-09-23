@@ -837,9 +837,8 @@ mod tests {
         // Should not infinite-loop; returns false (or an error if depth exceeded)
         let result = store.check("group:a", "member", "user:alice").await;
         // Either false or depth error — both are acceptable
-        match result {
-            Ok(v) => assert!(!v),
-            Err(_) => {} // Depth exceeded is fine
+        if let Ok(v) = result {
+            assert!(!v);
         }
     }
 

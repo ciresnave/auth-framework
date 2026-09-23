@@ -28,7 +28,7 @@ async fn test_monitoring_manager_default_config() {
     let manager = MonitoringManager::new(config);
     let metrics = manager.get_performance_metrics();
     // All counters start at zero
-    for (_key, val) in &metrics {
+    for val in metrics.values() {
         assert_eq!(*val, 0);
     }
 }
@@ -135,8 +135,10 @@ async fn test_record_mfa_challenge() {
 
 #[tokio::test]
 async fn test_security_events_limit() {
-    let mut config = MonitoringConfig::default();
-    config.max_history_size = 5;
+    let config = MonitoringConfig {
+        max_history_size: 5,
+        ..Default::default()
+    };
     let manager = MonitoringManager::new(config);
 
     for i in 0..10 {
@@ -215,8 +217,10 @@ async fn test_health_check_returns_all_components() {
 
 #[tokio::test]
 async fn test_health_check_disabled() {
-    let mut config = MonitoringConfig::default();
-    config.enable_health_checks = false;
+    let config = MonitoringConfig {
+        enable_health_checks: false,
+        ..Default::default()
+    };
     let manager = MonitoringManager::new(config);
 
     let results = manager.health_check().await.unwrap();
@@ -295,8 +299,10 @@ async fn test_prometheus_export_format() {
 
 #[tokio::test]
 async fn test_security_metrics_disabled() {
-    let mut config = MonitoringConfig::default();
-    config.enable_security_metrics = false;
+    let config = MonitoringConfig {
+        enable_security_metrics: false,
+        ..Default::default()
+    };
     let manager = MonitoringManager::new(config);
 
     manager.record_auth_failure(Some("user"), "bad_pass").await;

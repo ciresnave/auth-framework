@@ -889,7 +889,7 @@ mod tests {
     async fn test_create_role_unauthorized() {
         let token = create_test_token(vec!["read:users"]);
         assert!(
-            !token.permissions.contains(&"admin:roles:write".to_string()),
+            !token.permissions.contains("admin:roles:write"),
             "token without admin:roles:write should not be authorized to create roles"
         );
     }
@@ -898,7 +898,7 @@ mod tests {
     async fn test_create_role_success() {
         let token = create_test_token(vec!["admin:roles:write", "read:users"]);
         assert!(
-            token.permissions.contains(&"admin:roles:write".to_string()),
+            token.permissions.contains("admin:roles:write"),
             "token with admin:roles:write should be authorized to create roles"
         );
     }
@@ -907,8 +907,8 @@ mod tests {
     async fn test_permission_check() {
         let token = create_test_token(vec!["read:users", "write:users"]);
         assert_eq!(token.permissions.len(), 2);
-        assert!(token.permissions.contains(&"read:users".to_string()));
-        assert!(token.permissions.contains(&"write:users".to_string()));
-        assert!(!token.permissions.contains(&"admin:delete".to_string()));
+        assert!(token.permissions.contains("read:users"));
+        assert!(token.permissions.contains("write:users"));
+        assert!(!token.permissions.contains("admin:delete"));
     }
 }

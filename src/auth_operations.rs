@@ -1466,6 +1466,179 @@ impl AuditOperations<'_> {
         self.framework.get_security_audit_stats().await
     }
 }
+// ──────────────────────────────────────────────────────────────────────────────
+// Admin operations
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Focused advanced administration operations exposed from [`AuthFramework::admin`].
+///
+/// These operations go beyond the everyday [`AuthorizationOperations`] surface and cover
+/// ABAC policy management, permission delegation, role inheritance, resource registration,
+/// and attribute-based access control.
+pub struct AdminOperations<'a> {
+    pub(crate) framework: &'a AuthFramework,
+}
+
+impl AdminOperations<'_> {
+    /// Define a parent–child role inheritance relationship.
+    pub async fn set_role_inheritance(&self, child_role: &str, parent_role: &str) -> Result<()> {
+        self.framework
+            .set_role_inheritance(child_role, parent_role)
+            .await
+    }
+
+    /// Create an ABAC policy.
+    pub async fn create_abac_policy(&self, name: &str, description: &str) -> Result<()> {
+        self.framework.create_abac_policy(name, description).await
+    }
+
+    /// Map a user attribute used in ABAC policy evaluation.
+    pub async fn map_user_attribute(
+        &self,
+        user_id: &str,
+        attribute: &str,
+        value: &str,
+    ) -> Result<()> {
+        self.framework
+            .map_user_attribute(user_id, attribute, value)
+            .await
+    }
+
+    /// Set multiple user attributes in one call.
+    ///
+    /// This is a convenience wrapper around [`map_user_attribute`](Self::map_user_attribute)
+    /// for setting several ABAC attributes at once.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use auth_framework::prelude::*;
+    /// # async fn example(auth: &AuthFramework) -> Result<(), AuthError> {
+    /// auth.admin().set_user_attributes("user-1", &[
+    ///     ("department", "engineering"),
+    ///     ("clearance", "top-secret"),
+    ///     ("location", "us-west-2"),
+    /// ]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_user_attributes(
+        &self,
+        user_id: &str,
+        attributes: &[(&str, &str)],
+    ) -> Result<()> {
+        for &(attribute, value) in attributes {
+            self.framework
+                .map_user_attribute(user_id, attribute, value)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Get a user attribute value.
+    pub async fn get_user_attribute(
+        &self,
+        user_id: &str,
+        attribute: &str,
+    ) -> Result<Option<String>> {
+        self.framework.get_user_attribute(user_id, attribute).await
+    }
+
+    /// Check a permission using dynamic ABAC context evaluation.
+    ///
+    /// Prefer [`check_dynamic_permission_with_context`](Self::check_dynamic_permission_with_context)
+    /// with a [`PermissionContext`] for a more readable API.
+    pub async fn check_dynamic_permission(
+        &self,
+        user_id: &str,
+        action: &str,
+        resource: &str,
+        context: std::collections::HashMap<String, String>,
+    ) -> Result<bool> {
+        self.framework
+            .check_dynamic_permission(user_id, action, resource, context)
+            .await
+    }
+
+    /// Check a permission using dynamic ABAC context evaluation with a
+    /// [`PermissionContext`].
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use auth_framework::auth_operations::PermissionContext;
+    ///
+    /// let ctx = PermissionContext::new()
+    ///     .with_attribute("ip_location", "office")
+    ///     .with_attribute("device_type", "trusted");
+    ///
+    /// let allowed = auth.admin()
+    ///     .check_dynamic_permission_with_context("user_123", "read", "docs", ctx)
+    ///     .await?;
+    /// ```
+    pub async fn check_dynamic_permission_with_context(
+        &self,
+        user_id: &str,
+        action: &str,
+        resource: &str,
+        context: PermissionContext,
+    ) -> Result<bool> {
+        self.framework
+            .check_dynamic_permission(user_id, action, resource, context.into_attributes())
+            .await
+    }
+
+    /// Register a resource in the permission system.
+    pub async fn create_resource(&self, resource: &str) -> Result<()> {
+        self.framework.create_resource(resource).await
+    }
+
+    /// Delegate a permission from one user to another using a [`DelegationRequest`].
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// auth.admin()
+    ///     .delegate(
+    ///         DelegationRequest::new("admin_1", "user_2", "write", "reports")
+    ///             .duration(Duration::from_secs(3600))
+    ///     )
+    ///     .await?;
+    /// ```
+    pub async fn delegate(&self, req: DelegationRequest) -> Result<()> {
+        self.framework
+            .delegate_permission(
+                &req.delegator_id,
+                &req.delegatee_id,
+                &req.action,
+                &req.resource,
+                req.duration,
+            )
+            .await
+    }
+
+    /// Delegate a permission from one user to another for a limited duration.
+    ///
+    /// Prefer [`delegate`](Self::delegate) with a [`DelegationRequest`] for
+    /// better readability.
+    pub async fn delegate_permission(
+        &self,
+        delegator_id: &str,
+        delegatee_id: &str,
+        action: &str,
+        resource: &str,
+        duration: Duration,
+    ) -> Result<()> {
+        self.framework
+            .delegate_permission(delegator_id, delegatee_id, action, resource, duration)
+            .await
+    }
+
+    /// List currently active permission delegations for a user.
+    pub async fn active_delegations(&self, user_id: &str) -> Result<Vec<String>> {
+        self.framework.get_active_delegations(user_id).await
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1724,7 +1897,7 @@ mod tests {
         fw.authorization().assign_role(&uid, "admin").await.unwrap();
         assert!(fw.authorization().has_role(&uid, "admin").await.unwrap());
         let roles = fw.authorization().roles_for_user(&uid).await.unwrap();
-        assert!(roles.contains(&"admin".to_string()));
+        assert!(roles.contains("admin"));
         fw.authorization().remove_role(&uid, "admin").await.unwrap();
         assert!(!fw.authorization().has_role(&uid, "admin").await.unwrap());
     }
@@ -1926,178 +2099,5 @@ mod tests {
         let fw = make_fw().await;
         let stats = fw.audit().security_stats().await.unwrap();
         assert_eq!(stats.failed_logins_24h, 0);
-    }
-}
-// ──────────────────────────────────────────────────────────────────────────────
-// Admin operations
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Focused advanced administration operations exposed from [`AuthFramework::admin`].
-///
-/// These operations go beyond the everyday [`AuthorizationOperations`] surface and cover
-/// ABAC policy management, permission delegation, role inheritance, resource registration,
-/// and attribute-based access control.
-pub struct AdminOperations<'a> {
-    pub(crate) framework: &'a AuthFramework,
-}
-
-impl AdminOperations<'_> {
-    /// Define a parent–child role inheritance relationship.
-    pub async fn set_role_inheritance(&self, child_role: &str, parent_role: &str) -> Result<()> {
-        self.framework
-            .set_role_inheritance(child_role, parent_role)
-            .await
-    }
-
-    /// Create an ABAC policy.
-    pub async fn create_abac_policy(&self, name: &str, description: &str) -> Result<()> {
-        self.framework.create_abac_policy(name, description).await
-    }
-
-    /// Map a user attribute used in ABAC policy evaluation.
-    pub async fn map_user_attribute(
-        &self,
-        user_id: &str,
-        attribute: &str,
-        value: &str,
-    ) -> Result<()> {
-        self.framework
-            .map_user_attribute(user_id, attribute, value)
-            .await
-    }
-
-    /// Set multiple user attributes in one call.
-    ///
-    /// This is a convenience wrapper around [`map_user_attribute`](Self::map_user_attribute)
-    /// for setting several ABAC attributes at once.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use auth_framework::prelude::*;
-    /// # async fn example(auth: &AuthFramework) -> Result<(), AuthError> {
-    /// auth.admin().set_user_attributes("user-1", &[
-    ///     ("department", "engineering"),
-    ///     ("clearance", "top-secret"),
-    ///     ("location", "us-west-2"),
-    /// ]).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn set_user_attributes(
-        &self,
-        user_id: &str,
-        attributes: &[(&str, &str)],
-    ) -> Result<()> {
-        for &(attribute, value) in attributes {
-            self.framework
-                .map_user_attribute(user_id, attribute, value)
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// Get a user attribute value.
-    pub async fn get_user_attribute(
-        &self,
-        user_id: &str,
-        attribute: &str,
-    ) -> Result<Option<String>> {
-        self.framework.get_user_attribute(user_id, attribute).await
-    }
-
-    /// Check a permission using dynamic ABAC context evaluation.
-    ///
-    /// Prefer [`check_dynamic_permission_with_context`](Self::check_dynamic_permission_with_context)
-    /// with a [`PermissionContext`] for a more readable API.
-    pub async fn check_dynamic_permission(
-        &self,
-        user_id: &str,
-        action: &str,
-        resource: &str,
-        context: std::collections::HashMap<String, String>,
-    ) -> Result<bool> {
-        self.framework
-            .check_dynamic_permission(user_id, action, resource, context)
-            .await
-    }
-
-    /// Check a permission using dynamic ABAC context evaluation with a
-    /// [`PermissionContext`].
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use auth_framework::auth_operations::PermissionContext;
-    ///
-    /// let ctx = PermissionContext::new()
-    ///     .with_attribute("ip_location", "office")
-    ///     .with_attribute("device_type", "trusted");
-    ///
-    /// let allowed = auth.admin()
-    ///     .check_dynamic_permission_with_context("user_123", "read", "docs", ctx)
-    ///     .await?;
-    /// ```
-    pub async fn check_dynamic_permission_with_context(
-        &self,
-        user_id: &str,
-        action: &str,
-        resource: &str,
-        context: PermissionContext,
-    ) -> Result<bool> {
-        self.framework
-            .check_dynamic_permission(user_id, action, resource, context.into_attributes())
-            .await
-    }
-
-    /// Register a resource in the permission system.
-    pub async fn create_resource(&self, resource: &str) -> Result<()> {
-        self.framework.create_resource(resource).await
-    }
-
-    /// Delegate a permission from one user to another using a [`DelegationRequest`].
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// auth.admin()
-    ///     .delegate(
-    ///         DelegationRequest::new("admin_1", "user_2", "write", "reports")
-    ///             .duration(Duration::from_secs(3600))
-    ///     )
-    ///     .await?;
-    /// ```
-    pub async fn delegate(&self, req: DelegationRequest) -> Result<()> {
-        self.framework
-            .delegate_permission(
-                &req.delegator_id,
-                &req.delegatee_id,
-                &req.action,
-                &req.resource,
-                req.duration,
-            )
-            .await
-    }
-
-    /// Delegate a permission from one user to another for a limited duration.
-    ///
-    /// Prefer [`delegate`](Self::delegate) with a [`DelegationRequest`] for
-    /// better readability.
-    pub async fn delegate_permission(
-        &self,
-        delegator_id: &str,
-        delegatee_id: &str,
-        action: &str,
-        resource: &str,
-        duration: Duration,
-    ) -> Result<()> {
-        self.framework
-            .delegate_permission(delegator_id, delegatee_id, action, resource, duration)
-            .await
-    }
-
-    /// List currently active permission delegations for a user.
-    pub async fn active_delegations(&self, user_id: &str) -> Result<Vec<String>> {
-        self.framework.get_active_delegations(user_id).await
     }
 }

@@ -1198,7 +1198,7 @@ mod tests {
             .await
             .unwrap();
         let info = mgr.get_user_info(&id).await.unwrap();
-        assert!(info.roles.contains(&"admin".to_string()));
+        assert!(info.roles.contains("admin"));
     }
 
     #[tokio::test]

@@ -328,9 +328,11 @@ async fn jarm_custom_claims_added() {
 
 #[tokio::test]
 async fn jarm_too_many_custom_claims_rejected() {
-    let mut config = AdvancedJarmConfig::default();
-    config.max_custom_claims = 2;
-    config.supported_algorithms = vec![jsonwebtoken::Algorithm::HS256];
+    let config = AdvancedJarmConfig {
+        max_custom_claims: 2,
+        supported_algorithms: vec![jsonwebtoken::Algorithm::HS256],
+        ..Default::default()
+    };
     let mgr = AdvancedJarmManager::new(config);
     let auth_resp = sample_auth_response();
 
@@ -353,9 +355,11 @@ async fn jarm_too_many_custom_claims_rejected() {
 
 #[tokio::test]
 async fn jarm_custom_claims_disabled_rejects() {
-    let mut config = AdvancedJarmConfig::default();
-    config.enable_custom_claims = false;
-    config.supported_algorithms = vec![jsonwebtoken::Algorithm::HS256];
+    let config = AdvancedJarmConfig {
+        enable_custom_claims: false,
+        supported_algorithms: vec![jsonwebtoken::Algorithm::HS256],
+        ..Default::default()
+    };
     let mgr = AdvancedJarmManager::new(config);
     let auth_resp = sample_auth_response();
 

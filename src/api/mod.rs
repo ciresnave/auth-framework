@@ -298,7 +298,7 @@ mod tests {
             .unwrap();
 
         let auth_token = validate_api_token(&fw, &token).await.unwrap();
-        assert!(auth_token.roles.contains(&"admin".to_string()));
-        assert!(auth_token.roles.contains(&"editor".to_string()));
+        assert!(auth_token.roles.contains("admin"));
+        assert!(auth_token.roles.contains("editor"));
     }
 }
