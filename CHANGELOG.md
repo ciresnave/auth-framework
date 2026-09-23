@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc29] - 2026-09-23
+
+### Security
+
+- Bumped `lettre` 0.11.21 → 0.11.23 (RUSTSEC-2026-0141 / GHSA-4pj9-g833-qx53 /
+  CVE-2026-46428, patched in >=0.11.22): an inverted-boolean bug in lettre's
+  `boring-tls` integration silently disabled TLS hostname verification,
+  letting an on-path attacker intercept SMTP submission. This crate builds
+  lettre with `tokio1-rustls-tls`, not `boring-tls` — the affected code path
+  was never reachable here — but `cargo audit` can't see which features are
+  enabled, and CireSnave's standing rule is dependencies at their most
+  recent version regardless, so bumped anyway. First of the 23 open RUSTSEC
+  findings addressed, sequenced first per the PM's explicit direction ahead
+  of anything cheaper to fix — CVSS 4.0 vector
+  `AV:N/AC:L/AT:P/PR:N/UI:N/VC:H/VI:H` (network, low complexity, no
+  privileges or user interaction needed, high confidentiality/integrity
+  impact).
+
 ## [0.5.0-rc28] - 2026-09-23
 
 ### Fixed
