@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc31] - 2026-09-23
+
+### Security
+
+- Bumped `h2` 0.4.13 → 0.4.19 (RUSTSEC-2026-0258, unbounded empty DATA
+  frames). `h2` is in the dependency tree at two independent versions:
+  0.3.27 (via `actix-http`, the `actix-integration` feature) and 0.4.13
+  (via the modern `hyper 1.x`/`reqwest`/`tonic` chain). This bumps only the
+  0.4.x instance — the 0.3.x one shares the same advisory ID but has no fix
+  available (latest released 0.3.x, no in-branch backport; see board item
+  43). **Measuring this by advisory ID would show no change** since
+  RUSTSEC-2026-0258 still appears (from the 0.3.27 instance); the real
+  effect is `cargo audit`'s vulnerability count dropping from 6 to 5 and
+  the `h2 0.4.13` entry disappearing from `Cargo.lock`.
+  `rust-version` is `1.63` on `0.4.13`, `0.4.16`, and `0.4.19` alike — this
+  bump does not touch the crate's MSRV floor.
+
 ## [0.5.0-rc30] - 2026-09-23
 
 ### Security
