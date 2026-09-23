@@ -13,6 +13,16 @@ use std::time::{Duration, SystemTime};
 use subtle::ConstantTimeEq;
 use zeroize::ZeroizeOnDrop;
 
+/// PBKDF2 iteration count for MFA code hashing.
+///
+/// A `const` (not a runtime `.unwrap()`): 10_000 is a fixed literal, so the
+/// `None` arm is unreachable by construction and would fail to compile,
+/// never panic at runtime, if the literal were ever changed to zero.
+const PBKDF2_ITERATIONS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(10_000) {
+    Some(n) => n,
+    None => unreachable!(),
+};
+
 /// Secure MFA code that zeros itself when dropped
 #[derive(Debug, Clone, ZeroizeOnDrop)]
 pub struct SecureMfaCode {
@@ -82,7 +92,7 @@ impl SecureMfaService {
         let mut out = [0u8; 32];
         pbkdf2::derive(
             pbkdf2::PBKDF2_HMAC_SHA256,
-            std::num::NonZeroU32::new(10_000).unwrap(),
+            PBKDF2_ITERATIONS,
             salt,
             code.as_bytes(),
             &mut out,

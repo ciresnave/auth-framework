@@ -739,7 +739,9 @@ fn aes_cts_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
 
     if n == AES_BLOCK {
         // Single block: ECB decrypt XOR with zero IV = just ECB decrypt
-        let ct: [u8; AES_BLOCK] = ciphertext.try_into().unwrap();
+        let ct: [u8; AES_BLOCK] = ciphertext
+            .try_into()
+            .map_err(|_| AuthError::crypto("AES-CTS single-block conversion failed"))?;
         return Ok(aes_ecb_decrypt(key, &ct).to_vec());
     }
 
@@ -755,7 +757,7 @@ fn aes_cts_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
 
     let c_second_last: [u8; AES_BLOCK] = ciphertext[preceding_len..preceding_len + AES_BLOCK]
         .try_into()
-        .unwrap();
+        .map_err(|_| AuthError::crypto("AES-CTS second-to-last block conversion failed"))?;
     let c_last = &ciphertext[preceding_len + AES_BLOCK..];
 
     // Determine the CBC IV for the CTS pair

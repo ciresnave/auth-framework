@@ -458,7 +458,12 @@ impl AdvancedJarmManager {
             http_client: {
                 use crate::server::core::common_config::EndpointConfig;
                 let endpoint_config = EndpointConfig::new("https://localhost");
-                crate::server::core::common_http::HttpClient::new(endpoint_config).unwrap()
+                crate::server::core::common_http::HttpClient::new(endpoint_config).unwrap_or_else(
+                    |e| {
+                        tracing::error!("Failed to initialize HttpClient for JARM: {e}");
+                        panic!("HttpClient init failed");
+                    },
+                )
             },
             jwe_public_key,
             jwe_private_key,

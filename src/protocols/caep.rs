@@ -163,7 +163,17 @@ impl CaepEvent {
             "subject": self.subject,
         });
         if let Some(ref entity) = self.initiating_entity {
-            event_body["initiating_entity"] = serde_json::to_value(entity).unwrap();
+            // Hand-encode instead of `serde_json::to_value(entity).unwrap()`: this
+            // method returns `Value` (not `Result`), and a fallible conversion
+            // here would need a breaking API change. Encoding the fieldless enum
+            // directly removes the failure mode entirely rather than assuming it
+            // away.
+            let encoded = match entity {
+                EventReasonAdmin::Policy => "policy",
+                EventReasonAdmin::Admin => "admin",
+                EventReasonAdmin::User => "user",
+            };
+            event_body["initiating_entity"] = serde_json::Value::String(encoded.to_string());
         }
         if let Some(ref r) = self.reason_admin {
             event_body["reason_admin"] = serde_json::json!({"en": r});
@@ -395,8 +405,11 @@ impl CaepTransmitter {
         subject: SubjectIdentifier,
         change_type: ChangeType,
     ) -> Result<CaepEvent> {
+        let change_type_value = serde_json::to_value(&change_type).map_err(|e| {
+            AuthError::internal(format!("Failed to serialize CAEP change_type: {e}"))
+        })?;
         let event = CaepEvent::new(&self.issuer, event_types::CREDENTIAL_CHANGE, subject)
-            .with_property("change_type", serde_json::to_value(&change_type).unwrap());
+            .with_property("change_type", change_type_value);
         self.dispatch_event(&event).await;
         Ok(event)
     }
@@ -424,7 +437,9 @@ impl CaepTransmitter {
         claims: HashMap<String, serde_json::Value>,
     ) -> Result<CaepEvent> {
         let mut event = CaepEvent::new(&self.issuer, event_types::TOKEN_CLAIMS_CHANGE, subject);
-        event = event.with_property("claims", serde_json::to_value(&claims).unwrap());
+        let claims_value = serde_json::to_value(&claims)
+            .map_err(|e| AuthError::internal(format!("Failed to serialize CAEP claims: {e}")))?;
+        event = event.with_property("claims", claims_value);
         self.dispatch_event(&event).await;
         Ok(event)
     }

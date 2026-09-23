@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc28] - 2026-09-23
+
+### Fixed
+
+- Resolved 17 of 18 `clippy::unwrap_used` sites in non-test library code
+  (the 18th, `kerberos.rs`'s `chunks_exact`-based block conversion, is fixed
+  by a separate in-flight PR; whichever of these merges second will need a
+  routine rebase). Each site got real error handling appropriate to its own
+  context, not `.expect()` or `#[allow]`:
+  - `methods/client_cert/mod.rs` (8 sites): `CertPinStore` and `CrlStore`
+    migrated from `std::sync::RwLock` (poisonable, hence the `.unwrap()`s)
+    to `parking_lot::RwLock` (already a dependency), which has no poisoning
+    and no fallible lock methods — the failure mode is gone, not handled.
+  - `security/secure_mfa.rs`: the PBKDF2 iteration count was
+    `NonZeroU32::new(10_000).unwrap()` on a literal that can never be zero;
+    replaced with a `const` whose `None` arm is a compile-time
+    `unreachable!()`, so a bad value would fail to build, never panic at
+    runtime.
+  - `protocols/caep.rs` (3 sites): two `serde_json::to_value(..).unwrap()`
+    calls now propagate a real `AuthError` via `?` (their functions already
+    return `Result`); a third, in a function that returns `Value` directly
+    (not `Result`), hand-encodes the fieldless enum instead of relying on a
+    fallible generic serializer for a case that can't fail.
+  - `protocols/kerberos.rs` (2 sites): `try_into().unwrap()` on
+    already-length-checked slices now propagates via `?` instead of trusting
+    the check silently.
+  - `protocols/sd_jwt.rs`: `Vec::last().unwrap()` (length checked above) now
+    uses `.ok_or_else(...)?`.
+  - `protocols/zanzibar.rs`: restructured `if contains('#') { split_once('#').unwrap() }`
+    into a single `if let Some(..) = split_once('#')`, removing the
+    redundant re-scan and the unwrap together.
+  - `server/oidc/oidc_advanced_jarm.rs`: `HttpClient::new(..).unwrap()` in a
+    non-fallible `-> Self` constructor now matches the file's own existing
+    pattern one line above — a logged, explicit panic with a real message
+    instead of an unexplained one.
+
 ## [0.5.0-rc27] - 2026-09-23
 
 ### Fixed

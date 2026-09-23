@@ -465,7 +465,7 @@ impl CertPin {
 /// appears in this store are accepted.
 #[derive(Debug, Clone, Default)]
 pub struct CertPinStore {
-    pins: Arc<std::sync::RwLock<HashSet<String>>>,
+    pins: Arc<parking_lot::RwLock<HashSet<String>>>,
 }
 
 impl CertPinStore {
@@ -476,23 +476,23 @@ impl CertPinStore {
 
     /// Add a pin by SHA-256 hex fingerprint.
     pub fn add(&self, pin: &CertPin) {
-        self.pins.write().unwrap().insert(pin.sha256_hex.clone());
+        self.pins.write().insert(pin.sha256_hex.clone());
     }
 
     /// Remove a pin.
     pub fn remove(&self, pin: &CertPin) -> bool {
-        self.pins.write().unwrap().remove(&pin.sha256_hex)
+        self.pins.write().remove(&pin.sha256_hex)
     }
 
     /// Check if a certificate (DER) matches any pinned fingerprint.
     pub fn is_pinned(&self, cert_der: &[u8]) -> bool {
         let pin = CertPin::from_der(cert_der);
-        self.pins.read().unwrap().contains(&pin.sha256_hex)
+        self.pins.read().contains(&pin.sha256_hex)
     }
 
     /// Number of stored pins.
     pub fn count(&self) -> usize {
-        self.pins.read().unwrap().len()
+        self.pins.read().len()
     }
 }
 
@@ -520,7 +520,7 @@ pub enum RevocationStatus {
 #[derive(Debug, Clone, Default)]
 pub struct CrlStore {
     /// Revoked certificate serial numbers (hex-encoded), keyed by issuer DN.
-    revoked: Arc<std::sync::RwLock<std::collections::HashMap<String, HashSet<String>>>>,
+    revoked: Arc<parking_lot::RwLock<std::collections::HashMap<String, HashSet<String>>>>,
 }
 
 impl CrlStore {
@@ -533,7 +533,6 @@ impl CrlStore {
     pub fn add_revoked(&self, issuer_dn: &str, serial_hex: &str) {
         self.revoked
             .write()
-            .unwrap()
             .entry(issuer_dn.to_string())
             .or_default()
             .insert(serial_hex.to_lowercase());
@@ -541,7 +540,7 @@ impl CrlStore {
 
     /// Check if a certificate (by issuer DN and serial hex) is revoked.
     pub fn check(&self, issuer_dn: &str, serial_hex: &str) -> RevocationStatus {
-        let store = self.revoked.read().unwrap();
+        let store = self.revoked.read();
         if let Some(serials) = store.get(issuer_dn)
             && serials.contains(&serial_hex.to_lowercase())
         {
@@ -563,12 +562,12 @@ impl CrlStore {
 
     /// Total count of revoked serial numbers across all issuers.
     pub fn revoked_count(&self) -> usize {
-        self.revoked.read().unwrap().values().map(|s| s.len()).sum()
+        self.revoked.read().values().map(|s| s.len()).sum()
     }
 
     /// Remove all entries for an issuer.
     pub fn clear_issuer(&self, issuer_dn: &str) {
-        self.revoked.write().unwrap().remove(issuer_dn);
+        self.revoked.write().remove(issuer_dn);
     }
 }
 
