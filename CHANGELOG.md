@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `action-slack@v3` instead of the `SLACK_WEBHOOK_URL` env var it actually reads.
   The step now skips cleanly when the secret is absent and uses the correct env
   var so it will work once/if the secret is added.
+- `Feature Matrix (crypto-sms-test)`: removing the `testing` feature typo above
+  unmasked a real, separate compile error underneath it — `x25519-dalek`'s
+  `StaticSecret` is gated behind its own `static_secrets` cargo feature, which
+  this crate's `[dependencies.x25519-dalek]` table never enabled. Enabled it.
+  This was unreachable before because the `testing` typo failed feature
+  resolution first, long before this code ever got compiled.
 
 ## [0.5.0-rc25] - 2026-09-17
 

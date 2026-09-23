@@ -447,6 +447,7 @@ sqlite-storage = ["sqlx"]
   [dependencies.x25519-dalek]
     optional = true
     version  = "2.0"
+    features = ["static_secrets"]
 
   [dependencies.ed25519-dalek]
     features = ["rand_core"]
