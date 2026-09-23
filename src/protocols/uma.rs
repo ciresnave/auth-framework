@@ -764,7 +764,7 @@ mod tests {
         let meta = UmaDiscoveryMetadata::new("https://auth.example.com");
         let json = serde_json::to_value(&meta).unwrap();
         assert_eq!(json["issuer"], "https://auth.example.com");
-        assert!(json["grant_types_supported"].as_array().unwrap().len() > 0);
+        assert!(!json["grant_types_supported"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -803,8 +803,10 @@ mod tests {
 
     #[test]
     fn test_lifetime_clamped_to_max() {
-        let mut config = StsConfig::default();
-        config.max_token_lifetime = Duration::hours(2);
+        let config = StsConfig {
+            max_token_lifetime: Duration::hours(2),
+            ..Default::default()
+        };
         let mut sts = SecurityTokenService::new(config);
 
         let now = Utc::now();
@@ -923,8 +925,10 @@ mod tests {
 
     #[test]
     fn test_issue_with_proof_token_symmetric_key() {
-        let mut config = StsConfig::default();
-        config.include_proof_tokens = true;
+        let config = StsConfig {
+            include_proof_tokens: true,
+            ..Default::default()
+        };
         let mut sts = SecurityTokenService::new(config);
 
         let request = RequestSecurityToken {
