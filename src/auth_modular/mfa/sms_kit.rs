@@ -42,16 +42,14 @@ impl Default for SmsKitConfig {
 
 /// Supported SMSKit providers
 ///
-/// `Plivo` and `AwsSns` require the `smskit` feature flag and their respective
-/// SDK crates (`sms-plivo`, `sms-aws-sns`). When selected without the feature
-/// enabled, `send_sms_with_fallback` returns a descriptive error at runtime.
+/// `Plivo` requires the `smskit` feature flag and its `sms-plivo` SDK crate.
+/// When selected without the feature enabled, `send_sms_with_fallback`
+/// returns a descriptive error at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SmsKitProvider {
     Twilio,
     /// Requires `smskit` feature and `sms-plivo` crate.
     Plivo,
-    /// Requires `smskit` feature and `sms-aws-sns` crate.
-    AwsSns,
     Development,
 }
 
@@ -69,11 +67,6 @@ pub enum SmsKitProviderConfig {
         auth_token: String,
         from_number: String,
         webhook_url: Option<String>,
-    },
-    AwsSns {
-        region: String,
-        access_key_id: String,
-        secret_access_key: String,
     },
     Development,
 }
@@ -321,7 +314,6 @@ impl SmsKitManager {
         let result = match &self.config.provider {
             SmsKitProvider::Twilio => self.send_via_twilio(phone_number, message).await,
             SmsKitProvider::Plivo => self.send_via_plivo(phone_number, message).await,
-            SmsKitProvider::AwsSns => self.send_via_aws_sns(phone_number, message).await,
             SmsKitProvider::Development => {
                 info!("📱 [SMSKit Development] SMS sent to: {}", phone_number);
                 info!("   Message: {}", message);
@@ -456,48 +448,6 @@ impl SmsKitManager {
     async fn send_via_plivo(&self, _phone_number: &str, _message: &str) -> Result<String> {
         Err(AuthError::internal(
             "Plivo SMS requires the 'smskit' feature flag to be enabled",
-        ))
-    }
-
-    /// Send SMS via AWS SNS using sms-aws-sns crate
-    #[cfg(feature = "smskit")]
-    async fn send_via_aws_sns(&self, phone_number: &str, message: &str) -> Result<String> {
-        use sms_core::SmsClient;
-
-        let client = if let SmsKitProviderConfig::AwsSns {
-            region,
-            access_key_id,
-            secret_access_key,
-        } = &self.config.config
-        {
-            if access_key_id.is_empty() || secret_access_key.is_empty() {
-                return Err(AuthError::internal("AWS credentials are incomplete"));
-            }
-            sms_aws_sns::AwsSnsClient::new(region, access_key_id, secret_access_key)
-        } else {
-            sms_aws_sns::AwsSnsClient::from_env()
-                .map_err(|e| AuthError::internal(format!("AWS SNS env config failed: {}", e)))?
-        };
-
-        let request = sms_core::SendRequest {
-            to: phone_number,
-            from: "",
-            text: message,
-        };
-
-        let response = client
-            .send(request)
-            .await
-            .map_err(|e| AuthError::internal(format!("AWS SNS SMS send failed: {}", e)))?;
-
-        debug!("AWS SNS SMS sent successfully, ID: {}", response.id);
-        Ok(response.id)
-    }
-
-    #[cfg(not(feature = "smskit"))]
-    async fn send_via_aws_sns(&self, _phone_number: &str, _message: &str) -> Result<String> {
-        Err(AuthError::internal(
-            "AWS SNS SMS requires the 'smskit' feature flag to be enabled",
         ))
     }
 

@@ -343,7 +343,6 @@
 
   # SMSKit dependencies for next-gen SMS support
   regex           = "1.11.3"
-  sms-aws-sns     = { version = "0.3.0", optional = true }
   sms-core        = { version = "0.3.0", optional = true }
   sms-plivo       = { version = "0.3.0", optional = true }
   sms-twilio      = { version = "0.3.0", optional = true }
@@ -428,7 +427,6 @@ sqlite-storage = ["sqlx"]
 
   # SMSKit integration (next-generation SMS support)
   smskit = [
-    "sms-aws-sns",
     "sms-core",
     "sms-plivo",
     "sms-twilio",
