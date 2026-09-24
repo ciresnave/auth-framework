@@ -1,6 +1,6 @@
 {
   "name": "@authframework/js-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Official JavaScript/TypeScript SDK for AuthFramework REST API",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -63,7 +63,7 @@
     "typescript": "^5.2.2"
   },
   "dependencies": {
-    "axios": "^1.6.2"
+    "axios": "^1.18.0"
   },
   "engines": {
     "node": ">=16.0.0"
