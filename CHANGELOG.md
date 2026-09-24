@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SmsKitProviderConfig::AwsSns` enum variants. Both types derive
   `Deserialize` and are part of the public API; **any persisted
   configuration (config files, database rows, etc.) that stored a
-  serialized `aws_sns` provider selection will fail to deserialize
+  serialized `AwsSns` provider selection will fail to deserialize
   after upgrading, with an actionable error** naming the removed
   feature, that it was removed in `0.6.0`, and pointing to this
   CHANGELOG entry -- not serde's generic unknown-variant error.
