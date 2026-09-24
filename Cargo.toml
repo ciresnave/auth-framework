@@ -79,7 +79,36 @@
   # Async runtime
   tokio = { version = "1.47.1", features = ["full"] }
 
-  # JWT handling
+  # JWT handling.
+  #
+  # WARNING FOR WHOEVER NEXT TRIES TO SLIM THESE FEATURES: listing
+  # jsonwebtoken's sub-dependencies individually (ed25519-dalek, hmac,
+  # p256, p384, rand, sha2 -- omitting "rust_crypto" itself, to try to
+  # exclude "rsa") PASSES `cargo check` cleanly. It also ships a crate
+  # that PANICS AT RUNTIME on the very first JWT sign or verify call, of
+  # ANY algorithm, because jsonwebtoken's `CryptoProvider::get_default()`
+  # requires "rust_crypto" or "aws_lc_rs" to be enabled BY LITERAL NAME
+  # (see jsonwebtoken 10.3.0's src/crypto/mod.rs) -- the individual
+  # sub-dependency features satisfy the compiler but never set that flag.
+  # A green `cargo check` on a configuration that cannot run is exactly
+  # the "looks done, isn't" defect this portfolio keeps re-discovering.
+  # Caught by reading jsonwebtoken's own source, not by trusting the
+  # build -- do the same before changing this again.
+  #
+  # Consequence for RSA specifically: "rust_crypto" is Cargo-feature-
+  # defined as ["ed25519-dalek","hmac","p256","p384","rand","rsa","sha2"]
+  # -- a single feature that unconditionally enables ALL of those,
+  # including "rsa". Cargo features are pure unions; there is no way to
+  # request that bundle minus "rsa". So jsonwebtoken's own RS*/PS* JWT
+  # algorithm support (and the `rsa` crate it depends on) CANNOT be
+  # feature-gated out of the default build without switching the crypto
+  # backend to aws_lc_rs for ALL algorithms (a separate, larger change,
+  # not done here -- see the portfolio roadmap). `rsa-key-ops` (below)
+  # gates auth-framework's OWN direct `rsa` crate usage instead: the JARM
+  # RSA-OAEP JWE path (the confirmed attacker-reachable exposure) and RSA
+  # JWKS export. It does NOT remove `rsa` from this crate's dependency
+  # tree -- see the `rsa-key-ops` feature comment below for what it does
+  # and does not do.
   jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 
   # HTTP client for OAuth flows
@@ -123,7 +152,10 @@
   rand = { version = "0.10.0", features = ["std_rng"] }
   rand_core = "0.6"  # Compatible version for rsa crate's OsRng
   ring = "0.17.14"
-  rsa = { version = "0.9", features = ["sha2"] }  # RSA-OAEP for JWE key wrapping
+  # Optional: only pulled in by the `rsa-key-ops` feature. Has an open,
+  # unpatched timing-sidechannel advisory (RUSTSEC-2023-0071) -- see deny.toml
+  # for the full disposition and CireSnave's 2026-09-24 ruling.
+  rsa = { version = "0.9", features = ["sha2"], optional = true }  # RSA-OAEP for JWE key wrapping
 
   # Time handling
   time = { version = "0.3.47", features = ["formatting", "parsing", "serde"] }
@@ -399,7 +431,39 @@ sqlite-storage = ["sqlx"]
   otp-auth = ["otpauth"]
   passkeys = ["coset", "passkey", "passkey-client"]
   hsm = ["cryptoki"]  # PKCS#11 / HSM integration for X.509 certificate loading
-  saml = ["bergshamra", "p256", "p384", "quick-xml"]
+  saml = ["bergshamra", "p256", "p384", "quick-xml", "rsa-key-ops"] # most SAML IdP certs are RSA
+  # WHAT THIS GATES: auth-framework's own direct `rsa` crate usage --
+  # JARM's RSA-OAEP JWE decrypt/encrypt (oidc_advanced_jarm.rs; the
+  # confirmed attacker-reachable path: the public `validate_jarm_response`
+  # API feeds an external token directly into an RSA private-key decrypt)
+  # and RSA JWKS export (tokens/mod.rs). With this feature OFF, both
+  # return an actionable error naming RUSTSEC-2023-0071 instead of
+  # silently working.
+  #
+  # WHAT THIS DOES NOT GATE, AND WHY: `rsa` v0.9.10 remains present in
+  # EVERY default build regardless of this feature. jsonwebtoken's own
+  # RS*/PS* JWT sign+verify pulls in its own `rsa` dependency via its
+  # "rust_crypto" feature bundle
+  # (rust_crypto = ["ed25519-dalek","hmac","p256","p384","rand","rsa","sha2"]),
+  # which is also required for ES256/EdDSA/HMAC to work at all --
+  # jsonwebtoken panics at runtime (`CryptoProvider::get_default()`)
+  # unless "rust_crypto" or "aws_lc_rs" is enabled by literal name, and
+  # Cargo features are pure unions: there is no way to request the
+  # "rust_crypto" bundle minus its "rsa" member. Confirmed via
+  # `cargo tree -e features -i rsa` (rsa still resolves with this feature
+  # off) and by reading jsonwebtoken 10.3.0's own source, not assumed.
+  # `cargo audit`/`cargo-deny` will therefore keep reporting `rsa` in this
+  # crate's dependency tree unconditionally -- that is correct, not a bug
+  # in this gate. Removing `rsa` from default builds entirely would
+  # require switching jsonwebtoken to its `aws_lc_rs` backend for ALL
+  # algorithms (a separate, larger change: different build toolchain
+  # requirements, not just an RSA change) -- not done here; see the
+  # portfolio roadmap.
+  #
+  # ECDSA (ES256/ES384) is the recommended default for new JWT
+  # configurations (see security/presets.rs) and does not exercise the
+  # vulnerable RSA code path even though the crate remains compiled in.
+  rsa-key-ops = ["dep:rsa"]
   tui = ["colored", "console", "crossterm", "indicatif", "ratatui", "tui-input"]
   unicode-support = ["unicode-normalization"]
   warp-integration = ["warp"]
