@@ -76,6 +76,12 @@
         # is that CC0-1.0 does not grant patent rights the way Apache-2.0 does;
         # accepted portfolio-wide, not just for this crate set.
         "CC0-1.0",
+        # BSL-1.0 - the BOOST Software License, for xxhash-rust (via redis).
+        # NOT BUSL-1.1 (Business Source License) -- one character apart in the
+        # name, but Boost is permissive and OSI-approved (MIT/Apache family)
+        # while BUSL-1.1 is source-available, not open source. CireSnave
+        # ruled on this distinction explicitly (2026-09-24): allow BSL-1.0.
+        "BSL-1.0",
         "ISC",
         "MIT",
         "MPL-2.0",                        # Mozilla Public License 2.0 - weak copyleft, commercial-friendly
