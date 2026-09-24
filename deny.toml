@@ -17,6 +17,18 @@
         # Impact: None; `paste` is a compile-time macro crate with no runtime attack surface
         # Tracking: Will resolve when cryptoki drops `paste` or migrates to an alternative
         "RUSTSEC-2024-0436",
+        # h2 0.3.27 unbounded empty DATA frames - transitive dependency via
+        # actix-http (actix-integration feature). actix-web's latest release is
+        # still pinned to this h2 0.3.x / hyper 0.14 line; there is no version of
+        # actix-web today that pulls in h2 >=0.4.16.
+        # Impact: accepted for actix-integration users; the fixed h2 0.4.19 is
+        # already in use everywhere else in the dependency tree (see the separate
+        # h2 0.4.13->0.4.19 bump), this is the one remaining unfixable instance.
+        # Re-check trigger: revisit when actix-web releases a hyper-1.x line
+        # (its current hyper-1.x support, if any, still needs to be verified to
+        # depend on h2 >=0.4.16 before this entry can be removed).
+        # Tracking: RUSTSEC-2026-0258, board item 43 problem 2
+        "RUSTSEC-2026-0258",
     ]
 
 [licenses]
@@ -41,6 +53,17 @@
     highlight         = "all"   # Highlight all issues
     multiple-versions = "warn"  # Allow multiple versions but warn
     wildcards         = "allow" # Allow wildcard dependencies
+
+    # Scope the RUSTSEC-2026-0258 (h2) acceptance above to the specific
+    # accepted path (actix-http's pinned h2 0.3.x), not to the advisory
+    # globally. The advisories.ignore entry alone would silently accept
+    # ANY vulnerable h2 instance on ANY path -- including a future
+    # regression like the one PR #34 fixed (h2 0.4.13, fixable, pulled in
+    # via hyper/reqwest/tonic). This ban makes any other <0.4.16 h2
+    # instance fail even while the actix-http one is accepted.
+    deny = [
+        { name = "h2", version = "<0.4.16", wrappers = ["actix-http"] },
+    ]
 
 [sources]
     # Source repository settings
