@@ -306,7 +306,7 @@ jobs:
         run: cargo install cargo-deny --locked
 
       - name: Run cargo-deny
-        run: cargo deny check
+        run: cargo deny --all-features check
 
   build:
     name: Build and Test Docker Image
