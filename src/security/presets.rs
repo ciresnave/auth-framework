@@ -144,6 +144,22 @@ pub enum SecuritySeverity {
 
 impl SecurityPreset {
     /// Convert the security preset to a SecurityConfig
+    ///
+    /// # Why HighSecurity/Paranoid default to ES256/ES384, not RS256/RS512
+    ///
+    /// `rsa` (the crate jsonwebtoken's `rust_crypto` backend uses for RS* signing/
+    /// verification) has an open, unpatched timing-sidechannel advisory
+    /// (RUSTSEC-2023-0071, "Marvin Attack") with no fix available as of this
+    /// writing. auth-framework has a confirmed attacker-reachable RSA private-key
+    /// operation on this path (JARM's RSA-OAEP JWE decrypt,
+    /// `oidc_advanced_jarm.rs::decrypt_rsa_oaep_a256gcm`) plus RS* JWT
+    /// sign/verify wherever a consumer opts into it. These presets are our
+    /// recommended defaults, so they should not steer integrators onto the
+    /// vulnerable path. RS*/PS* remain fully selectable via
+    /// `SecurityConfig::jwt_algorithm` for integrators who need RSA-based JWTs
+    /// for interop with an existing keypair or third party -- this only changes
+    /// what we recommend, not what we permit. CireSnave's ruling, 2026-09-24;
+    /// see also the RSA feature-gating work tracked separately.
     pub fn to_config(&self) -> SecurityConfig {
         match self {
             SecurityPreset::Development => SecurityConfig {
@@ -174,7 +190,7 @@ impl SecurityPreset {
                 min_password_length: 12,
                 require_password_complexity: true,
                 password_hash_algorithm: PasswordHashAlgorithm::Argon2,
-                jwt_algorithm: JwtAlgorithm::RS256, // RSA for better security
+                jwt_algorithm: JwtAlgorithm::ES256, // ECDSA -- see note below on why not RS*
                 secret_key: None,
                 previous_secret_key: None,
                 secure_cookies: true,
@@ -186,7 +202,7 @@ impl SecurityPreset {
                 min_password_length: 16,
                 require_password_complexity: true,
                 password_hash_algorithm: PasswordHashAlgorithm::Argon2,
-                jwt_algorithm: JwtAlgorithm::RS512, // Strongest RSA
+                jwt_algorithm: JwtAlgorithm::ES384, // ECDSA -- see note below on why not RS*
                 secret_key: None,
                 previous_secret_key: None,
                 secure_cookies: true,

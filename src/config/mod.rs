@@ -1499,7 +1499,14 @@ impl SecurityConfig {
             min_password_length: 12,
             require_password_complexity: true,
             password_hash_algorithm: PasswordHashAlgorithm::Argon2,
-            jwt_algorithm: JwtAlgorithm::RS256,
+            // ES256, not RS256 -- see security/presets.rs::to_config for why
+            // (rsa has an open, unpatched timing-sidechannel advisory,
+            // RUSTSEC-2023-0071). This constructor is the one actually
+            // reached by AuthBuilder/QuickStartBuilder's
+            // .security_preset(HighSecurity | Paranoid) and
+            // .use_case(Enterprise) -- not SecurityPreset::to_config() --
+            // so it needs the same fix independently.
+            jwt_algorithm: JwtAlgorithm::ES256,
             secret_key: None,
             previous_secret_key: None,
             secure_cookies: true,
