@@ -84,13 +84,6 @@ jobs:
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: cargo test --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration --workspace
 
-      - name: Run integration tests
-        env:
-          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
-          REDIS_URL: redis://localhost:6379
-          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --test integration --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration
-
       - name: Verify examples compile
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
