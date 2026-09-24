@@ -9,9 +9,44 @@
     # Security-first approach: Only allow explicitly documented exceptions
     # This forces explicit review and justification of ALL security issues
     ignore = [
-        # RSA timing attack - no fix available yet, used by essential dependencies
-        # Impact: Low risk in our authentication context as we don't expose raw RSA operations
-        # Tracking: Will update when sqlx/openidconnect provide fixed versions
+        # RSA Marvin Attack (timing sidechannel), no fix available (patched = []
+        # in the advisory; open since 2023-11-22, still unfixed 3 years later).
+        #
+        # PREVIOUS version of this entry claimed "we don't expose raw RSA
+        # operations." That claim was never verified and turned out to be
+        # false -- replaced here with what a source trace actually found:
+        #
+        # CONFIRMED exposed (attacker-reachable private-key operation):
+        #   - oidc_advanced_jarm.rs::decrypt_rsa_oaep_a256gcm (~line 933-957):
+        #     public API `validate_jarm_response(token: &str)` feeds an
+        #     external token straight into `priv_key.decrypt(Oaep::new::<Sha256>(), ...)`
+        #     -- a raw RSA-OAEP private-key decrypt of attacker-supplied
+        #     ciphertext, exactly the advisory's own workaround scenario
+        #     ("avoid using rsa where attackers can observe timing, over the
+        #     network"). Being addressed: RSA is being moved behind a feature
+        #     gate and the JARM decrypt path is under separate investigation.
+        #   - jsonwebtoken's "rust_crypto" feature (enabled in Cargo.toml)
+        #     routes RS256/RS384/RS512 JWT sign+verify through this crate.
+        #     RS* is no longer the recommended default in the HighSecurity/
+        #     Paranoid security presets (see security/presets.rs) as of this
+        #     change, though it remains selectable for integrators who need it.
+        # NOT exposed (public-key-only, no secret exponent -- not the Marvin
+        # Attack's concern):
+        #   - SAML IdP certificate verification (api/saml.rs, KeyUsage::Verify)
+        #   - JWKS export (tokens/mod.rs, parses PEM for n/e only)
+        #   - passkey RSA verification uses `ring`'s RsaPublicKeyComponents,
+        #     not this crate, at all
+        # UNEXAMINED, not claimed safe: sqlx-mysql's internal use of `rsa`
+        # (likely its caching_sha2_password auth handshake). Not traced in
+        # this pass; explicitly not asserted to be low-risk.
+        #
+        # Acceptance: CireSnave's, by name, 2026-09-24. His ruling: stop
+        # defaulting to RS* in security presets (done), feature-gate RSA so
+        # the exposure is opt-in (in progress), investigate alternatives for
+        # the JARM decrypt path specifically (research task, not yet
+        # resolved), and track a longer-term fix on the portfolio roadmap.
+        # Re-check trigger: RustSec publishes a patched `rsa` release, or the
+        # JARM decrypt path is replaced with a non-`rsa` implementation.
         "RUSTSEC-2023-0071",
         # `paste` crate unmaintained - transitive dependency via cryptoki 0.7.0
         # Impact: None; `paste` is a compile-time macro crate with no runtime attack surface
