@@ -641,9 +641,18 @@ mod deserialize_migration_tests {
         let err = serde_json::from_str::<SmsKitProvider>("\"AwsSns\"")
             .expect_err("AwsSns must fail to deserialize, not succeed");
         let msg = err.to_string();
-        assert!(msg.contains("sms-aws-sns"), "message should name the removed feature: {msg}");
-        assert!(msg.contains("0.6.0"), "message should name the removal version: {msg}");
-        assert!(msg.contains("CHANGELOG"), "message should say where to look: {msg}");
+        assert!(
+            msg.contains("sms-aws-sns"),
+            "message should name the removed feature: {msg}"
+        );
+        assert!(
+            msg.contains("0.6.0"),
+            "message should name the removal version: {msg}"
+        );
+        assert!(
+            msg.contains("CHANGELOG"),
+            "message should say where to look: {msg}"
+        );
     }
 
     #[test]
@@ -652,9 +661,18 @@ mod deserialize_migration_tests {
         let err = serde_json::from_str::<SmsKitProviderConfig>(json)
             .expect_err("AwsSns config must fail to deserialize, not succeed");
         let msg = err.to_string();
-        assert!(msg.contains("sms-aws-sns"), "message should name the removed feature: {msg}");
-        assert!(msg.contains("0.6.0"), "message should name the removal version: {msg}");
-        assert!(msg.contains("CHANGELOG"), "message should say where to look: {msg}");
+        assert!(
+            msg.contains("sms-aws-sns"),
+            "message should name the removed feature: {msg}"
+        );
+        assert!(
+            msg.contains("0.6.0"),
+            "message should name the removal version: {msg}"
+        );
+        assert!(
+            msg.contains("CHANGELOG"),
+            "message should say where to look: {msg}"
+        );
     }
 
     /// Arm 2 (control): every provider that still exists must keep
