@@ -54,6 +54,17 @@
     multiple-versions = "warn"  # Allow multiple versions but warn
     wildcards         = "allow" # Allow wildcard dependencies
 
+    # Scope the RUSTSEC-2026-0258 (h2) acceptance above to the specific
+    # accepted path (actix-http's pinned h2 0.3.x), not to the advisory
+    # globally. The advisories.ignore entry alone would silently accept
+    # ANY vulnerable h2 instance on ANY path -- including a future
+    # regression like the one PR #34 fixed (h2 0.4.13, fixable, pulled in
+    # via hyper/reqwest/tonic). This ban makes any other <0.4.16 h2
+    # instance fail even while the actix-http one is accepted.
+    deny = [
+        { name = "h2", version = "<0.4.16", wrappers = ["actix-http"] },
+    ]
+
 [sources]
     # Source repository settings
     allow-git        = []
