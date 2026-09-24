@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.6.0-rc2"
+  version       = "0.6.0-rc3"
 
 [[bin]]
   name              = "auth-framework"
@@ -237,7 +237,7 @@
   # Use opentelemetry-otlp instead — Jaeger 1.35+ accepts OTLP natively.
   opentelemetry-otlp = { version = "0.31.0", optional = true }
   opentelemetry-prometheus = { version = "0.31.0", optional = true }
-  opentelemetry_sdk = { version = "0.31.0", features = [
+  opentelemetry_sdk = { version = "0.32.1", features = [
     "trace",
   ], optional = true }
   prometheus = { version = "0.14.0", optional = true }
