@@ -5,7 +5,25 @@ All notable changes to the AuthFramework project will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - Unreleased
+
+### Removed
+
+- **Breaking:** the `sms-aws-sns` SMS backend and its `smskit` feature
+  membership, along with the `SmsKitProvider::AwsSns` and
+  `SmsKitProviderConfig::AwsSns` enum variants. Both types derive
+  `Deserialize` and are part of the public API; **any persisted
+  configuration (config files, database rows, etc.) that stored a
+  serialized `AwsSns` provider selection will fail to deserialize
+  after upgrading, with an actionable error** naming the removed
+  feature, that it was removed in `0.6.0`, and pointing to this
+  CHANGELOG entry -- not serde's generic unknown-variant error.
+  Consumers using the AWS SNS SMSKit backend must switch to `Twilio`,
+  `Plivo`, or `Development` before upgrading. Removed because the
+  `aws-sdk-sns` dependency chain was stuck on rustls/aws-smithy-http-client
+  versions that carried RUSTSEC-2026-0098, RUSTSEC-2026-0104, and
+  RUSTSEC-2026-0099 (`rustls-webpki`), with no available fix. `smskit`
+  still supports Twilio, Plivo, and a generic webhook backend.
 
 ## [0.5.0-rc32] - 2026-09-23
 
