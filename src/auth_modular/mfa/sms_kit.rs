@@ -45,7 +45,7 @@ impl Default for SmsKitConfig {
 /// `Plivo` requires the `smskit` feature flag and its `sms-plivo` SDK crate.
 /// When selected without the feature enabled, `send_sms_with_fallback`
 /// returns a descriptive error at runtime.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub enum SmsKitProvider {
     Twilio,
     /// Requires `smskit` feature and `sms-plivo` crate.
@@ -53,8 +53,37 @@ pub enum SmsKitProvider {
     Development,
 }
 
+/// Manual `Deserialize` (rather than `#[derive]`) so a persisted `AwsSns`
+/// selection -- from before the `sms-aws-sns` backend was removed -- fails
+/// with an actionable migration message instead of serde's generic
+/// unknown-variant error. See `SmsKitProviderConfig`'s impl for the shadow
+/// enum this mirrors and the mutation tests in this module.
+impl<'de> Deserialize<'de> for SmsKitProvider {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum Shadow {
+            Twilio,
+            Plivo,
+            Development,
+            AwsSns,
+        }
+        match Shadow::deserialize(deserializer)? {
+            Shadow::Twilio => Ok(SmsKitProvider::Twilio),
+            Shadow::Plivo => Ok(SmsKitProvider::Plivo),
+            Shadow::Development => Ok(SmsKitProvider::Development),
+            Shadow::AwsSns => Err(serde::de::Error::custom(
+                "the `sms-aws-sns` SMS backend (SmsKitProvider::AwsSns) was \
+                 removed in 0.6.0 -- see CHANGELOG.md for migration details",
+            )),
+        }
+    }
+}
+
 /// Provider-specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub enum SmsKitProviderConfig {
     Twilio {
         account_sid: String,
@@ -69,6 +98,71 @@ pub enum SmsKitProviderConfig {
         webhook_url: Option<String>,
     },
     Development,
+}
+
+/// Manual `Deserialize`: same reasoning as `SmsKitProvider` above -- a
+/// persisted `AwsSns { region, access_key_id, secret_access_key }` fails
+/// with an actionable message rather than deserializing successfully or
+/// failing with a generic unknown-variant error.
+impl<'de> Deserialize<'de> for SmsKitProviderConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum Shadow {
+            Twilio {
+                account_sid: String,
+                auth_token: String,
+                from_number: String,
+                webhook_url: Option<String>,
+            },
+            Plivo {
+                auth_id: String,
+                auth_token: String,
+                from_number: String,
+                webhook_url: Option<String>,
+            },
+            Development,
+            AwsSns {
+                #[allow(dead_code)]
+                region: String,
+                #[allow(dead_code)]
+                access_key_id: String,
+                #[allow(dead_code)]
+                secret_access_key: String,
+            },
+        }
+        match Shadow::deserialize(deserializer)? {
+            Shadow::Twilio {
+                account_sid,
+                auth_token,
+                from_number,
+                webhook_url,
+            } => Ok(SmsKitProviderConfig::Twilio {
+                account_sid,
+                auth_token,
+                from_number,
+                webhook_url,
+            }),
+            Shadow::Plivo {
+                auth_id,
+                auth_token,
+                from_number,
+                webhook_url,
+            } => Ok(SmsKitProviderConfig::Plivo {
+                auth_id,
+                auth_token,
+                from_number,
+                webhook_url,
+            }),
+            Shadow::Development => Ok(SmsKitProviderConfig::Development),
+            Shadow::AwsSns { .. } => Err(serde::de::Error::custom(
+                "the `sms-aws-sns` SMS backend (SmsKitProviderConfig::AwsSns) \
+                 was removed in 0.6.0 -- see CHANGELOG.md for migration details",
+            )),
+        }
+    }
 }
 
 /// Webhook configuration for SMS delivery status
@@ -530,5 +624,76 @@ impl SmsKitManager {
             .await?;
 
         Ok(code)
+    }
+}
+
+#[cfg(test)]
+mod deserialize_migration_tests {
+    use super::*;
+
+    /// Arm 1: a persisted `AwsSns` selection (the exact shape this crate's
+    /// own `Serialize` impl produced before the variant was removed) must
+    /// still FAIL to deserialize -- not fall back to another provider, not
+    /// succeed -- and the error must name the feature, the version it was
+    /// removed in, and where to look.
+    #[test]
+    fn aws_sns_provider_fails_with_actionable_migration_message() {
+        let err = serde_json::from_str::<SmsKitProvider>("\"AwsSns\"")
+            .expect_err("AwsSns must fail to deserialize, not succeed");
+        let msg = err.to_string();
+        assert!(msg.contains("sms-aws-sns"), "message should name the removed feature: {msg}");
+        assert!(msg.contains("0.6.0"), "message should name the removal version: {msg}");
+        assert!(msg.contains("CHANGELOG"), "message should say where to look: {msg}");
+    }
+
+    #[test]
+    fn aws_sns_provider_config_fails_with_actionable_migration_message() {
+        let json = r#"{"AwsSns":{"region":"us-east-1","access_key_id":"AKIA...","secret_access_key":"secret"}}"#;
+        let err = serde_json::from_str::<SmsKitProviderConfig>(json)
+            .expect_err("AwsSns config must fail to deserialize, not succeed");
+        let msg = err.to_string();
+        assert!(msg.contains("sms-aws-sns"), "message should name the removed feature: {msg}");
+        assert!(msg.contains("0.6.0"), "message should name the removal version: {msg}");
+        assert!(msg.contains("CHANGELOG"), "message should say where to look: {msg}");
+    }
+
+    /// Arm 2 (control): every provider that still exists must keep
+    /// deserializing cleanly. Without this arm, a manual `Deserialize` that
+    /// rejects everything would also pass arm 1.
+    #[test]
+    fn valid_providers_still_deserialize_cleanly() {
+        let twilio: SmsKitProvider = serde_json::from_str("\"Twilio\"").unwrap();
+        assert!(matches!(twilio, SmsKitProvider::Twilio));
+
+        let plivo: SmsKitProvider = serde_json::from_str("\"Plivo\"").unwrap();
+        assert!(matches!(plivo, SmsKitProvider::Plivo));
+
+        let dev: SmsKitProvider = serde_json::from_str("\"Development\"").unwrap();
+        assert!(matches!(dev, SmsKitProvider::Development));
+
+        let twilio_cfg: SmsKitProviderConfig = serde_json::from_str(
+            r#"{"Twilio":{"account_sid":"AC1","auth_token":"tok","from_number":"+15551234567","webhook_url":null}}"#,
+        )
+        .unwrap();
+        assert!(matches!(twilio_cfg, SmsKitProviderConfig::Twilio { .. }));
+
+        let plivo_cfg: SmsKitProviderConfig = serde_json::from_str(
+            r#"{"Plivo":{"auth_id":"id","auth_token":"tok","from_number":"+15551234567","webhook_url":null}}"#,
+        )
+        .unwrap();
+        assert!(matches!(plivo_cfg, SmsKitProviderConfig::Plivo { .. }));
+
+        let dev_cfg: SmsKitProviderConfig = serde_json::from_str(r#""Development""#).unwrap();
+        assert!(matches!(dev_cfg, SmsKitProviderConfig::Development));
+    }
+
+    /// Round-trip control: confirm Twilio's Serialize output still
+    /// deserializes through the new manual impl (not just hand-built JSON).
+    #[test]
+    fn round_trip_still_works_for_a_surviving_provider() {
+        let original = SmsKitProvider::Twilio;
+        let json = serde_json::to_string(&original).unwrap();
+        let round_tripped: SmsKitProvider = serde_json::from_str(&json).unwrap();
+        assert!(matches!(round_tripped, SmsKitProvider::Twilio));
     }
 }
