@@ -660,8 +660,20 @@ mod deserialize_migration_tests {
     /// Arm 2 (control): every provider that still exists must keep
     /// deserializing cleanly. Without this arm, a manual `Deserialize` that
     /// rejects everything would also pass arm 1.
+    ///
+    /// These JSON literals are hand-written, not round-tripped through this
+    /// crate's own `Serialize` -- a round-trip only proves self-consistency
+    /// (that Serialize and Deserialize agree with each other), not backward
+    /// compatibility with what an existing consumer's config already
+    /// contains. Confirmed the exact accepted spellings against the
+    /// PRE-#38 derived impl (`git show 0e47858^:src/auth_modular/mfa/sms_kit.rs`)
+    /// before writing these: no `#[serde(rename_all = ...)]`, no field or
+    /// variant renames, no aliases, no custom tagging -- plain externally-
+    /// tagged PascalCase, so `"Twilio"` / `{"Twilio": {...}}` etc. are what
+    /// the OLD derive actually accepted, not an assumption from this PR's
+    /// own types.
     #[test]
-    fn valid_providers_still_deserialize_cleanly() {
+    fn literal_pre_existing_config_strings_still_deserialize() {
         let twilio: SmsKitProvider = serde_json::from_str("\"Twilio\"").unwrap();
         assert!(matches!(twilio, SmsKitProvider::Twilio));
 
