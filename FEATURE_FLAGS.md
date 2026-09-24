@@ -47,7 +47,7 @@ These capabilities are always available regardless of feature flags:
 | `passkeys`             | `coset`, `passkey`, `passkey-client`                                    | WebAuthn/FIDO2 passkey support       |
 | `saml`                 | `bergshamra`, `p256`, `p384`, `quick-xml`                               | SAML 2.0 SP and IdP support          |
 | `enhanced-device-flow` | `oauth-device-flows`                                                    | OAuth 2.0 Device Authorization Grant |
-| `smskit`               | `sms-core`, `sms-twilio`, `sms-plivo`, `sms-aws-sns`, `sms-web-generic` | SMS-based MFA via SMSKit             |
+| `smskit`               | `sms-core`, `sms-twilio`, `sms-plivo`, `sms-web-generic`               | SMS-based MFA via SMSKit             |
 | `openid-connect`       | `openidconnect`                                                         | OpenID Connect client support        |
 
 ### Web Framework Integrations
