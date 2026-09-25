@@ -332,12 +332,12 @@ mod tests {
             refresh_token: Some(format!("refresh_{id}")),
             issued_at: Utc::now(),
             expires_at: Utc::now() + chrono::Duration::hours(1),
-            scopes: vec!["read".to_string()],
+            scopes: vec!["read".to_string()].into(),
             auth_method: "password".to_string(),
             client_id: Some("test_client".to_string()),
             user_profile: None,
-            permissions: vec![],
-            roles: vec![],
+            permissions: vec![].into(),
+            roles: vec![].into(),
             metadata: TokenMetadata::default(),
         }
     }
@@ -395,11 +395,14 @@ mod tests {
         let mut token = create_test_token("t1", "user1");
         storage.store_token(&token).await.unwrap();
 
-        token.scopes = vec!["read".to_string(), "write".to_string()];
+        token.scopes = vec!["read".to_string(), "write".to_string()].into();
         storage.update_token(&token).await.unwrap();
 
         let retrieved = storage.get_token("t1").await.unwrap().unwrap();
-        assert_eq!(retrieved.scopes, vec!["read", "write"]);
+        assert_eq!(
+            retrieved.scopes,
+            vec!["read".to_string(), "write".to_string()].into()
+        );
     }
 
     #[tokio::test]
