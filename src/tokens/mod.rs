@@ -1,18 +1,18 @@
 //! Token management and validation for the authentication framework.
 use crate::errors::{AuthError, Result, TokenError};
 use crate::providers::{OAuthProvider, ProfileExtractor, ProviderProfile};
-#[cfg(feature = "rsa-key-ops")]
+#[cfg(feature = "rsa-verify")]
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-#[cfg(feature = "rsa-key-ops")]
+#[cfg(feature = "rsa-verify")]
 use rsa::pkcs1::DecodeRsaPublicKey;
-#[cfg(feature = "rsa-key-ops")]
+#[cfg(feature = "rsa-verify")]
 use rsa::pkcs8::DecodePublicKey;
-#[cfg(feature = "rsa-key-ops")]
+#[cfg(feature = "rsa-verify")]
 use rsa::traits::PublicKeyParts;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "rsa-key-ops")]
+#[cfg(feature = "rsa-verify")]
 use sha2::{Digest, Sha256};
 #[cfg(feature = "postgres-storage")]
 use sqlx::FromRow;
@@ -1342,7 +1342,7 @@ impl Clone for TokenManager {
 }
 
 impl TokenManager {
-    #[cfg(feature = "rsa-key-ops")]
+    #[cfg(feature = "rsa-verify")]
     fn jwks_from_public_pem(public_key: &[u8], algorithm: Algorithm) -> Result<JwksPublicKey> {
         let pem = std::str::from_utf8(public_key)
             .map_err(|e| AuthError::crypto(format!("Invalid RSA public key PEM encoding: {e}")))?;
@@ -1371,16 +1371,16 @@ impl TokenManager {
         })
     }
 
-    /// RSA support is not compiled in without the `rsa-key-ops` feature (see
+    /// RSA support is not compiled in without the `rsa-verify` feature (see
     /// RUSTSEC-2023-0071 in deny.toml). `KeyMaterial::Rsa` can still be
     /// constructed, so this returns an actionable error at export time
     /// rather than failing to compile.
-    #[cfg(not(feature = "rsa-key-ops"))]
+    #[cfg(not(feature = "rsa-verify"))]
     fn jwks_from_public_pem(_public_key: &[u8], _algorithm: Algorithm) -> Result<JwksPublicKey> {
         Err(AuthError::crypto(
-            "RSA JWKS export requires the `rsa-key-ops` feature. RSA has an open, \
+            "RSA JWKS export requires the `rsa-verify` feature. RSA has an open, \
              unpatched timing-sidechannel advisory (RUSTSEC-2023-0071); see deny.toml \
-             for the full disposition. Enable the `rsa-key-ops` feature to opt in, or \
+             for the full disposition. Enable the `rsa-verify` feature to opt in, or \
              use an ECDSA (ES256/ES384) key instead.",
         ))
     }
