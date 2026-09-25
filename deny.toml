@@ -1,6 +1,16 @@
 # Cargo-deny configuration for AuthFramework
 # Security-first configuration for authentication framework
 
+[graph]
+    # Without this, cargo-deny only resolves the graph for the CI runner's own
+    # target (x86_64-unknown-linux-gnu on ubuntu-latest) -- any Windows-only
+    # dependency or advisory is invisible by construction, not by decision.
+    # x86_64-pc-windows-msvc added because CireSnave develops on Windows.
+    # aarch64-apple-darwin deliberately NOT added: no macOS build target, CI
+    # job, or platform-specific code exists in this repo today: nothing to
+    # check yet, and padding the target list only slows the check.
+    targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+
 [advisories]
     # Vulnerability database settings
     db-path = "~/.cargo/advisory-db"
