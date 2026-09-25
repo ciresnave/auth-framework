@@ -60,13 +60,13 @@ use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header};
-#[cfg(feature = "rsa-key-ops")]
+#[cfg(feature = "rsa-private-key-ops")]
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
-#[cfg(feature = "rsa-key-ops")]
+#[cfg(feature = "rsa-private-key-ops")]
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-#[cfg(feature = "rsa-key-ops")]
+#[cfg(feature = "rsa-private-key-ops")]
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -298,12 +298,12 @@ pub struct AdvancedJarmManager {
     /// HTTP client for push notifications
     http_client: crate::server::core::common_http::HttpClient,
     /// RSA public key for JWE CEK wrapping (encrypt to recipient). Requires
-    /// the `rsa-key-ops` feature (RUSTSEC-2023-0071 -- see deny.toml).
-    #[cfg(feature = "rsa-key-ops")]
+    /// the `rsa-private-key-ops` feature (RUSTSEC-2023-0071 -- see deny.toml).
+    #[cfg(feature = "rsa-private-key-ops")]
     jwe_public_key: Option<RsaPublicKey>,
     /// RSA private key for JWE CEK unwrapping (decrypt when we are
-    /// recipient). Requires the `rsa-key-ops` feature.
-    #[cfg(feature = "rsa-key-ops")]
+    /// recipient). Requires the `rsa-private-key-ops` feature.
+    #[cfg(feature = "rsa-private-key-ops")]
     jwe_private_key: Option<RsaPrivateKey>,
 }
 
@@ -393,25 +393,25 @@ impl AdvancedJarmManager {
             };
 
         // Resolve JWE key pair: config field → environment variable → None.
-        // RSA-OAEP JWE support requires the `rsa-key-ops` feature -- this is
+        // RSA-OAEP JWE support requires the `rsa-private-key-ops` feature -- this is
         // the confirmed attacker-reachable RSA private-key operation
         // (RUSTSEC-2023-0071 -- see deny.toml). Without the feature, warn if
         // the operator configured JWE keys anyway so this doesn't fail silently.
-        #[cfg(not(feature = "rsa-key-ops"))]
+        #[cfg(not(feature = "rsa-private-key-ops"))]
         if config.jwe_recipient_public_key_pem.is_some()
             || config.jwe_recipient_private_key_pem.is_some()
             || std::env::var("JARM_JWE_RECIPIENT_PUBLIC_KEY_PEM").is_ok()
             || std::env::var("JARM_JWE_RECIPIENT_PRIVATE_KEY_PEM").is_ok()
         {
             warn!(
-                "JARM JWE recipient keys were configured, but the `rsa-key-ops` \
+                "JARM JWE recipient keys were configured, but the `rsa-private-key-ops` \
                  feature is not enabled -- JWE encryption/decryption will be \
-                 unavailable. Enable `rsa-key-ops` to use it (RUSTSEC-2023-0071 \
+                 unavailable. Enable `rsa-private-key-ops` to use it (RUSTSEC-2023-0071 \
                  applies; see deny.toml)."
             );
         }
 
-        #[cfg(feature = "rsa-key-ops")]
+        #[cfg(feature = "rsa-private-key-ops")]
         let jwe_public_key = {
             let jwe_pub_pem = config
                 .jwe_recipient_public_key_pem
@@ -430,7 +430,7 @@ impl AdvancedJarmManager {
                     }
                 })
         };
-        #[cfg(feature = "rsa-key-ops")]
+        #[cfg(feature = "rsa-private-key-ops")]
         let jwe_private_key = {
             let jwe_priv_pem = config
                 .jwe_recipient_private_key_pem
@@ -493,9 +493,9 @@ impl AdvancedJarmManager {
                     },
                 )
             },
-            #[cfg(feature = "rsa-key-ops")]
+            #[cfg(feature = "rsa-private-key-ops")]
             jwe_public_key,
-            #[cfg(feature = "rsa-key-ops")]
+            #[cfg(feature = "rsa-private-key-ops")]
             jwe_private_key,
         }
     }
@@ -733,7 +733,7 @@ impl AdvancedJarmManager {
     /// Requires a recipient RSA public key supplied via
     /// `AdvancedJarmConfig::jwe_recipient_public_key_pem` or the
     /// `JARM_JWE_RECIPIENT_PUBLIC_KEY_PEM` environment variable.
-    #[cfg(feature = "rsa-key-ops")]
+    #[cfg(feature = "rsa-private-key-ops")]
     fn encrypt_key(&self, cek: &[u8]) -> Result<Vec<u8>> {
         let pub_key = self.jwe_public_key.as_ref().ok_or_else(|| {
             AuthError::crypto(
@@ -751,12 +751,12 @@ impl AdvancedJarmManager {
             .map_err(|e| AuthError::crypto(format!("RSA-OAEP CEK wrap failed: {e}")))
     }
 
-    /// RSA-OAEP JWE requires the `rsa-key-ops` feature (RUSTSEC-2023-0071 --
+    /// RSA-OAEP JWE requires the `rsa-private-key-ops` feature (RUSTSEC-2023-0071 --
     /// see deny.toml).
-    #[cfg(not(feature = "rsa-key-ops"))]
+    #[cfg(not(feature = "rsa-private-key-ops"))]
     fn encrypt_key(&self, _cek: &[u8]) -> Result<Vec<u8>> {
         Err(AuthError::crypto(
-            "JARM RSA-OAEP JWE encryption requires the `rsa-key-ops` feature. \
+            "JARM RSA-OAEP JWE encryption requires the `rsa-private-key-ops` feature. \
              RSA has an open, unpatched timing-sidechannel advisory \
              (RUSTSEC-2023-0071); see deny.toml for the full disposition.",
         ))
@@ -971,14 +971,14 @@ impl AdvancedJarmManager {
         }
     }
 
-    /// RSA-OAEP JWE decryption requires the `rsa-key-ops` feature. This is
+    /// RSA-OAEP JWE decryption requires the `rsa-private-key-ops` feature. This is
     /// the CONFIRMED attacker-reachable exposure named in deny.toml's
     /// RUSTSEC-2023-0071 entry: this function performs a raw RSA private-key
     /// decrypt of ciphertext taken directly from an external token string
     /// (see `validate_jarm_response` / `decrypt_jwe_response`), which is
     /// exactly the advisory's own workaround scenario ("avoid using rsa
     /// where attackers can observe timing, over the network").
-    #[cfg(not(feature = "rsa-key-ops"))]
+    #[cfg(not(feature = "rsa-private-key-ops"))]
     fn decrypt_rsa_oaep_a256gcm(
         &self,
         _encrypted_key_b64: &str,
@@ -987,14 +987,14 @@ impl AdvancedJarmManager {
         _tag_b64: &str,
     ) -> Result<String, AuthError> {
         Err(AuthError::crypto(
-            "JARM RSA-OAEP JWE decryption requires the `rsa-key-ops` feature. \
+            "JARM RSA-OAEP JWE decryption requires the `rsa-private-key-ops` feature. \
              RSA has an open, unpatched timing-sidechannel advisory \
              (RUSTSEC-2023-0071); see deny.toml for the full disposition.",
         ))
     }
 
     /// Perform RSA-OAEP-SHA-256 + A256GCM JWE decryption.
-    #[cfg(feature = "rsa-key-ops")]
+    #[cfg(feature = "rsa-private-key-ops")]
     fn decrypt_rsa_oaep_a256gcm(
         &self,
         encrypted_key_b64: &str,
@@ -1361,7 +1361,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "rsa-key-ops")]
+    #[cfg(feature = "rsa-private-key-ops")]
     #[tokio::test]
     async fn test_jwe_encrypt_decrypt_roundtrip() {
         use rsa::RsaPrivateKey;
