@@ -61,11 +61,9 @@
   version       = "0.6.0-rc3"
 
 [workspace]
-  # MEASURING CHANGE, not necessarily landing: unifies auth-storage-sqlite
-  # under the same Cargo.lock/resolution as this crate, so it comes under
-  # every existing CI job (test, clippy, coverage, audit, deny) instead of
-  # being silently unbuilt and unaudited. See auth-framework#<PR> for the
-  # measured Cargo.lock delta and post-unification audit/deny results.
+  # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
+  # comes under every existing CI job (test, clippy, coverage, audit,
+  # deny) instead of being silently unbuilt and unaudited (see #56).
   members = ["auth-storage-sqlite"]
 
 [[bin]]
