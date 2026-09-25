@@ -48,10 +48,6 @@
         # Re-check trigger: RustSec publishes a patched `rsa` release, or the
         # JARM decrypt path is replaced with a non-`rsa` implementation.
         "RUSTSEC-2023-0071",
-        # `paste` crate unmaintained - transitive dependency via cryptoki 0.7.0
-        # Impact: None; `paste` is a compile-time macro crate with no runtime attack surface
-        # Tracking: Will resolve when cryptoki drops `paste` or migrates to an alternative
-        "RUSTSEC-2024-0436",
         # h2 0.3.27 unbounded empty DATA frames - transitive dependency via
         # actix-http (actix-integration feature). actix-web's latest release is
         # still pinned to this h2 0.3.x / hyper 0.14 line; there is no version of
@@ -74,6 +70,18 @@
         "BSD-2-Clause",
         "BSD-3-Clause",
         "CDLA-Permissive-2.0",            # Community Data License Agreement - for webpki-roots
+        "0BSD",                           # BSD Zero Clause License - public-domain-equivalent, for quoted_printable (via lettre)
+        # CC0-1.0 - public-domain-equivalent dedication, for tiny-keccak/notify.
+        # CireSnave 2026-09-17: "Allow both, note the CC0 caveat" -- the caveat
+        # is that CC0-1.0 does not grant patent rights the way Apache-2.0 does;
+        # accepted portfolio-wide, not just for this crate set.
+        "CC0-1.0",
+        # BSL-1.0 - the BOOST Software License, for xxhash-rust (via redis).
+        # NOT BUSL-1.1 (Business Source License) -- one character apart in the
+        # name, but Boost is permissive and OSI-approved (MIT/Apache family)
+        # while BUSL-1.1 is source-available, not open source. CireSnave
+        # ruled on this distinction explicitly (2026-09-24): allow BSL-1.0.
+        "BSL-1.0",
         "ISC",
         "MIT",
         "MPL-2.0",                        # Mozilla Public License 2.0 - weak copyleft, commercial-friendly
