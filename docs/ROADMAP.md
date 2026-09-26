@@ -1,6 +1,6 @@
 # AuthFramework Development Roadmap
 
-Last updated: March 21, 2026 (release-readiness audit follow-up)
+Last updated: September 26, 2026 (dependency-freshness tracking, item 63e)
 
 ## Strategic Vision
 
@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.5.0-rc24`
+- Current crate version: `0.6.0-rc4`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
