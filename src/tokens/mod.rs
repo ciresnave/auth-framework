@@ -19,6 +19,7 @@ use sqlx::FromRow;
 use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 /// An issued authentication token with all associated metadata.
 ///
@@ -755,8 +756,14 @@ pub struct TokenManager {
 enum KeyMaterial {
     /// HMAC secret
     Hmac(Vec<u8>),
-    /// RSA private and public keys
-    Rsa { private: Vec<u8>, public: Vec<u8> },
+    /// RSA private and public keys. `private` is zeroized on drop -- per
+    /// CireSnave's standing rule, a credential that can be re-provided by
+    /// the caller should only be resident as long as needed and then
+    /// zeroed so it cannot linger in freed memory.
+    Rsa {
+        private: Zeroizing<Vec<u8>>,
+        public: Vec<u8>,
+    },
 }
 
 /// Public key material that can be serialized into a JWKS document.
@@ -1462,7 +1469,7 @@ impl TokenManager {
             decoding_key,
             previous_decoding_key: None,
             key_material: KeyMaterial::Rsa {
-                private: private_key.to_vec(),
+                private: Zeroizing::new(private_key.to_vec()),
                 public: public_key.to_vec(),
             },
             previous_key_material: None,
@@ -1507,7 +1514,7 @@ impl TokenManager {
         self.encoding_key = new_encoding_key;
         self.decoding_key = new_decoding_key;
         self.key_material = KeyMaterial::Rsa {
-            private: private_key.to_vec(),
+            private: Zeroizing::new(private_key.to_vec()),
             public: public_key.to_vec(),
         };
         self.algorithm = Algorithm::RS256;
