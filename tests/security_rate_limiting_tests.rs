@@ -18,9 +18,22 @@ use auth_framework::{
     server::{DeviceAuthManager, DeviceAuthorizationRequest},
     utils::rate_limit::RateLimiter as BasicRateLimiter,
 };
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
+
+/// A controllable clock for rate-limiter tests: advancing it moves the
+/// limiter's notion of "now" without any real wall-clock delay, so window
+/// expiry can be asserted deterministically instead of racing a `sleep`
+/// against scheduling or instrumentation overhead.
+fn fake_clock() -> (
+    Arc<Mutex<Instant>>,
+    impl Fn() -> Instant + Send + Sync + 'static,
+) {
+    let now = Arc::new(Mutex::new(Instant::now()));
+    let reader = now.clone();
+    (now, move || *reader.lock().unwrap())
+}
 
 /// Helper to create test framework
 async fn setup_test_framework() -> Arc<AuthFramework> {
@@ -37,8 +50,11 @@ async fn setup_test_framework() -> Arc<AuthFramework> {
 async fn test_basic_ip_rate_limiting() {
     println!("🔍 Testing: Basic IP-Based Rate Limiting");
 
-    // Create rate limiter: 3 requests per 100ms
-    let limiter = BasicRateLimiter::new(3, Duration::from_millis(100));
+    // Create rate limiter: 3 requests per 100ms, driven by a fake clock so
+    // window expiry is asserted by advancing time explicitly rather than by
+    // sleeping and hoping the real clock cooperates.
+    let (clock, now) = fake_clock();
+    let limiter = BasicRateLimiter::with_clock(3, Duration::from_millis(100), now);
 
     let test_ip = "192.168.1.100";
 
@@ -57,8 +73,8 @@ async fn test_basic_ip_rate_limiting() {
         "Request 4 should be rate limited"
     );
 
-    // Wait for window to reset
-    sleep(Duration::from_millis(150)).await;
+    // Advance the fake clock past the window -- no real time passes.
+    *clock.lock().unwrap() += Duration::from_millis(150);
 
     // Should be allowed again after window reset
     assert!(

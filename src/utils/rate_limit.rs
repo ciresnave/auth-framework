@@ -14,11 +14,22 @@ use std::time::{Duration, Instant};
 /// let limiter = RateLimiter::new(5, Duration::from_secs(60));
 /// assert!(limiter.is_allowed("client-1"));
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RateLimiter {
     max_requests: u32,
     window: Duration,
     requests: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+    now: Arc<dyn Fn() -> Instant + Send + Sync>,
+}
+
+impl std::fmt::Debug for RateLimiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RateLimiter")
+            .field("max_requests", &self.max_requests)
+            .field("window", &self.window)
+            .field("requests", &self.requests)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RateLimiter {
@@ -31,10 +42,33 @@ impl RateLimiter {
     /// let limiter = RateLimiter::new(100, Duration::from_secs(60));
     /// ```
     pub fn new(max_requests: u32, window: Duration) -> Self {
+        Self::with_clock(max_requests, window, Instant::now)
+    }
+
+    /// Create a new rate limiter with an injectable clock.
+    ///
+    /// This is a genuine testing seam, not a workaround: it lets callers
+    /// (this crate's own tests, or a consumer's) assert window-expiry
+    /// behavior by advancing a controlled clock instead of racing real
+    /// wall-clock sleeps against unpredictable scheduling or
+    /// instrumentation overhead.
+    ///
+    /// # Example
+    /// ```rust
+    /// use auth_framework::utils::rate_limit::RateLimiter;
+    /// use std::time::{Duration, Instant};
+    /// let limiter = RateLimiter::with_clock(100, Duration::from_secs(60), Instant::now);
+    /// ```
+    pub fn with_clock(
+        max_requests: u32,
+        window: Duration,
+        now: impl Fn() -> Instant + Send + Sync + 'static,
+    ) -> Self {
         Self {
             max_requests,
             window,
             requests: Arc::new(Mutex::new(HashMap::new())),
+            now: Arc::new(now),
         }
     }
 
@@ -55,7 +89,7 @@ impl RateLimiter {
             .lock()
             .map_err(|_| AuthError::internal("Failed to acquire rate limiter lock".to_string()))?;
 
-        let now = Instant::now();
+        let now = (self.now)();
         let entry = requests.entry(key.to_string()).or_insert_with(Vec::new);
 
         // Remove expired requests
@@ -113,7 +147,7 @@ impl RateLimiter {
             .lock()
             .map_err(|_| AuthError::internal("Failed to acquire rate limiter lock".to_string()))?;
 
-        let now = Instant::now();
+        let now = (self.now)();
         if let Some(entry) = requests.get(key) {
             let valid_requests = entry
                 .iter()
@@ -141,7 +175,7 @@ impl RateLimiter {
             .lock()
             .map_err(|_| AuthError::internal("Failed to acquire rate limiter lock".to_string()))?;
 
-        let now = Instant::now();
+        let now = (self.now)();
         let mut removed_count = 0;
 
         requests.retain(|_, entry| {
