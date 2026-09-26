@@ -26,7 +26,10 @@ use tokio::time::sleep;
 /// limiter's notion of "now" without any real wall-clock delay, so window
 /// expiry can be asserted deterministically instead of racing a `sleep`
 /// against scheduling or instrumentation overhead.
-fn fake_clock() -> (Arc<Mutex<Instant>>, impl Fn() -> Instant + Send + Sync + 'static) {
+fn fake_clock() -> (
+    Arc<Mutex<Instant>>,
+    impl Fn() -> Instant + Send + Sync + 'static,
+) {
     let now = Arc::new(Mutex::new(Instant::now()));
     let reader = now.clone();
     (now, move || *reader.lock().unwrap())
