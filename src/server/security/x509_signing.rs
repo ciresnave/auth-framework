@@ -28,6 +28,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
@@ -277,7 +278,11 @@ pub enum CertificateStatus {
 }
 
 /// CA Certificate
-#[derive(Debug, Clone)]
+///
+/// Does not derive `Debug`: `private_key` holds the CA's raw signing key,
+/// and a derived `Debug` would print it verbatim on any accidental
+/// `{:?}`. The manual impl below redacts it.
+#[derive(Clone)]
 pub struct CACertificate {
     /// CA ID
     pub ca_id: String,
@@ -299,6 +304,20 @@ pub struct CACertificate {
 
     /// Next certificate serial number
     pub next_serial: u64,
+}
+
+impl fmt::Debug for CACertificate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CACertificate")
+            .field("ca_id", &self.ca_id)
+            .field("certificate", &self.certificate)
+            .field("subject", &self.subject)
+            .field("private_key", &"[redacted]")
+            .field("ca_type", &self.ca_type)
+            .field("issued_count", &self.issued_count)
+            .field("next_serial", &self.next_serial)
+            .finish()
+    }
 }
 
 /// CA Types
