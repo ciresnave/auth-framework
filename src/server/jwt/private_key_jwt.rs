@@ -313,15 +313,35 @@ impl PrivateKeyJwtManager {
 
     /// Create a client assertion JWT (for testing/client-side use).
     ///
-    /// # Key encoding by algorithm
-    /// - **HS256/384/512**: `signing_key` is the raw HMAC secret bytes.
-    /// - **RS256/384/512**: `signing_key` must be a PEM-encoded RSA private key (`-----BEGIN RSA PRIVATE KEY-----...`).
-    /// - **ES256/384**: `signing_key` must be a PEM-encoded EC private key (`-----BEGIN EC PRIVATE KEY-----...`).
+    /// Per RFC 7523, a client assertion is regenerated on every token
+    /// request, so `encoding_key` should be constructed ONCE by the caller
+    /// (e.g. `EncodingKey::from_rsa_pem(pem_bytes)` at startup or config
+    /// load) and reused across calls, rather than re-parsed from raw PEM
+    /// bytes each time. jsonwebtoken 10.4.0+ zeroizes `EncodingKey` on
+    /// drop, so a long-lived `EncodingKey` is the safe object to hold --
+    /// the intermediate `PemEncodedKey` that `from_*_pem` briefly
+    /// constructs during that one parse is NOT zeroized, but this reduces
+    /// that un-zeroized copy from one per call to one per key, not to
+    /// zero. Closing that remaining gap is jsonwebtoken's to fix, not
+    /// this crate's.
+    ///
+    /// # Algorithm / key-family mismatch
+    /// The previous signature chose the PEM-parsing branch from
+    /// `algorithm`, so the two could never disagree by construction. This
+    /// signature accepts an already-typed `EncodingKey`, so a caller CAN
+    /// pass e.g. an RSA key with `Algorithm::ES256` -- there is no
+    /// compile-time guard against it. Verified (not assumed):
+    /// `jsonwebtoken::encode` rejects a mismatched pair with
+    /// `ErrorKind::InvalidAlgorithm` rather than silently signing under
+    /// the wrong declared `alg`, so this cannot produce an
+    /// algorithm-confusion token -- but the mismatch is now a runtime
+    /// error surfaced through this method's `Result`, not a type error
+    /// caught before it compiles.
     pub fn create_client_assertion(
         &self,
         client_id: &str,
         audience: &str,
-        signing_key: &[u8],
+        encoding_key: &EncodingKey,
         algorithm: Algorithm,
     ) -> Result<String> {
         let now = Utc::now();
@@ -335,36 +355,8 @@ impl PrivateKeyJwtManager {
             nbf: Some(now.timestamp()),
         };
 
-        let encoding_key = match algorithm {
-            Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512 => {
-                EncodingKey::from_secret(signing_key)
-            }
-            Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512 => {
-                EncodingKey::from_rsa_pem(signing_key).map_err(|e| {
-                    AuthError::auth_method(
-                        "private_key_jwt",
-                        format!("Invalid RSA PEM key for {:?}: {}", algorithm, e),
-                    )
-                })?
-            }
-            Algorithm::ES256 | Algorithm::ES384 => {
-                EncodingKey::from_ec_pem(signing_key).map_err(|e| {
-                    AuthError::auth_method(
-                        "private_key_jwt",
-                        format!("Invalid EC PEM key for {:?}: {}", algorithm, e),
-                    )
-                })?
-            }
-            _ => {
-                return Err(AuthError::auth_method(
-                    "private_key_jwt",
-                    format!("Unsupported signing algorithm: {:?}", algorithm),
-                ));
-            }
-        };
-
         let header = Header::new(algorithm);
-        encode(&header, &claims, &encoding_key).map_err(|e| {
+        encode(&header, &claims, encoding_key).map_err(|e| {
             AuthError::auth_method("private_key_jwt", format!("Failed to encode JWT: {}", e))
         })
     }
@@ -735,12 +727,13 @@ mod tests {
     fn test_create_client_assertion() {
         let manager = create_test_manager();
 
-        // HS256 uses a raw HMAC secret — pass any byte slice
+        // The caller constructs the EncodingKey once; HS256 uses a raw secret.
+        let encoding_key = EncodingKey::from_secret(b"super-secret-key-for-testing-purposes");
         let assertion = manager
             .create_client_assertion(
                 "test_client",
                 "https://auth.example.com/token",
-                b"super-secret-key-for-testing-purposes",
+                &encoding_key,
                 Algorithm::HS256,
             )
             .unwrap();
@@ -755,16 +748,33 @@ mod tests {
     }
 
     #[test]
-    fn test_create_client_assertion_rs256_requires_pem_key() {
+    fn test_create_client_assertion_rejects_key_algorithm_mismatch() {
+        // Parsing bad PEM bytes is now the caller's responsibility
+        // (EncodingKey::from_rsa_pem), not this method's -- verify that
+        // directly instead.
+        assert!(
+            EncodingKey::from_rsa_pem(b"not_a_pem_key").is_err(),
+            "EncodingKey::from_rsa_pem must reject non-PEM key bytes"
+        );
+
+        // The signature change removed the compile-time guarantee that
+        // `algorithm` matches the key family `encoding_key` was built
+        // from. Verify jsonwebtoken::encode rejects the mismatch at
+        // runtime rather than silently signing under the wrong declared
+        // `alg` (an algorithm-confusion vector) -- an HMAC key is valid
+        // key material, just the wrong family for ES256.
         let manager = create_test_manager();
-        // Raw bytes are not a valid RSA PEM key — must return an error
+        let encoding_key = EncodingKey::from_secret(b"super-secret-key-for-testing-purposes");
         let result = manager.create_client_assertion(
             "test_client",
             "https://auth.example.com/token",
-            b"not_a_pem_key",
-            Algorithm::RS256,
+            &encoding_key,
+            Algorithm::ES256,
         );
-        assert!(result.is_err(), "RS256 must reject non-PEM key bytes");
+        assert!(
+            result.is_err(),
+            "a key/algorithm family mismatch must be rejected, not silently signed"
+        );
     }
 
     #[tokio::test]
@@ -841,11 +851,12 @@ mod tests {
         manager.register_client(config.clone()).await.unwrap();
 
         // Create a test JWT assertion using HS256 (raw secret is valid for HMAC)
+        let encoding_key = EncodingKey::from_secret(b"super-secret-key-for-testing-purposes");
         let assertion = manager
             .create_client_assertion(
                 "test_client",
                 "https://auth.example.com/token",
-                b"super-secret-key-for-testing-purposes",
+                &encoding_key,
                 Algorithm::HS256,
             )
             .unwrap();
