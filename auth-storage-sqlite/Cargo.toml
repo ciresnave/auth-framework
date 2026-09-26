@@ -1,7 +1,10 @@
 [package]
     edition = "2021"
     name    = "auth-storage-sqlite"
-    version = "0.1.0"
+    version = "0.6.0-rc4"
+    # Not published to crates.io. Publishing this crate, and the version it
+    # ships at when that happens, is CireSnave's decision alone.
+    publish = false
 
 [dependencies]
     async-trait    = "0.1.86"
