@@ -78,7 +78,13 @@ pub struct CommonJwtClaims {
     pub iss: String,
     /// Subject
     pub sub: String,
-    /// Audience
+    /// Audience. Omitted from the serialized token when empty -- RFC 7519
+    /// treats `aud` as an intended-recipient claim, and an empty array is
+    /// not a meaningful value for it. jsonwebtoken 10.4.0+ validates a
+    /// present `aud` even when the verifier configured no expected
+    /// audience, so previously we issued tokens that could fail
+    /// verification for a reason unrelated to any real audience mismatch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aud: Vec<String>,
     /// Expiration time
     pub exp: i64,
