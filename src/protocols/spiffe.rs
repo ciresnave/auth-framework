@@ -426,10 +426,19 @@ impl Default for SpiffeTrustManager {
 /// Does not derive `Debug`: `X509::private_key` holds the workload's raw
 /// private key and `Jwt::token` holds a bearer credential; a derived
 /// `Debug` would print either verbatim on any accidental `{:?}`. The
-/// manual impl below redacts both. `Serialize`/`Deserialize` are left as
-/// derived for now (removing them is a breaking change to this `pub`
-/// type, tracked separately).
-#[derive(Clone, Serialize, Deserialize)]
+/// manual impl below redacts both.
+///
+/// Does not derive `Serialize`/`Deserialize` either, for the same reason:
+/// a derived `Serialize` would write the private key or bearer token
+/// verbatim into any JSON/CBOR/etc. produced from this type. Nothing in
+/// this crate persists an `SvidResponse` -- the Workload API client below
+/// only ever holds SVIDs in an in-memory cache and re-issues them from the
+/// CA/JWT signer on expiry/restart, matching the standing rule that
+/// re-derivable secret material should not be persisted beyond the current
+/// work. A consumer with a genuine need to persist an SVID should build
+/// its own explicit, reviewed representation rather than rely on a derive
+/// that would silently include the raw key or token.
+#[derive(Clone)]
 pub enum SvidResponse {
     /// An X.509-SVID with DER-encoded certificate chain and private key.
     X509 {

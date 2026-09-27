@@ -16,11 +16,16 @@ use zeroize::Zeroizing;
 /// output rather than leaving the derive as an unused, unsafe alternative
 /// path nobody deleted after `safe_display` was written.
 ///
-/// `Serialize`/`Deserialize` are unchanged here: removing them is a
-/// breaking change to this `pub` type's API and is tracked separately
-/// alongside this crate's other pending breaking security fixes.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "data")]
+/// Does not derive `Serialize`/`Deserialize`: several variants carry raw
+/// secret material in plain `String`/`Vec<u8>` fields, and a derived
+/// `Serialize` would write it verbatim into any JSON/CBOR/etc. output
+/// produced from this type. There is no in-tree persistence need for
+/// `Credential` -- nothing in this crate serializes it -- so the derive
+/// is removed outright rather than replaced with a redacting impl,
+/// which would silently produce a structurally-valid-but-wrong value.
+/// A consumer that genuinely needs to persist a `Credential` should
+/// serialize its own explicit, reviewed representation instead.
+#[derive(Clone)]
 pub enum Credential {
     /// Username and password credentials
     Password { username: String, password: String },
@@ -454,7 +459,10 @@ impl CredentialMetadata {
 }
 
 /// A complete authentication request with credentials and metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Does not derive `Serialize`/`Deserialize`: it embeds [`Credential`],
+/// which does not derive them either -- see that type's doc comment.
+#[derive(Debug, Clone)]
 pub struct AuthRequest {
     /// The credentials to authenticate with
     pub credential: Credential,
