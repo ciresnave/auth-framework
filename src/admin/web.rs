@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(feature = "web-gui")]
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
+#[cfg(feature = "web-gui")]
+use zeroize::Zeroizing;
 
 #[cfg(feature = "web-gui")]
 const ADMIN_SESSION_TTL_SECONDS: i64 = 30 * 60;
@@ -498,7 +500,7 @@ pub struct LogEntry {
 #[derive(Deserialize)]
 struct LoginForm {
     username: String,
-    password: String,
+    password: Zeroizing<String>,
 }
 
 #[cfg(feature = "web-gui")]
@@ -514,7 +516,7 @@ struct ConfigEditForm {
 #[allow(dead_code)] // Fields are read by axum's Form extractor via serde deserialization.
 struct CreateUserForm {
     email: String,
-    password: String,
+    password: Zeroizing<String>,
     admin: Option<bool>,
 }
 
