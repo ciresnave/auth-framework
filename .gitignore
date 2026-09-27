@@ -42,8 +42,14 @@ test_results*.txt
 final_test_out.txt
 release_test_output*.txt
 full_release_test_output.txt
+# Legacy default location (MigrationConfig::working_directory before it moved
+# to .auth-framework-migration/) -- kept so old checkouts/state don't get
+# re-tracked by accident.
 migration/migration_manifest.jsonl
 migration/test_plan_status.json
+migration/backups/
+# Current default MigrationConfig::working_directory / backup_directory.
+.auth-framework-migration/
 
 # Log files
 *.log

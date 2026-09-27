@@ -381,8 +381,8 @@ pub struct MigrationConfig {
 impl Default for MigrationConfig {
     fn default() -> Self {
         Self {
-            working_directory: PathBuf::from("./migration"),
-            backup_directory: PathBuf::from("./migration/backups"),
+            working_directory: PathBuf::from("./.auth-framework-migration"),
+            backup_directory: PathBuf::from("./.auth-framework-migration/backups"),
             max_concurrent_operations: 4,
             operation_timeout: chrono::Duration::minutes(30),
             dry_run: false,
@@ -496,6 +496,25 @@ impl MigrationConfigBuilder {
 impl MigrationManager {
     /// Create new migration manager
     pub fn new(config: MigrationConfig) -> Result<Self, MigrationError> {
+        // The default working_directory moved from "./migration" to
+        // "./.auth-framework-migration" (see MigrationConfig::default). A
+        // reader that finds no manifest at the new location treats that as
+        // "nothing recorded yet" rather than an error, so an upgrade would
+        // otherwise silently lose continuity with any pre-existing state at
+        // the old location. Surface it instead of staying silent.
+        let legacy_dir = std::path::Path::new("./migration");
+        if legacy_dir != config.working_directory && legacy_dir.exists() {
+            tracing::warn!(
+                "found a pre-existing '{}' directory, but this migration tool's default \
+                 working_directory is now '{}' -- if this holds manifest/status state from \
+                 before an upgrade, set MigrationConfig::working_directory explicitly to \
+                 '{}' to continue using it, or migrate its contents manually.",
+                legacy_dir.display(),
+                config.working_directory.display(),
+                legacy_dir.display(),
+            );
+        }
+
         // Ensure directories exist
         std::fs::create_dir_all(&config.working_directory)?;
         std::fs::create_dir_all(&config.backup_directory)?;
@@ -677,7 +696,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_migration_manager_creation() {
-        let config = MigrationConfig::default();
+        let tmp = tempfile::tempdir().unwrap();
+        let config = MigrationConfig {
+            working_directory: tmp.path().join("migration"),
+            backup_directory: tmp.path().join("backups"),
+            ..Default::default()
+        };
         let manager = MigrationManager::new(config);
         assert!(manager.is_ok());
     }
