@@ -469,7 +469,7 @@ impl AdvancedJarmManager {
                 types
             },
             require_secure_transport: true,
-            jwt_secret: validator_jwt_secret,
+            jwt_secret: validator_jwt_secret.into(),
             rsa_public_key_pem: rsa_pub_pem,
             ec_public_key_pem: None,
             ed_public_key_pem: None,

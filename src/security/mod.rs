@@ -15,6 +15,7 @@
 //! rather than importing security types directly.
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 // Timing protection utilities
 pub mod timing_protection;
@@ -160,7 +161,7 @@ pub struct LockoutConfig {
 pub struct SmsConfig {
     pub provider: String,
     #[serde(skip_serializing, default)]
-    pub api_key: String,
+    pub api_key: Zeroizing<String>,
     pub from_number: String,
 }
 
@@ -168,7 +169,7 @@ impl Default for SmsConfig {
     fn default() -> Self {
         Self {
             provider: "twilio".to_string(),
-            api_key: String::new(),
+            api_key: Zeroizing::new(String::new()),
             from_number: String::new(),
         }
     }
@@ -184,7 +185,7 @@ pub struct EmailConfig {
     pub smtp_port: u16,
     pub username: String,
     #[serde(skip_serializing, default)]
-    pub password: String,
+    pub password: Zeroizing<String>,
     pub from_email: String,
     pub use_tls: bool,
 }
@@ -195,7 +196,7 @@ impl Default for EmailConfig {
             smtp_server: "smtp.gmail.com".to_string(),
             smtp_port: 587,
             username: String::new(),
-            password: String::new(),
+            password: Zeroizing::new(String::new()),
             from_email: String::new(),
             use_tls: true,
         }

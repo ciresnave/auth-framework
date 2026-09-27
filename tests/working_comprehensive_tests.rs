@@ -35,7 +35,11 @@ fn create_working_config() -> AuthConfig {
             require_password_complexity: false,
             password_hash_algorithm: auth_framework::config::PasswordHashAlgorithm::Argon2,
             jwt_algorithm: auth_framework::config::JwtAlgorithm::HS256,
-            secret_key: Some("test-secret-key-with-sufficient-length-for-security".to_string()),
+            secret_key: Some(
+                "test-secret-key-with-sufficient-length-for-security"
+                    .to_string()
+                    .into(),
+            ),
             secure_cookies: true,
             cookie_same_site: auth_framework::config::CookieSameSite::Lax,
             csrf_protection: false,

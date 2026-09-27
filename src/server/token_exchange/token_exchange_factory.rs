@@ -22,7 +22,7 @@ impl TokenExchangeManagerFactory {
     /// Create a basic token exchange manager for simple scenarios
     pub fn create_basic_manager(jwt_secret: &str) -> Result<TokenExchangeManager> {
         let config = SecureJwtConfig {
-            jwt_secret: jwt_secret.to_string(),
+            jwt_secret: jwt_secret.to_string().into(),
             ..SecureJwtConfig::default()
         };
         let jwt_validator = SecureJwtValidator::new(config)?;

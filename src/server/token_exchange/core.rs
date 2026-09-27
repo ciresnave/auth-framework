@@ -37,7 +37,7 @@
 //! // Default generates a cryptographically random per-instance secret.
 //! // For stable keys shared across nodes, set `jwt_secret` explicitly.
 //! let jwt_validator = SecureJwtValidator::new(SecureJwtConfig {
-//!     jwt_secret: std::env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
+//!     jwt_secret: std::env::var("JWT_SECRET").expect("JWT_SECRET must be set").into(),
 //!     ..SecureJwtConfig::default()
 //! })?;
 //! let mut manager = TokenExchangeManager::new(jwt_validator);

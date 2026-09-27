@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::UdpSocket;
+use zeroize::Zeroizing;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ pub struct RadiusConfig {
     pub server_addr: String,
 
     /// Shared secret between client and server.
-    pub shared_secret: String,
+    pub shared_secret: Zeroizing<String>,
 
     /// Request timeout.
     pub timeout: Duration,
@@ -97,7 +98,7 @@ impl Default for RadiusConfig {
     fn default() -> Self {
         Self {
             server_addr: "127.0.0.1:1812".into(),
-            shared_secret: String::new(),
+            shared_secret: String::new().into(),
             timeout: Duration::from_secs(5),
             retries: 3,
             nas_identifier: "auth-framework".into(),
@@ -131,7 +132,7 @@ impl RadiusConfig {
         }
         Ok(Self {
             server_addr: server_addr.into(),
-            shared_secret: secret,
+            shared_secret: secret.into(),
             ..Default::default()
         })
     }
@@ -663,7 +664,7 @@ mod tests {
     #[test]
     fn test_client_rejects_short_secret() {
         let config = RadiusConfig {
-            shared_secret: "abc".into(),
+            shared_secret: "abc".to_string().into(),
             ..Default::default()
         };
         let err = RadiusClient::new(config).unwrap_err();
@@ -673,7 +674,7 @@ mod tests {
     #[test]
     fn test_client_creation() {
         let config = RadiusConfig {
-            shared_secret: "testing123".into(),
+            shared_secret: "testing123".to_string().into(),
             ..Default::default()
         };
         assert!(RadiusClient::new(config).is_ok());
@@ -718,7 +719,7 @@ mod tests {
     fn test_radius_config_with_server() {
         let config = RadiusConfig::with_server("10.0.0.1:1812", "testing123").unwrap();
         assert_eq!(config.server_addr, "10.0.0.1:1812");
-        assert_eq!(config.shared_secret, "testing123");
+        assert_eq!(config.shared_secret.as_str(), "testing123");
         assert_eq!(config.retries, 3); // default
     }
 

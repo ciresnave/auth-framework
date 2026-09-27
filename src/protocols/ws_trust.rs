@@ -12,6 +12,7 @@ use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode as jwt_encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use zeroize::Zeroizing;
 
 /// WS-Trust Security Token Service
 ///
@@ -61,7 +62,7 @@ pub struct StsConfig {
     /// automatically; override this field when you need a stable / shared
     /// signing key (e.g. for multi-node deployments that share the same
     /// validator).
-    pub jwt_signing_secret: String,
+    pub jwt_signing_secret: Zeroizing<String>,
 }
 
 /// Trust relationship with relying parties
@@ -614,7 +615,7 @@ impl Default for StsConfig {
             endpoint_url: "https://sts.example.com/trust".to_string(),
             include_proof_tokens: false,
             trust_relationships: Vec::new(),
-            jwt_signing_secret,
+            jwt_signing_secret: jwt_signing_secret.into(),
         }
     }
 }

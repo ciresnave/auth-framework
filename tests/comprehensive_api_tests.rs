@@ -49,7 +49,7 @@ mod framework_lifecycle_tests {
                 require_password_complexity: true,
                 password_hash_algorithm: PasswordHashAlgorithm::Argon2,
                 jwt_algorithm: JwtAlgorithm::HS256,
-                secret_key: Some("test_secret_key_32_bytes_long!!!!".to_string()),
+                secret_key: Some("test_secret_key_32_bytes_long!!!!".to_string().into()),
                 secure_cookies: true,
                 cookie_same_site: CookieSameSite::Strict,
                 csrf_protection: true,

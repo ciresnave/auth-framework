@@ -93,6 +93,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tokio::time::{Interval, interval};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 /// Type alias for complex event handler storage
 type EventHandlerMap = Arc<RwLock<HashMap<CaepEventType, Vec<Arc<dyn CaepEventHandler>>>>>;
@@ -126,7 +127,7 @@ pub struct CaepConfig {
 
     /// HMAC secret used to sign CAEP logout tokens (HS256).
     /// **Must be set to a strong, randomly-generated secret in production.**
-    pub signing_secret: String,
+    pub signing_secret: Zeroizing<String>,
 }
 
 impl Default for CaepConfig {
@@ -154,7 +155,7 @@ impl Default for CaepConfig {
             evaluation_rules: Vec::new(),
             // Randomly generated at startup. Override with a persisted secret in production
             // so that tokens remain verifiable across restarts.
-            signing_secret,
+            signing_secret: signing_secret.into(),
         }
     }
 }

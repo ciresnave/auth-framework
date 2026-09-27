@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use subtle::ConstantTimeEq;
 use tracing::{debug, error, info};
+use zeroize::Zeroizing;
 
 /// Email provider configuration for production email sending
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,21 +46,21 @@ pub enum EmailProvider {
 pub enum ProviderConfig {
     /// SendGrid configuration
     SendGrid {
-        api_key: String,
+        api_key: Zeroizing<String>,
         endpoint: Option<String>,
     },
     /// AWS SES configuration
     AwsSes {
         region: String,
         access_key_id: String,
-        secret_access_key: String,
+        secret_access_key: Zeroizing<String>,
     },
     /// SMTP configuration
     Smtp {
         host: String,
         port: u16,
         username: String,
-        password: String,
+        password: Zeroizing<String>,
         use_tls: bool,
     },
     /// Development configuration
@@ -305,7 +306,7 @@ impl EmailManager {
 
             let response = client
                 .post(sendgrid_endpoint)
-                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Authorization", format!("Bearer {}", api_key.as_str()))
                 .header("Content-Type", "application/json")
                 .json(&payload)
                 .send()
@@ -455,7 +456,7 @@ impl EmailManager {
                 .body(body.to_string())
                 .map_err(|e| AuthError::internal(format!("Failed to build email: {}", e)))?;
 
-            let creds = Credentials::new(username.clone(), password.clone());
+            let creds = Credentials::new(username.clone(), password.to_string());
 
             let host = host.clone();
             let port = *port;
