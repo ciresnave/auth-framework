@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 /// Stored refresh token with validation metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +109,7 @@ impl EnhancedAuthorizationCode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedClientCredentials {
     pub client_id: String,
-    pub client_secret_hash: String,
+    pub client_secret_hash: Zeroizing<String>,
     pub client_type: ClientType,
     pub redirect_uris: Vec<String>,
     pub allowed_scopes: Vec<String>,
@@ -129,7 +130,7 @@ impl EnhancedClientCredentials {
 
         Ok(Self {
             client_id,
-            client_secret_hash: hash_password_bcrypt(client_secret)?,
+            client_secret_hash: hash_password_bcrypt(client_secret)?.into(),
             client_type: ClientType::Confidential,
             redirect_uris,
             allowed_scopes,
@@ -147,7 +148,7 @@ impl EnhancedClientCredentials {
     ) -> Self {
         Self {
             client_id,
-            client_secret_hash: String::new(), // Public clients don't have secrets
+            client_secret_hash: String::new().into(), // Public clients don't have secrets
             client_type: ClientType::Public,
             redirect_uris,
             allowed_scopes,

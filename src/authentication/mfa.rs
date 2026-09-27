@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 use totp_lite::{Sha1, totp};
+use zeroize::Zeroizing;
 
 /// MFA method types
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,7 +103,7 @@ pub struct UserMfaMethod {
 pub enum MfaMethodData {
     Totp {
         /// Base32-encoded secret key
-        secret_key: String,
+        secret_key: Zeroizing<String>,
         /// QR code URL for setup
         qr_code_url: String,
     },
@@ -427,7 +428,7 @@ impl<S: MfaStorage> MfaManager<S> {
             user_id: user_id.to_string(),
             method_type: MfaMethodType::Totp,
             method_data: MfaMethodData::Totp {
-                secret_key: secret,
+                secret_key: secret.into(),
                 qr_code_url,
             },
             display_name: "Authenticator App".to_string(),

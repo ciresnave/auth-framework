@@ -73,6 +73,7 @@ use crate::{
 use std::time::Duration;
 #[cfg(not(feature = "redis-storage"))]
 use tracing::warn;
+use zeroize::Zeroizing;
 
 /// Main builder for constructing an [`AuthFramework`] instance.
 ///
@@ -135,17 +136,17 @@ pub struct QuickStartBuilder {
 #[derive(Debug)]
 pub enum QuickStartAuth {
     Jwt {
-        secret: String,
+        secret: Zeroizing<String>,
     },
     JwtFromEnv,
     OAuth2 {
         client_id: String,
-        client_secret: String,
+        client_secret: Zeroizing<String>,
     },
     Combined {
-        jwt_secret: String,
+        jwt_secret: Zeroizing<String>,
         oauth_client_id: String,
-        oauth_client_secret: String,
+        oauth_client_secret: Zeroizing<String>,
     },
 }
 
@@ -518,7 +519,7 @@ impl QuickStartBuilder {
     /// ```
     pub fn jwt_auth(mut self, secret: impl Into<String>) -> Self {
         self.auth_method = Some(QuickStartAuth::Jwt {
-            secret: secret.into(),
+            secret: secret.into().into(),
         });
         self
     }
@@ -562,7 +563,7 @@ impl QuickStartBuilder {
     ) -> Self {
         self.auth_method = Some(QuickStartAuth::OAuth2 {
             client_id: client_id.into(),
-            client_secret: client_secret.into(),
+            client_secret: client_secret.into().into(),
         });
         self
     }
@@ -587,9 +588,9 @@ impl QuickStartBuilder {
         oauth_client_secret: impl Into<String>,
     ) -> Self {
         self.auth_method = Some(QuickStartAuth::Combined {
-            jwt_secret: jwt_secret.into(),
+            jwt_secret: jwt_secret.into().into(),
             oauth_client_id: oauth_client_id.into(),
-            oauth_client_secret: oauth_client_secret.into(),
+            oauth_client_secret: oauth_client_secret.into().into(),
         });
         self
     }
@@ -787,7 +788,7 @@ impl QuickStartBuilder {
         // Configure authentication method
         match self.auth_method {
             Some(QuickStartAuth::Jwt { secret }) => {
-                builder = builder.with_jwt().secret(secret).done();
+                builder = builder.with_jwt().secret(secret.to_string()).done();
             }
             Some(QuickStartAuth::JwtFromEnv) => {
                 let secret = std::env::var("JWT_SECRET").map_err(|_| {
@@ -802,7 +803,7 @@ impl QuickStartBuilder {
                 builder = builder
                     .with_oauth2()
                     .client_id(client_id)
-                    .client_secret(client_secret)
+                    .client_secret(client_secret.to_string())
                     .done();
             }
             Some(QuickStartAuth::Combined {
@@ -812,11 +813,11 @@ impl QuickStartBuilder {
             }) => {
                 builder = builder
                     .with_jwt()
-                    .secret(jwt_secret)
+                    .secret(jwt_secret.to_string())
                     .done()
                     .with_oauth2()
                     .client_id(oauth_client_id)
-                    .client_secret(oauth_client_secret)
+                    .client_secret(oauth_client_secret.to_string())
                     .done();
             }
             None => {
