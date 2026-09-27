@@ -251,7 +251,7 @@
   crc32fast = "1.3"
 
   # Memory protection and zeroization
-  zeroize = { version = "1.8.2", features = ["zeroize_derive"] }
+  zeroize = { version = "1.8.2", features = ["zeroize_derive", "serde"] }
 
   # Constant-time comparisons
   subtle = "2.5"
