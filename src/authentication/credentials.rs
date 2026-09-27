@@ -3,9 +3,22 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 /// Represents different types of credentials that can be used for authentication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Does not derive `Debug`: several variants carry raw secret material
+/// (passwords, private keys, tokens), and a derived `Debug` would print it
+/// verbatim on any accidental `{:?}`. The manual impl below delegates to
+/// [`Credential::safe_display`], which already existed as the intended
+/// redacted representation -- this restores that as the actual `Debug`
+/// output rather than leaving the derive as an unused, unsafe alternative
+/// path nobody deleted after `safe_display` was written.
+///
+/// `Serialize`/`Deserialize` are unchanged here: removing them is a
+/// breaking change to this `pub` type's API and is tracked separately
+/// alongside this crate's other pending breaking security fixes.
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum Credential {
     /// Username and password credentials
@@ -95,6 +108,12 @@ pub enum Credential {
         credential_id: Vec<u8>,
         assertion_response: String, // JSON-serialized AuthenticatorAssertionResponse
     },
+}
+
+impl fmt::Debug for Credential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.safe_display())
+    }
 }
 
 impl Credential {

@@ -20,6 +20,7 @@ use crate::errors::{AuthError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -420,7 +421,14 @@ impl Default for SpiffeTrustManager {
 // ── Workload API Client ─────────────────────────────────────────────
 
 /// SVID type returned by the Workload API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Does not derive `Debug`: `X509::private_key` holds the workload's raw
+/// private key and `Jwt::token` holds a bearer credential; a derived
+/// `Debug` would print either verbatim on any accidental `{:?}`. The
+/// manual impl below redacts both. `Serialize`/`Deserialize` are left as
+/// derived for now (removing them is a breaking change to this `pub`
+/// type, tracked separately).
+#[derive(Clone, Serialize, Deserialize)]
 pub enum SvidResponse {
     /// An X.509-SVID with DER-encoded certificate chain and private key.
     X509 {
@@ -438,6 +446,37 @@ pub enum SvidResponse {
         token: String,
         expires_at: u64,
     },
+}
+
+impl fmt::Debug for SvidResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::X509 {
+                spiffe_id,
+                cert_chain,
+                bundle,
+                expires_at,
+                private_key: _,
+            } => f
+                .debug_struct("SvidResponse::X509")
+                .field("spiffe_id", spiffe_id)
+                .field("cert_chain", cert_chain)
+                .field("private_key", &"[redacted]")
+                .field("bundle", bundle)
+                .field("expires_at", expires_at)
+                .finish(),
+            Self::Jwt {
+                spiffe_id,
+                expires_at,
+                token: _,
+            } => f
+                .debug_struct("SvidResponse::Jwt")
+                .field("spiffe_id", spiffe_id)
+                .field("token", &"[redacted]")
+                .field("expires_at", expires_at)
+                .finish(),
+        }
+    }
 }
 
 /// Configuration for the SPIFFE Workload API client.
