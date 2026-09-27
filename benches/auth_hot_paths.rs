@@ -71,7 +71,7 @@ fn make_validator() -> SecureJwtValidator {
             s
         },
         require_secure_transport: false, // disabled for bench; no TLS in unit context
-        jwt_secret: BENCH_SECRET.to_string(),
+        jwt_secret: BENCH_SECRET.to_string().into(),
         rsa_public_key_pem: None,
         ec_public_key_pem: None,
         ed_public_key_pem: None,

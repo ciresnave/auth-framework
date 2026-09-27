@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Error)]
 pub enum MonitoringError {
@@ -170,7 +171,7 @@ pub struct PrometheusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrafanaConfig {
     pub endpoint: String,
-    pub api_key: String,
+    pub api_key: Zeroizing<String>,
     pub organization: String,
     pub datasource: String,
     pub auto_provision: bool,
@@ -714,7 +715,7 @@ impl Default for MonitoringConfig {
             },
             grafana: GrafanaConfig {
                 endpoint: "http://localhost:3000".to_string(),
-                api_key: "".to_string(),
+                api_key: "".to_string().into(),
                 organization: "Main Org.".to_string(),
                 datasource: "Prometheus".to_string(),
                 auto_provision: true,

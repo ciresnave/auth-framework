@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -91,7 +92,7 @@ pub struct LogRotationConfig {
 /// Security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
-    pub jwt_secret: String,
+    pub jwt_secret: Zeroizing<String>,
     pub session_timeout: u64,
     pub bcrypt_cost: u32,
     pub rate_limiting: RateLimitConfig,
@@ -219,7 +220,7 @@ impl ConfigManager {
 
         // Load security configuration from environment
         if let Ok(jwt_secret) = std::env::var("JWT_SECRET") {
-            config.security.jwt_secret = jwt_secret;
+            config.security.jwt_secret = jwt_secret.into();
         }
 
         // Load environment name
@@ -509,7 +510,7 @@ impl Default for AppConfig {
                 // Randomly generated at startup. Override with the JWT_SECRET env var (or an
                 // explicit config value) in production to ensure tokens remain verifiable
                 // across process restarts.
-                jwt_secret,
+                jwt_secret: jwt_secret.into(),
                 session_timeout: 3600,
                 bcrypt_cost: 12,
                 rate_limiting: RateLimitConfig {
@@ -675,7 +676,7 @@ app_version = "1.0.0"
     #[test]
     fn test_config_validation() {
         let mut config = AppConfig::default();
-        config.security.jwt_secret = "short".to_string(); // Too short
+        config.security.jwt_secret = "short".to_string().into(); // Too short
 
         let manager = ConfigManager {
             config,
@@ -694,8 +695,9 @@ app_version = "1.0.0"
     fn test_set_value() {
         let mut manager = ConfigManager::new();
         // set_value calls validate_config; provide a valid JWT secret first.
-        manager.config.security.jwt_secret =
-            "test-jwt-secret-minimum-32-characters-long".to_string();
+        manager.config.security.jwt_secret = "test-jwt-secret-minimum-32-characters-long"
+            .to_string()
+            .into();
 
         let result = manager.set_value(
             "server.port",
@@ -709,8 +711,9 @@ app_version = "1.0.0"
     fn test_config_watcher() {
         let mut manager = ConfigManager::new();
         // set_value calls validate_config; provide a valid JWT secret first.
-        manager.config.security.jwt_secret =
-            "test-jwt-secret-minimum-32-characters-long".to_string();
+        manager.config.security.jwt_secret = "test-jwt-secret-minimum-32-characters-long"
+            .to_string()
+            .into();
         let watcher = Box::new(SimpleConfigWatcher::new("test".to_string()));
         manager.add_watcher(watcher);
 

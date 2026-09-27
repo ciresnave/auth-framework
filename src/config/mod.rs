@@ -14,6 +14,7 @@ use crate::errors::{AuthError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 /// Main configuration for the authentication framework.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,10 +159,10 @@ pub struct SecurityConfig {
     pub jwt_algorithm: JwtAlgorithm,
 
     /// Secret key for signing (should be loaded from environment)
-    pub secret_key: Option<String>,
+    pub secret_key: Option<Zeroizing<String>>,
 
     /// Previous secret key to maintain validation capabilities during rotation
-    pub previous_secret_key: Option<String>,
+    pub previous_secret_key: Option<Zeroizing<String>>,
 
     /// Enable secure cookies
     pub secure_cookies: bool,
@@ -691,7 +692,7 @@ impl AuthConfig {
 
         if let Ok(secret) = std::env::var("JWT_SECRET") {
             config.secret = Some(secret.clone());
-            config.security.secret_key = Some(secret);
+            config.security.secret_key = Some(secret.into());
         }
 
         if let Ok(issuer) = std::env::var("AUTH_ISSUER") {
@@ -1221,8 +1222,9 @@ impl AuthConfig {
             .security
             .secret_key
             .as_ref()
-            .or(self.secret.as_ref())
-            .or(env_secret.as_ref());
+            .map(|s| s.as_str())
+            .or(self.secret.as_deref())
+            .or(env_secret.as_deref());
 
         if let Some(secret) = jwt_secret {
             // Enforce minimum length only outside test environments.

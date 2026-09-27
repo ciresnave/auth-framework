@@ -176,7 +176,7 @@ fn load_settings(args: &ServerCliArgs) -> Result<AuthFrameworkSettings> {
 fn apply_common_env_overrides(config: &mut AuthConfig) {
     if let Ok(secret) = env::var("JWT_SECRET") {
         config.secret = Some(secret.clone());
-        config.security.secret_key = Some(secret);
+        config.security.secret_key = Some(secret.into());
     }
 
     if let Ok(issuer) = env::var("AUTH_ISSUER") {

@@ -34,7 +34,7 @@ impl AuthCli {
             .token_lifetime(Duration::from_secs(3600))
             .refresh_token_lifetime(Duration::from_secs(86400))
             .security(SecurityConfig {
-                secret_key: Some("cli-demo-secret-key-32-chars-long!".to_string()),
+                secret_key: Some("cli-demo-secret-key-32-chars-long!".to_string().into()),
                 ..security_config
             });
 

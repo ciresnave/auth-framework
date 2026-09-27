@@ -3,6 +3,7 @@ use jsonwebtoken::{Algorithm, DecodingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecureJwtClaims {
@@ -32,7 +33,7 @@ pub struct SecureJwtConfig {
     pub allowed_token_types: HashSet<String>,
     pub require_secure_transport: bool,
     /// HMAC secret for HS256/HS384/HS512
-    pub jwt_secret: String,
+    pub jwt_secret: Zeroizing<String>,
     /// PEM-encoded RSA public key for RS256/RS384/RS512/PS256/PS384/PS512
     pub rsa_public_key_pem: Option<String>,
     /// PEM-encoded EC public key for ES256/ES384
@@ -82,7 +83,7 @@ impl Default for SecureJwtConfig {
             validate_nbf: true,
             allowed_token_types,
             require_secure_transport: true,
-            jwt_secret,
+            jwt_secret: jwt_secret.into(),
             rsa_public_key_pem: None,
             ec_public_key_pem: None,
             ed_public_key_pem: None,
@@ -175,7 +176,7 @@ impl SecureJwtConfigBuilder {
 
     /// Set the HMAC signing secret (required for symmetric signing operations)
     pub fn with_secret(mut self, secret: impl Into<String>) -> Self {
-        self.config.jwt_secret = secret.into();
+        self.config.jwt_secret = Zeroizing::new(secret.into());
         self
     }
 
@@ -684,7 +685,9 @@ mod tests {
 
     fn test_config() -> SecureJwtConfig {
         SecureJwtConfig {
-            jwt_secret: "a]test_secret_that_is_longer_than_32_chars_for_security!".to_string(),
+            jwt_secret: "a]test_secret_that_is_longer_than_32_chars_for_security!"
+                .to_string()
+                .into(),
             ..SecureJwtConfig::default()
         }
     }

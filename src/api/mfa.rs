@@ -16,6 +16,7 @@ use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
+use zeroize::Zeroizing;
 
 /// Response returned after initiating MFA setup.
 ///
@@ -26,7 +27,7 @@ pub struct MfaSetupResponse {
     /// `otpauth://` URI suitable for a QR code.
     pub qr_code: String,
     /// Base32-encoded TOTP shared secret (for manual entry).
-    pub secret: String,
+    pub secret: Zeroizing<String>,
     /// One-time recovery codes — store securely; shown only once.
     pub backup_codes: Vec<String>,
 }
@@ -174,7 +175,7 @@ pub async fn setup_mfa(
                     tracing::info!("MFA setup initiated for user: {}", auth_token.user_id);
                     ApiResponse::success(MfaSetupResponse {
                         qr_code,
-                        secret: secret_b32,
+                        secret: secret_b32.into(),
                         backup_codes: plaintext_codes,
                     })
                 }

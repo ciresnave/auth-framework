@@ -118,7 +118,7 @@ mod users_api_tests {
         .await;
         assert!(verify.success, "MFA verification should succeed");
 
-        setup_data.secret
+        setup_data.secret.to_string()
     }
 
     // -------------------------------------------------------------------------

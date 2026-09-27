@@ -9,6 +9,7 @@ use std::time::Duration;
 use subtle::ConstantTimeEq;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 /// SMSKit configuration for AuthFramework
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,7 +170,7 @@ impl<'de> Deserialize<'de> for SmsKitProviderConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookConfig {
     pub endpoint_url: String,
-    pub webhook_secret: String,
+    pub webhook_secret: Zeroizing<String>,
     pub track_delivery: bool,
     pub track_clicks: bool,
 }

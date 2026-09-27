@@ -26,7 +26,7 @@
 //! // `Default` generates a fresh random secret per instance.
 //! // Pass an explicit `jwt_secret` when running multiple nodes that share a key.
 //! let jwt_config = SecureJwtConfig {
-//!     jwt_secret: std::env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
+//!     jwt_secret: std::env::var("JWT_SECRET").expect("JWT_SECRET must be set").into(),
 //!     ..SecureJwtConfig::default()
 //! };
 //! let jwt_validator = SecureJwtValidator::new(jwt_config)?;

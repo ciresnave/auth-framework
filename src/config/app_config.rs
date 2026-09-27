@@ -5,6 +5,7 @@
 use super::SecurityConfig;
 use serde::{Deserialize, Serialize};
 use std::{env, time::Duration};
+use zeroize::Zeroizing;
 
 impl Default for ConfigBuilder {
     fn default() -> Self {
@@ -55,7 +56,7 @@ pub struct RedisConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtConfig {
     /// Cryptographic secret key used to sign and verify JWTs
-    pub secret_key: String,
+    pub secret_key: Zeroizing<String>,
     /// The 'iss' (issuer) claim to embed in generated tokens
     pub issuer: String,
     /// The 'aud' (audience) claim to embed in generated tokens
@@ -93,7 +94,7 @@ pub struct OAuthProviderConfig {
     /// OAuth client ID provided by the Identity Provider
     pub client_id: String,
     /// OAuth client secret provided by the Identity Provider
-    pub client_secret: String,
+    pub client_secret: Zeroizing<String>,
     /// The redirect URI where the IDP will send the user post-authentication
     pub redirect_uri: String,
     /// List of scopes to request during authentication
@@ -152,7 +153,8 @@ impl AppConfig {
             },
             jwt: JwtConfig {
                 secret_key: env::var("JWT_SECRET")
-                    .map_err(|_| ConfigError::MissingEnvVar("JWT_SECRET"))?,
+                    .map_err(|_| ConfigError::MissingEnvVar("JWT_SECRET"))?
+                    .into(),
                 issuer: env::var("JWT_ISSUER").unwrap_or_else(|_| "auth-framework".to_string()),
                 audience: env::var("JWT_AUDIENCE").unwrap_or_else(|_| "api".to_string()),
                 access_token_ttl_seconds: 3600,
@@ -195,7 +197,7 @@ impl AppConfig {
 
         Some(OAuthProviderConfig {
             client_id,
-            client_secret,
+            client_secret: client_secret.into(),
             redirect_uri: env::var(format!("{}_REDIRECT_URI", provider))
                 .unwrap_or_else(|_| format!("/auth/{}/callback", provider.to_lowercase())),
             scopes: env::var(format!("{}_SCOPES", provider))
@@ -214,7 +216,7 @@ impl AppConfig {
             .refresh_token_lifetime(Duration::from_secs(self.jwt.refresh_token_ttl_seconds))
             .issuer(&self.jwt.issuer)
             .audience(&self.jwt.audience)
-            .secret(&self.jwt.secret_key)
+            .secret(&*self.jwt.secret_key)
             .security(self.to_security_config());
 
         config.storage = self.primary_storage_config();
@@ -366,7 +368,7 @@ impl ConfigBuilder {
     }
 
     pub fn with_jwt_secret(mut self, secret: impl Into<String>) -> Self {
-        self.config.jwt.secret_key = secret.into();
+        self.config.jwt.secret_key = Zeroizing::new(secret.into());
         self
     }
 
@@ -454,7 +456,9 @@ impl Default for AppConfig {
             },
             redis: None,
             jwt: JwtConfig {
-                secret_key: "development-only-secret-change-in-production".to_string(),
+                secret_key: "development-only-secret-change-in-production"
+                    .to_string()
+                    .into(),
                 issuer: "auth-framework".to_string(),
                 audience: "api".to_string(),
                 access_token_ttl_seconds: 3600,
@@ -497,7 +501,7 @@ mod tests {
 
         assert_eq!(config.database.url, "postgresql://test");
         assert_eq!(config.database.max_connections, 25);
-        assert_eq!(config.jwt.secret_key, "test-secret");
+        assert_eq!(config.jwt.secret_key.as_str(), "test-secret");
         assert_eq!(config.jwt.issuer, "issuer");
         assert_eq!(config.jwt.audience, "audience");
         assert_eq!(config.security.rate_limit_requests_per_minute, 120);
