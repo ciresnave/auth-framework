@@ -24,6 +24,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
+use zeroize::Zeroizing;
 
 // ── SPIFFE ID ───────────────────────────────────────────────────────
 
@@ -434,7 +435,7 @@ pub enum SvidResponse {
     X509 {
         spiffe_id: String,
         cert_chain: Vec<Vec<u8>>,
-        private_key: Vec<u8>,
+        private_key: Zeroizing<Vec<u8>>,
         /// DER-encoded trust bundle for the given trust domain.
         bundle: Vec<Vec<u8>>,
         /// When the SVID expires (UNIX timestamp seconds).
@@ -1222,7 +1223,7 @@ mod tests {
         let svid = SvidResponse::X509 {
             spiffe_id: "spiffe://example.org/web".to_string(),
             cert_chain: vec![vec![0x30, 0x82]],
-            private_key: vec![0x01],
+            private_key: vec![0x01].into(),
             bundle: vec![vec![0xCA]],
             expires_at: 9999999999,
         };
@@ -1263,7 +1264,7 @@ mod tests {
         let svid = SvidResponse::X509 {
             spiffe_id: "spiffe://example.org/old".to_string(),
             cert_chain: vec![],
-            private_key: vec![],
+            private_key: vec![].into(),
             bundle: vec![],
             expires_at: 1, // expired long ago
         };
@@ -1284,7 +1285,7 @@ mod tests {
         let svid = SvidResponse::X509 {
             spiffe_id: "spiffe://example.org/expiring".to_string(),
             cert_chain: vec![],
-            private_key: vec![],
+            private_key: vec![].into(),
             bundle: vec![],
             expires_at: now + 10,
         };

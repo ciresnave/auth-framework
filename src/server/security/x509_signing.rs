@@ -34,6 +34,7 @@ use std::time::SystemTime;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 use x509_parser::parse_x509_certificate;
+use zeroize::Zeroizing;
 
 /// Enhanced X.509 Certificate Manager
 #[derive(Debug, Clone)]
@@ -294,7 +295,7 @@ pub struct CACertificate {
     pub subject: String,
 
     /// CA private key
-    pub private_key: Vec<u8>,
+    pub private_key: Zeroizing<Vec<u8>>,
 
     /// CA type
     pub ca_type: CAType,
@@ -937,7 +938,7 @@ impl X509CertificateManager {
             ca_id: "root_ca".to_string(),
             certificate: ca_cert,
             subject: subject.clone(),
-            private_key: vec![], // Load from secure storage
+            private_key: vec![].into(), // Load from secure storage
             ca_type: CAType::Root,
             issued_count: 0,
             next_serial: 1000, // Start from 1000
@@ -985,7 +986,7 @@ impl X509CertificateManager {
                 ca_id: "intermediate_ca".to_string(),
                 certificate: intermediate_cert,
                 subject: "CN=AuthFramework Intermediate CA".to_string(), // Parse from actual cert in production
-                private_key: vec![],                                     // Load from secure storage
+                private_key: vec![].into(),                              // Load from secure storage
                 ca_type: CAType::Intermediate,
                 issued_count: 0,
                 next_serial: 1,
@@ -1577,7 +1578,7 @@ impl X509CertificateManager {
             ca_id: "root_ca".to_string(),
             certificate: ca_cert,
             subject,
-            private_key: vec![],
+            private_key: vec![].into(),
             ca_type: CAType::Root,
             issued_count: 0,
             next_serial: 1000,

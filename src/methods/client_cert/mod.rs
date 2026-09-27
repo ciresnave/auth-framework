@@ -652,7 +652,7 @@ mod tests {
         let method = ClientCertAuthMethod::new(ClientCertConfig::new());
         let cred = Credential::Certificate {
             certificate: vec![],
-            private_key: vec![],
+            private_key: vec![].into(),
             passphrase: None,
         };
         let err = method.authenticate(&cred).unwrap_err();
@@ -664,7 +664,7 @@ mod tests {
         let method = ClientCertAuthMethod::new(ClientCertConfig::new());
         let cred = Credential::Certificate {
             certificate: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04],
-            private_key: vec![],
+            private_key: vec![].into(),
             passphrase: None,
         };
         assert!(method.authenticate(&cred).is_err());
@@ -784,7 +784,7 @@ mod tests {
     fn cert_cred(der: Vec<u8>) -> Credential {
         Credential::Certificate {
             certificate: der,
-            private_key: vec![],
+            private_key: vec![].into(),
             passphrase: None,
         }
     }

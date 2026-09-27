@@ -4,6 +4,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use zeroize::Zeroizing;
 
 /// Represents different types of credentials that can be used for authentication.
 ///
@@ -63,7 +64,7 @@ pub enum Credential {
     /// Certificate-based authentication
     Certificate {
         certificate: Vec<u8>,
-        private_key: Vec<u8>,
+        private_key: Zeroizing<Vec<u8>>,
         passphrase: Option<String>,
     },
 
@@ -261,7 +262,7 @@ impl Credential {
     ) -> Self {
         Self::Certificate {
             certificate,
-            private_key,
+            private_key: Zeroizing::new(private_key),
             passphrase,
         }
     }
@@ -272,7 +273,7 @@ impl Credential {
     pub fn client_cert_from_tls(der_certificate: Vec<u8>) -> Self {
         Self::Certificate {
             certificate: der_certificate,
-            private_key: vec![],
+            private_key: Zeroizing::new(vec![]),
             passphrase: None,
         }
     }
