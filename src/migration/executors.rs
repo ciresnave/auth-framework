@@ -1277,9 +1277,11 @@ mod tests {
     #[tokio::test]
     async fn test_execute_migration_plan_dry_run() {
         let plan = create_test_plan();
+        let tmp = tempfile::tempdir().unwrap();
         let config = MigrationConfig {
             dry_run: true,
             verbose: false, // Reduce test output
+            working_directory: tmp.path().to_path_buf(),
             ..Default::default()
         };
 
@@ -1293,9 +1295,11 @@ mod tests {
     #[tokio::test]
     async fn test_execute_migration_plan_real() {
         let plan = create_test_plan();
+        let tmp = tempfile::tempdir().unwrap();
         let config = MigrationConfig {
             dry_run: false,
             verbose: false, // Reduce test output
+            working_directory: tmp.path().to_path_buf(),
             ..Default::default()
         };
 
@@ -1322,9 +1326,11 @@ mod tests {
     #[tokio::test]
     async fn test_execute_migration_plan_with_role_system_creates_role() {
         let plan = create_test_plan();
+        let tmp = tempfile::tempdir().unwrap();
         let config = MigrationConfig {
             dry_run: false,
             verbose: false,
+            working_directory: tmp.path().to_path_buf(),
             ..Default::default()
         };
         let rs = make_role_system();
@@ -1355,9 +1361,11 @@ mod tests {
                 role_id: "test_role".to_string(),
                 expiration: None,
             });
+        let tmp = tempfile::tempdir().unwrap();
         let config = MigrationConfig {
             dry_run: false,
             verbose: false,
+            working_directory: tmp.path().to_path_buf(),
             ..Default::default()
         };
         let rs = make_role_system();
@@ -1381,9 +1389,11 @@ mod tests {
     #[tokio::test]
     async fn test_execute_migration_plan_permission_registry_feeds_create_role() {
         // CreatePermission populates the registry; CreateRole reads from it.
+        let tmp = tempfile::tempdir().unwrap();
         let config = MigrationConfig {
             dry_run: false,
             verbose: false,
+            working_directory: tmp.path().to_path_buf(),
             ..Default::default()
         };
         let plan = {
@@ -1430,9 +1440,11 @@ mod tests {
         // Without the enhanced-rbac feature (or without passing a role-system),
         // execute_migration_plan must still complete successfully using manifest only.
         let plan = create_test_plan();
+        let tmp = tempfile::tempdir().unwrap();
         let config = MigrationConfig {
             dry_run: false,
             verbose: false,
+            working_directory: tmp.path().to_path_buf(),
             ..Default::default()
         };
         let result = execute_migration_plan(&plan, &config).await.unwrap();
