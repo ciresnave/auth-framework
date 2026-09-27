@@ -1,5 +1,39 @@
 # Security Policy
 
+## 🚨 Important Security Notice: RUSTSEC-2026-0258
+
+### Current Vulnerability Status
+
+**RUSTSEC-2026-0258** (`h2` unbounded empty DATA frames) affects this framework's **optional `actix-integration` feature**. `h2` 0.3.27 is a transitive dependency pulled in by `actix-web` (a direct, optional dependency) via `actix-http`, and is present only when `actix-integration` is enabled — it is **not** part of this crate's default feature set.
+
+**Key Details:**
+
+- **Advisory**: [RUSTSEC-2026-0258](https://rustsec.org/advisories/RUSTSEC-2026-0258)
+- **Severity**: High
+- **Affected Feature**: `actix-integration` only
+- **No fix currently available**: `actix-http`'s latest published release (3.18.9 at time of writing) still pins `h2 = "0.3.27"` as an exact version, not a caret range, and `actix-web`'s latest release (4.15.0) depends on that same `actix-http` line. There is no newer `actix-web`/`actix-http` release that moves this pin. The fix has to come from the `actix-web` project, not from a dependency bump here.
+
+### Risk Analysis
+
+**This crate itself never runs an HTTP server.** `src/integrations/actix_web.rs` provides only an `AuthMiddleware` `Transform` for a consuming application's own `actix_web::HttpServer` — this crate never calls `HttpServer::new` or binds a listener. So the vulnerable code path (`h2`'s server-side handling of empty DATA frames) is **not exercised by anything in this crate or its own tests**.
+
+The risk is real but conditional, and depends entirely on how a consuming application is built:
+
+1. You must enable the `actix-integration` feature (not on by default).
+2. Your own application must run an `actix_web::HttpServer` with HTTP/2 enabled (this is `actix-web`'s own default whenever the feature is compiled in).
+3. That server must be reachable by an untrusted client capable of sending crafted HTTP/2 frames.
+
+If all three apply to your deployment, you inherit `h2`'s advisory through this crate's dependency graph exactly as you would by depending on `actix-web` directly.
+
+### Recommended Mitigation
+
+- If you don't need `actix-web` integration, don't enable `actix-integration` — the vulnerable dependency won't be compiled in at all.
+- If you do use `actix-integration` and run an HTTP/2-capable server, track [RUSTSEC-2026-0258](https://rustsec.org/advisories/RUSTSEC-2026-0258) and `actix-web`'s upstream repository for a fix, and consider request-size/connection-rate limiting at your reverse proxy or load balancer as a stopgap, since this is a resource-exhaustion (DoS) class issue rather than a data-disclosure one.
+
+### Current Status
+
+- `cargo audit` on this repo will continue to report this finding until `actix-web`/`actix-http` update their own `h2` dependency. This is expected and tracked, not a regression to chase in future changelogs.
+
 ## 🚨 Important Security Notice: RUSTSEC-2023-0071
 
 ### Current Vulnerability Status

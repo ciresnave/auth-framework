@@ -420,6 +420,12 @@ sqlite-storage = ["sqlx"]
   enhanced-rbac = ["api-server", "role-system"]
 
   # Additional features referenced in code
+  #
+  # SECURITY: pulls in h2 0.3.27 transitively via actix-web -> actix-http,
+  # which is affected by RUSTSEC-2026-0258 (unbounded empty DATA frames).
+  # No fixed actix-http release exists yet (see SECURITY.md). Not exercised
+  # by this crate itself -- only relevant if your own app runs an
+  # actix_web::HttpServer with HTTP/2 enabled.
   actix-integration = ["actix-web", "futures-util"]
   admin-binary = ["cli", "tui", "web-gui"]
   api-server = ["axum", "tower", "tower-http"]
