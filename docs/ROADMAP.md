@@ -1,6 +1,6 @@
 # AuthFramework Development Roadmap
 
-Last updated: March 21, 2026 (release-readiness audit follow-up)
+Last updated: September 26, 2026 (dependency-freshness tracking, item 63e)
 
 ## Strategic Vision
 
@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.5.0-rc24`
+- Current crate version: `0.6.0-rc4`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -190,6 +190,68 @@ This phase begins once the release-readiness and DX stabilization work above is 
 - [x] HSM and signing-key integration hardening
 - [x] Expanded audit-log querying and operator workflows
 - [x] Production-grade admin dashboard configuration editing and safer live-reload flows
+
+### Dependency Freshness (item 63e)
+
+CireSnave's standing rule: *"my most-recent-versions-at-all-times rule is a
+goal to work toward. If we can't bump a dependency right now, we need to
+ensure that it is noted in the roadmap for the involved project(s) so they
+don't forget."* The 43 semver-compatible bumps landed via #57. These 28
+require a manual major/minor-incompatible version bump and have not been
+evaluated or scheduled -- tracked here so they aren't lost, not because a
+blocker has been fully diagnosed for each one. Measured 2026-09-25 via
+`cargo outdated --root-deps-only`; versions will have moved further by the
+time anyone picks one up, so re-check before acting on any entry.
+
+**RustCrypto-family, likely need to move together** (shared trait
+dependencies like `digest`/`crypto-common` typically force coordinated
+bumps within this ecosystem -- not yet confirmed for this specific set):
+- [ ] `aes` 0.8.4 -> 0.9.3
+- [ ] `aes-gcm` 0.10.3 -> 0.11.1
+- [ ] `argon2` 0.5.3 -> 0.6.0
+- [ ] `chacha20poly1305` 0.10.1 -> 0.11.0
+- [ ] `ed25519-dalek` 2.2.0 -> 3.0.0
+- [ ] `hmac` 0.12.1 -> 0.13.0
+- [ ] `md-5` 0.10.6 -> 0.11.0
+- [ ] `p256` 0.13.2 -> 0.14.0
+- [ ] `p384` 0.13.1 -> 0.14.0
+- [ ] `rand_core` 0.6.4 -> 0.10.1 (large jump, spans several majors)
+- [ ] `sha2` 0.10.9 -> 0.11.0
+- [ ] `x25519-dalek` 2.0.1 -> 3.0.0
+
+**OpenTelemetry family, versioned in lockstep upstream:**
+- [ ] `opentelemetry` 0.31.0 -> 0.33.0
+- [ ] `opentelemetry-otlp` 0.31.1 -> 0.33.0
+- [ ] `opentelemetry-prometheus` 0.31.0 -> 0.33.0
+- [ ] `opentelemetry_sdk` 0.32.1 -> 0.33.0
+- [ ] `tracing-opentelemetry` 0.32.1 -> 0.34.0
+
+**Independent, each needs its own evaluation:**
+- [ ] `askama` 0.15.6 -> 0.16.1
+- [ ] `axum-test` 19.1.1 -> 21.1.0 (dev-dependency only)
+- [ ] `base64` 0.22.1 -> 0.23.1
+- [ ] `bergshamra` 0.3.1 -> 0.9.1 (six minor versions in one jump -- worth scrutiny before attempting)
+- [ ] `dirs` 6.0.0 -> 7.0.0
+- [ ] `maxminddb` 0.27.3 -> 0.32.0
+- [ ] `quick-xml` 0.41.0 -> 0.42.0
+- [ ] `sqlx` 0.8.6 -> 0.9.0 -- **known specific blocker**: 0.9.0 obsoletes the `runtime-tokio-rustls` feature this crate uses (`cargo-outdated`'s own warning), so this needs a feature-name change alongside the version bump, not just a `Cargo.toml` edit.
+- [ ] `sysinfo` 0.32.1 -> 0.39.6 (seven minor versions in one jump -- worth scrutiny before attempting)
+- [ ] `toml` 0.9.12+spec-1.1.0 -> 1.1.6+spec-1.1.0 (major version jump)
+- [ ] `zip` 2.4.2 -> 8.6.0 (six major versions in one jump -- treat as a from-scratch compatibility review, not an upgrade)
+
+**`jsonwebtoken` -- deliberately excluded from this list.** CireSnave,
+verbatim: *"[jsonwebtoken] should not be pushed forward just to satisfy my
+rule but, instead, we should continue to look for other solutions that
+solve the RSA problem."* Its `rust_crypto` feature bundles in `rsa`
+unconditionally (confirmed against both 10.3.0 and 10.4.0's own
+`Cargo.toml`), which is the mechanism behind RUSTSEC-2023-0071's continued
+reachability in this crate. A version bump on its own does not change
+that -- the crate exposes an alternative `aws_lc_rs` crypto backend that
+does not depend on `rsa` at all, but switching to it is a separate,
+larger change (different build toolchain requirements, and it would need
+to replace `rust_crypto` crate-wide rather than coexist with it) that has
+not been scoped or scheduled. Continue looking for a real fix on this
+path rather than bumping the version number.
 
 ### Storage and Scaling
 
