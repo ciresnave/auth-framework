@@ -9,19 +9,20 @@ use ring::hmac;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::Zeroizing;
 
 /// OAuth 1.0a consumer credentials (application).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthConsumer {
     pub key: String,
-    pub secret: String,
+    pub secret: Zeroizing<String>,
 }
 
 /// OAuth 1.0a token credentials (user-authorized).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthToken {
     pub token: String,
-    pub secret: String,
+    pub secret: Zeroizing<String>,
 }
 
 /// OAuth 1.0a signature method.
@@ -57,7 +58,7 @@ pub struct OAuthSignedRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestTokenResponse {
     pub oauth_token: String,
-    pub oauth_token_secret: String,
+    pub oauth_token_secret: Zeroizing<String>,
     pub oauth_callback_confirmed: bool,
 }
 
@@ -65,7 +66,7 @@ pub struct RequestTokenResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessTokenResponse {
     pub oauth_token: String,
-    pub oauth_token_secret: String,
+    pub oauth_token_secret: Zeroizing<String>,
 }
 
 /// OAuth 1.0a client for constructing signed requests.
@@ -206,7 +207,7 @@ impl OAuth1Client {
 
         Ok(RequestTokenResponse {
             oauth_token: token,
-            oauth_token_secret: secret,
+            oauth_token_secret: secret.into(),
             oauth_callback_confirmed: confirmed,
         })
     }
@@ -225,7 +226,7 @@ impl OAuth1Client {
 
         Ok(AccessTokenResponse {
             oauth_token: token,
-            oauth_token_secret: secret,
+            oauth_token_secret: secret.into(),
         })
     }
 }
@@ -275,7 +276,7 @@ mod tests {
     fn test_consumer() -> OAuthConsumer {
         OAuthConsumer {
             key: "dpf43f3p2l4k3l03".to_string(),
-            secret: "kd94hf93k423kf44".to_string(),
+            secret: "kd94hf93k423kf44".to_string().into(),
         }
     }
 
@@ -289,7 +290,7 @@ mod tests {
     fn test_empty_consumer_rejected() {
         let consumer = OAuthConsumer {
             key: String::new(),
-            secret: "secret".to_string(),
+            secret: "secret".to_string().into(),
         };
         assert!(OAuth1Client::new(consumer, SignatureMethod::HmacSha1).is_err());
     }
@@ -313,7 +314,7 @@ mod tests {
         let client = OAuth1Client::new(test_consumer(), SignatureMethod::HmacSha1).unwrap();
         let token = OAuthToken {
             token: "nnch734d00sl2jdk".to_string(),
-            secret: "pfkkdhi9sl3r4s00".to_string(),
+            secret: "pfkkdhi9sl3r4s00".to_string().into(),
         };
         let signed = client
             .sign_request("POST", "https://api.example.com/post", Some(&token), None)
@@ -380,7 +381,7 @@ mod tests {
         let body = "oauth_token=hh5s93j4hdidpola&oauth_token_secret=hdhd0244k9j7ao03&oauth_callback_confirmed=true";
         let resp = OAuth1Client::parse_request_token_response(body).unwrap();
         assert_eq!(resp.oauth_token, "hh5s93j4hdidpola");
-        assert_eq!(resp.oauth_token_secret, "hdhd0244k9j7ao03");
+        assert_eq!(resp.oauth_token_secret.as_str(), "hdhd0244k9j7ao03");
         assert!(resp.oauth_callback_confirmed);
     }
 
@@ -395,7 +396,7 @@ mod tests {
         let body = "oauth_token=nnch734d00sl2jdk&oauth_token_secret=pfkkdhi9sl3r4s00";
         let resp = OAuth1Client::parse_access_token_response(body).unwrap();
         assert_eq!(resp.oauth_token, "nnch734d00sl2jdk");
-        assert_eq!(resp.oauth_token_secret, "pfkkdhi9sl3r4s00");
+        assert_eq!(resp.oauth_token_secret.as_str(), "pfkkdhi9sl3r4s00");
     }
 
     #[test]
@@ -403,7 +404,7 @@ mod tests {
         let c1 = OAuth1Client::new(
             OAuthConsumer {
                 key: "key1".to_string(),
-                secret: "secret1".to_string(),
+                secret: "secret1".to_string().into(),
             },
             SignatureMethod::HmacSha1,
         )
@@ -411,7 +412,7 @@ mod tests {
         let c2 = OAuth1Client::new(
             OAuthConsumer {
                 key: "key2".to_string(),
-                secret: "secret2".to_string(),
+                secret: "secret2".to_string().into(),
             },
             SignatureMethod::HmacSha1,
         )
