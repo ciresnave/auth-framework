@@ -76,7 +76,7 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration -- -D warnings
 
-      - name: Run unit tests
+      - name: Run all tests (lib + integration)
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
@@ -90,7 +90,7 @@ jobs:
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: cargo test --examples --no-run --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration
 
-      - name: Run benchmarks
+      - name: Verify benchmarks compile
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
