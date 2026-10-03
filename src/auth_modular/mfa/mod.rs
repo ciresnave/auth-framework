@@ -1488,4 +1488,90 @@ mod tests {
         let _code = mfa.sms.generate_code(&cid).await.unwrap();
         assert!(!mfa.sms.verify_code(&cid, "000000").await.unwrap());
     }
+
+    // ── verify_challenge_code: expiry gate ──────────────────────────────
+    //
+    // Replaces tests/vulnerability_testing_analysis.rs (issue #11), which
+    // claimed (in a println!-only, zero-assertion test) that this expiry
+    // check was absent. It is not: `verify_challenge_code` checks
+    // `challenge.is_expired()` before dispatching to any sub-manager. These
+    // tests assert that directly, against the real storage-backed code path
+    // (Email, which stores a plaintext code under a KV key verified by
+    // `constant_time_compare`), rather than printing a claim nobody checks.
+
+    async fn store_email_code(mfa: &MfaManager, challenge_id: &str, code: &str) {
+        let key = format!("email_challenge:{}:code", challenge_id);
+        mfa.storage
+            .store_kv(&key, code.as_bytes(), None)
+            .await
+            .unwrap();
+    }
+
+    fn make_email_challenge(
+        user_id: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> MfaChallenge {
+        use crate::methods::MfaType;
+        MfaChallenge {
+            id: format!("chal_{}", uuid::Uuid::new_v4()),
+            mfa_type: MfaType::Email {
+                email_address: format!("{user_id}@example.com"),
+            },
+            user_id: user_id.to_string(),
+            created_at: chrono::Utc::now(),
+            expires_at,
+            attempts: 0,
+            max_attempts: 3,
+            code_hash: None,
+            message: None,
+            data: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_verify_challenge_code_accepts_correct_code_before_expiry() {
+        let mfa = make_mfa();
+        let challenge =
+            make_email_challenge("expiry1", chrono::Utc::now() + chrono::Duration::minutes(5));
+        store_email_code(&mfa, &challenge.id, "123456").await;
+        assert!(
+            mfa.verify_challenge_code(&challenge, "123456")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_challenge_code_rejects_correct_code_after_expiry() {
+        let mfa = make_mfa();
+        let challenge =
+            make_email_challenge("expiry2", chrono::Utc::now() - chrono::Duration::seconds(1));
+        store_email_code(&mfa, &challenge.id, "123456").await;
+        // The code is objectively correct -- only expiry distinguishes this
+        // from the accept case above. If this ever returns `true`, a
+        // reviewer must treat it as a live MFA-bypass vulnerability, not a
+        // test-quality issue.
+        assert!(
+            !mfa.verify_challenge_code(&challenge, "123456")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_challenge_code_expiry_check_runs_before_storage_lookup() {
+        // Positive control for the test above: an expired challenge is
+        // rejected even when no code was ever stored for it, proving the
+        // expiry check short-circuits before the storage-dependent branches
+        // (so an expired/garbage challenge can't be used to probe storage
+        // state via timing or error differences).
+        let mfa = make_mfa();
+        let challenge =
+            make_email_challenge("expiry3", chrono::Utc::now() - chrono::Duration::seconds(1));
+        assert!(
+            !mfa.verify_challenge_code(&challenge, "123456")
+                .await
+                .unwrap()
+        );
+    }
 }
