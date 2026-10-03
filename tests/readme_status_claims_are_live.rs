@@ -103,7 +103,7 @@ fn no_readme_badge_hardcodes_a_verdict() {
          long as nobody checks.\n\n\
          FIX: use a live source (the workflow-status badge), or make the badge a \
          POINTER to the document that holds the real answer rather than a summary of it.",
-        bad.join(&format!("\n  ")),
+        bad.join("\n  "),
         STATIC_BADGE
     );
 }
