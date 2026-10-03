@@ -965,9 +965,24 @@ impl AdvancedTokenExchangeManager {
                         )));
                     }
                 }
-                Err(_) => {
-                    // If introspection fails, continue but log for audit
-                    // This is permissive since token processors will validate properly
+                Err(e) => {
+                    // Fail closed: a JWT that does not verify against this
+                    // manager's key is never "not a JWT" -- it is a token
+                    // whose claims (including `iss`) cannot be trusted, so
+                    // the trusted-issuer check above cannot run on it. The
+                    // old, permissive behavior here relied on
+                    // introspect_jwt_token succeeding for ANY token
+                    // (insecure_decode never failed), which made this
+                    // reachable only by a decode error, not a forged
+                    // untrusted-issuer claim. Now that introspection
+                    // actually verifies the signature, letting this branch
+                    // continue would let an unverifiable (forged, or
+                    // signed by a key this manager doesn't hold) token
+                    // bypass the trusted-issuer policy entirely.
+                    return Err(AuthError::InvalidRequest(format!(
+                        "JWT subject token failed introspection: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -1229,12 +1244,35 @@ impl AdvancedTokenExchangeManager {
         })
     }
 
-    /// Introspect and validate any JWT token using the manager's keys
+    /// Introspect and validate a JWT token signed by this manager's own key.
+    ///
+    /// Verifies the signature against `self.decoding_key` (RS256 -- the only
+    /// algorithm `new()` ever constructs this manager's keys for) and the
+    /// standard time-based claims (`exp` always, `nbf` when present --
+    /// `jsonwebtoken` does not check `nbf` unless explicitly asked to, so
+    /// that is set here rather than left on its default).
+    ///
+    /// **Scope, read before relying on this for a new caller:** this only
+    /// proves the token was signed by this manager's key and has not expired
+    /// or not-yet-begun. It does **not** check `aud`/`iss`/purpose, so a
+    /// token this manager minted for one purpose (e.g. a delegation-context
+    /// token) will introspect successfully even when presented somewhere
+    /// else. `apply_exchange_policies` adds its own trusted-issuer check on
+    /// top of this; any other caller needing purpose-scoping must check the
+    /// relevant claims itself. There is also no cross-issuer verification
+    /// (no JWKS/per-issuer key lookup) -- a token genuinely signed by a
+    /// *different* issuer's key, however "trusted" its claimed `iss` is,
+    /// always fails introspection with a signature error, not a trust
+    /// decision. Callers must fail closed on that error, not treat it as
+    /// "not a JWT, continue" -- see `apply_exchange_policies` below.
     pub fn introspect_jwt_token(&self, token: &str) -> Result<serde_json::Value> {
-        use jsonwebtoken::dangerous;
+        use jsonwebtoken::{Algorithm, Validation, decode};
 
-        // For introspection only, decode without signature verification
-        let token_data = dangerous::insecure_decode::<serde_json::Value>(token)
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.validate_aud = false;
+        validation.validate_nbf = true;
+
+        let token_data = decode::<serde_json::Value>(token, &self.decoding_key, &validation)
             .map_err(|e| AuthError::token(format!("Token introspection failed: {}", e)))?;
 
         Ok(token_data.claims)
@@ -1604,5 +1642,278 @@ mod tests {
 
         assert_eq!(link.delegator, "service_a");
         assert_eq!(link.delegated_scopes.len(), 2);
+    }
+
+    // Fixed 2048-bit RSA test keys (not used anywhere else) so these tests
+    // don't depend on the `rsa` crate being enabled at test time.
+    const INTROSPECT_TEST_PRIVATE_KEY_PEM: &str = "-----BEGIN RSA PRIVATE KEY-----\n\
+MIIEpQIBAAKCAQEAtiH2iikmMPaoxF999nrxnXITbxHNRsbr2MH7C4LzY7MSuW41\n\
+14L3ZhMTIrfcyvJXjkm6SFBetZYaG+a3IHDR7+G5YRtfgM/wMjJ1o8cWEer1frAc\n\
+c9tZm7ERHZDBdZ5t53KpMMV3ZyOiVo1GZMvlEz+OXLwrGMjeHe7wKRlL3HJEj0c/\n\
+7TRK+9Z/7dzuTsP9JnDkqInMP0EuA1Dpy9B191dPvrDfzIuoHxmQdlIzevnIvXQq\n\
+Kf36zrw4WHFKK9DYgux8DGxFoQB/uqXMcUTuFLU9Z1J6wd+JlU2F97nYTnixt26x\n\
+K2SznAjJZq8QI3CQJhtK14wNnzmNIVNgFPeu4wIDAQABAoIBAEbLWMtHR2MM3XjH\n\
+LW0bSMNMTiWEI+h49b+hVvWYhwaf2o1dO2xzqbpxe6SpFxeDr2jNW600IDwxBiEG\n\
+QvRHJjM56BbIzwyAxvqcBoIMppV8YMRHrCeUgXY1E1QMqkYPuOSX+w/MEadzgGxo\n\
+KY6QepBKygld0tqlaUD1WUCAZq5eyypupZuPC4jk/IZDtVfJcifpvMuNL+mfGeIF\n\
+mHLJ7YcqTw6hh/wULu9KK5ueDUPOdMU32+rG8tEP8APhP+fhd1AwlbZRaJHpGzBo\n\
+qbqes/QV991Q2ekAtfjJQ7PO7/BG1IAp+lM//khnns6OF3ylxB7519uRApONlYkE\n\
+/eB3Z6ECgYEA8pYnrHOVAj48IE4+pyK9Hs/D1dMEI4dbjWYFwdAUAp6L4cPmBpR0\n\
+uMwwebRwwxweg8BEdPdweIFtj55VffDVPKWnEkEV4P/lktVaXrq1/l7ZZyfiayJr\n\
+O0I2Vy/YVbbNVF+vgYrSe4Df5W6AtVd7ABUhy3glGgLhG9ebvVS8D8kCgYEAwDQT\n\
+S5RETjAkPOZsqGAdhUQ/Ecu2yUU+FnaWmlJ/2WDLsEvyJ+PkvNc16wYzRdzcBwb9\n\
+AcSaWzWfhr3VkwR7GrtyGBpqXMwuMG7VQ/61imdksOQfAoUUCtuHnHhNhjfZn+Fb\n\
+/jEPI4AtipFTaqrdIoUL1ujPTcTStqSuBPrUF0sCgYEA2cDHZBlsTFMpDaauvsCE\n\
+GsBM/gco0+uQ1uAZktwA2kkPL1z1gjqIe8luShEal0kKayGPUZ87KjCj9CMggqhI\n\
+AOSBj/U0en+5x5AUSqw26Vqis+ItcBW5Q7wvoxujiW1J6s7pb9L5FTudvwjuJ9ma\n\
+43wUldwHEc472w4zEkSZe2ECgYEAsdU86RgE3wcB8GsOq/dKOQy9Ah0nQTBU0vnk\n\
+PGMKsbkynSqXojrkX6kL1SnGdOR1m/bmTyV13+BMeqHYIw/pSwGV/iEqujOcpOlX\n\
+X3Miyy0A5/4Zhv5UXftijO5uZDn2nEwqDpWbuTAWcvglYzM2KYNKQgzkCcOLZrwV\n\
+2rutUuMCgYEAprpOJkQvCsHLuIPNRH69BEQKqOrht/xfhJbqLoNjsKcZrcVp3bkH\n\
+2SmLEzUyRNK/CDW5oGF2vdducrAFfbmEPZA7kYxKGUN5PHth/+28jeWCoCpE/YMT\n\
+yrkJ79pZYrrNezfeqoVOR2mEeieCdHZ9FSh7BB24p2zbN5RYiuvX8VE=\n\
+-----END RSA PRIVATE KEY-----\n";
+
+    const INTROSPECT_TEST_PUBLIC_KEY_PEM: &str = "-----BEGIN PUBLIC KEY-----\n\
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtiH2iikmMPaoxF999nrx\n\
+nXITbxHNRsbr2MH7C4LzY7MSuW4114L3ZhMTIrfcyvJXjkm6SFBetZYaG+a3IHDR\n\
+7+G5YRtfgM/wMjJ1o8cWEer1frAcc9tZm7ERHZDBdZ5t53KpMMV3ZyOiVo1GZMvl\n\
+Ez+OXLwrGMjeHe7wKRlL3HJEj0c/7TRK+9Z/7dzuTsP9JnDkqInMP0EuA1Dpy9B1\n\
+91dPvrDfzIuoHxmQdlIzevnIvXQqKf36zrw4WHFKK9DYgux8DGxFoQB/uqXMcUTu\n\
+FLU9Z1J6wd+JlU2F97nYTnixt26xK2SznAjJZq8QI3CQJhtK14wNnzmNIVNgFPeu\n\
+4wIDAQAB\n\
+-----END PUBLIC KEY-----\n";
+
+    // A second, unrelated key pair standing in for an attacker who does not
+    // hold the manager's real private key.
+    const INTROSPECT_ATTACKER_PRIVATE_KEY_PEM: &str = "-----BEGIN RSA PRIVATE KEY-----\n\
+MIIEowIBAAKCAQEAtcqfGn0x5B33tTrIRDyWsa3L6wqIajQpg+Iv1mMQwv1L80a6\n\
+LQSKwlbeQScCWDK0rJFV5cTqMsOi9kO7IctrvVU/9nYNH1iLptS3iLb3O3TCudd9\n\
+UOpd4NFuU2Muw3u5A7qmRo/qnJQDQepa6xDbSDYlH2K5dgkC70GeaoZhH3xj5hpD\n\
+Lf1Rwn0jmNWgNLAgriQDKrn4E/QUWUNohzNuvHWPEFAnwvDW7GOzOOPEXVALHwK4\n\
+51z5tOLlI0adakgpZ4PG/4qFN7jM91SmRkjpXapBQHgp358I5jEzpDoztsVJF/FP\n\
+xvya1/Qp2eE7/i6sMyIx02ghgu+8FRRvEqmikwIDAQABAoIBAEq9+PZKHPYeQBb6\n\
+CRbNFmQNAbcsSHPp6Fu55lMtvdl9jPmDzc3ufSJz1sNQx4z9o/0DcB6c/HFMsDay\n\
+GEFHwo9AeqDZXoHRxPEdqiwCldmTIvCHoZVgFqL1WHfeYn6q4qGe3vhJ+XrQ/Bng\n\
+weq9rnqdEFw8GeZmxBcckoZXo5zutQVhMpGbu4rxBe/wuWPY98fvjfoeXrqVb8eF\n\
+/6syW0P3pYznCMYloYItUx4XC9htYuuz2Dd/rShMMds6pgnY+IozW+mxo7T5BQe2\n\
+uNsBz70Bh+mcaAUupgSchirqQl/daPPlKYJSc2Ts20r3+77dOCNf0QRWQkfN6tKs\n\
+eab+KhkCgYEA4odbrM9uJYrRK00bGIqR3crCh6RLA+HXDCnldZsjnxZpy8RVZANo\n\
+hGc3xqmZKq93aceV3+in1eA15vAR34HqggxoXCel8qnz4E8a0REduMItMJJMOp7u\n\
+n4aFoJ5/tSmJL50YE4BAMuq2Im+s/w5iyE9Qhd4JrTe1VM1/GFiSNCUCgYEAzXFE\n\
+32d1bIz734Ir8DJgM1ryE5k95J1lL/ckpcYCu8xdGDgz595eTa01rboNmJdsCrlS\n\
+8vn6KESVLrKgXV/eBA3MvWezphw1Vpp9dFIcheN7ue+3AHZt0YAZ1WaJttyp7lCP\n\
+LC/SAQniixkcnyX2BsCZkMjdS0c1GJQehxnJIlcCgYAnCosbQnjKUZ1xKA3WcfNn\n\
+1U0nkYI4PhEREJtyZHWEMpmzO7g3z3qQ7zUmsQ4r1CfxfCtxdqiObOD9VzzNV5ey\n\
+KC9ISrEIHJBihV+qzpdfw1+EcoJezAt2RPn8z7RU5b62DQ4cNktaOyd+0d5v6uvN\n\
+eBX5rGXgi6xd3DjeWk2AXQKBgGnCp9wCXLbXFUsIrinnJRMK/JgOSYiJZm/84Mbe\n\
+WsXm/P3c4Qu6s/10769RmnI1cY9LvGINQjS8qbfyiQ/IrHiVyhKvchJPbz34JiFd\n\
+rAVZCHa96w236ezx71qmgLq8elaO7kWnEIssVY2aDdv4JOFxAR1B6no4XCMdDWIr\n\
+ahndAoGBALQG3n62SZMYba2BhQ74C0UvyW7U4FU/KS9zsphTm7NkylwR3Mmque2w\n\
+B29cp6/xsQallnwW/39X0GHoAPa7VWKVnV2LOALXNOZ9uXnfClLBKORJYVAHo0E9\n\
+8bhzLuKyntbFEhWssdomi+3uwOLbsRkY1O9SvmRLSWIM4DczkegG\n\
+-----END RSA PRIVATE KEY-----\n";
+
+    fn make_introspection_test_manager() -> AdvancedTokenExchangeManager {
+        use crate::server::oidc::oidc_session_management::SessionManager;
+
+        let config = AdvancedTokenExchangeConfig {
+            jwt_signing_key: INTROSPECT_TEST_PRIVATE_KEY_PEM.to_string(),
+            jwt_verification_key: INTROSPECT_TEST_PUBLIC_KEY_PEM.to_string(),
+            ..Default::default()
+        };
+
+        AdvancedTokenExchangeManager::new(config, Arc::new(SessionManager::new(Default::default())))
+            .expect("manager construction with valid RSA test keys must succeed")
+    }
+
+    #[test]
+    fn test_introspect_jwt_token_accepts_genuinely_signed_token() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let manager = make_introspection_test_manager();
+        let encoding_key = EncodingKey::from_rsa_pem(INTROSPECT_TEST_PRIVATE_KEY_PEM.as_bytes())
+            .expect("valid RSA private key PEM");
+        let claims = serde_json::json!({
+            "sub": "user-123",
+            "exp": (Utc::now() + Duration::minutes(5)).timestamp(),
+        });
+        let token = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
+            .expect("signing with the manager's own key must succeed");
+
+        let result = manager
+            .introspect_jwt_token(&token)
+            .expect("a token signed by the manager's own key must be accepted");
+        assert_eq!(result["sub"], "user-123");
+    }
+
+    #[test]
+    fn test_introspect_jwt_token_rejects_token_signed_by_different_key() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let manager = make_introspection_test_manager();
+        // Forged: signed with a different RSA key the manager never configured.
+        let attacker_key =
+            EncodingKey::from_rsa_pem(INTROSPECT_ATTACKER_PRIVATE_KEY_PEM.as_bytes())
+                .expect("valid RSA private key PEM");
+        let claims = serde_json::json!({
+            "sub": "attacker-controlled-subject",
+            "exp": (Utc::now() + Duration::minutes(5)).timestamp(),
+        });
+        let forged_token = encode(&Header::new(Algorithm::RS256), &claims, &attacker_key)
+            .expect("signing with the attacker's own key must succeed");
+
+        let result = manager.introspect_jwt_token(&forged_token);
+        assert!(
+            result.is_err(),
+            "a token signed with a key the manager never configured must be rejected, \
+             not silently accepted with attacker-controlled claims"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_exchange_policies_fails_closed_on_forged_trusted_issuer_claim() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let manager = make_introspection_test_manager();
+        // Forged: signed with a key the manager never configured, but
+        // claiming a trusted issuer by name. Before the fail-closed fix,
+        // introspect_jwt_token's insecure_decode let this claim through
+        // unverified and the trusted-issuer check below would have caught
+        // it on content; after introspection started actually verifying
+        // signatures, a forged token like this fails introspection instead
+        // -- and the old permissive `Err(_) => continue` let it slip past
+        // the trusted-issuer check entirely rather than being rejected.
+        let attacker_key =
+            EncodingKey::from_rsa_pem(INTROSPECT_ATTACKER_PRIVATE_KEY_PEM.as_bytes())
+                .expect("valid RSA private key PEM");
+        let forged_claims = serde_json::json!({
+            "sub": "attacker",
+            "iss": "https://auth.example.com", // a name on the trusted list
+            "exp": (Utc::now() + Duration::minutes(5)).timestamp(),
+        });
+        let forged_token = encode(
+            &Header::new(Algorithm::RS256),
+            &forged_claims,
+            &attacker_key,
+        )
+        .expect("signing with the attacker's own key must succeed");
+
+        let request = AdvancedTokenExchangeRequest {
+            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
+            subject_token: forged_token,
+            subject_token_type: "urn:ietf:params:oauth:token-type:jwt".to_string(),
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: "urn:ietf:params:oauth:token-type:access_token".to_string(),
+            scope: None,
+            audience: Vec::new(),
+            resource: Vec::new(),
+            exchange_context: None,
+            policy_requirements: Vec::new(),
+            custom_parameters: HashMap::new(),
+        };
+        let context = ExchangeContext {
+            transaction_id: "txn-forged".to_string(),
+            business_context: serde_json::json!({}),
+            delegation_chain: Vec::new(),
+            original_request: None,
+            security_context: None,
+            custom_fields: HashMap::new(),
+        };
+
+        let result = manager.apply_exchange_policies(&request, &context).await;
+        assert!(
+            result.is_err(),
+            "a JWT that fails introspection must fail the whole policy check, \
+             not be silently treated as having no claims to check"
+        );
+    }
+
+    #[test]
+    fn test_introspect_jwt_token_rejects_expired_token() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let manager = make_introspection_test_manager();
+        let encoding_key = EncodingKey::from_rsa_pem(INTROSPECT_TEST_PRIVATE_KEY_PEM.as_bytes())
+            .expect("valid RSA private key PEM");
+        let claims = serde_json::json!({
+            "sub": "user-123",
+            "exp": (Utc::now() - Duration::minutes(5)).timestamp(),
+        });
+        let expired_token = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
+            .expect("signing must succeed");
+
+        let result = manager.introspect_jwt_token(&expired_token);
+        assert!(result.is_err(), "an expired token must be rejected");
+    }
+
+    #[test]
+    fn test_introspect_jwt_token_rejects_not_yet_valid_token() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let manager = make_introspection_test_manager();
+        let encoding_key = EncodingKey::from_rsa_pem(INTROSPECT_TEST_PRIVATE_KEY_PEM.as_bytes())
+            .expect("valid RSA private key PEM");
+        let claims = serde_json::json!({
+            "sub": "user-123",
+            "exp": (Utc::now() + Duration::minutes(10)).timestamp(),
+            "nbf": (Utc::now() + Duration::minutes(5)).timestamp(), // not valid yet
+        });
+        let not_yet_valid_token = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
+            .expect("signing must succeed");
+
+        let result = manager.introspect_jwt_token(&not_yet_valid_token);
+        assert!(
+            result.is_err(),
+            "a token whose nbf is in the future must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_introspect_jwt_token_rejects_algorithm_confusion_hs256_with_public_key() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let manager = make_introspection_test_manager();
+        // Classic alg-confusion attempt: sign with HS256 using the RSA
+        // PUBLIC key's bytes as if they were a shared HMAC secret (an
+        // attacker who only knows the public key can do this). Must be
+        // rejected because Validation::new(Algorithm::RS256) only accepts
+        // RS256, regardless of what alg the token header claims.
+        let hmac_key = EncodingKey::from_secret(INTROSPECT_TEST_PUBLIC_KEY_PEM.as_bytes());
+        let claims = serde_json::json!({
+            "sub": "attacker",
+            "exp": (Utc::now() + Duration::minutes(5)).timestamp(),
+        });
+        let confused_token = encode(&Header::new(Algorithm::HS256), &claims, &hmac_key)
+            .expect("HS256 signing must succeed");
+
+        let result = manager.introspect_jwt_token(&confused_token);
+        assert!(
+            result.is_err(),
+            "an HS256 token, even one signed with the public key as an HMAC secret, \
+             must be rejected by an RS256-only verifier"
+        );
+    }
+
+    #[test]
+    fn test_introspect_jwt_token_rejects_token_without_exp_claim() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let manager = make_introspection_test_manager();
+        let encoding_key = EncodingKey::from_rsa_pem(INTROSPECT_TEST_PRIVATE_KEY_PEM.as_bytes())
+            .expect("valid RSA private key PEM");
+        // No `exp` claim at all -- a token that never expires must not be
+        // accepted as valid by default.
+        let claims = serde_json::json!({ "sub": "user-123" });
+        let token = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
+            .expect("signing must succeed");
+
+        let result = manager.introspect_jwt_token(&token);
+        assert!(
+            result.is_err(),
+            "a token with no exp claim at all must be rejected, not treated as \
+             non-expiring"
+        );
     }
 }

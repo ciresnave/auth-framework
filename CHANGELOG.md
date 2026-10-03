@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - Unreleased
 
+### Security
+
+- **Breaking:** `AdvancedTokenExchangeManager::introspect_jwt_token` now
+  actually verifies the token's signature (RS256, against the manager's
+  configured key) and its `exp`/`nbf` claims, instead of calling
+  `jsonwebtoken::dangerous::insecure_decode` and returning whatever
+  claims an unverified token happened to contain. Any token that does
+  not verify -- forged, signed by a different key, expired, not yet
+  valid, or using a different algorithm (including alg-confusion
+  attempts like HS256 signed with the public key as an HMAC secret) --
+  is now rejected instead of silently accepted. Affects two callers:
+  `TokenExchangeService::validate_token` (which previously reported
+  `is_valid: true` for any syntactically-valid JWT regardless of who
+  signed it) and `apply_exchange_policies` (which now fails the whole
+  policy check, rather than silently skipping the trusted-issuer check,
+  when the subject token fails introspection).
+  - **Known pre-existing limitations, not changed by this fix, worth
+    knowing before relying on it for a new use:** `introspect_jwt_token`
+    does not check `aud`/`iss`/token purpose, so a token this manager
+    minted for one purpose (e.g. an internal delegation-context token)
+    will still introspect successfully if presented somewhere else --
+    callers needing purpose-scoping must check those claims themselves.
+    There is also no cross-issuer verification (no JWKS/per-issuer key
+    lookup): a token genuinely signed by a different issuer's key
+    always fails introspection with a signature error, never a trust
+    decision, regardless of how "trusted" its claimed `iss` looks.
+    `validate_token` also does not consult token revocation
+    (`revoked_token:{jti}` storage) and surfaces the raw underlying
+    `jsonwebtoken` error text to callers -- both pre-existing, tracked
+    separately, not introduced or fixed here.
+
 ### Removed
 
 - **Breaking:** the `sms-aws-sns` SMS backend and its `smskit` feature
