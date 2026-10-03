@@ -20,7 +20,13 @@ impl TotpManager {
     pub async fn generate_secret(&self, user_id: &str) -> Result<String> {
         debug!("Generating TOTP secret for user '{}'", user_id);
 
-        let secret = crate::utils::crypto::generate_token(20);
+        // Generate 20 cryptographically-secure random bytes encoded as RFC 4648 Base32,
+        // compatible with generate_code_for_window() which base32-decodes the secret.
+        let rng = ring::rand::SystemRandom::new();
+        let mut raw_bytes = [0u8; 20];
+        ring::rand::SecureRandom::fill(&rng, &mut raw_bytes)
+            .map_err(|_| AuthError::internal("Failed to generate random bytes for TOTP secret"))?;
+        let secret = base32::encode(base32::Alphabet::Rfc4648 { padding: true }, &raw_bytes);
 
         // Store the secret securely
         let key = format!("user:{}:totp_secret", user_id);

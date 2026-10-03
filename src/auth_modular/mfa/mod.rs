@@ -736,9 +736,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_cross_method_step_accepts_valid_code() {
-        // 0.4.x's `generate_secret` emits a non-base32 token that `generate_code` rejects
-        // (a separate, pre-existing TOTP issue), so seed a known-valid base32 secret directly
-        // at the key `verify_code` reads. This keeps the happy path independent of that bug.
         let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
         let mfa = MfaManager::new(storage.clone());
         let secret = "JBSWY3DPEHPK3PXP".to_string();
@@ -756,5 +753,26 @@ mod tests {
             .await
             .unwrap();
         assert!(res.success, "a valid TOTP code must complete the step (error={:?})", res.error);
+    }
+
+    /// Regression test for issue #24: `generate_secret` used to emit a raw,
+    /// non-base32 token (`crate::utils::crypto::generate_token`) that
+    /// `generate_code`/`verify_code` can't decode, so an enrolled user's
+    /// correct codes were always rejected. `generate_secret`'s own output
+    /// must round-trip through `generate_code` and `verify_code`.
+    #[tokio::test]
+    async fn test_generate_secret_output_round_trips_through_generate_and_verify_code() {
+        let mfa = make_mfa();
+        let secret = mfa.totp.generate_secret("roundtrip_user").await.unwrap();
+        let code = mfa
+            .totp
+            .generate_code(&secret)
+            .await
+            .expect("generate_secret's own output must be accepted by generate_code");
+        let verified = mfa.totp.verify_code("roundtrip_user", &code).await.unwrap();
+        assert!(
+            verified,
+            "a code generated from generate_secret's own output must verify successfully"
+        );
     }
 }
