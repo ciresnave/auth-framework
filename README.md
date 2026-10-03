@@ -9,9 +9,9 @@ Security-first • Feature-rich • Batteries-included • Release candidate
 [![Crates.io](https://img.shields.io/crates/v/auth-framework.svg)](https://crates.io/crates/auth-framework)
 [![Documentation](https://docs.rs/auth-framework/badge.svg)](https://docs.rs/auth-framework)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
-[![Security Audit](https://img.shields.io/badge/security-audited-green.svg)](SECURITY.md)
+[![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 [![OAuth 2.1](https://img.shields.io/badge/OAuth-2.1-blue.svg)](https://oauth.net/2.1/)
-[![Tests](https://img.shields.io/badge/tests-CI%20verified-brightgreen.svg)](docs/development/TESTING_RESULTS.md)
+[![CI](https://github.com/ciresnave/auth-framework/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/ciresnave/auth-framework/actions/workflows/ci-cd.yml)
 
 ## ⚡ Quick Start - Get Running in Seconds
 
@@ -57,7 +57,7 @@ This split exists to support both simple app integration and advanced compositio
 - **🏢 Complete Client & Server Solution**: The ONLY Rust framework providing both client authentication AND full OAuth 2.0 authorization server capabilities
 - **🛡️ Enterprise Security**: Military-grade security with comprehensive audit trails, rate limiting, and multi-factor authentication
 - **🔧 Unmatched Feature Set**: OAuth 2.0 server, OIDC provider, JWT server, SAML SP, WebAuthn RP, API gateway, and more
-- **📊 Production Proven**: CI-verified test suites with detailed results published in `docs/development/TESTING_RESULTS.md`
+- **📊 Test Suite**: extensive test suite; recorded results in `docs/development/TESTING_RESULTS.md` are a **historical rc18 snapshot**, not the current CI state — read the CI badge above for that
 - **⚡ High Performance**: Optimized for speed with async-first design and efficient memory usage
 - **🌍 Framework Agnostic**: Seamless integration with Axum, Actix Web, Warp, and any Rust web framework
 - **🔒 Zero-Trust Architecture**: Built from the ground up with security-first principles and defense in depth
