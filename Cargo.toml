@@ -87,35 +87,25 @@
 
   # JWT handling.
   #
-  # WARNING FOR WHOEVER NEXT TRIES TO SLIM THESE FEATURES: listing
-  # jsonwebtoken's sub-dependencies individually (ed25519-dalek, hmac,
-  # p256, p384, rand, sha2 -- omitting "rust_crypto" itself, to try to
-  # exclude "rsa") PASSES `cargo check` cleanly. It also ships a crate
-  # that PANICS AT RUNTIME on the very first JWT sign or verify call, of
-  # ANY algorithm, because jsonwebtoken's `CryptoProvider::get_default()`
-  # requires "rust_crypto" or "aws_lc_rs" to be enabled BY LITERAL NAME
-  # (see jsonwebtoken 10.3.0's src/crypto/mod.rs) -- the individual
-  # sub-dependency features satisfy the compiler but never set that flag.
-  # A green `cargo check` on a configuration that cannot run is exactly
-  # the "looks done, isn't" defect this portfolio keeps re-discovering.
-  # Caught by reading jsonwebtoken's own source, not by trusting the
-  # build -- do the same before changing this again.
+  # Backed by jsonwebtoken's "aws_lc_rs" crypto provider, not "rust_crypto".
+  # "rust_crypto" is Cargo-feature-defined as
+  # ["ed25519-dalek","hmac","p256","p384","rand","rsa","sha2"] -- a single
+  # feature that unconditionally enables ALL of those, including the `rsa`
+  # crate (RUSTSEC-2023-0071, an open, unpatched RSA timing sidechannel --
+  # see deny.toml's prior disposition of it). "aws_lc_rs" covers the exact
+  # same Algorithm set (RS*/PS*/ES*/EdDSA/HS*, confirmed against
+  # jsonwebtoken 10.4.0's src/crypto/aws_lc/*.rs match arms) through AWS-LC
+  # (a BoringSSL-derived C/assembly implementation), which is not the `rsa`
+  # crate and is not subject to this advisory.
   #
-  # Consequence for RSA specifically: "rust_crypto" is Cargo-feature-
-  # defined as ["ed25519-dalek","hmac","p256","p384","rand","rsa","sha2"]
-  # -- a single feature that unconditionally enables ALL of those,
-  # including "rsa". Cargo features are pure unions; there is no way to
-  # request that bundle minus "rsa". So jsonwebtoken's own RS*/PS* JWT
-  # algorithm support (and the `rsa` crate it depends on) CANNOT be
-  # feature-gated out of the default build without switching the crypto
-  # backend to aws_lc_rs for ALL algorithms (a separate, larger change,
-  # not done here -- see the portfolio roadmap). `rsa-verify` and
-  # `rsa-private-key-ops` (below) gate auth-framework's OWN direct `rsa`
-  # crate usage instead: RSA JWKS export / SAML cert verify, and the JARM
-  # RSA-OAEP JWE path (the confirmed attacker-reachable exposure),
-  # respectively. Neither removes `rsa` from this crate's dependency
-  # tree -- see those feature comments below for what they do and do not.
-  jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
+  # WARNING FOR WHOEVER NEXT TOUCHES THIS: jsonwebtoken's
+  # `CryptoProvider::get_default()` requires "rust_crypto" or "aws_lc_rs"
+  # to be enabled BY LITERAL NAME (see jsonwebtoken's src/crypto/mod.rs) --
+  # listing sub-dependencies individually instead passes `cargo check`
+  # cleanly but PANICS AT RUNTIME on the very first JWT sign or verify
+  # call, of any algorithm. Caught by reading jsonwebtoken's own source,
+  # not by trusting the build -- do the same before changing this again.
+  jsonwebtoken = { version = "10.3", features = ["aws_lc_rs"] }
 
   # HTTP client for OAuth flows
   reqwest = { version = "0.13.2", features = ["json", "form"] }
@@ -158,11 +148,17 @@
   rand = { version = "0.10.0", features = ["std_rng"] }
   rand_core = "0.6"  # Compatible version for rsa crate's OsRng
   ring = "0.17.14"
-  # Optional: only pulled in by the `rsa-verify` or `rsa-private-key-ops`
-  # features. Has an open, unpatched timing-sidechannel advisory
-  # (RUSTSEC-2023-0071) -- see deny.toml for the full disposition and
-  # CireSnave's 2026-09-24 ruling.
-  rsa = { version = "0.9", features = ["sha2"], optional = true }  # RSA-OAEP for JWE key wrapping
+  # Optional: only pulled in by the `saml` feature, via bergshamra 0.3.x's
+  # own `KeyData::Rsa` variant, which requires an `rsa::RsaPublicKey`
+  # directly -- not auth-framework's own choice. `rsa-verify` and
+  # `rsa-private-key-ops` (below) used to pull this crate in too, for
+  # auth-framework's OWN RSA JWKS export and JARM RSA-OAEP JWE paths, but
+  # those were rewritten against `aws-lc-rs` instead (which is not subject
+  # to RUSTSEC-2023-0071, see the jsonwebtoken comment above) and no
+  # longer need `rsa` at all. Removing this last path requires bumping
+  # bergshamra to >=0.9.2 and selecting its `aws-lc` feature instead of
+  # `rustcrypto` -- tracked separately, not done in this change.
+  rsa = { version = "0.9", features = ["sha2"], optional = true }
 
   # Time handling
   time = { version = "0.3.47", features = ["formatting", "parsing", "serde"] }
@@ -420,7 +416,7 @@ sqlite-storage = ["sqlx"]
   distributed-rate-limiting = ["redis"]
   # Reserved for future enhanced cryptographic operations — currently a no-op
   enhanced-crypto           = ["chacha20poly1305", "ed25519-dalek", "x25519-dalek"]
-  fips-compliance           = ["aws-lc-rs"]
+  fips-compliance           = ["dep:aws-lc-rs"]
 
   # Enterprise RBAC with role-system v1.0
   enhanced-rbac = ["api-server", "role-system"]
@@ -450,60 +446,41 @@ sqlite-storage = ["sqlx"]
   otp-auth = ["otpauth"]
   passkeys = ["coset", "passkey", "passkey-client"]
   hsm = ["cryptoki"]  # PKCS#11 / HSM integration for X.509 certificate loading
-  saml = ["bergshamra", "p256", "p384", "quick-xml", "rsa-verify"] # most SAML IdP certs are RSA
+  # `dep:rsa` here is NOT `rsa-verify` -- it's bergshamra 0.3.x's own
+  # `KeyData::Rsa` variant (src/api/saml.rs::key_from_x509_der), which
+  # requires an `rsa::RsaPublicKey` directly, independent of whatever
+  # backend auth-framework's OWN rsa-verify/rsa-private-key-ops features
+  # use. Most SAML IdP certs are RSA. See the `rsa` dependency's own
+  # comment above for the plan to remove this last path (bergshamra bump).
+  saml = ["bergshamra", "p256", "p384", "quick-xml", "dep:rsa"]
   # RSA split into two features, `rsa-verify` and `rsa-private-key-ops`, so a
-  # consumer who only needs public-key verification (SAML, JWKS export --
-  # neither is the Marvin Attack's concern; confirmed by source trace) is
-  # never forced to also compile in the one confirmed attacker-reachable
-  # private-key operation (JARM's RSA-OAEP JWE decrypt). Formerly one
-  # feature (`rsa-key-ops`); split so `saml` can depend on the safe half
-  # only. Both gates are refinements of the same disposition, not new risk
-  # acceptances -- see deny.toml's RUSTSEC-2023-0071 entry for that.
+  # consumer who only needs public-key verification (SAML, JWKS export) is
+  # never forced to also compile in the private-key operation (JARM's
+  # RSA-OAEP JWE decrypt). Formerly backed directly by the `rsa` crate
+  # (RUSTSEC-2023-0071); now backed by `aws-lc-rs`, which implements RSA
+  # independently (AWS-LC, a BoringSSL-derived C/assembly codebase) and is
+  # not subject to that advisory. The opt-in-feature shape is unchanged
+  # from CireSnave's 2026-09-24 ruling -- only the backend underneath it.
   #
-  # WHAT NEITHER FEATURE GATES, AND WHY (true of both, stated in both):
-  # `rsa` v0.9.10 remains present in EVERY default build regardless of
-  # either feature. jsonwebtoken's own RS*/PS* JWT sign+verify pulls in its
-  # own `rsa` dependency via its "rust_crypto" feature bundle
-  # (rust_crypto = ["ed25519-dalek","hmac","p256","p384","rand","rsa","sha2"]),
-  # which is also required for ES256/EdDSA/HMAC to work at all --
-  # jsonwebtoken panics at runtime (`CryptoProvider::get_default()`)
-  # unless "rust_crypto" or "aws_lc_rs" is enabled by literal name, and
-  # Cargo features are pure unions: there is no way to request the
-  # "rust_crypto" bundle minus its "rsa" member. Confirmed via
-  # `cargo tree -e features -i rsa` (rsa still resolves with both features
-  # off) and by reading jsonwebtoken 10.3.0's own source, not assumed.
-  # `cargo audit`/`cargo-deny` will therefore keep reporting `rsa` in this
-  # crate's dependency tree unconditionally -- that is correct, not a bug
-  # in either gate. Removing `rsa` from default builds entirely would
-  # require switching jsonwebtoken to its `aws_lc_rs` backend for ALL
-  # algorithms (a separate, larger change: different build toolchain
-  # requirements, not just an RSA change) -- not done here; see the
-  # portfolio roadmap.
-  #
-  # ECDSA (ES256/ES384) is the recommended default for new JWT
-  # configurations (see security/presets.rs) and does not exercise the
-  # vulnerable RSA code path even though the crate remains compiled in.
-
-  # Public-key-only RSA operations: SAML IdP certificate verification
-  # (api/saml.rs, KeyUsage::Verify) and RSA JWKS export (tokens/mod.rs,
-  # parses PEM for n/e only). No secret exponent involved -- not the
-  # Marvin Attack's concern. With this feature OFF, JWKS export of an RSA
-  # key returns an actionable error naming RUSTSEC-2023-0071 instead of
-  # silently working; SAML's `saml` feature enables this automatically
-  # (most SAML IdP certs are RSA).
-  rsa-verify = ["dep:rsa"]
+  # `saml`'s OWN rsa:: usage (above) is untouched by this and still pulls
+  # the real `rsa` crate via `dep:rsa` directly -- these two features no
+  # longer have anything to do with that path.
+  rsa-verify = ["dep:aws-lc-rs"]
 
   # RSA private-key operations: JARM's RSA-OAEP JWE decrypt AND encrypt
-  # (oidc_advanced_jarm.rs). Decrypt is the CONFIRMED attacker-reachable
-  # exposure -- the public `validate_jarm_response` API feeds an external
-  # token directly into an RSA private-key decrypt. Encrypt (using a
-  # recipient's public key to wrap a CEK) is bundled here rather than under
-  # `rsa-verify` because it shares the same JWE round-trip config,
-  # struct fields, and constructor logic as decrypt in this file, not
-  # because encrypting with a public key is itself dangerous -- it isn't.
-  # With this feature OFF, both return an actionable error naming
-  # RUSTSEC-2023-0071 instead of silently working.
-  rsa-private-key-ops = ["dep:rsa"]
+  # (oidc_advanced_jarm.rs), backed by aws-lc-rs (see rsa-verify's comment
+  # above). Decrypt is the path that was the confirmed attacker-reachable
+  # exposure under the `rsa` crate -- the public `validate_jarm_response`
+  # API feeds an external token directly into a private-key decrypt.
+  # aws-lc-rs's decrypt returns an opaque `Unspecified` error on every
+  # failure path (malformed ciphertext, wrong padding, wrong key size --
+  # no distinguishable error variants), which is the actual property this
+  # gate cares about, not just "a different crate." Encrypt is bundled
+  # here rather than under `rsa-verify` because it shares the same JWE
+  # round-trip config, struct fields, and constructor logic as decrypt in
+  # this file, not because encrypting with a public key is itself
+  # dangerous -- it isn't.
+  rsa-private-key-ops = ["dep:aws-lc-rs"]
   tui = ["colored", "console", "crossterm", "indicatif", "ratatui", "tui-input"]
   unicode-support = ["unicode-normalization"]
   warp-integration = ["warp"]
@@ -556,6 +533,12 @@ sqlite-storage = ["sqlx"]
     optional = true
     version  = "2.2.0"
 
+  # Optional: pulled in by `fips-compliance`, and by `rsa-verify`/
+  # `rsa-private-key-ops` for RSA JWKS export (tokens/mod.rs) and JARM
+  # RSA-OAEP JWE (oidc_advanced_jarm.rs) respectively -- not subject to
+  # RUSTSEC-2023-0071 (AWS-LC's own RSA implementation, not the `rsa`
+  # crate's). `ring-io` (default-on) is required for RsaPublicKey's
+  # modulus()/exponent() accessors used by the JWKS export path.
   [dependencies.aws-lc-rs]
     features = ["aws-lc-sys"]
     optional = true
