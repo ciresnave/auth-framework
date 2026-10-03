@@ -344,6 +344,12 @@
   quick-xml = { version = "0.41.0", features = ["serialize"], optional = true }
 
   # XML-DSig signature validation for SAML
+  # NOTE: Cargo.lock holds the transitive `ml-dsa` at 0.1.0-rc.7 (and `module-lattice`
+  # at 0.1.0). bergshamra-crypto 0.3.x does not compile against ml-dsa 0.1.0-rc.8
+  # (no `sign_deterministic` / `SigningKey::from_seed`, bergshamra-crypto src/sign.rs),
+  # so a bare `cargo update` breaks the build. After any `cargo update`, re-run
+  # `cargo update -p ml-dsa --precise 0.1.0-rc.7`. Lift this pin when bergshamra is
+  # bumped to a release that supports a newer ml-dsa.
   bergshamra = { version = "0.3", optional = true }
   p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
   p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
