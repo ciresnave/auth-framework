@@ -83,6 +83,21 @@ jobs:
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: cargo test --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration --workspace
 
+      # tests/storage_postgres.rs and tests/storage_redis.rs are #[ignore]d
+      # (cargo's convention for tests needing an external service) and were
+      # never actually run here despite this job provisioning healthy
+      # postgres/redis services for them (issue #17). tests/storage_mysql.rs
+      # stays ignored -- no mysql service is provisioned in this job -- and
+      # now carries a reason string saying so.
+      - name: Run ignored storage integration tests (postgres, redis)
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        run: |
+          cargo test --test storage_postgres --features postgres-storage -- --ignored
+          cargo test --test storage_redis --features redis-storage -- --ignored
+
       - name: Verify examples compile
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test

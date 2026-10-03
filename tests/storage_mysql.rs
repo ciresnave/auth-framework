@@ -28,7 +28,7 @@ async fn setup() -> MySqlStorage {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires a mysql service; not provisioned in CI, see #17"]
 async fn mysql_token_crud() {
     let storage = setup().await;
     let token = AuthToken::new("my_user1", "my_access1", Duration::from_secs(3600), "test");
@@ -55,7 +55,7 @@ async fn mysql_token_crud() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires a mysql service; not provisioned in CI, see #17"]
 async fn mysql_session_crud() {
     let storage = setup().await;
     let session = SessionData::new("my_sess1", "my_user_s", Duration::from_secs(3600))
@@ -74,7 +74,7 @@ async fn mysql_session_crud() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires a mysql service; not provisioned in CI, see #17"]
 async fn mysql_kv_crud() {
     let storage = setup().await;
     storage
@@ -90,7 +90,7 @@ async fn mysql_kv_crud() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires a mysql service; not provisioned in CI, see #17"]
 async fn mysql_kv_list_prefix() {
     let storage = setup().await;
     storage.store_kv("mypfx:a", b"1", None).await.unwrap();
@@ -106,7 +106,7 @@ async fn mysql_kv_list_prefix() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires a mysql service; not provisioned in CI, see #17"]
 async fn mysql_cleanup_expired() {
     let storage = setup().await;
 
