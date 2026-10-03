@@ -111,7 +111,16 @@ jobs:
         # NOT exclude them here -- `-- --ignored` runs every #[ignore]d
         # test by design, reason string or not. --skip is what actually
         # excludes them from this invocation.
-        run: cargo test --test storage_postgres --features postgres-storage -- --ignored --test-threads=1 --skip pg_cleanup_expired --skip pg_token_crud --skip pg_token_update
+        #
+        # --skip pg_concurrent_migrate_is_safe: this one is SUPPOSED to fail
+        # right now -- it's the regression test proving issue #89
+        # (PostgresStorage::migrate() is not concurrency-safe) is still
+        # unfixed. --test-threads=1 only serializes separate #[test]
+        # functions against each other; it does nothing to stop this one
+        # test from spawning its own 8 concurrent migrate() calls
+        # internally, which is the whole point of the test. Same
+        # --skip-not-#[ignore] mistake as above, caught the same way.
+        run: cargo test --test storage_postgres --features postgres-storage -- --ignored --test-threads=1 --skip pg_cleanup_expired --skip pg_token_crud --skip pg_token_update --skip pg_concurrent_migrate_is_safe
 
       # if: always() -- GitHub Actions skips a step by default once an
       # earlier step in the job fails, so without this the redis tests
