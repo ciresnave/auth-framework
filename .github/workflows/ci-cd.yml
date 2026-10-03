@@ -88,15 +88,26 @@ jobs:
       # never actually run here despite this job provisioning healthy
       # postgres/redis services for them (issue #17). tests/storage_mysql.rs
       # stays ignored -- no mysql service is provisioned in this job -- and
-      # now carries a reason string saying so.
-      - name: Run ignored storage integration tests (postgres, redis)
+      # now carries a reason string saying so. Split into two steps (not one
+      # `run: |` block) so a failure in one does not stop the other from
+      # running and reporting under GitHub Actions' default `bash -e` shell.
+      - name: Run ignored postgres storage integration tests
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        # --test-threads=1: PostgresStorage::migrate() is not safe under
+        # concurrent execution (duplicate-key races on Postgres's own
+        # pg_type_typname_nsp_index catalog index when two connections both
+        # run CREATE TABLE IF NOT EXISTS at once) -- see issue #89, which
+        # this works around rather than fixes. A real fix removes the need
+        # for this flag.
+        run: cargo test --test storage_postgres --features postgres-storage -- --ignored --test-threads=1
+
+      - name: Run ignored redis storage integration tests
+        env:
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: |
-          cargo test --test storage_postgres --features postgres-storage -- --ignored
-          cargo test --test storage_redis --features redis-storage -- --ignored
+        run: cargo test --test storage_redis --features redis-storage -- --ignored
 
       - name: Verify examples compile
         env:
