@@ -397,12 +397,27 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      # Deliberately keyed on the base branch name, not Cargo.lock's hash: a
+      # criterion baseline needs to survive across the version bump every
+      # push produces (which rotates the cargo-registry cache key above on
+      # nearly every run), or comparison has nothing to compare against.
+      # restore-keys lets a PR run fall back to the most recent baseline
+      # saved for its base branch.
+      - name: Cache criterion baseline
+        uses: actions/cache@v4
+        with:
+          path: target/criterion
+          key: criterion-baseline-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            criterion-baseline-${{ github.base_ref || github.ref_name }}-
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libpq-dev libssl-dev pkg-config
 
       - name: Run performance benchmarks
+        shell: bash -eo pipefail {0}
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
@@ -418,8 +433,15 @@ jobs:
 
       - name: Performance regression check
         run: |
-          # Check if any benchmark shows >10% performance degradation
-          if grep -q "change:.*-[1-9][0-9]\%" benchmark_results.txt; then
+          # Criterion prints its own verdict line ("Performance has regressed.")
+          # when a benchmark regresses beyond its noise threshold -- match that
+          # directly rather than reconstructing the sign convention from a
+          # formatted percentage (criterion's "change:" is negative for a
+          # SPEEDUP and positive for a regression, which the previous pattern
+          # had backwards). Absent entirely on a run with no prior baseline
+          # (see the "Cache criterion baseline" step above), in which case
+          # there is nothing to regress against and the gate correctly passes.
+          if grep -q "Performance has regressed" benchmark_results.txt; then
             echo "Performance regression detected!"
             exit 1
           fi
