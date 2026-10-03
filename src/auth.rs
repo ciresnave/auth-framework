@@ -340,7 +340,10 @@ impl AuthFramework {
         let token_manager =
             TokenManager::new_hmac(&ephemeral_secret, "auth-framework", "auth-framework");
 
-        let user_manager = crate::auth_modular::user_manager::UserManager::new(storage.clone());
+        let user_manager = crate::auth_modular::user_manager::UserManager::new(
+            storage.clone(),
+            config.security.password_hash_algorithm.clone(),
+        );
         let session_manager =
             crate::auth_modular::session_manager::SessionManager::new(storage.clone());
         let mfa_manager = crate::auth_modular::mfa::MfaManager::new(storage.clone());
@@ -423,7 +426,10 @@ impl AuthFramework {
         let audit_storage = Arc::new(crate::storage::MemoryStorage::new());
         let audit_manager = Arc::new(crate::audit::AuditLogger::new(audit_storage));
 
-        let user_manager = crate::auth_modular::user_manager::UserManager::new(storage.clone());
+        let user_manager = crate::auth_modular::user_manager::UserManager::new(
+            storage.clone(),
+            config.security.password_hash_algorithm.clone(),
+        );
         let session_manager =
             crate::auth_modular::session_manager::SessionManager::new(storage.clone());
         let mfa_manager = crate::auth_modular::mfa::MfaManager::new(storage.clone());
@@ -465,7 +471,10 @@ impl AuthFramework {
     /// caller.
     pub fn replace_storage(&mut self, storage: std::sync::Arc<dyn AuthStorage>) {
         self.storage = storage.clone();
-        self.user_manager = crate::auth_modular::user_manager::UserManager::new(storage.clone());
+        self.user_manager = crate::auth_modular::user_manager::UserManager::new(
+            storage.clone(),
+            self.config.security.password_hash_algorithm.clone(),
+        );
         self.session_manager =
             crate::auth_modular::session_manager::SessionManager::new(storage.clone());
         self.mfa_manager = crate::auth_modular::mfa::MfaManager::new(storage.clone());
