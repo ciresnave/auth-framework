@@ -9,6 +9,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Breaking:** `create_client_assertion` (RFC 7523 private-key-JWT client
+  authentication) now takes `encoding_key: &EncodingKey` instead of raw
+  signing-key bytes (`signing_key: &[u8]`). The previous signature
+  rebuilt a fresh `EncodingKey` from raw PEM/HMAC bytes on *every call*
+  -- for RS*/ES* algorithms, a new, un-zeroized `jsonwebtoken`
+  `PemEncodedKey` on every single token request, per RFC 7523's
+  per-request assertion regeneration. The new signature lets the
+  caller construct the `EncodingKey` once and reuse it across calls,
+  reducing that construction from one-per-call to one-per-key. This is
+  not "zero un-zeroized copies" -- the caller's initial
+  `from_rsa_pem`/`from_ec_pem` still builds one `PemEncodedKey` at
+  setup time, and `jsonwebtoken` 10.4.0 does not zeroize that
+  intermediate type (confirmed from its own changelog and source;
+  only `EncodingKey`/`DecodingKey` themselves are zeroized) -- but
+  N-to-1 is the real win given per-request regeneration.
+  The previous signature made `algorithm` and the key family agree by
+  construction, since it chose the PEM-parsing branch from `algorithm`.
+  The new signature allows an `EncodingKey` of one family to be passed
+  with an unrelated `Algorithm` (e.g. an HMAC key with `Algorithm::ES256`)
+  with no compile-time guard; verified directly against `jsonwebtoken`
+  10.4.0 (not assumed) that such a mismatch is rejected at `encode()`
+  time with `Error(InvalidAlgorithm)`, never silently signed under the
+  wrong declared `alg`, so this cannot become an algorithm-confusion
+  vector -- it is now a runtime error instead of a type-system
+  guarantee, and both facts are documented on the method.
+
+- **Breaking:** `Credential`, `SvidResponse`, and `CACertificate` no
+  longer derive `Debug`; each has a manual, redacting impl instead
+  (`Credential`'s delegates to its pre-existing but previously-unused
+  `safe_display()`; `CACertificate`'s and `SvidResponse::X509`'s
+  redact their `private_key` field, and `SvidResponse::Jwt`'s redacts
+  its `token` field). A derived `Debug` printing secret material
+  verbatim on an accidental `{:?}` is a disclosure bug in its own
+  right, independent of any zeroization; none of the three derives
+  was load-bearing in-tree (checked individually before removing,
+  including confirming the one apparent `Credential` serialization
+  call site in `passkey/mod.rs` is actually an unrelated WebAuthn
+  library type sharing the variable name `credential`). `Debug` output
+  is not a stable public contract, so this part of the fix is itself
+  non-breaking; it is grouped here because it is the first step of the
+  breaking changes below.
+
+- **Breaking:** `Credential::Certificate.private_key`,
+  `CACertificate.private_key`, and `SvidResponse::X509.private_key`
+  change from `Vec<u8>` to `Zeroizing<Vec<u8>>`, so the key bytes are
+  wiped from memory as soon as the value holding them drops, per
+  CireSnave's standing rule that regenerable secret material should
+  only be held in memory as long as the current work needs it.
+  `Zeroizing<T>` derefs to `&Vec<u8>`/`&[u8]` so most call sites stayed
+  source-compatible, but the field's public type changes on three
+  `pub` types, which is a real break for any downstream code naming
+  the concrete field type. Verified per-field rather than assumed safe:
+  `Credential::Certificate.private_key` is never cloned or cached;
+  `CACertificate.private_key` and `SvidResponse::X509.private_key` are
+  each cached behind `Arc<RwLock<HashMap<..>>>` and cloned out of the
+  lock at various call sites, and `Zeroizing<Vec<u8>>`'s `Clone`
+  allocates an independent buffer per clone, so the cached original
+  and any transient clone each zeroize independently on their own
+  `Drop` -- for the SVID case this is a net improvement over the prior
+  behavior, where every read cloned the private key and left it
+  unwiped until ordinary deallocation. Required enabling the `serde`
+  feature on the `zeroize` dependency, since `SvidResponse` still
+  derived `Serialize`/`Deserialize` at this point in the sweep (see
+  next entry) and `Zeroizing<Vec<u8>>` only implements those traits
+  with that feature on.
+
+- **Breaking:** `Credential`, `SvidResponse`, and `AuthRequest` no
+  longer derive `Serialize`/`Deserialize`. A derived `Serialize` on a
+  type holding secret material is an active disclosure path reachable
+  from one line of ordinary code (`serde_json::to_string`/`to_value`)
+  -- the JSON-serialization analogue of the `Debug` disclosure path
+  closed above. The derive was removed outright rather than replaced
+  with a redacting custom `Serialize`, since a custom impl that
+  silently drops the secret field would produce a structurally-valid-
+  but-wrong value (e.g. an SVID with an empty private key, a
+  `Credential` with an empty password) that either fails confusingly
+  later or, worse, succeeds against a null credential; a loud compile
+  break was judged preferable to that quiet wrong answer. Verified
+  unused in-tree before removing each: no in-tree `serde_json` call
+  actually serializes or deserializes a `Credential` (the one apparent
+  hit is the same unrelated WebAuthn type noted above); `SvidResponse`
+  is only ever held in an in-memory `Arc<RwLock<HashMap<..>>>` cache
+  and re-issued on expiry, never serialized to storage or over the
+  wire (SPIFFE's real Workload API wire protocol is gRPC/protobuf, not
+  JSON); `AuthRequest` (which embeds `Credential`, so its own derive
+  stopped compiling as a direct consequence) has zero in-tree callers
+  of `AuthRequest::new`/`with_metadata` at all.
+
+- **Breaking:** roughly twenty secret-string fields across
+  config, protocol, and consumer-credential types change from
+  `String`/`Option<String>` to `Zeroizing<String>`/`Option<Zeroizing<String>>`,
+  so the plaintext secret is wiped from memory as soon as the value
+  holding it drops. Affected: `MfaSetupResponse.secret`; the email MFA
+  provider configs' `api_key`/`secret_access_key`/`password`; the SMS
+  MFA webhook's `webhook_secret`; `GrafanaConfig.api_key`; the app and
+  deployment `JwtConfig`/`SecurityConfig` secret/JWT fields;
+  `SecurityConfig.secret_key`/`.previous_secret_key`;
+  `RadiusConfig.shared_secret`; `StsConfig.jwt_signing_secret`;
+  `SecureJwtConfig.jwt_secret`; `CaepConfig.signing_secret`;
+  `SmsConfig.api_key`/`EmailConfig.password`; OAuth 1.0a's consumer and
+  token secrets (`OAuthConsumer.secret`, `OAuthToken.secret`,
+  `RequestTokenResponse`/`AccessTokenResponse.oauth_token_secret`);
+  `EnhancedClientCredentials.client_secret_hash` (a bcrypt hash, not
+  the raw secret, zeroized anyway since an offline-crackable hash left
+  resident longer than needed is the same class of risk at lower
+  severity); the `QuickStartAuth` builder's JWT/OAuth2 secret fields;
+  and `MfaMethodData::Totp.secret_key`. Each type was checked
+  individually against the sweep's name list rather than trusted by
+  name alone, since several names are reused for unrelated structs in
+  this codebase (three distinct `SecurityConfig` types, two distinct
+  `JwtConfig` types, two distinct `OAuthProviderConfig` types, two
+  distinct `WebhookConfig` types) -- several instances turned out to
+  hold no secret field at all and needed no change, including
+  `server::core::common_jwt::JwtConfig`, which already uses
+  `jsonwebtoken`'s `EncodingKey`/`DecodingKey` (zeroized on `Drop` as
+  of the `create_client_assertion` change above). `Zeroizing<T>`
+  derefs to `&T` so most call sites stayed source-compatible, but it
+  implements neither `Display` nor `Into<String>`, so `format!()`
+  sites and builder methods taking `impl Into<String>` needed
+  `.as_str()`/`.to_string()` (via `Deref`-based method lookup to the
+  wrapped `String`'s own methods, not a trait impl on `Zeroizing`
+  itself) or a second `.into()` at construction. Verifying this class
+  of change requires `cargo check --all-features --all-targets`, not
+  just `--lib` or `--all-targets` alone: earlier passes in this sweep
+  missed errors in test/example/bench code (`--lib` alone) and, once,
+  two doc-comment construction sites invisible to both `--lib` and
+  `--all-targets` (caught only by a targeted grep for the construction
+  pattern plus a full doctest run).
+
+- `LoginForm.password` and `CreateUserForm.password` (private,
+  non-`pub` admin-GUI form structs populated only by axum's `Form`
+  extractor) now wrap their password field in `Zeroizing<String>` as
+  well, for the same reason as the fields above. Non-breaking: both
+  structs are private, so the field type was never part of this
+  crate's public API, and every downstream use of `.password` already
+  took a `&str`, which `Zeroizing<String>`'s `Deref` satisfies with no
+  call-site changes.
+
 - **Breaking:** `AdvancedTokenExchangeManager::introspect_jwt_token` now
   actually verifies the token's signature (RS256, against the manager's
   configured key) and its `exp`/`nbf` claims, instead of calling
