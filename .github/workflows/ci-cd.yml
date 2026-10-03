@@ -83,6 +83,56 @@ jobs:
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: cargo test --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration --workspace
 
+      # tests/storage_postgres.rs and tests/storage_redis.rs are #[ignore]d
+      # (cargo's convention for tests needing an external service) and were
+      # never actually run here despite this job provisioning healthy
+      # postgres/redis services for them (issue #17). tests/storage_mysql.rs
+      # stays ignored -- no mysql service is provisioned in this job -- and
+      # now carries a reason string saying so. Split into two steps (not one
+      # `run: |` block) so a failure in one does not stop the other from
+      # running and reporting under GitHub Actions' default `bash -e` shell.
+      - name: Run ignored postgres storage integration tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        # --test-threads=1: PostgresStorage::migrate() is not safe under
+        # concurrent execution (duplicate-key races on Postgres's own
+        # pg_type_typname_nsp_index catalog index when two connections both
+        # run CREATE TABLE IF NOT EXISTS at once) -- see issue #89, which
+        # this works around rather than fixes. A real fix removes the need
+        # for this flag.
+        #
+        # --skip pg_cleanup_expired/pg_token_crud/pg_token_update: these 3
+        # fail with "no column found for name: user_profile" -- see issue
+        # #93 (AuthToken.user_profile never round-trips through any storage
+        # backend; Postgres is the only one that hard-errors about it
+        # instead of silently dropping it). NOTE: the tests are also marked
+        # #[ignore = "..."] in source for documentation, but that alone does
+        # NOT exclude them here -- `-- --ignored` runs every #[ignore]d
+        # test by design, reason string or not. --skip is what actually
+        # excludes them from this invocation.
+        #
+        # --skip pg_concurrent_migrate_is_safe: this one is SUPPOSED to fail
+        # right now -- it's the regression test proving issue #89
+        # (PostgresStorage::migrate() is not concurrency-safe) is still
+        # unfixed. --test-threads=1 only serializes separate #[test]
+        # functions against each other; it does nothing to stop this one
+        # test from spawning its own 8 concurrent migrate() calls
+        # internally, which is the whole point of the test. Same
+        # --skip-not-#[ignore] mistake as above, caught the same way.
+        run: cargo test --test storage_postgres --features postgres-storage -- --ignored --test-threads=1 --skip pg_cleanup_expired --skip pg_token_crud --skip pg_token_update --skip pg_concurrent_migrate_is_safe
+
+      # if: always() -- GitHub Actions skips a step by default once an
+      # earlier step in the job fails, so without this the redis tests
+      # would silently never run again any time the postgres step fails for
+      # any reason (exactly the kind of invisible skip issue #17 was about).
+      - name: Run ignored redis storage integration tests
+        if: always()
+        env:
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        run: cargo test --test storage_redis --features redis-storage -- --ignored
+
       - name: Verify examples compile
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test

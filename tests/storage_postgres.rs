@@ -30,7 +30,7 @@ async fn setup() -> PostgresStorage {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "AuthToken.user_profile has no column in this backend's schema, see #93"]
 async fn pg_token_crud() {
     let storage = setup().await;
     let token = AuthToken::new("pg_user1", "pg_access1", Duration::from_secs(3600), "test");
@@ -57,7 +57,7 @@ async fn pg_token_crud() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "AuthToken.user_profile has no column in this backend's schema, see #93"]
 async fn pg_token_update() {
     let storage = setup().await;
     let mut token = AuthToken::new("pg_upd_user", "pg_upd_at", Duration::from_secs(3600), "pw");
@@ -149,7 +149,7 @@ async fn pg_count_active_sessions() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "AuthToken.user_profile has no column in this backend's schema, see #93"]
 async fn pg_cleanup_expired() {
     let storage = setup().await;
 
@@ -184,4 +184,43 @@ async fn pg_cleanup_expired() {
     );
 
     storage.delete_token(&valid_token.token_id).await.unwrap();
+}
+
+/// Regression test for issue #89: `PostgresStorage::migrate()` used
+/// `CREATE TABLE IF NOT EXISTS`, which is not safe under concurrent
+/// execution -- two connections can both pass the existence check before
+/// either commits, then race on Postgres's own `pg_type` catalog (every
+/// table implicitly creates a composite row type there), failing with
+/// `duplicate key value violates unique constraint "pg_type_typname_nsp_index"`.
+/// This is a real product bug (two app instances migrating at startup at
+/// the same time), not just a test artifact -- CI currently works around
+/// it with `--test-threads=1` on this file rather than fixing it (see the
+/// comment at that step in `.github/workflows/ci-cd.yml`).
+///
+/// `#[ignore]`d pending the real fix (an advisory lock around `migrate()`,
+/// or catching and tolerating this specific duplicate-key error) -- lift
+/// the ignore once that lands; this test should then pass.
+#[tokio::test]
+#[ignore = "documents issue #89 (PostgresStorage::migrate() is not concurrency-safe); run manually once a fix lands"]
+async fn pg_concurrent_migrate_is_safe() {
+    let url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set to run PostgreSQL integration tests");
+
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let url = url.clone();
+        handles.push(tokio::spawn(async move {
+            let pool = PgPool::connect(&url)
+                .await
+                .expect("Failed to connect to PostgreSQL");
+            PostgresStorage::new(pool).migrate().await
+        }));
+    }
+
+    for (i, handle) in handles.into_iter().enumerate() {
+        handle
+            .await
+            .expect("migrate task panicked")
+            .unwrap_or_else(|e| panic!("concurrent migrate() call {i} failed: {e}"));
+    }
 }
