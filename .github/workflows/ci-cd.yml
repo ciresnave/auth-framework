@@ -103,7 +103,12 @@ jobs:
         # for this flag.
         run: cargo test --test storage_postgres --features postgres-storage -- --ignored --test-threads=1
 
+      # if: always() -- GitHub Actions skips a step by default once an
+      # earlier step in the job fails, so without this the redis tests
+      # would silently never run again any time the postgres step fails for
+      # any reason (exactly the kind of invisible skip issue #17 was about).
       - name: Run ignored redis storage integration tests
+        if: always()
         env:
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security

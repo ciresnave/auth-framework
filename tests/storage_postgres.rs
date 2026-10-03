@@ -30,7 +30,7 @@ async fn setup() -> PostgresStorage {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "AuthToken.user_profile has no column in this backend's schema, see #93"]
 async fn pg_token_crud() {
     let storage = setup().await;
     let token = AuthToken::new("pg_user1", "pg_access1", Duration::from_secs(3600), "test");
@@ -57,7 +57,7 @@ async fn pg_token_crud() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "AuthToken.user_profile has no column in this backend's schema, see #93"]
 async fn pg_token_update() {
     let storage = setup().await;
     let mut token = AuthToken::new("pg_upd_user", "pg_upd_at", Duration::from_secs(3600), "pw");
@@ -149,7 +149,7 @@ async fn pg_count_active_sessions() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "AuthToken.user_profile has no column in this backend's schema, see #93"]
 async fn pg_cleanup_expired() {
     let storage = setup().await;
 
