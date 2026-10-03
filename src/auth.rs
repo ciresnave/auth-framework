@@ -159,8 +159,11 @@ pub struct AuthFramework {
     /// Monitoring manager for metrics and health checks
     monitoring_manager: Arc<crate::monitoring::MonitoringManager>,
 
-    /// Audit manager for security event logging
-    audit_manager: Arc<crate::audit::AuditLogger<Arc<crate::storage::MemoryStorage>>>,
+    /// Audit manager for security event logging. The backend is chosen at
+    /// construction time from `config.audit.storage` (see
+    /// [`crate::audit::build_audit_storage`]), not hardcoded to in-memory
+    /// storage regardless of configuration.
+    audit_manager: Arc<crate::audit::AuditLogger<Arc<dyn crate::audit::AuditStorage>>>,
 
     /// Security manager for rate limiting, DoS protection, and IP blacklisting
     #[cfg(feature = "api-server")]
@@ -322,7 +325,7 @@ impl AuthFramework {
     pub fn new(config: AuthConfig) -> Self {
         // Store configuration for later validation during initialize()
         let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
-        let audit_storage = Arc::new(crate::storage::MemoryStorage::new());
+        let audit_storage = crate::audit::build_audit_storage(&config.audit.storage);
         let audit_manager = Arc::new(crate::audit::AuditLogger::new(audit_storage));
 
         // Create a token manager with a cryptographically random ephemeral secret.
@@ -423,7 +426,7 @@ impl AuthFramework {
         };
 
         // Create audit manager
-        let audit_storage = Arc::new(crate::storage::MemoryStorage::new());
+        let audit_storage = crate::audit::build_audit_storage(&config.audit.storage);
         let audit_manager = Arc::new(crate::audit::AuditLogger::new(audit_storage));
 
         let user_manager = crate::auth_modular::user_manager::UserManager::new(

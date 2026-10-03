@@ -275,6 +275,187 @@ pub trait AuditStorage: Send + Sync {
     async fn get_statistics(&self, query: &StatsQuery) -> Result<AuditStatistics>;
 }
 
+// Delegating impl so `AuditLogger<Arc<dyn AuditStorage>>` works -- this is
+// what lets the concrete backend be chosen at runtime (from
+// `AuditConfig::storage`) rather than baked into `AuthFramework`'s own type.
+#[async_trait]
+impl AuditStorage for std::sync::Arc<dyn AuditStorage> {
+    async fn store_event(&self, event: &AuditEvent) -> Result<()> {
+        (**self).store_event(event).await
+    }
+
+    async fn query_events(&self, query: &AuditQuery) -> Result<Vec<AuditEvent>> {
+        (**self).query_events(query).await
+    }
+
+    async fn get_event(&self, event_id: &str) -> Result<Option<AuditEvent>> {
+        (**self).get_event(event_id).await
+    }
+
+    async fn count_events(&self, query: &AuditQuery) -> Result<u64> {
+        (**self).count_events(query).await
+    }
+
+    async fn delete_old_events(&self, before: SystemTime) -> Result<u64> {
+        (**self).delete_old_events(before).await
+    }
+
+    async fn get_statistics(&self, query: &StatsQuery) -> Result<AuditStatistics> {
+        (**self).get_statistics(query).await
+    }
+}
+
+/// Audit storage backend that writes events through the `tracing`
+/// subscriber (matches [`crate::config::AuditStorage::Tracing`]).
+///
+/// This is a write-only sink: `tracing` output is not a queryable store, so
+/// every read-shaped method (`query_events`, `get_event`, `count_events`,
+/// `delete_old_events`, `get_statistics`) returns a clear error rather than
+/// silently reporting empty results, which could be mistaken for "no
+/// matching events" instead of "this backend cannot answer that question".
+pub struct TracingAuditStorage;
+
+#[async_trait]
+impl AuditStorage for TracingAuditStorage {
+    async fn store_event(&self, event: &AuditEvent) -> Result<()> {
+        match event.outcome {
+            EventOutcome::Success => {
+                tracing::info!(event_id = %event.id, event_type = ?event.event_type, "audit event")
+            }
+            EventOutcome::Failure => {
+                tracing::warn!(event_id = %event.id, event_type = ?event.event_type, "audit event")
+            }
+            EventOutcome::Partial | EventOutcome::Unknown => {
+                tracing::info!(event_id = %event.id, event_type = ?event.event_type, "audit event")
+            }
+        }
+        Ok(())
+    }
+
+    async fn query_events(&self, _query: &AuditQuery) -> Result<Vec<AuditEvent>> {
+        Err(crate::errors::AuthError::internal(
+            "AuditStorage::Tracing is write-only: audit events are written to the tracing \
+             subscriber and are not queryable from this crate. Use AuditStorage::Database (once \
+             implemented) or your own log aggregation if you need to query past events."
+                .to_string(),
+        ))
+    }
+
+    async fn get_event(&self, _event_id: &str) -> Result<Option<AuditEvent>> {
+        Err(crate::errors::AuthError::internal(
+            "AuditStorage::Tracing is write-only and cannot look up an event by ID.".to_string(),
+        ))
+    }
+
+    async fn count_events(&self, _query: &AuditQuery) -> Result<u64> {
+        Err(crate::errors::AuthError::internal(
+            "AuditStorage::Tracing is write-only and cannot count events.".to_string(),
+        ))
+    }
+
+    async fn delete_old_events(&self, _before: SystemTime) -> Result<u64> {
+        Err(crate::errors::AuthError::internal(
+            "AuditStorage::Tracing is write-only and has no events of its own to delete; \
+             retention is whatever your tracing subscriber/log aggregator is configured to keep."
+                .to_string(),
+        ))
+    }
+
+    async fn get_statistics(&self, _query: &StatsQuery) -> Result<AuditStatistics> {
+        Err(crate::errors::AuthError::internal(
+            "AuditStorage::Tracing is write-only and cannot compute statistics.".to_string(),
+        ))
+    }
+}
+
+/// Placeholder for an [`AuditStorage`] destination that is configured but
+/// has no real implementation in this crate yet
+/// ([`crate::config::AuditStorage::File`],
+/// [`crate::config::AuditStorage::Database`], and
+/// [`crate::config::AuditStorage::External`] -- see board item tracking
+/// those). Every operation fails loudly, naming the destination that was
+/// configured, instead of silently falling back to in-memory storage that
+/// discards events on restart.
+pub struct UnimplementedAuditStorage {
+    destination_description: String,
+}
+
+impl UnimplementedAuditStorage {
+    pub fn new(destination_description: impl Into<String>) -> Self {
+        Self {
+            destination_description: destination_description.into(),
+        }
+    }
+
+    fn error(&self) -> crate::errors::AuthError {
+        crate::errors::AuthError::internal(format!(
+            "audit storage destination '{}' is configured but not yet implemented in this \
+             crate; configure AuditStorage::Tracing instead, or provide your own AuditStorage \
+             implementation",
+            self.destination_description
+        ))
+    }
+}
+
+#[async_trait]
+impl AuditStorage for UnimplementedAuditStorage {
+    async fn store_event(&self, _event: &AuditEvent) -> Result<()> {
+        Err(self.error())
+    }
+
+    async fn query_events(&self, _query: &AuditQuery) -> Result<Vec<AuditEvent>> {
+        Err(self.error())
+    }
+
+    async fn get_event(&self, _event_id: &str) -> Result<Option<AuditEvent>> {
+        Err(self.error())
+    }
+
+    async fn count_events(&self, _query: &AuditQuery) -> Result<u64> {
+        Err(self.error())
+    }
+
+    async fn delete_old_events(&self, _before: SystemTime) -> Result<u64> {
+        Err(self.error())
+    }
+
+    async fn get_statistics(&self, _query: &StatsQuery) -> Result<AuditStatistics> {
+        Err(self.error())
+    }
+}
+
+/// Build the [`AuditStorage`] backend named by `config`.
+///
+/// Never fails by itself -- `AuthFramework::new` is infallible and must be
+/// able to call this unconditionally -- so an unimplemented destination
+/// (`File`/`Database`/`External`) produces an [`UnimplementedAuditStorage`]
+/// that fails loudly and specifically on first actual use (`log_event`,
+/// etc.) rather than silently falling back to discarding events in memory.
+pub fn build_audit_storage(
+    config: &crate::config::AuditStorage,
+) -> std::sync::Arc<dyn AuditStorage> {
+    match config {
+        crate::config::AuditStorage::Memory => {
+            std::sync::Arc::new(crate::storage::MemoryStorage::new())
+        }
+        crate::config::AuditStorage::Tracing => std::sync::Arc::new(TracingAuditStorage),
+        crate::config::AuditStorage::File { path } => std::sync::Arc::new(
+            UnimplementedAuditStorage::new(format!("File {{ path: {path:?} }}")),
+        ),
+        crate::config::AuditStorage::Database {
+            connection_string: _,
+        } => std::sync::Arc::new(UnimplementedAuditStorage::new(
+            "Database { .. }".to_string(),
+        )),
+        crate::config::AuditStorage::External {
+            endpoint,
+            api_key: _,
+        } => std::sync::Arc::new(UnimplementedAuditStorage::new(format!(
+            "External {{ endpoint: {endpoint:?}, .. }}"
+        ))),
+    }
+}
+
 /// Query parameters for audit events
 #[derive(Debug, Clone)]
 pub struct AuditQuery {
@@ -1455,5 +1636,66 @@ mod tests {
         assert_eq!(EventOutcome::Failure.to_string(), "failure");
         assert_eq!(EventOutcome::Partial.to_string(), "partial");
         assert_eq!(EventOutcome::Unknown.to_string(), "unknown");
+    }
+
+    // ── build_audit_storage / backend routing ───────────────────────────
+
+    #[tokio::test]
+    async fn test_build_audit_storage_tracing_accepts_store_event() {
+        let storage = build_audit_storage(&crate::config::AuditStorage::Tracing);
+        let event = AuditEvent::builder(AuditEventType::LoginSuccess, "test login").build();
+        assert!(
+            storage.store_event(&event).await.is_ok(),
+            "the Tracing backend must actually accept and log events, not just compile"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_audit_storage_tracing_is_write_only() {
+        let storage = build_audit_storage(&crate::config::AuditStorage::Tracing);
+        let query = AuditQuery::builder().build();
+        assert!(
+            storage.query_events(&query).await.is_err(),
+            "Tracing cannot answer queries and must say so, not silently return an empty Vec \
+             that looks indistinguishable from 'no matching events'"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_audit_storage_file_fails_loudly_not_silently_in_memory() {
+        let storage = build_audit_storage(&crate::config::AuditStorage::File {
+            path: "/var/log/audit.jsonl".to_string(),
+        });
+        let event = AuditEvent::builder(AuditEventType::LoginSuccess, "test login").build();
+        let result = storage.store_event(&event).await;
+        assert!(
+            result.is_err(),
+            "configuring File audit storage (not yet implemented) must fail loudly on use, \
+             not silently accept and discard the event in memory"
+        );
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("File"),
+            "the error should name which destination was configured, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_audit_storage_database_fails_loudly() {
+        let storage = build_audit_storage(&crate::config::AuditStorage::Database {
+            connection_string: "postgres://example".to_string(),
+        });
+        let event = AuditEvent::builder(AuditEventType::LoginSuccess, "test login").build();
+        assert!(storage.store_event(&event).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_build_audit_storage_external_fails_loudly() {
+        let storage = build_audit_storage(&crate::config::AuditStorage::External {
+            endpoint: "https://audit.example.com".to_string(),
+            api_key: "secret".to_string(),
+        });
+        let event = AuditEvent::builder(AuditEventType::LoginSuccess, "test login").build();
+        assert!(storage.store_event(&event).await.is_err());
     }
 }

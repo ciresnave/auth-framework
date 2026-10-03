@@ -296,7 +296,7 @@ impl CorsConfig {
 /// Audit logging configuration.
 ///
 /// Controls which authentication events are recorded and where the
-/// records are stored.  Enabled by default with [`AuditStorage::Tracing`].
+/// records are stored.  Enabled by default with [`AuditStorage::Memory`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AuditConfig {
@@ -324,7 +324,17 @@ pub struct AuditConfig {
 /// Pairs with [`AuditConfig`] to specify *where* audit events are persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditStorage {
-    /// Standard logging (via tracing)
+    /// In-process, queryable audit storage. Supports `permission_logs`,
+    /// `security_stats`, and other query-based audit operations out of the
+    /// box, but does not persist across a restart. The default.
+    Memory,
+
+    /// Standard logging (via tracing). Write-only: events are written to
+    /// the `tracing` subscriber and cannot be queried back through
+    /// `permission_logs`/`security_stats`/etc. -- those return a clear
+    /// error rather than silently reporting empty results. Choose this
+    /// when your log aggregation is the actual source of truth and you
+    /// don't need this crate's own audit-query API.
     Tracing,
 
     /// File-based storage
@@ -401,7 +411,7 @@ impl Default for AuditConfig {
             log_failures: true,
             log_permissions: true,
             log_tokens: false, // Tokens can be sensitive
-            storage: AuditStorage::Tracing,
+            storage: AuditStorage::Memory,
         }
     }
 }
@@ -536,6 +546,7 @@ impl std::fmt::Display for AuditConfig {
 impl std::fmt::Display for AuditStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Memory => write!(f, "memory"),
             Self::Tracing => write!(f, "tracing"),
             Self::File { path } => write!(f, "file:{}", path),
             Self::Database { .. } => write!(f, "database"),

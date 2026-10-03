@@ -115,6 +115,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`server/oidc/oidc_user_registration.rs`, hardcoded bcrypt). Tracked
   separately, not fixed in this change.
 
+- **Breaking:** `AuditConfig::storage` is now actually consulted when
+  constructing `AuthFramework`'s audit manager. Previously, every
+  destination (`Tracing`, `File`, `Database`, `External`) was accepted
+  by the config but silently ignored -- `AuthFramework` always used an
+  in-memory, non-persistent `MemoryStorage` backend internally,
+  regardless of what was configured. Audit events are now actually
+  routed to the configured destination: `File`, `Database`, and
+  `External` have no implementation in this crate yet and fail loudly
+  (naming the destination) on first use rather than silently
+  discarding events in memory; `Tracing` writes events through the
+  `tracing` subscriber but cannot answer queries
+  (`permission_logs`/`security_stats`/etc. now return a clear error
+  under this destination instead of silently reporting empty results).
+  - **Breaking change to the default:** a new `AuditStorage::Memory`
+    variant wraps the same in-memory, queryable backend that was
+    always used in practice, and `AuditConfig::default()` now selects
+    it explicitly instead of defaulting to `Tracing`. This preserves
+    today's actual out-of-the-box behavior (`permission_logs` and
+    friends keep working without any configuration) now that the
+    `storage` setting is honored -- if the default had stayed
+    `Tracing` once it was actually wired up, every caller relying on
+    querying audit logs under default configuration would have broken
+    instead. Deployments that already explicitly set
+    `AuditStorage::Tracing` (as this crate's own "secure"/"production"
+    security presets do) are unaffected; this only changes behavior
+    for configurations that relied on the *implicit* default.
+
 ### Removed
 
 - **Breaking:** the `sms-aws-sns` SMS backend and its `smskit` feature
