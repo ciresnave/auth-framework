@@ -83,6 +83,7 @@ fn test_no_unimplemented_in_source() {
 
 /// Test to find potential security-critical panics
 #[test]
+#[ignore = "file-path filter can't tell test code (#[cfg(test)] blocks in ordinarily-named files) from production code, ~15 false positives, see https://github.com/ciresnave/auth-framework/issues/87"]
 fn test_audit_panics_in_source() {
     let panics = find_pattern_in_directory("src", "panic!");
 
@@ -100,8 +101,7 @@ fn test_audit_panics_in_source() {
         error_msg.push_str("\nProduction code should handle errors gracefully, not panic!\n");
         error_msg.push_str("Consider using Result<T, E> instead.\n");
 
-        // This is a warning for now, but should be reviewed
-        println!("WARNING: {}", error_msg);
+        panic!("{}", error_msg);
     }
 }
 
