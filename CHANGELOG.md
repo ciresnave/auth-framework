@@ -38,6 +38,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `jsonwebtoken` error text to callers -- both pre-existing, tracked
     separately, not introduced or fixed here.
 
+- **Breaking:** `UserManager::new` now takes a second parameter,
+  `password_hash_algorithm: PasswordHashAlgorithm`, and `UserManager`'s
+  own record-keeping now actually honors it. Previously,
+  `SecurityConfig::password_hash_algorithm`'s only read anywhere in the
+  crate was a `Display` impl: `register_user` and `update_user_password`
+  wrote **two** records per user -- `user:{id}` (hardcoded bcrypt) and
+  `user:credentials:{username}` (hardcoded Argon2id, independent of the
+  first) -- and the second record, not the first, is what
+  `verify_login_credentials` (the actual login path, called from
+  `AuthFramework::authenticate_password_builtin`) reads. Both records
+  now hash with the configured algorithm. An earlier version of this
+  fix touched only `user:{id}` and left the real login path's record
+  hardcoded to Argon2id regardless of configuration; caught and fixed
+  before merge, with tests on the login path specifically (not just the
+  secondary `user:{id}` record) so this can't regress silently again.
+  `PasswordHashAlgorithm::Scrypt` is rejected at `AuthConfig::validate()`
+  (called by both `AuthFramework::new_validated` and `initialize()`),
+  not only on first use, so a Scrypt misconfiguration surfaces at
+  startup rather than at the first registration attempt.
+
+  Verification is unaffected by this change in either direction:
+  `verify_user_password` and `verify_login_credentials` both detect
+  whether the stored hash is bcrypt or Argon2id from the hash's own
+  prefix, so existing users keep verifying correctly across an
+  algorithm change, and a deployment that switches its configured
+  algorithm does not need to rehash or re-migrate any existing user.
+
+  **Behavior change for existing Bcrypt-configured deployments:**
+  `SecurityConfig::development()` and the `security::presets` Development
+  preset already set `password_hash_algorithm: PasswordHashAlgorithm::Bcrypt`
+  ("faster for development"). Before this fix that setting was silently
+  ignored for login: every `user:credentials:{username}` record was
+  Argon2id regardless. After this fix, a Development-preset deployment's
+  login-credentials records are genuinely Bcrypt, matching what the
+  preset has always claimed to configure.
+
+  The constant-time dummy verification for a nonexistent username (in
+  `verify_login_credentials`) now performs exactly one verification
+  against a dummy hash computed *once*, under the configured algorithm,
+  at `UserManager` construction time -- matching the cost of a real
+  user's wrong-password check (also one verification). An earlier
+  version of this part of the fix hashed a fresh dummy password on
+  every lookup (one hash *and* one verify, roughly double a real
+  wrong-password check), which is itself a username-enumeration timing
+  oracle; caught in review and fixed before merge, with a test proving
+  the dummy hash is computed once at construction and reused, not
+  recomputed per lookup. `UserManager` constructed directly with
+  `PasswordHashAlgorithm::Scrypt` (bypassing `AuthConfig::validate()`,
+  which rejects it) has no working hasher for the dummy hash either;
+  the unknown-user path degrades to doing no dummy work in that one
+  case, a narrow, noted limitation rather than a silent regression.
+
+  **Known gap, not closed by this fix: the oracle returns during an
+  algorithm-migration window.** The dummy hash always follows the
+  *configured* algorithm, while an existing user verifies under
+  whatever algorithm their own stored hash actually is (this crate
+  never rehashes on login). So a deployment that switches its
+  configured algorithm without rehashing every existing user has a
+  real timing gap for exactly those legacy users until they're
+  rehashed: e.g. a Bcrypt-configured manager with legacy Argon2id
+  users measures ~39ms for a real wrong-password check against one of
+  those legacy users vs. ~390ms for an unknown username (and the
+  reverse, Argon2-configured with legacy Bcrypt users). Measured,
+  release build, 9 interleaved runs. This is not claimed fixed here;
+  fixing it requires rehashing on login, a separate, larger change not
+  attempted in this PR.
+
+  **Scope, stated precisely so the property claimed is actually
+  true:** this fix covers `UserManager::register_user`,
+  `update_user_password`, `verify_user_password`, and
+  `verify_login_credentials` only. Two other, unrelated registration
+  code paths still hash unconditionally and do **not** honor this
+  setting: the REST `/register` endpoint (`api/auth.rs`, hardcoded
+  Argon2id) and OIDC dynamic user registration
+  (`server/oidc/oidc_user_registration.rs`, hardcoded bcrypt). Tracked
+  separately, not fixed in this change.
+
 ### Removed
 
 - **Breaking:** the `sms-aws-sns` SMS backend and its `smskit` feature

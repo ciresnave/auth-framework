@@ -1,5 +1,6 @@
 //! User management module
 
+use crate::config::PasswordHashAlgorithm;
 use crate::errors::{AuthError, Result};
 use crate::storage::AuthStorage;
 use std::collections::HashMap;
@@ -8,6 +9,46 @@ use tracing::{debug, info, warn};
 
 /// Canonical user information type shared with [`crate::auth::UserInfo`].
 pub type UserInfo = crate::auth::UserInfo;
+
+// Test-only call counters, used to prove the unknown-user path in
+// UserManager::verify_login_credentials performs exactly one
+// verification and zero hashing operations -- a plain "does the result
+// stay the same" test on `dummy_password_hash` cannot catch a regression
+// that reintroduces hashing *in addition to* that field, since the field
+// itself would be untouched by such a mutation. Thread-local, not a
+// shared global: #[tokio::test] uses a single-threaded runtime by
+// default, so one test's counts cannot be polluted by another test
+// running concurrently on a different OS thread.
+#[cfg(test)]
+thread_local! {
+    static HASH_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static VERIFY_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_call_counters() {
+    HASH_CALL_COUNT.set(0);
+    VERIFY_CALL_COUNT.set(0);
+}
+
+#[cfg(test)]
+fn call_counts() -> (usize, usize) {
+    (HASH_CALL_COUNT.get(), VERIFY_CALL_COUNT.get())
+}
+
+/// Verify `password` against `hash`, detecting the hash's own format
+/// (bcrypt or Argon2id PHC string) rather than assuming one. Used so that
+/// changing [`PasswordHashAlgorithm`] doesn't break verification for users
+/// whose password was hashed before the change.
+fn verify_password_any_format(password: &str, hash: &str) -> Result<bool> {
+    #[cfg(test)]
+    VERIFY_CALL_COUNT.set(VERIFY_CALL_COUNT.get() + 1);
+    if hash.starts_with("$argon2") {
+        crate::utils::password::verify_password_argon2id(password, hash)
+    } else {
+        crate::security::secure_utils::verify_password_bcrypt(password, hash)
+    }
+}
 
 /// Result of a successful credential verification via [`UserManager::verify_login_credentials`].
 ///
@@ -29,22 +70,79 @@ pub struct CredentialCheckResult {
 /// # Example
 /// ```rust,ignore
 /// use auth_framework::auth_modular::UserManager;
-/// let um = UserManager::new(storage.clone());
+/// use auth_framework::config::PasswordHashAlgorithm;
+/// let um = UserManager::new(storage.clone(), PasswordHashAlgorithm::Argon2);
 /// let uid = um.register_user("alice", "alice@example.com", "Str0ng!Pass").await?;
 /// ```
 pub struct UserManager {
     storage: Arc<dyn AuthStorage>,
+    password_hash_algorithm: PasswordHashAlgorithm,
+    /// A hash of a fixed dummy password, computed once under the configured
+    /// algorithm at construction time. Used by the unknown-user path in
+    /// [`Self::verify_login_credentials`] so that path costs exactly one
+    /// verification, the same as a known user with a wrong password --
+    /// computing a fresh hash on every lookup (one hash + one verify)
+    /// would cost roughly double, which is itself a username-enumeration
+    /// timing oracle. `None` only when `password_hash_algorithm` has no
+    /// working hasher (currently just `Scrypt`, constructed directly
+    /// rather than through a validated `AuthConfig`); the unknown-user
+    /// path degrades to doing no dummy work at all in that case, which is
+    /// a known, narrow limitation rather than a silent regression.
+    dummy_password_hash: Option<String>,
 }
 
 impl UserManager {
-    /// Create a new user manager.
+    /// Create a new user manager that hashes new/changed passwords with
+    /// `password_hash_algorithm`. Verification is unaffected by this
+    /// setting -- it detects the stored hash's own format, so existing
+    /// users keep verifying correctly across an algorithm change.
+    ///
+    /// Computes a dummy password hash under `password_hash_algorithm` once,
+    /// synchronously, before returning -- this blocks the calling thread
+    /// for roughly the same time as one real hash operation (measured:
+    /// ~39ms for Argon2id with this crate's parameters, ~366ms for
+    /// bcrypt's default cost; `Scrypt` returns immediately since it has
+    /// no implementation and the dummy hash is simply absent in that
+    /// case). This is a one-time, per-instance cost, not per-request.
     ///
     /// # Example
     /// ```rust,ignore
-    /// let um = UserManager::new(storage.clone());
+    /// let um = UserManager::new(storage.clone(), PasswordHashAlgorithm::Argon2);
     /// ```
-    pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
-        Self { storage }
+    pub fn new(
+        storage: Arc<dyn AuthStorage>,
+        password_hash_algorithm: PasswordHashAlgorithm,
+    ) -> Self {
+        let dummy_password_hash =
+            Self::hash_with_algorithm(&password_hash_algorithm, "dummy-password-for-timing").ok();
+        Self {
+            storage,
+            password_hash_algorithm,
+            dummy_password_hash,
+        }
+    }
+
+    /// Hash `password` using the configured algorithm.
+    fn hash_password(&self, password: &str) -> Result<String> {
+        Self::hash_with_algorithm(&self.password_hash_algorithm, password)
+    }
+
+    fn hash_with_algorithm(algorithm: &PasswordHashAlgorithm, password: &str) -> Result<String> {
+        #[cfg(test)]
+        HASH_CALL_COUNT.set(HASH_CALL_COUNT.get() + 1);
+        match algorithm {
+            PasswordHashAlgorithm::Argon2 => {
+                crate::utils::password::hash_password_argon2id(password)
+            }
+            PasswordHashAlgorithm::Bcrypt => {
+                crate::security::secure_utils::hash_password_bcrypt(password)
+            }
+            PasswordHashAlgorithm::Scrypt => Err(AuthError::internal(
+                "PasswordHashAlgorithm::Scrypt is not yet implemented; configure Argon2 or \
+                 Bcrypt instead of silently hashing with a different algorithm"
+                    .to_string(),
+            )),
+        }
     }
 
     /// Create API key for a user.
@@ -388,8 +486,7 @@ impl UserManager {
 
         let user_id = crate::utils::string::generate_id(Some("user"));
 
-        let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
-            .map_err(|e| AuthError::crypto(format!("Failed to hash password: {}", e)))?;
+        let password_hash = self.hash_password(password)?;
 
         let user_data = serde_json::json!({
             "user_id": user_id,
@@ -427,9 +524,10 @@ impl UserManager {
             warn!("Failed to update user index during registration: {}", e);
         }
 
-        // Store Argon2 credentials record for authenticate_password_builtin.
+        // Store the credentials record for verify_login_credentials, hashed
+        // with the same configured algorithm as the user:{id} record above.
         let creds_key = format!("user:credentials:{}", username);
-        let creds_hash = match crate::utils::password::hash_password_argon2id(password) {
+        let creds_hash = match self.hash_password(password) {
             Ok(h) => h,
             Err(e) => {
                 warn!("Failed to hash credentials for user '{}': {}", username, e);
@@ -643,7 +741,13 @@ impl UserManager {
         Ok(())
     }
 
-    /// Verify a user's password against the stored bcrypt hash.
+    /// Verify a user's password against the stored hash.
+    ///
+    /// Detects whether the stored hash is bcrypt or Argon2id from its own
+    /// prefix and verifies against that format, independent of the
+    /// currently configured [`PasswordHashAlgorithm`]. This is deliberate:
+    /// changing the configured algorithm must not break verification for
+    /// users whose password was hashed under the old one.
     ///
     /// # Example
     /// ```rust,ignore
@@ -662,8 +766,7 @@ impl UserManager {
         let hash = user_data["password_hash"]
             .as_str()
             .ok_or_else(|| AuthError::internal("User has no password hash".to_string()))?;
-        bcrypt::verify(password, hash)
-            .map_err(|e| AuthError::crypto(format!("Password verification failed: {}", e)))
+        verify_password_any_format(password, hash)
     }
 
     /// Resolve a user_id to its username.
@@ -832,10 +935,28 @@ impl UserManager {
 
     /// Verify username/password credentials in a timing-safe manner.
     ///
-    /// Returns `Ok(None)` when the credentials are invalid — a dummy Argon2
-    /// verification is always executed when the username is not found, so
-    /// callers cannot distinguish missing users from wrong passwords via timing.
-    /// Returns `Ok(Some(result))` on success.
+    /// Returns `Ok(None)` when the credentials are invalid — a dummy
+    /// verification (under the configured algorithm, against a hash
+    /// precomputed once at construction) is always executed when the
+    /// username is not found, so callers cannot distinguish missing users
+    /// from wrong passwords via timing **for a manager whose stored users
+    /// all hash under the currently configured algorithm**. Returns
+    /// `Ok(Some(result))` on success.
+    ///
+    /// **Known gap: mid-migration timing oracle.** The dummy hash always
+    /// follows the *configured* algorithm, while a real existing user
+    /// verifies under whatever algorithm their own stored hash actually
+    /// is. If a deployment changes its configured algorithm without
+    /// rehashing existing users (this crate never rehashes on login), a
+    /// legacy user's wrong-password check costs their *old* algorithm's
+    /// verify time while an unknown username costs the *new* one's --
+    /// e.g. a Bcrypt-configured manager with legacy Argon2id users shows
+    /// ~39ms for a real wrong-password check vs. ~390ms for an unknown
+    /// username (and the reverse, Argon2-configured with legacy Bcrypt
+    /// users). This is not fixed by this crate and is not fixable without
+    /// rehashing on login (a separate, larger change): the oracle this
+    /// function closes is closed only once every stored user's hash
+    /// matches the currently configured algorithm.
     ///
     /// # Example
     /// ```rust,ignore
@@ -849,8 +970,6 @@ impl UserManager {
         username: &str,
         password: &str,
     ) -> Result<Option<CredentialCheckResult>> {
-        use crate::utils::password::verify_password_argon2id;
-
         if username.is_empty() || password.is_empty() {
             return Ok(None);
         }
@@ -859,11 +978,18 @@ impl UserManager {
         let stored_bytes = match self.storage.get_kv(&user_key).await? {
             Some(bytes) => bytes,
             None => {
-                // Constant-time: always do real work even for missing users.
-                let _ = verify_password_argon2id(
-                    password,
-                    "$argon2id$v=19$m=19456,t=2,p=1$dGVzdHNhbHRmb3J0aW1pbmc$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                );
+                // Constant-time defense: perform exactly one verification
+                // under the configured algorithm even for a nonexistent
+                // user, costing the same as a known user with a wrong
+                // password (one verify, below). Verifying against a hash
+                // computed ONCE at construction time (dummy_password_hash),
+                // rather than hashing a fresh password on every lookup, is
+                // the point: hashing here too would cost one hash + one
+                // verify -- roughly double a real wrong-password check --
+                // which is itself a username-enumeration timing oracle.
+                if let Some(dummy_hash) = &self.dummy_password_hash {
+                    let _ = verify_password_any_format(password, dummy_hash);
+                }
                 return Ok(None);
             }
         };
@@ -877,7 +1003,7 @@ impl UserManager {
             AuthError::internal("Missing password hash in user record".to_string())
         })?;
 
-        if !verify_password_argon2id(password, password_hash).unwrap_or(false) {
+        if !verify_password_any_format(password, password_hash).unwrap_or(false) {
             return Ok(None);
         }
 
@@ -939,18 +1065,17 @@ impl UserManager {
         let mut user_data: serde_json::Value = serde_json::from_slice(&user_bytes)
             .map_err(|e| AuthError::crypto(format!("Failed to parse user data: {}", e)))?;
 
-        let password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
-            .map_err(|e| AuthError::crypto(format!("Failed to hash password: {}", e)))?;
+        let password_hash = self.hash_password(new_password)?;
         user_data["password_hash"] = serde_json::json!(password_hash);
         user_data["updated_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
         self.storage
             .store_kv(&user_key, user_data.to_string().as_bytes(), None)
             .await?;
 
-        // Update Argon2 credentials record used by the login endpoint.
+        // Update the credentials record used by verify_login_credentials,
+        // hashed with the same configured algorithm as above.
         let creds_key = format!("user:credentials:{}", username);
-        let creds_hash = crate::utils::password::hash_password_argon2id(new_password)
-            .map_err(|e| AuthError::crypto(format!("Failed to hash login credentials: {e}")))?;
+        let creds_hash = self.hash_password(new_password)?;
         let creds_bytes =
             self.storage.get_kv(&creds_key).await?.ok_or_else(|| {
                 AuthError::internal("Login credentials record not found".to_string())
@@ -989,7 +1114,14 @@ mod tests {
     use crate::storage::MemoryStorage;
 
     fn make_manager() -> UserManager {
-        UserManager::new(Arc::new(MemoryStorage::new()))
+        UserManager::new(
+            Arc::new(MemoryStorage::new()),
+            PasswordHashAlgorithm::Bcrypt,
+        )
+    }
+
+    fn make_manager_with_algorithm(algorithm: PasswordHashAlgorithm) -> UserManager {
+        UserManager::new(Arc::new(MemoryStorage::new()), algorithm)
     }
 
     // ── register_user ───────────────────────────────────────────────────
@@ -1153,6 +1285,86 @@ mod tests {
     async fn test_verify_password_user_not_found() {
         let mgr = make_manager();
         assert!(mgr.verify_user_password("ghost", "x").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_register_and_verify_round_trips_with_bcrypt_configured() {
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Bcrypt);
+        let id = mgr
+            .register_user("bcrypt_user", "bcrypt_user@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        assert!(mgr.verify_user_password(&id, "StrongP@ss1!").await.unwrap());
+        assert!(!mgr.verify_user_password(&id, "wrong").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_register_and_verify_round_trips_with_argon2_configured() {
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Argon2);
+        let id = mgr
+            .register_user("argon2_user", "argon2_user@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        assert!(mgr.verify_user_password(&id, "StrongP@ss1!").await.unwrap());
+        assert!(!mgr.verify_user_password(&id, "wrong").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_register_user_honors_configured_algorithm_not_hardcoded_bcrypt() {
+        // Before this fix, register_user always called bcrypt::hash
+        // regardless of configuration. Prove the stored hash's own format
+        // actually reflects PasswordHashAlgorithm::Argon2 -- an Argon2id PHC
+        // string, not a bcrypt `$2` hash.
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Argon2);
+        let id = mgr
+            .register_user("argon2_format", "argon2_format@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        let user_key = format!("user:{}", id);
+        let bytes = mgr.storage.get_kv(&user_key).await.unwrap().unwrap();
+        let user_data: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let hash = user_data["password_hash"].as_str().unwrap();
+        assert!(
+            hash.starts_with("$argon2"),
+            "expected an Argon2id PHC hash, got: {hash}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_existing_bcrypt_hash_still_verifies_after_switching_to_argon2() {
+        // A user registered under the old/Bcrypt-configured manager must
+        // keep verifying correctly even after the deployment switches its
+        // configured algorithm to Argon2 -- verification must detect the
+        // stored hash's actual format, not assume the current config.
+        let bcrypt_mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Bcrypt);
+        let id = bcrypt_mgr
+            .register_user("legacy_user", "legacy_user@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+
+        // Re-open the same storage under a manager now configured for Argon2.
+        let argon2_mgr =
+            UserManager::new(bcrypt_mgr.storage.clone(), PasswordHashAlgorithm::Argon2);
+        assert!(
+            argon2_mgr
+                .verify_user_password(&id, "StrongP@ss1!")
+                .await
+                .unwrap(),
+            "a bcrypt hash created under the old config must still verify after the \
+             configured algorithm changes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scrypt_is_rejected_not_silently_substituted() {
+        // Scrypt has no implementation in this crate yet. Registering must
+        // fail loudly rather than silently falling back to a different
+        // algorithm than the one configured.
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Scrypt);
+        let result = mgr
+            .register_user("scrypt_user", "scrypt_user@example.com", "StrongP@ss1!")
+            .await;
+        assert!(result.is_err());
     }
 
     // ── update_user_password ────────────────────────────────────────────
@@ -1535,6 +1747,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_register_user_credentials_record_honors_bcrypt_configured_algorithm() {
+        // The user:credentials:{username} record (read by
+        // verify_login_credentials -- the actual login path) must be hashed
+        // with the configured algorithm too, not hardcoded to Argon2id
+        // independent of the user:{id} record.
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Bcrypt);
+        mgr.register_user("bcrypt_login", "bcrypt_login@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        let creds_key = "user:credentials:bcrypt_login";
+        let bytes = mgr.storage.get_kv(creds_key).await.unwrap().unwrap();
+        let creds: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let hash = creds["password_hash"].as_str().unwrap();
+        assert!(
+            hash.starts_with("$2"),
+            "expected a bcrypt hash on the login-credentials record, got: {hash}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_register_user_credentials_record_argon2_default_unchanged() {
+        // Derive the algorithm from AuthConfig::default() itself, not a
+        // hardcoded PasswordHashAlgorithm::Argon2, so this proves the
+        // crate's actual default produces an Argon2id credentials record --
+        // not just that Argon2 behaves correctly when explicitly chosen.
+        let default_algorithm = crate::config::AuthConfig::default()
+            .security
+            .password_hash_algorithm;
+        assert!(matches!(default_algorithm, PasswordHashAlgorithm::Argon2));
+        let mgr = make_manager_with_algorithm(default_algorithm);
+        mgr.register_user("argon2_login", "argon2_login@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        let creds_key = "user:credentials:argon2_login";
+        let bytes = mgr.storage.get_kv(creds_key).await.unwrap().unwrap();
+        let creds: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let hash = creds["password_hash"].as_str().unwrap();
+        assert!(
+            hash.starts_with("$argon2"),
+            "expected an Argon2id hash on the login-credentials record, got: {hash}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_round_trip_under_bcrypt_configured_algorithm() {
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Bcrypt);
+        mgr.register_user("bcrypt_rt", "bcrypt_rt@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        assert!(
+            mgr.verify_login_credentials("bcrypt_rt", "StrongP@ss1!")
+                .await
+                .unwrap()
+                .is_some(),
+            "correct password must log in under Bcrypt"
+        );
+        assert!(
+            mgr.verify_login_credentials("bcrypt_rt", "wrong")
+                .await
+                .unwrap()
+                .is_none(),
+            "wrong password must be rejected under Bcrypt"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_round_trip_under_argon2_configured_algorithm() {
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Argon2);
+        mgr.register_user("argon2_rt", "argon2_rt@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        assert!(
+            mgr.verify_login_credentials("argon2_rt", "StrongP@ss1!")
+                .await
+                .unwrap()
+                .is_some(),
+            "correct password must log in under Argon2"
+        );
+        assert!(
+            mgr.verify_login_credentials("argon2_rt", "wrong")
+                .await
+                .unwrap()
+                .is_none(),
+            "wrong password must be rejected under Argon2"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_password_updates_credentials_record_under_configured_algorithm() {
+        // update_password's user:credentials:{username} rewrite must also
+        // use the configured algorithm, not hardcoded Argon2id.
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Bcrypt);
+        mgr.register_user("bcrypt_update", "bcrypt_update@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        mgr.update_user_password("bcrypt_update", "NewerP@ss2!")
+            .await
+            .unwrap();
+
+        let creds_key = "user:credentials:bcrypt_update";
+        let bytes = mgr.storage.get_kv(creds_key).await.unwrap().unwrap();
+        let creds: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let hash = creds["password_hash"].as_str().unwrap();
+        assert!(
+            hash.starts_with("$2"),
+            "expected the rewritten login-credentials hash to stay bcrypt, got: {hash}"
+        );
+        assert!(
+            mgr.verify_login_credentials("bcrypt_update", "NewerP@ss2!")
+                .await
+                .unwrap()
+                .is_some(),
+            "login must succeed with the new password after update_password"
+        );
+    }
+
+    #[tokio::test]
     async fn test_verify_login_credentials_unknown_user() {
         let mgr = make_manager();
         let result = mgr
@@ -1542,6 +1871,72 @@ mod tests {
             .await
             .unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_dummy_password_hash_is_precomputed_at_construction() {
+        // Structural proof that the unknown-user path in
+        // verify_login_credentials costs exactly one verification, not one
+        // hash plus one verification: the dummy hash must already exist
+        // right after construction, before any lookup happens at all.
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Argon2);
+        assert!(
+            mgr.dummy_password_hash.is_some(),
+            "dummy_password_hash must be computed at construction time, not lazily on first \
+             unknown-user lookup"
+        );
+
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Bcrypt);
+        assert!(mgr.dummy_password_hash.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_unknown_user_lookup_performs_zero_hashes_and_one_verify() {
+        // Mutation-proof version of the earlier (removed) test: comparing
+        // dummy_password_hash before/after a lookup cannot catch a
+        // regression that reintroduces "hash a fresh dummy, then verify"
+        // in the None branch while leaving the (now-unused) field alone --
+        // that mutation calls hash_with_algorithm once and
+        // verify_password_any_format once, exactly like the buggy
+        // round-2 code did, and the field itself would never be touched
+        // either way. Counting both operations directly is what actually
+        // distinguishes "one verify against a precomputed hash" (the
+        // fix) from "one hash plus one verify" (the regression this is
+        // guarding against), which is the actual cost difference that
+        // created the timing oracle.
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Argon2);
+        reset_call_counters();
+
+        mgr.verify_login_credentials("ghost", "whatever")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            call_counts(),
+            (0, 1),
+            "the unknown-user path must perform zero hashing operations and exactly one \
+             verification -- any hashing here (even once) reintroduces the timing oracle \
+             this test guards against"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_known_user_wrong_password_performs_zero_hashes_and_one_verify() {
+        // Same shape as above, for a real user with a wrong password --
+        // establishing that the unknown-user path (test above) costs
+        // exactly the same number of operations as this one, which is the
+        // actual property a constant-time comparison needs.
+        let mgr = make_manager_with_algorithm(PasswordHashAlgorithm::Argon2);
+        mgr.register_user("real_user", "real_user@example.com", "StrongP@ss1!")
+            .await
+            .unwrap();
+        reset_call_counters();
+
+        mgr.verify_login_credentials("real_user", "wrong")
+            .await
+            .unwrap();
+
+        assert_eq!(call_counts(), (0, 1));
     }
 
     #[tokio::test]

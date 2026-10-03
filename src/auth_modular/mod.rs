@@ -205,7 +205,10 @@ impl AuthFramework {
         // Create specialized managers
         let mfa_manager = MfaManager::new(storage.clone());
         let session_manager = SessionManager::new(storage.clone());
-        let user_manager = UserManager::new(storage.clone());
+        let user_manager = UserManager::new(
+            storage.clone(),
+            config.security.password_hash_algorithm.clone(),
+        );
 
         Ok(Self {
             config,
@@ -232,7 +235,10 @@ impl AuthFramework {
         // Recreate managers that depend on storage
         self.mfa_manager = MfaManager::new(self.storage.clone());
         self.session_manager = SessionManager::new(self.storage.clone());
-        self.user_manager = UserManager::new(self.storage.clone());
+        self.user_manager = UserManager::new(
+            self.storage.clone(),
+            self.config.security.password_hash_algorithm.clone(),
+        );
     }
 
     /// Convenience constructor that creates a framework with a custom storage instance.

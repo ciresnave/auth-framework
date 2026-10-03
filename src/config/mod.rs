@@ -1091,6 +1091,16 @@ impl AuthConfig {
             ));
         }
 
+        if matches!(
+            self.security.password_hash_algorithm,
+            PasswordHashAlgorithm::Scrypt
+        ) {
+            return Err(AuthError::config(
+                "PasswordHashAlgorithm::Scrypt is not yet implemented; configure Argon2 or \
+                 Bcrypt instead",
+            ));
+        }
+
         // Enhanced security validation for production
         if self.is_production_environment() && !self.is_test_environment() {
             self.validate_production_security()?;
@@ -1994,5 +2004,41 @@ impl AuditConfigBuilder {
     /// Finish audit configuration and return to the main builder.
     pub fn done(self) -> AuthConfigBuilder {
         self.builder
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_rejects_scrypt_password_hash_algorithm() {
+        // PasswordHashAlgorithm::Scrypt has no implementation in this
+        // crate. It must be rejected at validate() time (reached by both
+        // AuthFramework::new_validated and initialize()), not only on the
+        // first actual hash attempt deep inside UserManager -- reverting
+        // this check must turn this test red, not leave it silently
+        // passing on an unrelated code path.
+        let mut config = AuthConfig::new().secret("test_secret_key_32_bytes_long!!!!".to_string());
+        config.security.password_hash_algorithm = PasswordHashAlgorithm::Scrypt;
+        let result = config.validate();
+        assert!(
+            result.is_err(),
+            "AuthConfig::validate() must reject PasswordHashAlgorithm::Scrypt"
+        );
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("Scrypt"),
+            "the error should name the unimplemented algorithm, got: {message}"
+        );
+    }
+
+    #[test]
+    fn test_validate_accepts_argon2_and_bcrypt() {
+        let mut config = AuthConfig::new().secret("test_secret_key_32_bytes_long!!!!".to_string());
+        config.security.password_hash_algorithm = PasswordHashAlgorithm::Argon2;
+        assert!(config.validate().is_ok());
+        config.security.password_hash_algorithm = PasswordHashAlgorithm::Bcrypt;
+        assert!(config.validate().is_ok());
     }
 }
