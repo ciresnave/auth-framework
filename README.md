@@ -25,7 +25,12 @@ curl -sSL https://raw.githubusercontent.com/ciresnave/auth-framework/main/script
 iwr -useb https://raw.githubusercontent.com/ciresnave/auth-framework/main/scripts/install.ps1 | iex
 
 # Docker - Instant deployment
-docker run -p 8080:8080 ghcr.io/ciresnave/auth-framework:latest
+# No `:latest` tag is published yet (every release so far has been a
+# pre-release, which the image-tagging workflow doesn't tag `latest`) --
+# pin to a real published tag; check
+# https://github.com/ciresnave/auth-framework/pkgs/container/auth-framework
+# for the current one.
+docker run -p 8080:8080 ghcr.io/ciresnave/auth-framework:0.5.0-rc24
 ```
 
 **That's it!** Server running at `http://localhost:8080` 🎉
