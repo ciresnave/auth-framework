@@ -1673,6 +1673,9 @@ mod tests {
     #[tokio::test]
     async fn test_login_success_sets_admin_cookie() {
         let _guard = login_env_guard().lock().unwrap();
+        // SAFETY: `_guard` holds `login_env_guard()`'s lock for this test's
+        // duration, serializing these env-var mutations against every other
+        // test that touches ADMIN_GUI_USERNAME/ADMIN_GUI_PASSWORD.
         unsafe {
             std::env::set_var("ADMIN_GUI_USERNAME", "admin-user");
             std::env::set_var("ADMIN_GUI_PASSWORD", "super-secret-password");
