@@ -1826,6 +1826,44 @@ mod tests {
         )
     }
 
+    /// Same key pair as `generate_test_rsa_pems`, but the public half in
+    /// SPKI/PKCS#8 ("PUBLIC KEY") form -- the format the old `rsa` crate's
+    /// `from_public_key_pem` treated as primary, and a different parse path
+    /// through `jwks_from_public_pem`/`pem_to_der` than the PKCS#1 form
+    /// above.
+    #[cfg(feature = "rsa-verify")]
+    fn generate_test_rsa_pems_spki_public() -> (Vec<u8>, Vec<u8>) {
+        use aws_lc_rs::signature::KeyPair as _;
+
+        fn der_to_pem(der: &[u8], label: &str) -> Vec<u8> {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+            let mut pem = format!("-----BEGIN {label}-----\n");
+            for chunk in b64.as_bytes().chunks(64) {
+                pem.push_str(std::str::from_utf8(chunk).unwrap());
+                pem.push('\n');
+            }
+            pem.push_str(&format!("-----END {label}-----\n"));
+            pem.into_bytes()
+        }
+
+        let key_pair = aws_lc_rs::rsa::KeyPair::generate(aws_lc_rs::rsa::KeySize::Rsa2048)
+            .expect("RSA key generation failed");
+        let priv_der =
+            aws_lc_rs::encoding::AsDer::<aws_lc_rs::encoding::Pkcs8V1Der>::as_der(&key_pair)
+                .expect("private key DER export failed");
+        let public_key = aws_lc_rs::rsa::PublicKey::from_der(key_pair.public_key().as_ref())
+            .expect("re-parsing the freshly generated public key must succeed");
+        let spki_der = aws_lc_rs::encoding::AsDer::<aws_lc_rs::encoding::PublicKeyX509Der>::as_der(
+            &public_key,
+        )
+        .expect("SPKI DER export failed");
+
+        (
+            der_to_pem(priv_der.as_ref(), "PRIVATE KEY"),
+            der_to_pem(spki_der.as_ref(), "PUBLIC KEY"),
+        )
+    }
+
     /// Regression/coverage test for the RSA-removal rewrite of
     /// `jwks_from_public_pem`: a real RSA key's exported JWKS `n`/`e` must
     /// match the key's own modulus/exponent, and the exported key must
@@ -1858,6 +1896,40 @@ mod tests {
             .encode(public_key.exponent().big_endian_without_leading_zero());
         assert_eq!(exported.n, expected_n);
         assert_eq!(exported.e, expected_e);
+
+        // The exported JWKS must be independently usable: sign a real token
+        // with the manager's private key, then verify it using ONLY the
+        // exported n/e (not the manager, not the PEM) -- the actual use case
+        // a resource server validating against a published JWKS exercises.
+        let token = manager
+            .create_jwt_token("test-user", vec![], None)
+            .expect("signing with the freshly generated RSA key should succeed");
+        let decoding_key = DecodingKey::from_rsa_components(&exported.n, &exported.e)
+            .expect("DecodingKey should accept the exported n/e");
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_issuer(&["test-issuer"]);
+        validation.set_audience(&["test-audience"]);
+        decode::<JwtClaims>(&token, &decoding_key, &validation)
+            .expect("a token signed by this key must verify against its own exported JWKS");
+    }
+
+    /// Same as the PKCS#1 test above, but for the SPKI ("PUBLIC KEY") PEM
+    /// form -- the format the old `rsa` crate's `from_public_key_pem`
+    /// treated as primary, and a different parse path through
+    /// `pem_to_der`/`PublicKey::from_der` than the PKCS#1 form.
+    #[cfg(feature = "rsa-verify")]
+    #[test]
+    fn test_export_public_jwks_accepts_spki_public_key_pem() {
+        let (priv_pem, pub_pem) = generate_test_rsa_pems_spki_public();
+        let manager = TokenManager::new_rsa(&priv_pem, &pub_pem, "test-issuer", "test-audience")
+            .expect("TokenManager::new_rsa should accept an SPKI-form public key");
+
+        let jwks = manager
+            .export_public_jwks()
+            .expect("JWKS export should succeed for an SPKI-form RSA public key");
+        assert_eq!(jwks.len(), 1);
+        assert!(!jwks[0].n.is_empty());
+        assert!(!jwks[0].e.is_empty());
     }
 
     #[cfg(not(feature = "rsa-verify"))]

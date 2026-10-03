@@ -147,19 +147,20 @@ impl SecurityPreset {
     ///
     /// # Why HighSecurity/Paranoid default to ES256/ES384, not RS256/RS512
     ///
-    /// `rsa` (the crate jsonwebtoken's `rust_crypto` backend uses for RS* signing/
-    /// verification) has an open, unpatched timing-sidechannel advisory
-    /// (RUSTSEC-2023-0071, "Marvin Attack") with no fix available as of this
-    /// writing. auth-framework has a confirmed attacker-reachable RSA private-key
-    /// operation on this path (JARM's RSA-OAEP JWE decrypt,
-    /// `oidc_advanced_jarm.rs::decrypt_rsa_oaep_a256gcm`) plus RS* JWT
-    /// sign/verify wherever a consumer opts into it. These presets are our
-    /// recommended defaults, so they should not steer integrators onto the
-    /// vulnerable path. RS*/PS* remain fully selectable via
-    /// `SecurityConfig::jwt_algorithm` for integrators who need RSA-based JWTs
-    /// for interop with an existing keypair or third party -- this only changes
-    /// what we recommend, not what we permit. CireSnave's ruling, 2026-09-24;
-    /// see also the RSA feature-gating work tracked separately.
+    /// `rsa` (the crate RS*/PS* JWT signing/verification and JARM's RSA-OAEP
+    /// JWE used to depend on) has an open, unpatched timing-sidechannel
+    /// advisory (RUSTSEC-2023-0071, "Marvin Attack") with no fix available.
+    /// Both of those paths have since been rewritten against `aws-lc-rs`
+    /// (not subject to this advisory) -- see deny.toml's RUSTSEC-2023-0071
+    /// entry for current status. These presets still default to ES256/ES384
+    /// rather than RS256/RS512: ECDSA sidesteps the RSA key-size and
+    /// padding-scheme questions entirely, which is a simpler recommendation
+    /// to stand behind, not a statement that RS*/PS* are currently unsafe.
+    /// RS*/PS* remain fully selectable via `SecurityConfig::jwt_algorithm`
+    /// for integrators who need RSA-based JWTs for interop with an existing
+    /// keypair or third party -- this only changes what we recommend, not
+    /// what we permit. CireSnave's ruling, 2026-09-24, escalated to full
+    /// `rsa` removal in a later pass; see deny.toml for what's left.
     pub fn to_config(&self) -> SecurityConfig {
         match self {
             SecurityPreset::Development => SecurityConfig {

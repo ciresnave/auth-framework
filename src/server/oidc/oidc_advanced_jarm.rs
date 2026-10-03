@@ -426,17 +426,30 @@ impl AdvancedJarmManager {
                 .clone()
                 .or_else(|| std::env::var("JARM_JWE_RECIPIENT_PUBLIC_KEY_PEM").ok());
             jwe_pub_pem.as_deref().and_then(|pem| {
-                let der = pem_to_der(pem).ok()?;
-                let key = aws_lc_rs::rsa::PublicEncryptingKey::from_der(&der)
-                    .ok()
-                    .and_then(|k| aws_lc_rs::rsa::OaepPublicEncryptingKey::new(k).ok());
-                match key {
-                    Some(k) => {
+                let der = match pem_to_der(pem) {
+                    Ok(der) => der,
+                    Err(e) => {
+                        warn!("JARM JWE: could not decode recipient public key PEM: {e}");
+                        return None;
+                    }
+                };
+                let encrypting_key = match aws_lc_rs::rsa::PublicEncryptingKey::from_der(&der) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        warn!(
+                            "JARM JWE: recipient public key is not a valid RSA key \
+                             (aws-lc-rs requires 2048-8192 bit keys): {e}"
+                        );
+                        return None;
+                    }
+                };
+                match aws_lc_rs::rsa::OaepPublicEncryptingKey::new(encrypting_key) {
+                    Ok(k) => {
                         info!("JARM JWE: loaded RSA recipient public key");
                         Some(k)
                     }
-                    None => {
-                        warn!("JARM JWE: could not parse recipient public key");
+                    Err(_) => {
+                        warn!("JARM JWE: recipient public key rejected for OAEP use");
                         None
                     }
                 }
@@ -449,17 +462,30 @@ impl AdvancedJarmManager {
                 .clone()
                 .or_else(|| std::env::var("JARM_JWE_RECIPIENT_PRIVATE_KEY_PEM").ok());
             jwe_priv_pem.as_deref().and_then(|pem| {
-                let der = pem_to_der(pem).ok()?;
-                let key = aws_lc_rs::rsa::PrivateDecryptingKey::from_pkcs8(&der)
-                    .ok()
-                    .and_then(|k| aws_lc_rs::rsa::OaepPrivateDecryptingKey::new(k).ok());
-                match key {
-                    Some(k) => {
+                let der = match pem_to_der(pem) {
+                    Ok(der) => der,
+                    Err(e) => {
+                        warn!("JARM JWE: could not decode recipient private key PEM: {e}");
+                        return None;
+                    }
+                };
+                let decrypting_key = match aws_lc_rs::rsa::PrivateDecryptingKey::from_pkcs8(&der) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        warn!(
+                            "JARM JWE: recipient private key is not a valid RSA key \
+                             (aws-lc-rs requires 2048-8192 bit keys): {e}"
+                        );
+                        return None;
+                    }
+                };
+                match aws_lc_rs::rsa::OaepPrivateDecryptingKey::new(decrypting_key) {
+                    Ok(k) => {
                         info!("JARM JWE: loaded RSA recipient private key");
                         Some(k)
                     }
-                    None => {
-                        warn!("JARM JWE: could not parse recipient private key");
+                    Err(_) => {
+                        warn!("JARM JWE: recipient private key rejected for OAEP use");
                         None
                     }
                 }
@@ -1031,9 +1057,13 @@ impl AdvancedJarmManager {
         })?;
 
         // 1. Unwrap the CEK with RSA-OAEP-SHA-256. aws-lc-rs's decrypt returns
-        // an opaque Unspecified error -- deliberately uniform across every
-        // failure mode (malformed ciphertext, bad padding, wrong size), so
-        // this map_err can't leak which one occurred.
+        // an opaque Unspecified error -- uniform across every RSA-OAEP-layer
+        // failure mode (bad padding, wrong key, wrong size once past aws-lc's
+        // own length filtering), so this map_err can't leak which one
+        // occurred. Uniformity stops at this layer: the CEK-length check and
+        // AES-GCM decrypt below have their own distinguishable errors, same
+        // as before this change -- not a new oracle (OAEP is CCA2-secure;
+        // see the longer note on the test for this function).
         let encrypted_cek = URL_SAFE_NO_PAD
             .decode(encrypted_key_b64)
             .map_err(|e| AuthError::token(format!("Bad encrypted_key encoding: {e}")))?;
@@ -1476,10 +1506,18 @@ mod tests {
 
     /// The JARM RSA-OAEP decrypt path is the confirmed attacker-reachable
     /// exposure (`validate_jarm_response` feeds external ciphertext straight
-    /// into a private-key decrypt) -- the property that matters most here is
-    /// that every way ciphertext can be wrong produces the SAME error, with
-    /// nothing a timing or error-content oracle could use to distinguish
-    /// "bad padding" from "bad length" from "right padding, wrong key".
+    /// into a private-key decrypt). This asserts uniformity AT THE RSA-OAEP
+    /// LAYER ONLY: every encrypted_key input that reaches
+    /// `OaepPrivateDecryptingKey::decrypt` and fails there (wrong padding,
+    /// wrong key, wrong size once length-filtered by aws-lc-rs) produces the
+    /// same opaque error. It does NOT claim uniformity end-to-end -- once an
+    /// RSA-OAEP unwrap succeeds, the subsequent CEK-length check, IV/tag
+    /// decoding, and AES-256-GCM decrypt each have their own, distinguishable
+    /// error messages, same as before this change. That is not a new
+    /// Manger/Bleichenbacher-style oracle: OAEP is CCA2-secure, so knowing
+    /// only "did the RSA-OAEP layer accept this ciphertext" leaks nothing
+    /// useful, and producing an OAEP-valid ciphertext needs only the public
+    /// key, which the attacker already has.
     #[cfg(feature = "rsa-private-key-ops")]
     #[tokio::test]
     async fn test_jwe_decrypt_rejects_malformed_ciphertext_uniformly() {
@@ -1523,6 +1561,20 @@ mod tests {
             .build();
         let manager = AdvancedJarmManager::new(config);
 
+        // The uniform-error assertion below is meaningless if the keys
+        // silently failed to load (e.g. a pem_to_der regression) -- every
+        // input would then hit the SAME early "requires an RSA private key"
+        // error for a reason that has nothing to do with the property this
+        // test checks. Confirm the keys actually loaded first.
+        assert!(
+            manager.jwe_private_key.is_some(),
+            "JWE private key must have loaded for this test to mean anything"
+        );
+        assert!(
+            manager.jwe_public_key.is_some(),
+            "JWE public key must have loaded for this test to mean anything"
+        );
+
         let iv_b64 = URL_SAFE_NO_PAD.encode([0u8; 12]);
         let tag_b64 = URL_SAFE_NO_PAD.encode([0u8; 16]);
         let ciphertext_b64 = URL_SAFE_NO_PAD.encode([0u8; 16]);
@@ -1547,6 +1599,12 @@ mod tests {
         }
 
         let first = &messages[0];
+        assert!(
+            first.contains("CEK unwrap failed"),
+            "expected the RSA-OAEP-layer error, got {first:?} -- if the keys didn't \
+             load this would be the generic \"requires an RSA private key\" message instead, \
+             which would make the uniformity check below pass vacuously"
+        );
         for (i, msg) in messages.iter().enumerate() {
             assert_eq!(
                 msg, first,

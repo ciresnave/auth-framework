@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- RSA support (jsonwebtoken's RS*/PS* JWT signing/verification, RSA JWKS
+  export via the `rsa-verify` feature, and JARM's RSA-OAEP JWE via
+  `rsa-private-key-ops`) no longer depends on the `rsa` crate
+  (RUSTSEC-2023-0071, an unpatched RSA timing sidechannel) -- backed by
+  `aws-lc-rs` instead. **Behavior change:** aws-lc-rs enforces a 2048-8192
+  bit RSA key size range; a key outside that range that was previously
+  accepted (e.g. a 1024-bit key) is now rejected. This is a hardening
+  change, not a regression -- 1024-bit RSA has been considered
+  insufficiently secure for new deployments for years -- but it is a real
+  behavior change for any integrator whose external IdP or JARM
+  recipient key falls outside the new range. SAML (`saml` feature) and
+  `mysql-storage` still depend on `rsa` via separate paths, tracked
+  separately.
+
 - **Breaking:** `create_client_assertion` (RFC 7523 private-key-JWT client
   authentication) now takes `encoding_key: &EncodingKey` instead of raw
   signing-key bytes (`signing_key: &[u8]`). The previous signature

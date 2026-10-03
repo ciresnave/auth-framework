@@ -22,41 +22,46 @@
         # RSA Marvin Attack (timing sidechannel), no fix available (patched = []
         # in the advisory; open since 2023-11-22, still unfixed 3 years later).
         #
-        # PREVIOUS version of this entry claimed "we don't expose raw RSA
-        # operations." That claim was never verified and turned out to be
-        # false -- replaced here with what a source trace actually found:
+        # UPDATE (supersedes the rest of this entry in full -- the JARM
+        # decrypt path and jsonwebtoken's RS*/PS* support, previously the two
+        # confirmed exposures, no longer use the `rsa` crate at all as of the
+        # aws-lc-rs rewrite (CireSnave: "I want broken RSA out of our
+        # codebase and its dependencies"). `rsa` remains in the dependency
+        # tree, and this advisory remains unresolved, ONLY via:
+        #   - `saml` feature: api/saml.rs::key_from_x509_der needs bergshamra
+        #     0.3.x's `KeyData::Rsa` variant, which requires `rsa::RsaPublicKey`
+        #     directly -- a third-party crate's choice, not this crate's own
+        #     RSA code. Public-key-only (SAML IdP cert verification), not the
+        #     Marvin Attack's concern. Tracked: bump bergshamra to >=0.9.2 and
+        #     select its `aws-lc` feature (confirmed available by reading
+        #     kushaldas/kryptering's own Cargo.toml) instead of `rustcrypto`.
+        #   - `mysql-storage` / any build with `postgres-storage` enabled
+        #     (which is in `default`): sqlx-mysql's own `rsa = "0.9"` is a
+        #     plain, non-optional, non-feature-gated dependency in sqlx-mysql
+        #     0.8.6's own Cargo.toml (its caching_sha2_password auth-plugin
+        #     support) -- and this crate's own `sqlx` dependency declaration
+        #     unconditionally enabled sqlx's "mysql" sub-feature regardless of
+        #     which storage backend was actually requested, so `postgres-storage`
+        #     alone (in `default`) pulled it in too. Tracked: split `sqlx`'s
+        #     features so each of postgres-storage/mysql-storage/sqlite-storage
+        #     enables only its own sqlx sub-feature; the mysql-storage
+        #     disposition itself (drop it, accept a scoped exception, or wait
+        #     on upstream sqlx) is CireSnave's call once that split lands.
+        # Previously-confirmed-exposed, now fixed (kept for history, not
+        # current status): jsonwebtoken's "rust_crypto" feature routed
+        # RS256/RS384/RS512 through the `rsa` crate -- switched to
+        # jsonwebtoken's "aws_lc_rs" feature, confirmed to cover the identical
+        # Algorithm set. oidc_advanced_jarm.rs::decrypt_rsa_oaep_a256gcm's raw
+        # RSA-OAEP private-key decrypt of attacker-supplied ciphertext (the
+        # CONFIRMED attacker-reachable exposure named in the prior version of
+        # this entry) is rewritten against aws-lc-rs, whose decrypt returns an
+        # opaque `Unspecified` error uniform across every RSA-OAEP-layer
+        # failure mode.
         #
-        # CONFIRMED exposed (attacker-reachable private-key operation):
-        #   - oidc_advanced_jarm.rs::decrypt_rsa_oaep_a256gcm (~line 933-957):
-        #     public API `validate_jarm_response(token: &str)` feeds an
-        #     external token straight into `priv_key.decrypt(Oaep::new::<Sha256>(), ...)`
-        #     -- a raw RSA-OAEP private-key decrypt of attacker-supplied
-        #     ciphertext, exactly the advisory's own workaround scenario
-        #     ("avoid using rsa where attackers can observe timing, over the
-        #     network"). Being addressed: RSA is being moved behind a feature
-        #     gate and the JARM decrypt path is under separate investigation.
-        #   - jsonwebtoken's "rust_crypto" feature (enabled in Cargo.toml)
-        #     routes RS256/RS384/RS512 JWT sign+verify through this crate.
-        #     RS* is no longer the recommended default in the HighSecurity/
-        #     Paranoid security presets (see security/presets.rs) as of this
-        #     change, though it remains selectable for integrators who need it.
-        # NOT exposed (public-key-only, no secret exponent -- not the Marvin
-        # Attack's concern):
-        #   - SAML IdP certificate verification (api/saml.rs, KeyUsage::Verify)
-        #   - JWKS export (tokens/mod.rs, parses PEM for n/e only)
-        #   - passkey RSA verification uses `ring`'s RsaPublicKeyComponents,
-        #     not this crate, at all
-        # UNEXAMINED, not claimed safe: sqlx-mysql's internal use of `rsa`
-        # (likely its caching_sha2_password auth handshake). Not traced in
-        # this pass; explicitly not asserted to be low-risk.
-        #
-        # Acceptance: CireSnave's, by name, 2026-09-24. His ruling: stop
-        # defaulting to RS* in security presets (done), feature-gate RSA so
-        # the exposure is opt-in (in progress), investigate alternatives for
-        # the JARM decrypt path specifically (research task, not yet
-        # resolved), and track a longer-term fix on the portfolio roadmap.
-        # Re-check trigger: RustSec publishes a patched `rsa` release, or the
-        # JARM decrypt path is replaced with a non-`rsa` implementation.
+        # Acceptance: CireSnave's, by name, 2026-09-24 (original ruling,
+        # since escalated to full removal, in progress per the above).
+        # Re-check trigger: the bergshamra bump and sqlx feature split land
+        # (both tracked above), or RustSec publishes a patched `rsa` release.
         "RUSTSEC-2023-0071",
         # h2 0.3.27 unbounded empty DATA frames - transitive dependency via
         # actix-http (actix-integration feature). actix-web's latest release is

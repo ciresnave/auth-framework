@@ -416,7 +416,12 @@ sqlite-storage = ["sqlx"]
   distributed-rate-limiting = ["redis"]
   # Reserved for future enhanced cryptographic operations — currently a no-op
   enhanced-crypto           = ["chacha20poly1305", "ed25519-dalek", "x25519-dalek"]
-  fips-compliance           = ["dep:aws-lc-rs"]
+  # Explicit alias preserving the feature name a consumer would have gotten
+  # implicitly before any feature in this manifest used `dep:aws-lc-rs`
+  # syntax -- without this, `features = ["aws-lc-rs"]` in a downstream
+  # Cargo.toml would stop resolving (Opus review on #96 caught this).
+  aws-lc-rs = ["dep:aws-lc-rs"]
+  fips-compliance = ["aws-lc-rs"]
 
   # Enterprise RBAC with role-system v1.0
   enhanced-rbac = ["api-server", "role-system"]
@@ -472,10 +477,12 @@ sqlite-storage = ["sqlx"]
   # above). Decrypt is the path that was the confirmed attacker-reachable
   # exposure under the `rsa` crate -- the public `validate_jarm_response`
   # API feeds an external token directly into a private-key decrypt.
-  # aws-lc-rs's decrypt returns an opaque `Unspecified` error on every
-  # failure path (malformed ciphertext, wrong padding, wrong key size --
-  # no distinguishable error variants), which is the actual property this
-  # gate cares about, not just "a different crate." Encrypt is bundled
+  # aws-lc-rs's decrypt returns an opaque `Unspecified` error, uniform
+  # across every failure AT THE RSA-OAEP LAYER (malformed ciphertext, wrong
+  # padding, wrong key size) -- not end-to-end; see the test on
+  # decrypt_rsa_oaep_a256gcm for what that does and does not cover. That's
+  # the actual property this gate cares about, not just "a different
+  # crate." Encrypt is bundled
   # here rather than under `rsa-verify` because it shares the same JWE
   # round-trip config, struct fields, and constructor logic as decrypt in
   # this file, not because encrypting with a public key is itself
