@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed GHSA-jfmh-j245-wpjg: MFA verification no longer derives a
   fallback secret.
+- Fixed GHSA-rf2h-7m78-hhjm: revoking a refresh token now invalidates
+  it.
 - RSA support (jsonwebtoken's RS*/PS* JWT signing/verification, RSA JWKS
   export via the `rsa-verify` feature, and JARM's RSA-OAEP JWE via
   `rsa-private-key-ops`) no longer depends on the `rsa` crate

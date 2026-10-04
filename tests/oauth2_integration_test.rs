@@ -341,8 +341,10 @@ mod oauth2_integration_tests {
     }
 
     /// A refresh token must actually be usable to mint a new access token
-    /// -- positive control / regression coverage for the refresh grant,
-    /// which had no test coverage at all before this.
+    /// -- positive control for the two tests below. (The refresh grant
+    /// already has baseline coverage via tests/auth_flow_tests.rs's JWT
+    /// refresh tests, a separate mechanism from this opaque-token grant;
+    /// this is the first coverage of *this* grant specifically.)
     #[tokio::test]
     async fn test_oauth2_refresh_token_grant_mints_new_access_token() {
         let state = setup_api_state().await;
@@ -400,11 +402,10 @@ mod oauth2_integration_tests {
     }
 
     /// Revoking a refresh token must actually prevent it from minting new
-    /// access tokens -- the regression test for the fix: revoke must
-    /// delete the refresh record AND the grant handler must check the
-    /// revocation marker, either one alone is not enough on its own to
-    /// prove the fix (this test exercises the real end-to-end behavior,
-    /// not either internal mechanism directly).
+    /// access tokens, end to end through the real handlers. Passes if
+    /// EITHER fix mechanism (the delete in `revoke`, or the marker check
+    /// in `handle_refresh_token_grant`) is working -- see the two
+    /// mechanism-isolating tests below for coverage of each one alone.
     #[tokio::test]
     async fn test_oauth2_revoked_refresh_token_cannot_mint_new_access_tokens() {
         let state = setup_api_state().await;
@@ -459,11 +460,98 @@ mod oauth2_integration_tests {
         let revoke_response = oauth2::revoke(State(state.clone()), Json(revoke_request)).await;
         assert!(revoke_response.success);
 
+        // Pin the delete specifically, not just the end-to-end outcome.
+        let stored = state
+            .auth_framework
+            .storage()
+            .get_kv(&format!("oauth2_refresh_token:{}", refresh_token))
+            .await
+            .unwrap();
+        assert!(
+            stored.is_none(),
+            "revoke must delete the refresh token's own storage entry"
+        );
+
         let refresh_request = TokenRequest::refresh(&refresh_token);
         let refresh_response = oauth2::token(State(state), Json(refresh_request)).await;
         assert!(
             !refresh_response.success,
             "a revoked refresh token must not be able to mint a new access token"
+        );
+    }
+
+    /// Isolates the marker-check mechanism specifically: writes the
+    /// revocation marker directly (bypassing `revoke`, so the refresh
+    /// token's own storage record is left in place), and confirms
+    /// `handle_refresh_token_grant` rejects it via the marker check
+    /// alone. Without this, a mutant that removed only the marker check
+    /// (leaving `revoke`'s delete intact) could survive the end-to-end
+    /// test above.
+    #[tokio::test]
+    async fn test_oauth2_refresh_grant_checks_revocation_marker_even_if_record_still_present() {
+        let state = setup_api_state().await;
+
+        let auth_request = AuthorizeRequest {
+            response_type: "code".to_string(),
+            client_id: "test_client".to_string(),
+            redirect_uri: "http://localhost:3000/callback".to_string(),
+            scope: Some("openid profile".to_string()),
+            state: Some("test_state".to_string()),
+            code_challenge: Some("test_challenge".to_string()),
+            code_challenge_method: Some("plain".to_string()),
+            nonce: None,
+            resource: None,
+        };
+        let auth_headers = make_auth_headers(&state).await;
+        let auth_response =
+            oauth2::authorize(State(state.clone()), auth_headers, Query(auth_request))
+                .await
+                .into_response();
+        let auth_url = auth_response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let code = auth_url
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split("&")
+            .next()
+            .unwrap();
+
+        let token_request = TokenRequest::authorization_code(code)
+            .redirect_uri("http://localhost:3000/callback")
+            .client_id("test_client")
+            .code_verifier("test_challenge");
+        let token_response = oauth2::token(State(state.clone()), Json(token_request)).await;
+        assert!(token_response.success);
+        let refresh_token = token_response
+            .data
+            .unwrap()
+            .refresh_token
+            .expect("authorization_code grant must issue a refresh token");
+
+        // Write the marker directly -- the refresh token's own storage
+        // record is untouched, so only the marker check can catch this.
+        state
+            .auth_framework
+            .storage()
+            .store_kv(
+                &format!("oauth2_revoked_token:{}", refresh_token),
+                b"{}",
+                Some(std::time::Duration::from_secs(86400)),
+            )
+            .await
+            .unwrap();
+
+        let refresh_request = TokenRequest::refresh(&refresh_token);
+        let refresh_response = oauth2::token(State(state), Json(refresh_request)).await;
+        assert!(
+            !refresh_response.success,
+            "the marker alone, with the refresh record still present, must still block the grant"
         );
     }
 

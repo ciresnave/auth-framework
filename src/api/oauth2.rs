@@ -653,10 +653,20 @@ async fn handle_refresh_token_grant(
     };
 
     // A revoked refresh token must not mint new access tokens, regardless of
-    // whether its own storage entry has been deleted yet (see `revoke`).
+    // whether its own storage entry has been deleted yet (see `revoke`). Fail
+    // closed on a storage error here -- matching the equivalent check in
+    // `api/auth.rs`'s refresh handler -- rather than treating "couldn't check"
+    // as "not revoked".
     let revoked_key = format!("oauth2_revoked_token:{}", refresh_token_str);
-    if let Ok(Some(_)) = state.auth_framework.storage().get_kv(&revoked_key).await {
-        return ApiResponse::error_typed("invalid_grant", "Refresh token has been revoked");
+    match state.auth_framework.storage().get_kv(&revoked_key).await {
+        Ok(Some(_)) => {
+            return ApiResponse::error_typed("invalid_grant", "Refresh token has been revoked");
+        }
+        Ok(None) => {} // Not revoked -- proceed
+        Err(e) => {
+            tracing::error!("Refresh token revocation check failed: {:?}", e);
+            return ApiResponse::error_typed("server_error", "Failed to validate refresh token");
+        }
     }
 
     // Defense-in-depth: Use a consumed marker to mitigate the non-atomic get+delete
@@ -766,14 +776,17 @@ async fn handle_refresh_token_grant(
 
 /// POST /api/v1/oauth/revoke — revoke an access or refresh token.
 ///
-/// Stores a revocation marker in KV (`oauth2_revoked_token:{token}`) and,
-/// for JWT tokens, also stores a JTI-based marker (`revoked_token:{jti}`)
-/// so that all authenticated endpoints reject the token immediately. If
+/// Stores a revocation marker in KV (`oauth2_revoked_token:{token}`,
+/// TTL'd to the refresh token's own 30-day lifetime -- not just the 7
+/// days access-token revocation needs -- since this one marker has to
+/// outlive whichever token type was actually revoked) and, for JWT
+/// tokens, also stores a JTI-based marker (`revoked_token:{jti}`) so
+/// that all authenticated endpoints reject the token immediately. If
 /// the token is a refresh token, also deletes its `oauth2_refresh_token:`
-/// storage entry outright -- `handle_refresh_token_grant` also checks the
-/// revocation marker directly, so revocation is effective even if this
-/// delete and that check somehow disagree (e.g. a storage error on
-/// either side).
+/// storage entry outright -- `handle_refresh_token_grant` also checks
+/// the revocation marker directly (failing closed on a storage error
+/// there), so revocation is effective for the marker's full TTL even if
+/// the delete itself fails.
 ///
 /// # Example
 /// ```rust,ignore
@@ -804,7 +817,12 @@ pub async fn revoke(
             serde_json::to_string(&revoked_data)
                 .unwrap_or_default()
                 .as_bytes(),
-            Some(std::time::Duration::from_secs(86400 * 7)),
+            // 30 days: must outlive the longest-lived token type this
+            // endpoint can revoke (the refresh token's own 30-day TTL),
+            // not just the 7 days an access token's JWT markers need --
+            // otherwise a revoked refresh token whose delete somehow
+            // failed would become usable again once this marker expired.
+            Some(std::time::Duration::from_secs(86400 * 30)),
         )
         .await
     {
