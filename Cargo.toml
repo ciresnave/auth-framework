@@ -178,7 +178,7 @@
   bs58 = "0.5"
 
   # MaxMind GeoIP2 for IP geolocation
-  maxminddb = "0.27.3"
+  maxminddb = "0.32"
 
   # Threat intelligence integration
   csv                  = "1.3.1"  # For parsing threat feeds
