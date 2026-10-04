@@ -310,6 +310,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     security presets do) are unaffected; this only changes behavior
     for configurations that relied on the *implicit* default.
 
+### Changed
+
+- **Dependency:** `maxminddb` 0.27.3 -> 0.32.0 (closes #9). The calls this crate
+  makes (`Reader::open_readfile`, `lookup`, `decode::<geoip2::City>`) are unchanged.
+  Upstream changes that reach us: a database with an unsupported format version, IP
+  version or zero-node tree is now rejected at open (our callers already treat an
+  open error as "no geolocation"), and decoding is bounded (`ResourceLimit` error)
+  against crafted databases. The removed `simdutf8` feature was not enabled here.
+
 ### Removed
 
 - **Breaking:** the `sms-aws-sns` SMS backend and its `smskit` feature
