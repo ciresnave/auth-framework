@@ -715,6 +715,42 @@ mod tests {
         MfaManager::new(storage)
     }
 
+    /// `verify_code` must reject an unenrolled user outright, never silently
+    /// derive and accept a fallback secret computed purely from the user_id.
+    /// Proves absence, not just "some code was rejected": computes the
+    /// specific fallback this method used to derive
+    /// (`SHA256(user_id || "totp_secret_salt_2024")`, base32-encoded, same
+    /// as the TOTP secret format `generate_secret` produces), generates the
+    /// valid code for that derived secret, and submits it -- if the fallback
+    /// still existed, this specific code would verify as `true`.
+    #[tokio::test]
+    async fn test_totp_verify_code_rejects_unenrolled_user_even_with_the_old_derived_code() {
+        let mfa = make_mfa();
+        let user_id = "totp_unenrolled_user";
+
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(user_id.as_bytes());
+        hasher.update(b"totp_secret_salt_2024");
+        let hash = hasher.finalize();
+        let would_be_derived_secret =
+            base32::encode(base32::Alphabet::Rfc4648 { padding: true }, &hash[0..20]);
+
+        let code_for_derived_secret = mfa
+            .totp
+            .generate_code(&would_be_derived_secret)
+            .await
+            .unwrap();
+
+        assert!(
+            !mfa.totp
+                .verify_code(user_id, &code_for_derived_secret)
+                .await
+                .unwrap(),
+            "an unenrolled user must not be verifiable via the old predictable fallback secret"
+        );
+    }
+
     #[tokio::test]
     async fn test_cross_method_step_rejects_invalid_code() {
         let mfa = make_mfa();

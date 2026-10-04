@@ -5,6 +5,18 @@ All notable changes to the AuthFramework project will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-10-04
+
+### Security
+
+- Fixed GHSA-jfmh-j245-wpjg: MFA verification no longer derives a
+  fallback secret. As part of this fix, `AuthFramework::generate_totp_secret`
+  now actually persists the secret it generates (previously it stored
+  nothing), so calling it for a user who already has one enrolled now
+  overwrites the existing secret -- this is a real behavior change for
+  that method, though no legitimate enrollment previously worked through
+  this path at all.
+
 ## [0.4.3] - 2026-09-17
 
 ### Security
