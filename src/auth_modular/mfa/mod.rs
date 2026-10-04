@@ -1288,6 +1288,69 @@ mod tests {
         assert!(!mfa.totp.has_totp_secret("nobody").await.unwrap());
     }
 
+    /// `verify_code` must reject an unenrolled user outright, never silently
+    /// derive and accept a fallback secret computed purely from the user_id.
+    /// Proves absence, not just "some code was rejected": computes the
+    /// specific fallback this method used to derive
+    /// (`SHA256(user_id || "totp_secret_salt_2024")`, base32-encoded, same
+    /// as the TOTP secret format `generate_secret` produces), generates the
+    /// valid code for that derived secret, and submits it -- if the fallback
+    /// still existed, this specific code would verify as `true`.
+    #[tokio::test]
+    async fn test_totp_verify_code_rejects_unenrolled_user_even_with_the_old_derived_code() {
+        let mfa = make_mfa();
+        let user_id = "totp_unenrolled_user";
+
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(user_id.as_bytes());
+        hasher.update(b"totp_secret_salt_2024");
+        let hash = hasher.finalize();
+        let would_be_derived_secret =
+            base32::encode(base32::Alphabet::Rfc4648 { padding: true }, &hash[0..20]);
+
+        let code_for_derived_secret = mfa
+            .totp
+            .generate_code(&would_be_derived_secret)
+            .await
+            .unwrap();
+
+        assert!(
+            !mfa.totp
+                .verify_code(user_id, &code_for_derived_secret)
+                .await
+                .unwrap(),
+            "an unenrolled user must not be verifiable via the old predictable fallback secret"
+        );
+        assert!(!mfa.totp.has_totp_secret(user_id).await.unwrap());
+    }
+
+    /// A user who enrolled via the live `/mfa/setup` API route (which
+    /// stores under `mfa_secret:{user_id}`) must be verifiable through the
+    /// same `verify_code` the modular `generate_secret` path uses -- the two
+    /// routes must agree on where the secret lives, not silently diverge.
+    #[tokio::test]
+    async fn test_totp_verify_code_finds_secret_enrolled_via_api_setup_key() {
+        use crate::storage::MemoryStorage;
+        let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+        let mfa = MfaManager::new(storage.clone());
+        let user_id = "totp_api_enrolled_user";
+
+        // Simulate the live /mfa/setup route's storage key directly, bypassing
+        // the modular generate_secret path entirely.
+        let secret = "JBSWY3DPEHPK3PXP".to_string(); // valid base32
+        storage
+            .store_kv(&format!("mfa_secret:{}", user_id), secret.as_bytes(), None)
+            .await
+            .unwrap();
+
+        let code = mfa.totp.generate_code(&secret).await.unwrap();
+        assert!(
+            mfa.totp.verify_code(user_id, &code).await.unwrap(),
+            "verify_code must find a secret enrolled under the API route's key"
+        );
+    }
+
     #[tokio::test]
     async fn test_totp_generate_qr_code() {
         let mfa = make_mfa();
