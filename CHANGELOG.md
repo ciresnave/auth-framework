@@ -50,14 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (via `legacy-algorithms` specifically) DSA, MD5, and RIPEMD160.
     RSA-SHA1 -- the one legacy combination real-world SAML IdPs still
     sometimes use -- is unaffected and continues to work.
-  - **Known limitation, tracked separately:** `kryptering`'s `aws-lc`
-    feature only compiles on Linux and non-FIPS macOS (x86_64/aarch64);
-    it hard-errors via `compile_error!` on Windows and other platforms
-    (`kryptering-0.6.0/src/lib.rs`). `saml` therefore no longer builds on
-    Windows at all. CI (ubuntu-only) does not catch this. This is a real
-    capability loss for Windows users of the `saml` feature and needs a
-    disposition from CireSnave before this lands; not a hidden silent
-    regression, flagged explicitly here pending that call.
+  - **Breaking: `saml` no longer builds on Windows.** `kryptering`'s
+    `aws-lc` feature only compiles on Linux and non-FIPS macOS
+    (x86_64/aarch64); it hard-errors via `compile_error!` on Windows and
+    other platforms (`kryptering-0.6.0/src/lib.rs`). CI (ubuntu-only)
+    does not catch this. CireSnave's ruling (2026-10-04): accept this
+    loss for now -- **we are actively searching for a way to support
+    SAML on Windows again**; see
+    [#106](https://github.com/ciresnave/auth-framework/issues/106) for
+    the options being tracked (an upstream fix to `kryptering`, bypassing
+    it for just this one code path, or a platform-conditional dependency
+    split).
 
 - **Breaking:** each storage-backend feature now enables only its own
   `sqlx` sub-feature -- `postgres-storage` -> `sqlx/postgres`,

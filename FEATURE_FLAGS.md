@@ -45,7 +45,7 @@ These capabilities are always available regardless of feature flags:
 | `ldap-auth`            | `ldap3`                                                                 | LDAP/Active Directory authentication |
 | `otp-auth`             | `otpauth`                                                               | One-time password authentication     |
 | `passkeys`             | `coset`, `passkey`, `passkey-client`                                    | WebAuthn/FIDO2 passkey support       |
-| `saml`                 | `bergshamra`, `p256`, `p384`, `quick-xml`                               | SAML 2.0 SP and IdP support          |
+| `saml`                 | `bergshamra`, `kryptering`, `quick-xml`                                 | SAML 2.0 SP and IdP support. **Linux/macOS only for now** -- `kryptering`'s `aws-lc` backend (needed to keep SAML off the vulnerable `rsa` crate, RUSTSEC-2023-0071) does not build on Windows; see [#106](https://github.com/ciresnave/auth-framework/issues/106) -- we are actively searching for a way around this. |
 | `enhanced-device-flow` | `oauth-device-flows`                                                    | OAuth 2.0 Device Authorization Grant |
 | `smskit`               | `sms-core`, `sms-twilio`, `sms-plivo`, `sms-web-generic`               | SMS-based MFA via SMSKit             |
 | `openid-connect`       | `openidconnect`                                                         | OpenID Connect client support        |
