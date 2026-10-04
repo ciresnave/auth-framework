@@ -146,31 +146,34 @@ impl TotpManager {
         Ok(false)
     }
 
-    /// Get user's TOTP secret from secure storage
+    /// Get user's TOTP secret from secure storage.
+    ///
+    /// Checks both storage locations a secret may have been enrolled under
+    /// -- `mfa_secret:{user_id}` (the live `/mfa/setup` API route) and
+    /// `user:{user_id}:totp_secret` (the modular `generate_secret` path) --
+    /// matching [`Self::verify_login_code`]'s existing dual-key lookup, so
+    /// a user enrolled via either route is recognized by this method too.
+    ///
+    /// Returns an error if the user has no secret enrolled under either
+    /// key. There is no fallback secret: a user with nothing enrolled must
+    /// fail verification, never receive a silently-derived one.
     async fn get_user_secret(&self, user_id: &str) -> Result<String> {
-        let key = format!("user:{}:totp_secret", user_id);
-
-        if let Some(secret_data) = self.storage.get_kv(&key).await? {
-            Ok(String::from_utf8(secret_data)
-                .map_err(|e| AuthError::internal(format!("Failed to parse TOTP secret: {}", e)))?)
-        } else {
-            // Generate a consistent secret per user for testing if none exists
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(user_id.as_bytes());
-            hasher.update(b"totp_secret_salt_2024");
-            let hash = hasher.finalize();
-
-            // Convert to base32 for TOTP compatibility
-            let secret = base32::encode(
-                base32::Alphabet::Rfc4648 { padding: true },
-                &hash[0..20], // Use first 160 bits (20 bytes)
-            );
-
-            // Store it for future use
-            self.storage.store_kv(&key, secret.as_bytes(), None).await?;
-            Ok(secret)
+        let api_key = format!("mfa_secret:{}", user_id);
+        if let Some(secret_data) = self.storage.get_kv(&api_key).await? {
+            return String::from_utf8(secret_data)
+                .map_err(|e| AuthError::internal(format!("Failed to parse TOTP secret: {}", e)));
         }
+
+        let modular_key = format!("user:{}:totp_secret", user_id);
+        if let Some(secret_data) = self.storage.get_kv(&modular_key).await? {
+            return String::from_utf8(secret_data)
+                .map_err(|e| AuthError::internal(format!("Failed to parse TOTP secret: {}", e)));
+        }
+
+        Err(AuthError::validation(format!(
+            "No TOTP secret enrolled for user '{}'",
+            user_id
+        )))
     }
 
     /// Check if user has TOTP secret configured
