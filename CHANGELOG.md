@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Security: MFA verification no longer derives a fallback secret.
 - RSA support (jsonwebtoken's RS*/PS* JWT signing/verification, RSA JWKS
   export via the `rsa-verify` feature, and JARM's RSA-OAEP JWE via
   `rsa-private-key-ops`) no longer depends on the `rsa` crate
