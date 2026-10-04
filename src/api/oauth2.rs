@@ -652,6 +652,23 @@ async fn handle_refresh_token_grant(
         None => return ApiResponse::validation_error_typed("refresh_token is required"),
     };
 
+    // A revoked refresh token must not mint new access tokens, regardless of
+    // whether its own storage entry has been deleted yet (see `revoke`). Fail
+    // closed on a storage error here -- matching the equivalent check in
+    // `api/auth.rs`'s refresh handler -- rather than treating "couldn't check"
+    // as "not revoked".
+    let revoked_key = format!("oauth2_revoked_token:{}", refresh_token_str);
+    match state.auth_framework.storage().get_kv(&revoked_key).await {
+        Ok(Some(_)) => {
+            return ApiResponse::error_typed("invalid_grant", "Refresh token has been revoked");
+        }
+        Ok(None) => {} // Not revoked -- proceed
+        Err(e) => {
+            tracing::error!("Refresh token revocation check failed: {:?}", e);
+            return ApiResponse::error_typed("server_error", "Failed to validate refresh token");
+        }
+    }
+
     // Defense-in-depth: Use a consumed marker to mitigate the non-atomic get+delete
     // race condition. If a concurrent request already consumed this refresh token, reject.
     let consumed_key = format!("oauth2_refresh_consumed:{}", refresh_token_str);
@@ -691,6 +708,7 @@ async fn handle_refresh_token_grant(
         Some(u) => u.to_string(),
         None => return ApiResponse::error_typed("invalid_grant", "Malformed refresh token data"),
     };
+    let client_id = stored["client_id"].as_str().map(|s| s.to_string());
     let scope = stored["scopes"]
         .as_str()
         .unwrap_or("openid profile email")
@@ -712,7 +730,11 @@ async fn handle_refresh_token_grant(
     // Issue a new refresh token (rotation).
     // Store the new token BEFORE deleting the old one to avoid data loss on failure.
     let new_refresh_token = uuid::Uuid::new_v4().to_string().replace("-", "");
-    let new_refresh_data = serde_json::json!({ "user_id": user_id, "scopes": scope });
+    let new_refresh_data = serde_json::json!({
+        "user_id": user_id,
+        "client_id": client_id,
+        "scopes": scope,
+    });
     let new_refresh_key = format!("oauth2_refresh_token:{}", new_refresh_token);
     if let Err(e) = state
         .auth_framework
@@ -754,9 +776,17 @@ async fn handle_refresh_token_grant(
 
 /// POST /api/v1/oauth/revoke — revoke an access or refresh token.
 ///
-/// Stores a revocation marker in KV (`oauth2_revoked_token:{token}`) and,
-/// for JWT tokens, also stores a JTI-based marker (`revoked_token:{jti}`)
-/// so that all authenticated endpoints reject the token immediately.
+/// Stores a revocation marker in KV (`oauth2_revoked_token:{token}`,
+/// TTL'd to the refresh token's own 30-day lifetime -- not just the 7
+/// days access-token revocation needs -- since this one marker has to
+/// outlive whichever token type was actually revoked) and, for JWT
+/// tokens, also stores a JTI-based marker (`revoked_token:{jti}`) so
+/// that all authenticated endpoints reject the token immediately. If
+/// the token is a refresh token, also deletes its `oauth2_refresh_token:`
+/// storage entry outright -- `handle_refresh_token_grant` also checks
+/// the revocation marker directly (failing closed on a storage error
+/// there), so revocation is effective for the marker's full TTL even if
+/// the delete itself fails.
 ///
 /// # Example
 /// ```rust,ignore
@@ -787,12 +817,26 @@ pub async fn revoke(
             serde_json::to_string(&revoked_data)
                 .unwrap_or_default()
                 .as_bytes(),
-            Some(std::time::Duration::from_secs(86400 * 7)),
+            // 30 days: must outlive the longest-lived token type this
+            // endpoint can revoke (the refresh token's own 30-day TTL),
+            // not just the 7 days an access token's JWT markers need --
+            // otherwise a revoked refresh token whose delete somehow
+            // failed would become usable again once this marker expired.
+            Some(std::time::Duration::from_secs(86400 * 30)),
         )
         .await
     {
         tracing::error!("Failed to store revoked token: {:?}", e);
         return ApiResponse::error_typed("server_error", "Failed to revoke token");
+    }
+
+    // If this is a refresh token, delete its storage entry outright so it
+    // can no longer be used to mint new access tokens. A no-op (and not an
+    // error) if `req.token` isn't a refresh token at all -- the key simply
+    // won't exist.
+    let refresh_key = format!("oauth2_refresh_token:{}", req.token);
+    if let Err(e) = state.auth_framework.storage().delete_kv(&refresh_key).await {
+        tracing::warn!("Failed to delete refresh token on revoke: {:?}", e);
     }
 
     // If the token is a JWT, also store revoked_token:{jti} so the authentication
