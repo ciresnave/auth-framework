@@ -1146,11 +1146,19 @@ impl DeviceFingerprintGenerator {
 
     /// Lookup IP geolocation using MaxMind GeoIP2 database
     fn lookup_maxmind_geolocation(&self, ip: &std::net::Ipv4Addr) -> Option<String> {
-        use std::path::Path;
-
         // Path to MaxMind GeoLite2-City.mmdb (configurable via environment)
         let db_path =
             std::env::var("MAXMIND_DB_PATH").unwrap_or_else(|_| "GeoLite2-City.mmdb".to_string());
+        self.lookup_maxmind_geolocation_at(&db_path, ip)
+    }
+
+    /// [`Self::lookup_maxmind_geolocation`] against an explicit database path.
+    fn lookup_maxmind_geolocation_at(
+        &self,
+        db_path: &str,
+        ip: &std::net::Ipv4Addr,
+    ) -> Option<String> {
+        use std::path::Path;
 
         if !Path::new(&db_path).exists() {
             tracing::warn!(
@@ -1160,7 +1168,7 @@ impl DeviceFingerprintGenerator {
             return None;
         }
 
-        match maxminddb::Reader::open_readfile(&db_path) {
+        match maxminddb::Reader::open_readfile(db_path) {
             Ok(reader) => {
                 match reader.lookup((*ip).into()) {
                     Ok(result) => match result.decode::<maxminddb::geoip2::City>() {
@@ -1754,5 +1762,41 @@ mod tests {
         assert!(config.enforce_geographic_restrictions);
         assert_eq!(config.allowed_countries, vec!["US".to_string()]);
         assert!(config.security_policy.require_mfa_for_new_devices);
+    }
+
+    // No test here performs a real MaxMind lookup (that needs a third-party
+    // .mmdb fixture). These cover the open path: a missing or unreadable
+    // database must yield `None`, never a panic.
+    #[test]
+    fn maxmind_geolocation_none_for_missing_or_garbage_database() {
+        let generator = DeviceFingerprintGenerator::new();
+        let ip = std::net::Ipv4Addr::new(8, 8, 8, 8);
+        let dir = tempfile::tempdir().unwrap();
+
+        let missing = dir.path().join("missing.mmdb");
+        assert_eq!(
+            generator.lookup_maxmind_geolocation_at(missing.to_str().unwrap(), &ip),
+            None
+        );
+
+        let garbage_inputs: [(&str, &[u8]); 3] = [
+            ("empty.mmdb", b""),
+            ("garbage.mmdb", b"this is not a MaxMind database at all"),
+            ("truncated.mmdb", b"\xAB\xCD\xEFMaxMind.com\x00"),
+        ];
+        for (name, bytes) in garbage_inputs {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            // Positive control: see the twin test in secure_session_config.rs.
+            assert!(
+                maxminddb::Reader::open_readfile(&path).is_err(),
+                "{name}: maxminddb accepted garbage bytes"
+            );
+            assert_eq!(
+                generator.lookup_maxmind_geolocation_at(path.to_str().unwrap(), &ip),
+                None,
+                "{name}"
+            );
+        }
     }
 }
