@@ -899,7 +899,6 @@ fn pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
 /// the vast majority of SAML Identity Providers.
 #[cfg(feature = "saml")]
 fn key_from_x509_der(der: &[u8]) -> Result<Key, String> {
-    use rsa::pkcs8::DecodePublicKey;
     use x509_parser::prelude::*;
 
     let (_, cert) = X509Certificate::from_der(der)
@@ -908,37 +907,19 @@ fn key_from_x509_der(der: &[u8]) -> Result<Key, String> {
     let spki = cert.public_key();
     let spki_der = spki.raw;
 
-    // Try RSA first (by far the most common in SAML).
-    if let Ok(rsa_pub) = rsa::RsaPublicKey::from_public_key_der(spki_der) {
-        return Ok(Key::new(
-            KeyData::Rsa {
-                public: rsa_pub,
-                private: None,
-            },
-            bergshamra::KeyUsage::Verify,
-        ));
-    }
-
-    // ECDSA P-256.
-    if let Ok(ec_key) = p256::ecdsa::VerifyingKey::from_public_key_der(spki_der) {
-        return Ok(Key::new(
-            KeyData::EcP256 {
-                public: ec_key,
-                private: None,
-            },
-            bergshamra::KeyUsage::Verify,
-        ));
-    }
-
-    // ECDSA P-384.
-    if let Ok(ec_key) = p384::ecdsa::VerifyingKey::from_public_key_der(spki_der) {
-        return Ok(Key::new(
-            KeyData::EcP384 {
-                public: ec_key,
-                private: None,
-            },
-            bergshamra::KeyUsage::Verify,
-        ));
+    // Try RSA first (by far the most common in SAML), then the two ECDSA
+    // curves. `KeyData` is an opaque handle as of bergshamra 0.9.2 (no
+    // public enum variants to construct directly, unlike 0.3.x) --
+    // `from_spki_der` requires an explicit algorithm guess per attempt,
+    // same shape as the old code's "try RSA, then P-256, then P-384".
+    for algorithm in [
+        kryptering::KeyAlgorithm::Rsa,
+        kryptering::KeyAlgorithm::Ec(kryptering::EcCurve::P256),
+        kryptering::KeyAlgorithm::Ec(kryptering::EcCurve::P384),
+    ] {
+        if let Ok(key_data) = KeyData::from_spki_der(algorithm, spki_der) {
+            return Ok(Key::new(key_data, bergshamra::KeyUsage::Verify));
+        }
     }
 
     Err(format!(
@@ -1335,6 +1316,70 @@ fn xml_extract_name_id(saml_xml: &str) -> Option<String> {
 mod tests {
     use super::*;
     use chrono::{Duration, Utc};
+
+    /// Regression/coverage test for the bergshamra 0.9.2 bump's rewrite of
+    /// `key_from_x509_der`: a real X.509 certificate (ECDSA P-256, the same
+    /// key type this codebase's own rcgen-based cert-generation tests
+    /// already use elsewhere) must import successfully through
+    /// `KeyData::from_spki_der(kryptering::KeyAlgorithm::Ec(EcCurve::P256), ..)`
+    /// after failing the RSA attempt first, exercising the same
+    /// try-RSA-then-P256-then-P384 fallback loop a real RSA-keyed SAML IdP
+    /// certificate would use (just landing on a different iteration).
+    #[test]
+    fn test_key_from_x509_der_accepts_ecdsa_p256_certificate() {
+        let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .expect("ECDSA P-256 key generation should succeed");
+        let params = rcgen::CertificateParams::default();
+        let cert = params
+            .self_signed(&key_pair)
+            .expect("self-signing should succeed");
+
+        let key = key_from_x509_der(cert.der().as_ref())
+            .expect("a valid ECDSA P-256 certificate must be accepted");
+        assert_eq!(key.usage, bergshamra::KeyUsage::Verify);
+    }
+
+    /// Drift detector for the deliberate choice (not CireSnave's, mine, see
+    /// the bergshamra dependency's own Cargo.toml comment) to select
+    /// bergshamra's `aws-lc` feature alone -- excluding its default
+    /// `legacy-algorithms`, `post-quantum`, and `pkcs11` features, none of
+    /// which any current SAML use case needs. If someone edits the
+    /// `bergshamra` dependency line to add one of those back (e.g. while
+    /// chasing an unrelated build error) without updating this test and
+    /// its comment, this goes red -- the point is making that an explicit,
+    /// visible decision rather than a silent feature-creep.
+    #[test]
+    fn test_bergshamra_feature_choices_are_deliberate() {
+        let manifest = include_str!("../../Cargo.toml");
+        let bergshamra_line = manifest
+            .lines()
+            .skip_while(|l| !l.trim_start().starts_with("bergshamra = {"))
+            .take_while(|l| !l.trim_end().ends_with("optional = true }"))
+            .chain(std::iter::once("], optional = true }"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            bergshamra_line.contains(r#""aws-lc""#),
+            "expected bergshamra's feature list to include \"aws-lc\": {bergshamra_line}"
+        );
+        for excluded in ["legacy-algorithms", "post-quantum", "pkcs11", "rustcrypto"] {
+            assert!(
+                !bergshamra_line.contains(excluded),
+                "bergshamra's feature list now includes {excluded:?}, which was a deliberate \
+                 exclusion (see the dependency's own Cargo.toml comment) -- if this is an \
+                 intentional change, update that comment and this test together, don't just \
+                 fix the assertion"
+            );
+        }
+    }
+
+    #[test]
+    fn test_key_from_x509_der_rejects_non_certificate_der() {
+        let err = key_from_x509_der(b"not a certificate")
+            .expect_err("garbage input must not be accepted as a certificate");
+        assert!(err.contains("Failed to parse X.509 certificate"));
+    }
 
     #[test]
     fn test_extract_issuer() {

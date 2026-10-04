@@ -23,9 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change, not a regression -- 1024-bit RSA has been considered
   insufficiently secure for new deployments for years -- but it is a real
   behavior change for any integrator whose external IdP or JARM
-  recipient key falls outside the new range. SAML (`saml` feature) and
-  `mysql-storage` still depend on `rsa` via separate paths, tracked
-  separately.
+  recipient key falls outside the new range. `mysql-storage` still
+  depends on `rsa` via a separate path (sqlx-mysql's
+  `caching_sha2_password` auth plugin), tracked separately as
+  CireSnave's own disposition.
+
+- SAML (`saml` feature) no longer depends on the `rsa` crate either:
+  `bergshamra` is bumped 0.3.1 -> 0.9.2 and switched from its default
+  `rustcrypto` backend to its `aws-lc` backend (via a new direct
+  `kryptering` dependency), so IdP signing-key verification now goes
+  through `aws-lc-rs` for RSA, P-256, and P-384 keys instead of the
+  `rsa`/`p256`/`p384` RustCrypto crates. `KeyData` construction changed
+  from bergshamra's old public enum (`KeyData::Rsa{..}`,
+  `KeyData::EcP256{..}`, `KeyData::EcP384{..}`) to the new opaque
+  `KeyData::from_spki_der(kryptering::KeyAlgorithm, der)` API; this is
+  an internal implementation detail of `key_from_x509_der` and does not
+  change SAML's public behavior or supported algorithm set.
 
 - **Breaking:** each storage-backend feature now enables only its own
   `sqlx` sub-feature -- `postgres-storage` -> `sqlx/postgres`,
