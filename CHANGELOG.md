@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc26] - 2026-10-04
+
+### Security
+
+- Fixed GHSA-jfmh-j245-wpjg: MFA verification no longer derives a
+  fallback secret.
+- Fixed GHSA-rf2h-7m78-hhjm: revoking a refresh token now invalidates
+  it.
+
 ## [0.5.0-rc25] - 2026-09-17
 
 ### Security
