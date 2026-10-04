@@ -36,9 +36,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rsa`/`p256`/`p384` RustCrypto crates. `KeyData` construction changed
   from bergshamra's old public enum (`KeyData::Rsa{..}`,
   `KeyData::EcP256{..}`, `KeyData::EcP384{..}`) to the new opaque
-  `KeyData::from_spki_der(kryptering::KeyAlgorithm, der)` API; this is
-  an internal implementation detail of `key_from_x509_der` and does not
-  change SAML's public behavior or supported algorithm set.
+  `KeyData::from_spki_der(kryptering::KeyAlgorithm, der)` API.
+  **Behavior changes, found by adversarial review (not just an internal
+  implementation detail):**
+  - the same 2048-bit RSA key-size floor from the jsonwebtoken/JARM
+    change above now applies to SAML IdP signing keys too -- a
+    previously-accepted sub-2048-bit RSA IdP certificate now fails SAML
+    signature verification at login time, not at startup;
+  - the `aws-lc` backend drops several weaker signature algorithms that
+    bergshamra's default `rustcrypto` backend (and its optional
+    `legacy-algorithms` feature, not enabled here) supported: RSA-SHA224,
+    RSA-PSS with SHA1/SHA224/SHA3-*, ECDSA with SHA1/SHA224/SHA3-*, and
+    (via `legacy-algorithms` specifically) DSA, MD5, and RIPEMD160.
+    RSA-SHA1 -- the one legacy combination real-world SAML IdPs still
+    sometimes use -- is unaffected and continues to work.
+  - **Known limitation, tracked separately:** `kryptering`'s `aws-lc`
+    feature only compiles on Linux and non-FIPS macOS (x86_64/aarch64);
+    it hard-errors via `compile_error!` on Windows and other platforms
+    (`kryptering-0.6.0/src/lib.rs`). `saml` therefore no longer builds on
+    Windows at all. CI (ubuntu-only) does not catch this. This is a real
+    capability loss for Windows users of the `saml` feature and needs a
+    disposition from CireSnave before this lands; not a hidden silent
+    regression, flagged explicitly here pending that call.
 
 - **Breaking:** each storage-backend feature now enables only its own
   `sqlx` sub-feature -- `postgres-storage` -> `sqlx/postgres`,

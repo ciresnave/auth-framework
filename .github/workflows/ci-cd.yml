@@ -327,6 +327,19 @@ jobs:
         run: |
           cargo check --lib --tests --bins --examples --no-default-features --features "${{ matrix.features }}"
 
+      # This matrix entry is the only one carrying `saml`, and until now
+      # nothing in CI actually RAN the saml test suite (only compiled it
+      # above) -- `cargo check --tests` proves the tests build, not that
+      # they pass. SAML's tests are self-contained (no DB/redis needed), so
+      # this is safe to run for just this one matrix entry rather than
+      # widening it to every group above, several of which assume services
+      # this job doesn't provide.
+      - name: Run SAML tests
+        if: matrix.name == 'enterprise-auth'
+        shell: bash
+        run: |
+          cargo test --lib --no-default-features --features "${{ matrix.features }}" 'api::saml::tests::'
+
   security-audit-advisories:
     name: Security Audit (advisories)
     runs-on: ubuntu-latest

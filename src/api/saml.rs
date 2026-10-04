@@ -912,19 +912,30 @@ fn key_from_x509_der(der: &[u8]) -> Result<Key, String> {
     // public enum variants to construct directly, unlike 0.3.x) --
     // `from_spki_der` requires an explicit algorithm guess per attempt,
     // same shape as the old code's "try RSA, then P-256, then P-384".
+    let mut last_err = None;
     for algorithm in [
         kryptering::KeyAlgorithm::Rsa,
         kryptering::KeyAlgorithm::Ec(kryptering::EcCurve::P256),
         kryptering::KeyAlgorithm::Ec(kryptering::EcCurve::P384),
     ] {
-        if let Ok(key_data) = KeyData::from_spki_der(algorithm, spki_der) {
-            return Ok(Key::new(key_data, bergshamra::KeyUsage::Verify));
+        match KeyData::from_spki_der(algorithm, spki_der) {
+            Ok(key_data) => return Ok(Key::new(key_data, bergshamra::KeyUsage::Verify)),
+            Err(e) => last_err = Some(e),
         }
     }
 
+    // `last_err` (from the final attempt, P-384) is diagnostic detail only --
+    // it is never the reason a GENUINELY RSA or P-256 key is rejected, since
+    // each attempt's own error is independent of the others; keeping it
+    // means a size/strength rejection (e.g. a sub-2048-bit RSA key, per
+    // aws-lc-rs's floor) is surfaced instead of silently collapsed into
+    // "unsupported algorithm".
     Err(format!(
-        "Unsupported IdP signing key algorithm (OID: {}). RSA, P-256, and P-384 are supported.",
-        cert.public_key().algorithm.oid()
+        "Unsupported IdP signing key algorithm (OID: {}). RSA, P-256, and P-384 are supported.{}",
+        cert.public_key().algorithm.oid(),
+        last_err
+            .map(|e| format!(" Last error: {e}"))
+            .unwrap_or_default()
     ))
 }
 
@@ -1339,6 +1350,28 @@ mod tests {
         assert_eq!(key.usage, bergshamra::KeyUsage::Verify);
     }
 
+    /// Same coverage as the P-256 test above, but for the RSA branch of the
+    /// try-RSA-then-P256-then-P384 loop: a real RSA-keyed certificate must
+    /// land on the FIRST iteration (`KeyAlgorithm::Rsa`), not fall through
+    /// to an EC branch misinterpreting the same DER bytes. The P-256 test
+    /// alone cannot catch a bug confined to the RSA branch (e.g. the RSA
+    /// arm silently swapped for an EC one, or removed from the loop
+    /// entirely) since it never exercises that code path.
+    #[test]
+    fn test_key_from_x509_der_accepts_rsa_certificate() {
+        let key_pair =
+            rcgen::KeyPair::generate_rsa_for(&rcgen::PKCS_RSA_SHA256, rcgen::RsaKeySize::_2048)
+                .expect("RSA key generation should succeed");
+        let params = rcgen::CertificateParams::default();
+        let cert = params
+            .self_signed(&key_pair)
+            .expect("self-signing should succeed");
+
+        let key = key_from_x509_der(cert.der().as_ref())
+            .expect("a valid RSA certificate must be accepted");
+        assert_eq!(key.usage, bergshamra::KeyUsage::Verify);
+    }
+
     /// Drift detector for the deliberate choice (not CireSnave's, mine, see
     /// the bergshamra dependency's own Cargo.toml comment) to select
     /// bergshamra's `aws-lc` feature alone -- excluding its default
@@ -1351,13 +1384,18 @@ mod tests {
     #[test]
     fn test_bergshamra_feature_choices_are_deliberate() {
         let manifest = include_str!("../../Cargo.toml");
-        let bergshamra_line = manifest
+        let mut bergshamra_lines = Vec::new();
+        for line in manifest
             .lines()
             .skip_while(|l| !l.trim_start().starts_with("bergshamra = {"))
-            .take_while(|l| !l.trim_end().ends_with("optional = true }"))
-            .chain(std::iter::once("], optional = true }"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        {
+            let done = line.trim_end().ends_with("optional = true }");
+            bergshamra_lines.push(line);
+            if done {
+                break;
+            }
+        }
+        let bergshamra_line = bergshamra_lines.join("\n");
 
         assert!(
             bergshamra_line.contains(r#""aws-lc""#),
