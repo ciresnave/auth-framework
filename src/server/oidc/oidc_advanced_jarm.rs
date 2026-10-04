@@ -60,14 +60,8 @@ use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header};
-#[cfg(feature = "rsa-private-key-ops")]
-use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
-#[cfg(feature = "rsa-private-key-ops")]
-use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-#[cfg(feature = "rsa-private-key-ops")]
-use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -298,13 +292,28 @@ pub struct AdvancedJarmManager {
     /// HTTP client for push notifications
     http_client: crate::server::core::common_http::HttpClient,
     /// RSA public key for JWE CEK wrapping (encrypt to recipient). Requires
-    /// the `rsa-private-key-ops` feature (RUSTSEC-2023-0071 -- see deny.toml).
+    /// the `rsa-private-key-ops` feature.
     #[cfg(feature = "rsa-private-key-ops")]
-    jwe_public_key: Option<RsaPublicKey>,
+    jwe_public_key: Option<aws_lc_rs::rsa::OaepPublicEncryptingKey>,
     /// RSA private key for JWE CEK unwrapping (decrypt when we are
     /// recipient). Requires the `rsa-private-key-ops` feature.
     #[cfg(feature = "rsa-private-key-ops")]
-    jwe_private_key: Option<RsaPrivateKey>,
+    jwe_private_key: Option<aws_lc_rs::rsa::OaepPrivateDecryptingKey>,
+}
+
+/// Strip PEM headers/footers and whitespace, then base64-decode to DER.
+#[cfg(feature = "rsa-private-key-ops")]
+fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
+    let b64: String = pem
+        .lines()
+        .filter(|line| {
+            !line.starts_with("-----BEGIN") && !line.starts_with("-----END") && !line.is_empty()
+        })
+        .collect();
+
+    base64::engine::general_purpose::STANDARD
+        .decode(&b64)
+        .map_err(|e| AuthError::crypto(format!("Failed to base64-decode PEM: {e}")))
 }
 
 impl AdvancedJarmManager {
@@ -406,8 +415,7 @@ impl AdvancedJarmManager {
             warn!(
                 "JARM JWE recipient keys were configured, but the `rsa-private-key-ops` \
                  feature is not enabled -- JWE encryption/decryption will be \
-                 unavailable. Enable `rsa-private-key-ops` to use it (RUSTSEC-2023-0071 \
-                 applies; see deny.toml)."
+                 unavailable. Enable `rsa-private-key-ops` to use it."
             );
         }
 
@@ -417,18 +425,35 @@ impl AdvancedJarmManager {
                 .jwe_recipient_public_key_pem
                 .clone()
                 .or_else(|| std::env::var("JARM_JWE_RECIPIENT_PUBLIC_KEY_PEM").ok());
-            jwe_pub_pem
-                .as_deref()
-                .and_then(|pem| match RsaPublicKey::from_public_key_pem(pem) {
+            jwe_pub_pem.as_deref().and_then(|pem| {
+                let der = match pem_to_der(pem) {
+                    Ok(der) => der,
+                    Err(e) => {
+                        warn!("JARM JWE: could not decode recipient public key PEM: {e}");
+                        return None;
+                    }
+                };
+                let encrypting_key = match aws_lc_rs::rsa::PublicEncryptingKey::from_der(&der) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        warn!(
+                            "JARM JWE: recipient public key is not a valid RSA key \
+                             (aws-lc-rs requires 2048-8192 bit keys): {e}"
+                        );
+                        return None;
+                    }
+                };
+                match aws_lc_rs::rsa::OaepPublicEncryptingKey::new(encrypting_key) {
                     Ok(k) => {
                         info!("JARM JWE: loaded RSA recipient public key");
                         Some(k)
                     }
-                    Err(e) => {
-                        warn!("JARM JWE: could not parse recipient public key: {e}");
+                    Err(_) => {
+                        warn!("JARM JWE: recipient public key rejected for OAEP use");
                         None
                     }
-                })
+                }
+            })
         };
         #[cfg(feature = "rsa-private-key-ops")]
         let jwe_private_key = {
@@ -436,18 +461,35 @@ impl AdvancedJarmManager {
                 .jwe_recipient_private_key_pem
                 .clone()
                 .or_else(|| std::env::var("JARM_JWE_RECIPIENT_PRIVATE_KEY_PEM").ok());
-            jwe_priv_pem
-                .as_deref()
-                .and_then(|pem| match RsaPrivateKey::from_pkcs8_pem(pem) {
+            jwe_priv_pem.as_deref().and_then(|pem| {
+                let der = match pem_to_der(pem) {
+                    Ok(der) => der,
+                    Err(e) => {
+                        warn!("JARM JWE: could not decode recipient private key PEM: {e}");
+                        return None;
+                    }
+                };
+                let decrypting_key = match aws_lc_rs::rsa::PrivateDecryptingKey::from_pkcs8(&der) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        warn!(
+                            "JARM JWE: recipient private key is not a valid RSA key \
+                             (aws-lc-rs requires 2048-8192 bit keys): {e}"
+                        );
+                        return None;
+                    }
+                };
+                match aws_lc_rs::rsa::OaepPrivateDecryptingKey::new(decrypting_key) {
                     Ok(k) => {
                         info!("JARM JWE: loaded RSA recipient private key");
                         Some(k)
                     }
-                    Err(e) => {
-                        warn!("JARM JWE: could not parse recipient private key: {e}");
+                    Err(_) => {
+                        warn!("JARM JWE: recipient private key rejected for OAEP use");
                         None
                     }
-                })
+                }
+            })
         };
 
         let mut required_issuers = std::collections::HashSet::new();
@@ -743,22 +785,25 @@ impl AdvancedJarmManager {
             )
         })?;
 
-        // RSA-OAEP-SHA-256 key wrapping.
-        let mut rng = rand_core::OsRng;
-        let padding = Oaep::new::<Sha256>();
-        pub_key
-            .encrypt(&mut rng, padding, cek)
-            .map_err(|e| AuthError::crypto(format!("RSA-OAEP CEK wrap failed: {e}")))
+        let mut ciphertext = vec![0u8; pub_key.ciphertext_size()];
+        let written = pub_key
+            .encrypt(
+                &aws_lc_rs::rsa::OAEP_SHA256_MGF1SHA256,
+                cek,
+                &mut ciphertext,
+                None,
+            )
+            .map_err(|_| AuthError::crypto("RSA-OAEP CEK wrap failed"))?
+            .len();
+        ciphertext.truncate(written);
+        Ok(ciphertext)
     }
 
-    /// RSA-OAEP JWE requires the `rsa-private-key-ops` feature (RUSTSEC-2023-0071 --
-    /// see deny.toml).
+    /// RSA-OAEP JWE requires the `rsa-private-key-ops` feature.
     #[cfg(not(feature = "rsa-private-key-ops"))]
     fn encrypt_key(&self, _cek: &[u8]) -> Result<Vec<u8>> {
         Err(AuthError::crypto(
-            "JARM RSA-OAEP JWE encryption requires the `rsa-private-key-ops` feature. \
-             RSA has an open, unpatched timing-sidechannel advisory \
-             (RUSTSEC-2023-0071); see deny.toml for the full disposition.",
+            "JARM RSA-OAEP JWE encryption requires the `rsa-private-key-ops` feature.",
         ))
     }
 
@@ -972,12 +1017,13 @@ impl AdvancedJarmManager {
     }
 
     /// RSA-OAEP JWE decryption requires the `rsa-private-key-ops` feature. This is
-    /// the CONFIRMED attacker-reachable exposure named in deny.toml's
-    /// RUSTSEC-2023-0071 entry: this function performs a raw RSA private-key
-    /// decrypt of ciphertext taken directly from an external token string
-    /// (see `validate_jarm_response` / `decrypt_jwe_response`), which is
-    /// exactly the advisory's own workaround scenario ("avoid using rsa
-    /// where attackers can observe timing, over the network").
+    /// the path that was the confirmed attacker-reachable exposure under the
+    /// `rsa` crate: this function performs a raw RSA private-key decrypt of
+    /// ciphertext taken directly from an external token string (see
+    /// `validate_jarm_response` / `decrypt_jwe_response`). Now backed by
+    /// aws-lc-rs, whose decrypt returns an opaque `Unspecified` error on
+    /// every failure path -- malformed ciphertext, wrong padding, wrong key
+    /// size all look identical to the caller, by construction.
     #[cfg(not(feature = "rsa-private-key-ops"))]
     fn decrypt_rsa_oaep_a256gcm(
         &self,
@@ -987,9 +1033,7 @@ impl AdvancedJarmManager {
         _tag_b64: &str,
     ) -> Result<String, AuthError> {
         Err(AuthError::crypto(
-            "JARM RSA-OAEP JWE decryption requires the `rsa-private-key-ops` feature. \
-             RSA has an open, unpatched timing-sidechannel advisory \
-             (RUSTSEC-2023-0071); see deny.toml for the full disposition.",
+            "JARM RSA-OAEP JWE decryption requires the `rsa-private-key-ops` feature.",
         ))
     }
 
@@ -1012,14 +1056,26 @@ impl AdvancedJarmManager {
             )
         })?;
 
-        // 1. Unwrap the CEK with RSA-OAEP-SHA-256.
+        // 1. Unwrap the CEK with RSA-OAEP-SHA-256. aws-lc-rs's decrypt returns
+        // an opaque Unspecified error -- uniform across every RSA-OAEP-layer
+        // failure mode (bad padding, wrong key, wrong size once past aws-lc's
+        // own length filtering), so this map_err can't leak which one
+        // occurred. Uniformity stops at this layer: the CEK-length check and
+        // AES-GCM decrypt below have their own distinguishable errors, same
+        // as before this change -- not a new oracle (OAEP is CCA2-secure;
+        // see the longer note on the test for this function).
         let encrypted_cek = URL_SAFE_NO_PAD
             .decode(encrypted_key_b64)
             .map_err(|e| AuthError::token(format!("Bad encrypted_key encoding: {e}")))?;
-        let padding = Oaep::new::<Sha256>();
+        let mut cek_buf = vec![0u8; priv_key.key_size_bytes()];
         let cek = priv_key
-            .decrypt(padding, &encrypted_cek)
-            .map_err(|e| AuthError::crypto(format!("RSA-OAEP CEK unwrap failed: {e}")))?;
+            .decrypt(
+                &aws_lc_rs::rsa::OAEP_SHA256_MGF1SHA256,
+                &encrypted_cek,
+                &mut cek_buf,
+                None,
+            )
+            .map_err(|_| AuthError::crypto("RSA-OAEP CEK unwrap failed"))?;
 
         if cek.len() != 32 {
             return Err(AuthError::crypto(format!(
@@ -1046,7 +1102,7 @@ impl AdvancedJarmManager {
         // aes-gcm expects ciphertext + tag concatenated.
         ciphertext.extend_from_slice(&tag);
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let key = Key::<Aes256Gcm>::from_slice(&cek);
+        let key = Key::<Aes256Gcm>::from_slice(cek);
         let cipher = Aes256Gcm::new(key);
         let plaintext = cipher
             .decrypt(nonce, ciphertext.as_slice())
@@ -1364,21 +1420,30 @@ mod tests {
     #[cfg(feature = "rsa-private-key-ops")]
     #[tokio::test]
     async fn test_jwe_encrypt_decrypt_roundtrip() {
-        use rsa::RsaPrivateKey;
-        use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
+        use aws_lc_rs::encoding::AsDer as _;
+
+        fn der_to_pem(der: &[u8], label: &str) -> String {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+            let mut pem = format!("-----BEGIN {label}-----\n");
+            for chunk in b64.as_bytes().chunks(64) {
+                pem.push_str(std::str::from_utf8(chunk).unwrap());
+                pem.push('\n');
+            }
+            pem.push_str(&format!("-----END {label}-----\n"));
+            pem
+        }
 
         // Generate a 2048-bit RSA key pair for the test.
-        let mut rng = rand_core::OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation failed");
-        let public_key = private_key.to_public_key();
+        let private_key =
+            aws_lc_rs::rsa::PrivateDecryptingKey::generate(aws_lc_rs::rsa::KeySize::Rsa2048)
+                .expect("RSA key generation failed");
+        let public_key = private_key.public_key();
 
-        let priv_pem = private_key
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("private key PEM serialisation failed")
-            .to_string();
-        let pub_pem = public_key
-            .to_public_key_pem(LineEnding::LF)
-            .expect("public key PEM serialisation failed");
+        let priv_der = private_key.as_der().expect("private key DER export failed");
+        let pub_der = public_key.as_der().expect("public key DER export failed");
+
+        let priv_pem = der_to_pem(priv_der.as_ref(), "PRIVATE KEY");
+        let pub_pem = der_to_pem(pub_der.as_ref(), "PUBLIC KEY");
 
         let config = AdvancedJarmConfig::builder()
             .supported_algorithms(vec![Algorithm::HS256])
@@ -1437,6 +1502,116 @@ mod tests {
             3,
             "Recovered payload should be a 3-part JWT"
         );
+    }
+
+    /// The JARM RSA-OAEP decrypt path is the confirmed attacker-reachable
+    /// exposure (`validate_jarm_response` feeds external ciphertext straight
+    /// into a private-key decrypt). This asserts uniformity AT THE RSA-OAEP
+    /// LAYER ONLY: every encrypted_key input that reaches
+    /// `OaepPrivateDecryptingKey::decrypt` and fails there (wrong padding,
+    /// wrong key, wrong size once length-filtered by aws-lc-rs) produces the
+    /// same opaque error. It does NOT claim uniformity end-to-end -- once an
+    /// RSA-OAEP unwrap succeeds, the subsequent CEK-length check, IV/tag
+    /// decoding, and AES-256-GCM decrypt each have their own, distinguishable
+    /// error messages, same as before this change. That is not a new
+    /// Manger/Bleichenbacher-style oracle: OAEP is CCA2-secure, so knowing
+    /// only "did the RSA-OAEP layer accept this ciphertext" leaks nothing
+    /// useful, and producing an OAEP-valid ciphertext needs only the public
+    /// key, which the attacker already has.
+    #[cfg(feature = "rsa-private-key-ops")]
+    #[tokio::test]
+    async fn test_jwe_decrypt_rejects_malformed_ciphertext_uniformly() {
+        use aws_lc_rs::encoding::AsDer as _;
+
+        fn der_to_pem(der: &[u8], label: &str) -> String {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+            let mut pem = format!("-----BEGIN {label}-----\n");
+            for chunk in b64.as_bytes().chunks(64) {
+                pem.push_str(std::str::from_utf8(chunk).unwrap());
+                pem.push('\n');
+            }
+            pem.push_str(&format!("-----END {label}-----\n"));
+            pem
+        }
+
+        let private_key =
+            aws_lc_rs::rsa::PrivateDecryptingKey::generate(aws_lc_rs::rsa::KeySize::Rsa2048)
+                .expect("RSA key generation failed");
+        let public_key = private_key.public_key();
+        let priv_pem = der_to_pem(
+            private_key
+                .as_der()
+                .expect("private key DER export failed")
+                .as_ref(),
+            "PRIVATE KEY",
+        );
+        let pub_pem = der_to_pem(
+            public_key
+                .as_der()
+                .expect("public key DER export failed")
+                .as_ref(),
+            "PUBLIC KEY",
+        );
+
+        let config = AdvancedJarmConfig::builder()
+            .supported_algorithms(vec![Algorithm::HS256])
+            .enable_jwe_encryption(true)
+            .jwe_recipient_public_key_pem(pub_pem)
+            .jwe_recipient_private_key_pem(priv_pem)
+            .build();
+        let manager = AdvancedJarmManager::new(config);
+
+        // The uniform-error assertion below is meaningless if the keys
+        // silently failed to load (e.g. a pem_to_der regression) -- every
+        // input would then hit the SAME early "requires an RSA private key"
+        // error for a reason that has nothing to do with the property this
+        // test checks. Confirm the keys actually loaded first.
+        assert!(
+            manager.jwe_private_key.is_some(),
+            "JWE private key must have loaded for this test to mean anything"
+        );
+        assert!(
+            manager.jwe_public_key.is_some(),
+            "JWE public key must have loaded for this test to mean anything"
+        );
+
+        let iv_b64 = URL_SAFE_NO_PAD.encode([0u8; 12]);
+        let tag_b64 = URL_SAFE_NO_PAD.encode([0u8; 16]);
+        let ciphertext_b64 = URL_SAFE_NO_PAD.encode([0u8; 16]);
+
+        // A real, correctly-sized-but-wrong encrypted key (right length for
+        // a 2048-bit key, garbage content -- the shape a real attacker-
+        // supplied forged token would have, not a trivially-too-short one).
+        let wrong_key_same_size = URL_SAFE_NO_PAD.encode(vec![0x42u8; 256]);
+        // Too short to even be a candidate ciphertext for this key size.
+        let too_short = URL_SAFE_NO_PAD.encode(vec![0x42u8; 16]);
+        // Too long.
+        let too_long = URL_SAFE_NO_PAD.encode(vec![0x42u8; 512]);
+        // Empty.
+        let empty = URL_SAFE_NO_PAD.encode(Vec::<u8>::new());
+
+        let mut messages = Vec::new();
+        for encrypted_key_b64 in [&wrong_key_same_size, &too_short, &too_long, &empty] {
+            let err = manager
+                .decrypt_rsa_oaep_a256gcm(encrypted_key_b64, &iv_b64, &ciphertext_b64, &tag_b64)
+                .expect_err("malformed/forged ciphertext must never decrypt successfully");
+            messages.push(format!("{err}"));
+        }
+
+        let first = &messages[0];
+        assert!(
+            first.contains("CEK unwrap failed"),
+            "expected the RSA-OAEP-layer error, got {first:?} -- if the keys didn't \
+             load this would be the generic \"requires an RSA private key\" message instead, \
+             which would make the uniformity check below pass vacuously"
+        );
+        for (i, msg) in messages.iter().enumerate() {
+            assert_eq!(
+                msg, first,
+                "input {i} produced a different error message than input 0 ({first:?} vs {msg:?}) -- \
+                 a distinguishable failure mode is exactly the oracle this path must not have"
+            );
+        }
     }
 
     #[test]
