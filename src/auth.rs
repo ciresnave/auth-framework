@@ -1355,11 +1355,23 @@ impl AuthFramework {
         }
     }
 
-    /// Generate TOTP secret for a user.
+    /// Generate TOTP secret for a user, and persist it under the same
+    /// storage key `auth_modular::mfa::TotpManager` uses, so this facade
+    /// and the modular path agree on where the secret lives.
     pub async fn generate_totp_secret(&self, user_id: &str) -> Result<String> {
         debug!("Generating TOTP secret for user '{}'", user_id);
 
-        let secret = crate::utils::crypto::generate_token(20);
+        // 20 cryptographically-secure random bytes, RFC 4648 base32-encoded
+        // -- compatible with verify_totp_code's base32::decode, matching
+        // the modular TotpManager::generate_secret format (see #24/#94).
+        let rng = ring::rand::SystemRandom::new();
+        let mut raw_bytes = [0u8; 20];
+        ring::rand::SecureRandom::fill(&rng, &mut raw_bytes)
+            .map_err(|_| AuthError::internal("Failed to generate random bytes for TOTP secret"))?;
+        let secret = base32::encode(base32::Alphabet::Rfc4648 { padding: true }, &raw_bytes);
+
+        let key = format!("user:{}:totp_secret", user_id);
+        self.storage.store_kv(&key, secret.as_bytes(), None).await?;
 
         info!("TOTP secret generated for user '{}'", user_id);
 
@@ -1703,21 +1715,21 @@ impl AuthFramework {
         Ok(challenge_id)
     }
 
-    /// Get user's TOTP secret from secure storage
+    /// Get user's TOTP secret from secure storage.
+    ///
+    /// Returns an error if the user has no secret enrolled. There is no
+    /// fallback secret: a user with nothing enrolled must fail
+    /// verification, never receive a silently-derived one.
     async fn get_user_totp_secret(&self, user_id: &str) -> Result<String> {
-        // In production, this would be retrieved from secure storage with proper encryption
-        // For now, derive a consistent secret per user for testing
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(user_id.as_bytes());
-        hasher.update(b"totp_secret_salt_2024");
-        let hash = hasher.finalize();
-
-        // Convert to base32 for TOTP compatibility
-        Ok(base32::encode(
-            base32::Alphabet::Rfc4648 { padding: true },
-            &hash[0..20], // Use first 160 bits (20 bytes)
-        ))
+        let key = format!("user:{}:totp_secret", user_id);
+        match self.storage.get_kv(&key).await? {
+            Some(secret_data) => String::from_utf8(secret_data)
+                .map_err(|e| AuthError::internal(format!("Failed to parse TOTP secret: {}", e))),
+            None => Err(AuthError::validation(format!(
+                "No TOTP secret enrolled for user '{}'",
+                user_id
+            ))),
+        }
     }
 
     /// Verify MFA code with proper challenge validation.
@@ -3107,6 +3119,65 @@ mod tests {
 
         assert!(framework.initialize().await.is_ok());
         assert!(framework.initialized);
+    }
+
+    /// `AuthFramework::verify_totp_code` must reject an unenrolled user
+    /// outright, never silently derive and accept a fallback secret
+    /// computed purely from the user_id. Proves absence, not just "some
+    /// code was rejected": computes the specific fallback this method
+    /// used to derive (`SHA256(user_id || "totp_secret_salt_2024")`,
+    /// base32-encoded), generates the valid code for that derived secret,
+    /// and submits it -- if the fallback still existed, this specific
+    /// code would verify as `true`.
+    #[tokio::test]
+    async fn test_verify_totp_code_rejects_unenrolled_user_even_with_the_old_derived_code() {
+        let config = AuthConfig::new()
+            .secret("test_totp_facade_secret_key_long_enough_for_security".to_string());
+        let mut framework = AuthFramework::new(config);
+        framework.initialize().await.unwrap();
+        let user_id = "totp_facade_unenrolled_user";
+
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(user_id.as_bytes());
+        hasher.update(b"totp_secret_salt_2024");
+        let hash = hasher.finalize();
+        let would_be_derived_secret =
+            base32::encode(base32::Alphabet::Rfc4648 { padding: true }, &hash[0..20]);
+
+        let code_for_derived_secret = framework
+            .generate_totp_code(&would_be_derived_secret)
+            .await
+            .unwrap();
+
+        assert!(
+            !framework
+                .verify_totp_code(user_id, &code_for_derived_secret)
+                .await
+                .unwrap(),
+            "an unenrolled user must not be verifiable via the old predictable fallback secret"
+        );
+    }
+
+    /// `generate_totp_secret` must persist the secret it generates (under
+    /// the same key `TotpManager` uses), and `verify_totp_code` must be
+    /// able to verify a code generated from it -- a real enrollment must
+    /// actually work, not merely reject fallbacks.
+    #[tokio::test]
+    async fn test_generate_totp_secret_then_verify_totp_code_round_trips() {
+        let config = AuthConfig::new()
+            .secret("test_totp_facade_secret_key_long_enough_for_security".to_string());
+        let mut framework = AuthFramework::new(config);
+        framework.initialize().await.unwrap();
+        let user_id = "totp_facade_enrolled_user";
+
+        let secret = framework.generate_totp_secret(user_id).await.unwrap();
+        let code = framework.generate_totp_code(&secret).await.unwrap();
+
+        assert!(
+            framework.verify_totp_code(user_id, &code).await.unwrap(),
+            "a code generated from a properly enrolled secret must verify"
+        );
     }
 
     #[tokio::test]
