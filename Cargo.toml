@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.6.0-rc6"
+  version       = "0.6.0-rc7"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -367,12 +367,18 @@
   ], optional = true }
   warp = { version = "0.4.2", features = ["server", "test"], optional = true }
 
-  # Database integrations (optional) - Updated sqlx to fix RSA vulnerability
+  # Database integrations (optional). Deliberately does NOT list "mysql",
+  # "sqlite", or "postgres" here -- those are enabled per-backend by
+  # mysql-storage/sqlite-storage/postgres-storage below (see those
+  # features' own comments), not unconditionally by every build that
+  # turns on `sqlx` at all. sqlx-mysql pulls in the `rsa` crate
+  # (RUSTSEC-2023-0071) for its caching_sha2_password auth-plugin support;
+  # before this split, enabling ANY one storage backend (including
+  # `postgres-storage`, which is in `default`) silently built sqlx with
+  # full mysql support and therefore `rsa`, regardless of whether
+  # mysql-storage was ever requested.
   sqlx = { version = "0.8.6", features = [
     "chrono",
-    "mysql",
-    "sqlite",
-    "postgres",
     "runtime-tokio-rustls",
     "uuid",
   ], optional = true }
@@ -407,10 +413,13 @@ pasetors = "0.7.7"
     "postgres-storage",
   ] # PostgreSQL recommended
   enhanced-device-flow = ["oauth-device-flows"]
-  mysql-storage = ["sqlx"]
-sqlite-storage = ["sqlx"]
+  # Each storage feature enables only its own sqlx sub-feature -- mysql-storage
+  # is the only one that pulls sqlx-mysql (and therefore `rsa`,
+  # RUSTSEC-2023-0071, via its caching_sha2_password auth-plugin support).
+  mysql-storage = ["dep:sqlx", "sqlx/mysql"]
+  sqlite-storage = ["dep:sqlx", "sqlx/sqlite"]
   openid-connect = ["openidconnect"]
-  postgres-storage = ["sqlx", "tokio-postgres"]
+  postgres-storage = ["dep:sqlx", "sqlx/postgres", "tokio-postgres"]
   redis-storage = ["redis"]
   # Enhanced cryptography features
   distributed-rate-limiting = ["redis"]
