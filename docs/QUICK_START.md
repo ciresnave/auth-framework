@@ -6,7 +6,7 @@ Get a complete authentication and authorization system running in your Rust appl
 
 ## Prerequisites
 
-- **Rust 1.88+** (edition 2024)
+- **Rust 1.89+** (edition 2024)
 - **Tokio** async runtime
 - A running **PostgreSQL** instance (recommended) or use in-memory storage for development
 

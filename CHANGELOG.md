@@ -832,6 +832,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false regression this file carried since before storage encryption at
   rest (auth-framework#119) existed, only surfaced once the gate fix above
   started comparing correctly same-runner.
+- **Breaking:** minimum supported Rust version raised 1.88 -> 1.89 (`rust-version`, the CI MSRV
+  job, the Docker builder image, and the install docs). Needed for current releases of
+  RustCrypto and test dependencies (for example `aes` 0.9.3 and `axum-test` 21.1.0).
 
 ### Removed
 

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM rust:1.88-slim AS chef
+FROM rust:1.89-slim AS chef
 
 ARG APP_FEATURES=api-server,postgres-storage
 

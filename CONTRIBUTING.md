@@ -45,7 +45,7 @@ Enhancement suggestions are welcome! When proposing an enhancement:
 
 ### Prerequisites
 
-- Rust 1.85+ (stable, edition 2024)
+- Rust 1.89+ (stable, edition 2024)
 - Git
 
 ### Local Development

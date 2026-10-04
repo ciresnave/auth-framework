@@ -10,13 +10,17 @@ policies.
 
 | Property                              | Value    |
 | ------------------------------------- | -------- |
-| Minimum Supported Rust Version (MSRV) | **1.85** |
+| Minimum Supported Rust Version (MSRV) | **1.89** |
 | Rust Edition                          | 2024     |
 | Recommended toolchain                 | `stable` |
 
 The MSRV is enforced by the `rust-version` field in `Cargo.toml`. A Rust version bump is
 treated as a **minor** breaking change and will be announced in the changelog with at least one
 release cycle of advance notice.
+
+Pre-release exception: the MSRV may be raised in a pre-release (`-rc`) version, with a
+**Breaking** entry in that release's changelog; in a stable release it needs the announced
+advance notice of one release cycle described above.
 
 ---
 
