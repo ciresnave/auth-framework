@@ -340,6 +340,133 @@ mod oauth2_integration_tests {
         assert!(revoke_response.success);
     }
 
+    /// A refresh token must actually be usable to mint a new access token
+    /// -- positive control / regression coverage for the refresh grant,
+    /// which had no test coverage at all before this.
+    #[tokio::test]
+    async fn test_oauth2_refresh_token_grant_mints_new_access_token() {
+        let state = setup_api_state().await;
+
+        let auth_request = AuthorizeRequest {
+            response_type: "code".to_string(),
+            client_id: "test_client".to_string(),
+            redirect_uri: "http://localhost:3000/callback".to_string(),
+            scope: Some("openid profile".to_string()),
+            state: Some("test_state".to_string()),
+            code_challenge: Some("test_challenge".to_string()),
+            code_challenge_method: Some("plain".to_string()),
+            nonce: None,
+            resource: None,
+        };
+        let auth_headers = make_auth_headers(&state).await;
+        let auth_response =
+            oauth2::authorize(State(state.clone()), auth_headers, Query(auth_request))
+                .await
+                .into_response();
+        let auth_url = auth_response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let code = auth_url
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split("&")
+            .next()
+            .unwrap();
+
+        let token_request = TokenRequest::authorization_code(code)
+            .redirect_uri("http://localhost:3000/callback")
+            .client_id("test_client")
+            .code_verifier("test_challenge");
+        let token_response = oauth2::token(State(state.clone()), Json(token_request)).await;
+        assert!(token_response.success);
+        let refresh_token = token_response
+            .data
+            .unwrap()
+            .refresh_token
+            .expect("authorization_code grant must issue a refresh token");
+
+        let refresh_request = TokenRequest::refresh(&refresh_token);
+        let refresh_response = oauth2::token(State(state), Json(refresh_request)).await;
+        assert!(
+            refresh_response.success,
+            "a valid, unrevoked refresh token must mint a new access token"
+        );
+        assert!(!refresh_response.data.unwrap().access_token.is_empty());
+    }
+
+    /// Revoking a refresh token must actually prevent it from minting new
+    /// access tokens -- the regression test for the fix: revoke must
+    /// delete the refresh record AND the grant handler must check the
+    /// revocation marker, either one alone is not enough on its own to
+    /// prove the fix (this test exercises the real end-to-end behavior,
+    /// not either internal mechanism directly).
+    #[tokio::test]
+    async fn test_oauth2_revoked_refresh_token_cannot_mint_new_access_tokens() {
+        let state = setup_api_state().await;
+
+        let auth_request = AuthorizeRequest {
+            response_type: "code".to_string(),
+            client_id: "test_client".to_string(),
+            redirect_uri: "http://localhost:3000/callback".to_string(),
+            scope: Some("openid profile".to_string()),
+            state: Some("test_state".to_string()),
+            code_challenge: Some("test_challenge".to_string()),
+            code_challenge_method: Some("plain".to_string()),
+            nonce: None,
+            resource: None,
+        };
+        let auth_headers = make_auth_headers(&state).await;
+        let auth_response =
+            oauth2::authorize(State(state.clone()), auth_headers, Query(auth_request))
+                .await
+                .into_response();
+        let auth_url = auth_response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let code = auth_url
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split("&")
+            .next()
+            .unwrap();
+
+        let token_request = TokenRequest::authorization_code(code)
+            .redirect_uri("http://localhost:3000/callback")
+            .client_id("test_client")
+            .code_verifier("test_challenge");
+        let token_response = oauth2::token(State(state.clone()), Json(token_request)).await;
+        assert!(token_response.success);
+        let refresh_token = token_response
+            .data
+            .unwrap()
+            .refresh_token
+            .expect("authorization_code grant must issue a refresh token");
+
+        let revoke_request = RevokeRequest {
+            token: refresh_token.clone(),
+            token_type_hint: Some("refresh_token".to_string()),
+        };
+        let revoke_response = oauth2::revoke(State(state.clone()), Json(revoke_request)).await;
+        assert!(revoke_response.success);
+
+        let refresh_request = TokenRequest::refresh(&refresh_token);
+        let refresh_response = oauth2::token(State(state), Json(refresh_request)).await;
+        assert!(
+            !refresh_response.success,
+            "a revoked refresh token must not be able to mint a new access token"
+        );
+    }
+
     #[tokio::test]
     async fn test_oauth2_pkce_s256_validation() {
         let state = setup_api_state().await;
