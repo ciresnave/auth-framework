@@ -23,6 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mysql-storage` still depend on `rsa` via separate paths, tracked
   separately.
 
+- **Breaking:** each storage-backend feature now enables only its own
+  `sqlx` sub-feature -- `postgres-storage` -> `sqlx/postgres`,
+  `mysql-storage` -> `sqlx/mysql`, `sqlite-storage` -> `sqlx/sqlite`.
+  Previously a single `sqlx` dependency declaration listed all three
+  sub-features unconditionally, so enabling any one storage backend
+  (including `postgres-storage`, which is in `default`) silently built
+  `sqlx` with full MySQL support too, and therefore pulled in the `rsa`
+  crate (RUSTSEC-2023-0071, see above) via `sqlx-mysql`'s
+  `caching_sha2_password` auth-plugin dependency -- regardless of
+  whether `mysql-storage` was ever requested. Combined with the RSA
+  backend switch above, default builds (and `postgres-storage`-only,
+  `sqlite-storage`-only builds) no longer depend on `rsa` at all;
+  `mysql-storage` is now the only storage feature that still does,
+  isolated to that one feature rather than spread across every build
+  that touches `sqlx`.
+
 - **Breaking:** `create_client_assertion` (RFC 7523 private-key-JWT client
   authentication) now takes `encoding_key: &EncodingKey` instead of raw
   signing-key bytes (`signing_key: &[u8]`). The previous signature
