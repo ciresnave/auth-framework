@@ -1385,11 +1385,13 @@ mod tests {
 
     // NOTE on CI coverage: `pub mod admin` (src/lib.rs) is gated on the
     // `admin-binary` feature, not just `cli`, so every test in this
-    // module -- including the `encrypt_kv_*` tests below -- only
-    // compiles and runs under that feature. `admin-binary` was added to
+    // module only compiles and runs under that feature; several of the
+    // `encrypt_kv_*` tests below are ADDITIONALLY gated on
+    // `sqlite-storage` (they need a real, persistent backend to prove
+    // anything about actual v0 records). Both features were added to
     // the required "Test Suite" job's `cargo test` step in this same PR
     // (.github/workflows/ci-cd.yml) specifically so these tests run
-    // there; it was deliberately NOT added to that job's separate "Run
+    // there; deliberately NOT added to that job's separate "Run
     // Clippy" step, which would otherwise newly fail that job on the
     // pre-existing, already filed, unrelated issue #120
     // (unwrap_used/await_holding_lock in src/admin/web.rs).

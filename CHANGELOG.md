@@ -475,9 +475,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lets `Arc<dyn AuthStorage>` (as returned by the storage factory) be
   wrapped in `EncryptedStorage` directly, without downcasting to a
   concrete backend type first.
-- **Hardened across four rounds of independent adversarial review, before
-  merge.** Both rounds judged the AES-256-GCM core itself sound (random
-  12-byte nonce, tag checked, record-key AAD, factory fails closed).
+- **Hardened across five rounds of independent adversarial review, before
+  merge.** The first two rounds judged the AES-256-GCM core itself sound
+  (random 12-byte nonce, tag checked, record-key AAD, factory fails
+  closed); the fourth round, after the real holes below were fixed,
+  confirmed no further logic bug and no new leak.
   **Round 1** found five gaps:
   1. `get_kv` previously accepted ANY non-envelope value as plaintext
      unconditionally -- including an attacker overwriting an encrypted
@@ -543,9 +545,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   base64-encoded key strings `EnvKeyProvider` reads, but this CHANGELOG
   entry originally (incorrectly) said those strings were *not*
   zeroized -- an internal contradiction within round 2 itself, not
-  caught until round 4 (see item 7 there). Corrected here rather than
-  left for a future reader to untangle; `aes`'s internal key schedule
-  remains the one genuinely out-of-this-code's-control exception.
+  caught until round 4 (see round 4's own "Minor fixes" paragraph
+  below, which closed the remaining gaps on this same code path).
+  Corrected here rather than left for a future reader to untangle;
+  `aes`'s internal key schedule remains the one genuinely
+  out-of-this-code's-control exception.
   Test-coverage gaps closed, round 1: the AAD-rejection test only covered
   `StorageEncryption` directly (a wrapper passing a constant AAD instead
   of the real storage key would have left every original test green) --
@@ -628,7 +632,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decision, not this PR's to make) that the three new `encrypt_kv_*`
   CLI tests, and the pre-existing admin maintenance smoke test, only
   compile and run under the `admin-binary` feature -- **fixed in round 4
-  (item 12 below)**, not left as noted-only.
+  (item 19 below), then completed in round 5 (item 20) once round 5
+  found `admin-binary` alone wasn't enough**, not left as noted-only.
   **Round 4**, re-reviewing round 3's fixes (this time by actually
   running the tests and mutations in a temp worktree), found one
   high-severity issue plus several more documentation/test gaps:
@@ -697,12 +702,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real upgrade; `KvEncryptionMigrationReport` and `MigrationOptions` are
   now `#[non_exhaustive]` so a later field addition isn't a breaking
   change.
-  12. (Referenced above.) `admin-binary` added to the required "Test
+  19. (Referenced above.) `admin-binary` added to the required "Test
       Suite" job's `cargo test` step (not its separate "Run Clippy"
       step, which would newly fail that job on the pre-existing,
-      unrelated issue #120) -- this PR's `encrypt_kv_*` tests, and the
-      pre-existing admin maintenance smoke test, now actually run in a
-      required CI job instead of only in the non-required Coverage job.
+      unrelated issue #120). **Round 5 found this was incomplete**:
+      several of the `encrypt_kv_*` tests, and the pre-existing admin
+      maintenance smoke test, are ADDITIONALLY gated on
+      `sqlite-storage` (they need a real, persistent backend), which
+      `admin-binary` does not enable -- so "Test Suite" still never ran
+      them. Also, both "Test Suite" and "Coverage" are required checks
+      on `main` (an earlier version of this entry incorrectly called
+      Coverage non-required); the fix was never about moving these
+      tests into *a* required job, since one already ran them, but
+      about making *every* required job's own log show them passing or
+      failing, instead of only Coverage's. Fixed by adding
+      `sqlite-storage` alongside `admin-binary` in that same step.
+  **Round 5**, re-reviewing round 4's fixes (this time by actually
+  running the tests and mutations in a throwaway worktree), confirmed
+  no logic bug and no new leak -- the round-4 key-leak fix holds across
+  the whole PR. What remained was one more real gap in `safe_log_id`
+  itself, plus false written claims and the CI gap above:
+  20. `safe_log_id`'s "never the raw key" guarantee was false for a key
+      with no `:` at all: `key.split(':').next()` on a colonless key
+      returns the *whole* key, not a namespace prefix. Every actual key
+      shape in this crate's own code has a fixed, non-secret literal
+      before its first `:`, so there was no in-repo exposure -- but
+      `EncryptedStorage` is a public type with downstream callers who
+      could pass arbitrary key strings. Fixed: a colonless key now
+      falls back to the literal `key:` prefix instead of the key
+      itself; added a test.
+  21. `MigrationOptions`' doc said `..Default::default()` works when
+      constructing one -- true only from *inside* this crate;
+      `#[non_exhaustive]` makes that a compile error (E0639) for an
+      external caller. Fixed by adding `.with_dry_run()` /
+      `.with_accept_legacy_v0()` builder methods (consistent with
+      "a named struct instead of adjacent bools" from round 4) rather
+      than just documenting the more awkward
+      `let mut o = MigrationOptions::default(); o.dry_run = true;` form.
+  22. Two `// SAFETY:` comments (round 4's own fix for the *previous*
+      round's overclaim) ended up inverted: "unsound only against
+      another test that ALSO takes the lock" states the wrong
+      direction -- the lock makes access *sound* against other
+      lock-taking callers, and is silent about (not a guarantee
+      against) ones that don't. Corrected the wording in all three
+      spots (the two regression tests plus `EncryptionEnvGuard::set`,
+      which had the same issue).
+  23. Several more stale/drifted statements: the migration function's
+      own doc still described `failed` as covering "wrong key,
+      corrupted" generically (not v0-only, contradicting the field's
+      own accurate doc) and said failures were "recorded by name"
+      (they're a safe identifier, not the raw key); the CLI help text
+      for `encrypt-kv` still said failures were merely "reported ...
+      not treated as fatal" after round 4 made that exit non-zero; the
+      zeroization doc said "maps" (plural) were pre-sized when only
+      `load_from_file`'s multi-key loop actually is (the single-env-var
+      path never resizes at all, so there was nothing to pre-size
+      there). All corrected to what's actually true.
+  24. This entry's own round count and cross-references had drifted:
+      "across four rounds" with "both rounds judged ... sound" read as
+      if only two rounds existed; round 2's zeroization-contradiction
+      fix pointed at "item 7" in round 4, which round 4 does not have;
+      round 4's items were numbered 13-18 then a stray, collided "12".
+      Corrected throughout this file rather than compounding the drift
+      further with round 5's own numbering.
+  **Breaking changes introduced across this PR** (the version bump
+  below covers all of them, not just round 1's original scope):
+  `StorageEncryption::new` now takes `&dyn KeyProvider` instead of no
+  arguments; `encrypt`/`decrypt` take raw `&[u8]` and an `aad`
+  parameter instead of `&str`; `EncryptedStorage::new` takes two
+  additional `bool` flags; `AuthConfig` gained a public
+  `storage_encryption` field; and, most significantly from an
+  operator's perspective, storage encryption is now enabled by default
+  and a persistent backend refuses to start without a configured key --
+  an existing deployment upgrading into this release must configure
+  `AUTH_STORAGE_ENCRYPTION_KEY` (or explicitly opt out) before it will
+  start at all.
 
 ### Changed
 

@@ -668,8 +668,11 @@ pub enum SecurityAction {
     },
     /// Encrypt any plaintext KV-layer values at rest (for data written
     /// before encryption was enabled). Safe to re-run: already-encrypted
-    /// values are left untouched; a value that fails to decrypt is
-    /// skipped and reported by name, not treated as fatal.
+    /// values are left untouched. A value that fails to decrypt is
+    /// skipped (identified in the output by a safe identifier, never
+    /// its raw key) rather than aborting the rest of the run, but the
+    /// command as a whole then exits with a non-zero status so a
+    /// failure is never silently missed.
     ///
     /// WARNING: this re-stores every migrated value with no TTL, even if
     /// the original had one (OAuth codes, email-verification tokens,

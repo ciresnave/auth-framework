@@ -48,8 +48,9 @@ pub(crate) struct EncryptionEnvGuard;
 #[cfg(test)]
 impl EncryptionEnvGuard {
     pub(crate) fn set(key: &str) -> Self {
-        // SAFETY: unsound only under concurrent access; the caller holds
-        // `TEST_ENCRYPTION_ENV_LOCK` for this guard's entire lifetime.
+        // SAFETY: sound against every caller that ALSO takes
+        // `TEST_ENCRYPTION_ENV_LOCK`; NOT sound otherwise (see the
+        // lock's own doc for which pre-existing tests don't).
         unsafe {
             std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEY", key);
             std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
@@ -314,16 +315,21 @@ impl EnvKeyProvider {
 /// can leak a working credential into logs or a terminal.
 ///
 /// Keeps the portion up to (not including) the first `:` (the
-/// namespace, e.g. `api_key`, which is not secret) plus a short,
-/// one-way hash of the *full* key, so an operator with direct storage
-/// access can still correlate a reported identifier back to the real
-/// record (by recomputing the same hash over a candidate key) without
-/// the identifier itself being usable as a credential.
+/// namespace, e.g. `api_key`, assumed not secret since every KV
+/// namespace convention in this crate puts a fixed literal there) plus
+/// a short, one-way hash of the *full* key, so an operator with direct
+/// storage access can still correlate a reported identifier back to
+/// the real record (by recomputing the same hash over a candidate key)
+/// without the identifier itself being usable as a credential. A key
+/// with no `:` at all has no such non-secret prefix to keep -- it is
+/// replaced with the literal `key`, never the raw key itself.
 fn safe_log_id(key: &str) -> String {
     use sha2::{Digest, Sha256};
-    let namespace = key.split(':').next().unwrap_or("");
-    let hash = Sha256::digest(key.as_bytes());
-    format!("{namespace}:{}", hex::encode(&hash[..4]))
+    let hash_hex = hex::encode(&Sha256::digest(key.as_bytes())[..4]);
+    match key.split_once(':') {
+        Some((namespace, _)) => format!("{namespace}:{hash_hex}"),
+        None => format!("key:{hash_hex}"),
+    }
 }
 
 fn decode_key(encoded: &str) -> Result<[u8; 32]> {
@@ -375,10 +381,14 @@ fn decode_key(encoded: &str) -> Result<[u8; 32]> {
 /// internally that this code doesn't control (notably `aes` 0.8.4's own
 /// key-schedule storage inside the `Aes256Gcm` cipher object, which has
 /// no zeroize support in the version this crate depends on; and
-/// `HashMap` growth can in principle leave a stale decoded-key copy in an
-/// old, freed backing allocation during a resize -- mitigated, not
-/// eliminated, by pre-sizing the maps this module builds with
-/// `with_capacity`), or a plaintext value a public method (`decrypt`,
+/// `HashMap` growth can in principle leave a stale decoded-key copy in
+/// an old, freed backing allocation during a resize -- mitigated, not
+/// eliminated, in `EnvKeyProvider::load_from_file`'s multi-key decoding
+/// loop (the one production path that decodes a variable, potentially
+/// large number of keys into a map) by pre-sizing it with
+/// `with_capacity`; `EnvKeyProvider::load_keys`' single-env-var path
+/// only ever inserts exactly one entry, so it can't resize at all), or
+/// a plaintext value a public method (`decrypt`,
 /// `decrypt_from_storage`) hands back to its caller (that's the actual
 /// return value the caller needs -- it isn't leftover residue this module
 /// can clean up on the caller's behalf).
@@ -850,9 +860,11 @@ where
 
 /// Outcome of [`migrate_kv_to_encrypted`].
 ///
-/// `#[non_exhaustive]`: use `..Default::default()` when constructing one
-/// (tests do), since a later field addition here must not be a breaking
-/// change for callers who build a value of this type.
+/// `#[non_exhaustive]`: this is a read-only outcome type, not something
+/// a caller builds -- only this crate's own tests construct one (with
+/// `..Default::default()`, which only compiles from *inside* the
+/// crate), so a later field addition here can never be a breaking
+/// change for an external caller.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct KvEncryptionMigrationReport {
@@ -917,6 +929,25 @@ pub struct MigrationOptions {
     pub accept_legacy_v0: bool,
 }
 
+impl MigrationOptions {
+    /// Builder-style setter. `#[non_exhaustive]` means `MigrationOptions {
+    /// dry_run: true, ..Default::default() }` only compiles *inside*
+    /// this crate -- a downstream caller needs `let mut o =
+    /// MigrationOptions::default(); o.dry_run = true;` or this method
+    /// chain instead: `MigrationOptions::default().with_dry_run(true)`.
+    pub fn with_dry_run(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
+    }
+
+    /// Builder-style setter; see [`Self::with_dry_run`] for why this
+    /// exists instead of a struct literal.
+    pub fn with_accept_legacy_v0(mut self, accept_legacy_v0: bool) -> Self {
+        self.accept_legacy_v0 = accept_legacy_v0;
+        self
+    }
+}
+
 /// Re-encrypts every already-plaintext value under `prefix` in the given
 /// KV storage, in place.
 ///
@@ -926,13 +957,15 @@ pub struct MigrationOptions {
 ///   `failed`) only ever touches the plaintext and not-yet-upgraded v0
 ///   values still remaining -- there's no separate resume cursor to
 ///   manage.
-/// - **A single undecryptable envelope never aborts the run**: if one
-///   key's envelope can't be decrypted (wrong key, corrupted, or a v0
-///   envelope that doesn't decrypt under any loaded key), it's recorded
-///   by name in [`KvEncryptionMigrationReport::failed`] and skipped --
-///   every other key is still processed. Anyone who can write one
-///   envelope-shaped value under `prefix` can otherwise make an `?` on
-///   the first failure block the entire run.
+/// - **A single undecryptable v0 envelope never aborts the run**: if one
+///   key's format-version-0 envelope can't be decrypted under any
+///   loaded key (wrong/missing key, or corrupted -- only v0 envelopes
+///   are decrypt-checked this way, see
+///   [`KvEncryptionMigrationReport::failed`]'s own docs), a safe
+///   identifier for it (never the raw key) is recorded in `failed` and
+///   it's skipped -- every other key is still processed. Anyone who can
+///   write one envelope-shaped value under `prefix` can otherwise make
+///   an `?` on the first failure block the entire run.
 /// - **Dry-run is accurate, not optimistic**: `dry_run: true` actually
 ///   attempts every decrypt it would need for a real run (it just skips
 ///   the write-back), so its counts -- including `failed` -- match what
@@ -1845,6 +1878,25 @@ mod tests {
         // recompute it to correlate a logged identifier back to a
         // specific record.
         assert_eq!(id, safe_log_id(&key));
+    }
+
+    /// A key with no `:` at all has no non-secret namespace prefix to
+    /// keep -- `key.split(':').next()` on a colonless key returns the
+    /// WHOLE key, which would print the raw secret verbatim. This is
+    /// the fix for that gap.
+    #[test]
+    fn test_safe_log_id_handles_colonless_key_without_leaking_it() {
+        let raw_secret = "a_bearer_token_with_no_colon_in_it_at_all";
+        let id = safe_log_id(raw_secret);
+
+        assert!(
+            !id.contains(raw_secret),
+            "a colonless key must not appear verbatim in its safe_log_id, got: {id}"
+        );
+        assert!(
+            id.starts_with("key:"),
+            "a colonless key should fall back to the literal 'key:' prefix, got: {id}"
+        );
     }
 
     /// Kills the mutation `if !dry_run && accept_legacy_v0` ->

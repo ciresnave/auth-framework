@@ -2710,8 +2710,8 @@ mod tests {
     #[test]
     fn new_validated_redis_fails_closed_without_an_encryption_key() {
         let _lock = crate::storage::encryption::TEST_ENCRYPTION_ENV_LOCK.blocking_lock();
-        // SAFETY: unsound only against another test that ALSO takes
-        // `_lock`; no such test runs concurrently with this one.
+        // SAFETY: sound against every other test that ALSO takes
+        // `_lock`; this test does.
         unsafe {
             std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
             std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
