@@ -327,11 +327,16 @@ println!("Hits: {}, Misses: {}", stats.hits, stats.misses);
 KV-layer values (`store_kv`/`get_kv`) at rest with AES-256-GCM. Always
 available — no feature flag required.
 
-**On by default.** `AuthFramework` wraps every persistent backend
-(Postgres/Redis/SQLite/custom) in `EncryptedStorage` automatically unless you
-set `storage_encryption.enabled = false`. In-memory storage is exempt
-(nothing persists across a restart). This fails closed: if encryption is on
-(the default) and no key can be loaded, framework initialization returns an
+**On by default, for backends built through the storage factory.**
+`AuthFramework` wraps Postgres/Redis/SQLite in `EncryptedStorage`
+automatically unless you set `storage_encryption.enabled = false`.
+In-memory storage is exempt (nothing persists across a restart).
+`StorageConfig::Custom` is rejected outright, not silently left
+unwrapped. Storage supplied directly via `AuthFramework::new_with_storage`,
+`replace_storage`, or the builder's `custom_storage` **bypasses this
+factory entirely and is not auto-wrapped** -- see "Coverage" below. This
+fails closed for the backends that are wrapped: if encryption is on (the
+default) and no key can be loaded, framework initialization returns an
 error rather than silently storing data in plaintext.
 
 Set the key via environment variable:
@@ -360,7 +365,7 @@ use auth_framework::config::{AuthConfig, StorageEncryptionConfig};
 
 let config = AuthConfig::new().storage_encryption(StorageEncryptionConfig {
     enabled: false,
-    allow_plaintext_reads: false,
+    ..Default::default()
 });
 ```
 

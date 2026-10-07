@@ -465,11 +465,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lets `Arc<dyn AuthStorage>` (as returned by the storage factory) be
   wrapped in `EncryptedStorage` directly, without downcasting to a
   concrete backend type first.
-- **Hardened after an independent adversarial review, before merge.** The
-  review judged the AES-256-GCM core itself sound (random 12-byte nonce,
-  tag checked, record-key AAD, factory fails closed for every persistent
-  backend) and found five real gaps in the surrounding design, all fixed
-  here rather than filed as follow-up:
+- **Hardened across two rounds of independent adversarial review, before
+  merge.** Both rounds judged the AES-256-GCM core itself sound (random
+  12-byte nonce, tag checked, record-key AAD, factory fails closed).
+  **Round 1** found five gaps:
   1. `get_kv` previously accepted ANY non-envelope value as plaintext
      unconditionally -- including an attacker overwriting an encrypted
      value with chosen plaintext, or a corrupted envelope. Fixed by the
@@ -478,41 +477,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      AAD) would have failed to deserialize into the new shape and been
      silently misread as plaintext, and the migration tool would have
      double-encrypted them. Fixed with `#[serde(default)]` compatibility
-     fields and an explicit `v` format-version field (`0` for the
-     original shape, decrypted with an empty AAD against every loaded
-     key; `1` for the current format).
-  3. The migration tool's TTL loss (noted above) is now documented loudly
-     and gated behind `--confirm` for the highest-blast-radius case
-     (empty prefix), rather than only in rustdoc.
+     fields and an explicit `v` format-version field.
+  3. The migration tool's TTL loss (noted above) -- **mitigated, not
+     fixed** (there's no way to fix it without `AuthStorage::get_kv`
+     returning a TTL, which is a bigger trait change left for later):
+     documented loudly in the CLI help text and
+     `docs/storage-backends.md`, and an empty `--prefix` requires
+     `--confirm` for a real (non-dry-run) application.
   4. The factory's "every persistent backend is wrapped" claim was true
      of the factory itself but overstated for the crate as a whole --
-     `new_with_storage`/`replace_storage`/custom storage bypass it, and
-     `auth_modular::AuthFramework`'s separate Redis path did too. Both
-     are now documented accurately and (for the modular path) actually
-     fixed, not just disclaimed.
-  5. The migration's read-then-write has no compare-and-swap; now
-     documented as offline-only / pause-writers-first rather than implied
-     safe for a live deployment.
-  Minor findings also fixed: the nonce-reuse-bound code comment
-  overstated the safety margin (corrected to NIST SP 800-38D's actual
-  2^32-per-key guidance for random 96-bit IVs, not a ~2^48 birthday
-  bound); raw key bytes are now zeroized after the AES-GCM cipher is
-  constructed; an empty key id is now rejected (reserved to mean
-  "format-version-0, no key id at all"); a keys file readable by group
-  or other now triggers a `tracing::warn!` on Unix; `EncryptedStorage`
-  now overrides the four `*_bulk` token/session methods to delegate
-  directly to `inner`'s own overrides instead of inheriting the
-  `AuthStorage` trait's one-at-a-time default loop (performance only --
-  encryption coverage for token/session storage is unchanged, still out
-  of scope); the CLI's `encrypt-kv` now refuses to run if
-  `storage_encryption.enabled` is `false`. Two gaps in the original test
-  suite were also closed: the AAD-rejection test only covered
-  `StorageEncryption` directly (a wrapper that passed a constant AAD
-  instead of the real storage key would have left every original test
-  green) -- a new test proves the *wrapper's* own `store_kv`/`get_kv`
-  specifically use the storage key as AAD; and the fail-closed
-  integration test now asserts the actual error message, not just that
-  an error occurred.
+     `new_with_storage`/`replace_storage`/custom storage bypass it (now
+     documented, still not wrapped -- callers must wrap it themselves),
+     and `auth_modular::AuthFramework`'s separate Redis path did too (now
+     actually fixed, via a shared `wrap_with_encryption_if_enabled`).
+  5. The migration's read-then-write has no compare-and-swap --
+     **mitigated, not fixed** (doing so needs a conditional write the
+     `AuthStorage` trait doesn't expose): documented as offline-only /
+     pause-writers-first rather than implied safe for a live deployment.
+  **Round 2**, re-reviewing round 1's fixes, found one more real hole and
+  several documentation/testing gaps:
+  6. **Format-version-0 (`v == 0`) envelopes decrypted with an empty AAD
+     against every loaded key, unconditionally** -- the exact protection
+     AAD exists to provide never applied to them, and
+     `migrate_kv_to_encrypted` counted a v0 envelope as already done
+     instead of upgrading it, so a deployment with any v0 data stayed
+     vulnerable to the record-swap attack indefinitely. Fixed with a new
+     `allow_legacy_v0` flag (default `false`, same shape as
+     `allow_plaintext_reads`) gating v0 decryption through
+     `EncryptedStorage`, and by making `migrate_kv_to_encrypted` actively
+     decrypt-and-re-encrypt every v0 envelope it finds to the current
+     format, regardless of that flag (migration is specifically how a v0
+     envelope stops being one).
+  7. The factory's and `docs/storage-backends.md`'s "every persistent
+     backend" claim (point 4 above) still overstated things in two
+     places that a caveat elsewhere didn't retract; replaced with
+     accurate wording in both.
+  8. `src/auth.rs`'s `new_validated` builds a Redis backend directly too
+     (separate from both the factory and the `auth_modular` path fixed
+     in round 1) -- there is a window between that construction and
+     `initialize()` replacing it where it's unwrapped; documented on the
+     method pending a proper fix.
+  Minor fixes from round 1: the nonce-reuse-bound code comment overstated
+  the safety margin (corrected to NIST SP 800-38D's actual 2^32-per-key
+  guidance, not a ~2^48 birthday bound); an empty key id is now rejected;
+  a keys file readable by group or other warns on Unix;
+  `EncryptedStorage` now delegates the four `*_bulk` methods to `inner`
+  (performance only); the CLI's `encrypt-kv` refuses to run if
+  `storage_encryption.enabled` is `false`.
+  Minor fixes from round 2: the comment on `default_format_version`
+  incorrectly claimed serde doesn't call it for a missing field (it
+  does -- it just happens to return the same `0` the bare type default
+  would); zeroization is now accurately scoped in its own doc comment
+  rather than overclaimed as comprehensive -- only the raw `[u8; 32]` key
+  bytes in `LoadedKeys` and the intermediate decoded key `Vec<u8>` in
+  `decode_key` are actually zeroized; base64-encoded key strings, moved
+  copies, and the `aes` crate's internal key schedule (no zeroize
+  support in the version used here) are not, and the doc comment says so
+  instead of implying otherwise.
+  Test-coverage gaps closed, round 1: the AAD-rejection test only covered
+  `StorageEncryption` directly (a wrapper passing a constant AAD instead
+  of the real storage key would have left every original test green) --
+  a new test proves the *wrapper's* own `store_kv`/`get_kv` specifically
+  use the storage key as AAD; the fail-closed integration test now
+  asserts the actual error message. Round 2: the empty-key-id test now
+  exercises the check it claims to (previously a different, earlier
+  check caught the same input first, so removing the intended check
+  still left the test green); a new test proves `allow_plaintext_reads`
+  is actually threaded through the storage factory, not just accepted
+  and ignored; a new test proves a tampered-to-look-like-v0 envelope
+  (a real v1 ciphertext with its `v`/`key_id` fields stripped) is
+  correctly rejected rather than decrypting under the empty-AAD v0 path.
   Known, accepted-not-fixed limitation (documented on `StorageEncryption`
   itself): AAD binds a ciphertext to *which record* it belongs to, not to
   *when* it was written -- someone who can both read an old ciphertext

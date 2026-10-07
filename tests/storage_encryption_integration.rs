@@ -70,7 +70,7 @@ async fn sqlite_backend_succeeds_when_encryption_explicitly_disabled() {
     let db_path = dir.path().join("opt_out.db");
     let config = base_config(sqlite_config(&db_path)).storage_encryption(StorageEncryptionConfig {
         enabled: false,
-        allow_plaintext_reads: false,
+        ..Default::default()
     });
 
     let mut framework = AuthFramework::new(config);

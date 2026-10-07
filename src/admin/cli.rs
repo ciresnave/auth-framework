@@ -818,7 +818,11 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                 ));
             }
 
-            if prefix.is_empty() && !confirm {
+            // --confirm is only required to actually WRITE with an empty
+            // prefix -- a dry run makes no changes, so there's nothing to
+            // confirm (and requiring it would make the documented
+            // "preview everything first" workflow itself fail).
+            if prefix.is_empty() && !confirm && !dry_run {
                 return Err(AuthError::Cli(
                     "An empty --prefix touches every KV key, including any with a TTL \
                      (OAuth codes, email-verification tokens, MFA/SMS codes, WebAuthn \
@@ -1159,7 +1163,7 @@ mod tests {
         // opt out explicitly rather than requiring a key just for this.
         auth_config.storage_encryption = crate::config::StorageEncryptionConfig {
             enabled: false,
-            allow_plaintext_reads: false,
+            ..Default::default()
         };
 
         let settings = AuthFrameworkSettings {
@@ -1326,5 +1330,103 @@ mod tests {
             .collect::<std::result::Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[cfg(feature = "cli")]
+    fn security_state(storage_encryption: crate::config::StorageEncryptionConfig) -> AppState {
+        let auth_config = AuthConfig::new()
+            .secret("0123456789abcdef0123456789abcdef")
+            .storage_encryption(storage_encryption);
+        let settings = AuthFrameworkSettings {
+            auth: auth_config,
+            api_server: None,
+            threat_intelligence: None,
+            session: None,
+            custom: std::collections::HashMap::new(),
+        };
+        AppState::new(settings).unwrap()
+    }
+
+    #[cfg(feature = "cli")]
+    #[tokio::test]
+    async fn encrypt_kv_refuses_when_storage_encryption_disabled() {
+        let state = security_state(crate::config::StorageEncryptionConfig {
+            enabled: false,
+            ..Default::default()
+        });
+
+        let err = run_cli(
+            state,
+            CliCommand::Security {
+                action: SecurityAction::EncryptKv {
+                    prefix: String::new(),
+                    dry_run: true,
+                    confirm: false,
+                },
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            err.contains("opted out"),
+            "expected a storage_encryption.enabled=false refusal, got: {err}"
+        );
+    }
+
+    #[cfg(feature = "cli")]
+    #[tokio::test]
+    async fn encrypt_kv_requires_confirm_for_empty_prefix_non_dry_run() {
+        // storage_encryption defaults to enabled: true.
+        let state = security_state(Default::default());
+
+        let err = run_cli(
+            state,
+            CliCommand::Security {
+                action: SecurityAction::EncryptKv {
+                    prefix: String::new(),
+                    dry_run: false,
+                    confirm: false,
+                },
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            err.contains("--confirm"),
+            "expected a missing---confirm refusal for an empty prefix, got: {err}"
+        );
+    }
+
+    /// The documented `encrypt-kv --dry-run` (empty prefix, no
+    /// `--confirm`) must actually work, not just be exempted from the
+    /// confirm check in theory -- run it end to end against a real
+    /// (in-memory) backend with a real key configured.
+    #[cfg(feature = "cli")]
+    #[tokio::test]
+    async fn encrypt_kv_dry_run_with_empty_prefix_does_not_require_confirm() {
+        let _lock = crate::storage::encryption::TEST_ENCRYPTION_ENV_LOCK
+            .lock()
+            .await;
+        let key = crate::storage::encryption::StorageEncryption::generate_key();
+        let _guard = crate::storage::encryption::EncryptionEnvGuard::set(&key);
+
+        let state = security_state(Default::default());
+
+        run_cli(
+            state,
+            CliCommand::Security {
+                action: SecurityAction::EncryptKv {
+                    prefix: String::new(),
+                    dry_run: true,
+                    confirm: false,
+                },
+            },
+        )
+        .await
+        .expect("a dry run with an empty prefix must not require --confirm");
     }
 }

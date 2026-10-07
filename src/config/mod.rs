@@ -151,6 +151,22 @@ pub struct StorageEncryptionConfig {
     /// accepted silently forever, which defeats the point of encrypting
     /// at rest. Set it back to `false` once migration is complete.
     pub allow_plaintext_reads: bool,
+    /// Whether a format-version-0 envelope (the original, pre-redesign
+    /// `EncryptedStorage`'s shape: no `key_id`, no AAD at encryption time)
+    /// is decrypted (`true`) or rejected as an error (`false`, default).
+    ///
+    /// Format-version-0 envelopes have no AAD binding a ciphertext to its
+    /// own storage key, which is exactly the protection the current
+    /// format's AAD exists to provide: with this `true`, a writer who
+    /// knows one record's v0 envelope can copy it onto a different
+    /// record's key and it will still decrypt, because v0 decryption
+    /// tries every loaded key with an empty AAD regardless of which
+    /// record it's stored under. Set this to `true` **only transiently**
+    /// while migrating pre-existing v0 data (see
+    /// `storage::encryption::migrate_kv_to_encrypted`, which upgrades
+    /// every v0 envelope it finds to the current format and does not
+    /// depend on this flag to do so); leave it `false` otherwise.
+    pub allow_legacy_v0: bool,
 }
 
 impl Default for StorageEncryptionConfig {
@@ -158,6 +174,7 @@ impl Default for StorageEncryptionConfig {
         Self {
             enabled: true,
             allow_plaintext_reads: false,
+            allow_legacy_v0: false,
         }
     }
 }
@@ -996,8 +1013,10 @@ impl AuthConfig {
     /// ```rust
     /// use auth_framework::config::{AuthConfig, StorageEncryptionConfig};
     ///
-    /// let config = AuthConfig::new()
-    ///     .storage_encryption(StorageEncryptionConfig { enabled: false });
+    /// let config = AuthConfig::new().storage_encryption(StorageEncryptionConfig {
+    ///     enabled: false,
+    ///     ..Default::default()
+    /// });
     /// ```
     pub fn storage_encryption(mut self, storage_encryption: StorageEncryptionConfig) -> Self {
         self.storage_encryption = storage_encryption;

@@ -683,8 +683,9 @@ pub enum SecurityAction {
         /// Preview what would change without writing anything.
         #[arg(long)]
         dry_run: bool,
-        /// Required when --prefix is empty, acknowledging the TTL-loss
-        /// warning above.
+        /// Required when --prefix is empty and this is NOT a dry run,
+        /// acknowledging the TTL-loss warning above. Not needed for
+        /// --dry-run, which makes no changes.
         #[arg(long)]
         confirm: bool,
     },

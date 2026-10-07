@@ -8,9 +8,18 @@ use std::sync::Arc;
 /// wraps it in [`EncryptedStorage`] so KV-layer values are encrypted at
 /// rest. In-memory storage holds nothing across a restart, so "at rest"
 /// encryption has no referent for it and is skipped regardless of
-/// `encryption_config`. Every other backend (Postgres/Redis/SQLite/
-/// custom) actually persists, so it gets wrapped per the config,
-/// defaulting to on (board decision 124).
+/// `encryption_config`. Postgres/Redis/SQLite actually persist, so they
+/// get wrapped per the config, defaulting to on (board decision 124).
+///
+/// **This wrapping only applies to storage built by this function.**
+/// `StorageConfig::Custom` is rejected outright (see
+/// `build_storage_backend_inner`'s own doc) -- it is never silently left
+/// unwrapped, because it never reaches a usable backend at all through
+/// this path. Storage supplied directly via
+/// `AuthFramework::new_with_storage`, `replace_storage`, or the builder's
+/// `custom_storage` bypasses this function entirely and is **not**
+/// auto-wrapped; callers doing that must wrap it themselves with
+/// `EncryptedStorage::new` if they want it encrypted.
 pub(crate) async fn build_storage_backend_with_encryption(
     config: &StorageConfig,
     pool_size: Option<u32>,
@@ -79,6 +88,7 @@ pub(crate) fn wrap_with_encryption_if_enabled(
         backend,
         encryption,
         encryption_config.allow_plaintext_reads,
+        encryption_config.allow_legacy_v0,
     )))
 }
 
@@ -144,5 +154,113 @@ async fn build_storage_backend_inner(
         _ => Err(AuthError::configuration(
             "Requested storage backend is unavailable in this build. Enable the matching storage feature.",
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::MemoryStorage;
+    use crate::storage::encryption::{
+        EncryptionEnvGuard, StorageEncryption, TEST_ENCRYPTION_ENV_LOCK,
+    };
+
+    fn config(allow_plaintext_reads: bool, allow_legacy_v0: bool) -> StorageEncryptionConfig {
+        StorageEncryptionConfig {
+            enabled: true,
+            allow_plaintext_reads,
+            allow_legacy_v0,
+        }
+    }
+
+    /// Proves `wrap_with_encryption_if_enabled` actually threads
+    /// `allow_plaintext_reads` from the config into the `EncryptedStorage`
+    /// it builds, rather than accepting and silently ignoring it.
+    #[tokio::test]
+    async fn test_wrap_threads_allow_plaintext_reads_through() {
+        let _lock = TEST_ENCRYPTION_ENV_LOCK.lock().await;
+        let key = StorageEncryption::generate_key();
+        let _guard = EncryptionEnvGuard::set(&key);
+
+        let inner: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+        inner
+            .store_kv("legacy:key", b"plaintext value", None)
+            .await
+            .unwrap();
+
+        let wrapped_strict =
+            wrap_with_encryption_if_enabled(inner.clone(), &config(false, false)).unwrap();
+        assert!(
+            wrapped_strict.get_kv("legacy:key").await.is_err(),
+            "allow_plaintext_reads: false must reject a non-envelope value"
+        );
+
+        let wrapped_permissive =
+            wrap_with_encryption_if_enabled(inner.clone(), &config(true, false)).unwrap();
+        assert_eq!(
+            wrapped_permissive.get_kv("legacy:key").await.unwrap(),
+            Some(b"plaintext value".to_vec()),
+            "allow_plaintext_reads: true must accept a non-envelope value"
+        );
+    }
+
+    /// Proves `wrap_with_encryption_if_enabled` actually threads
+    /// `allow_legacy_v0` through, using a hand-built format-version-0
+    /// envelope (no `key_id`, no AAD) the same shape the original
+    /// pre-redesign `EncryptedStorage` produced.
+    #[tokio::test]
+    async fn test_wrap_threads_allow_legacy_v0_through() {
+        let _lock = TEST_ENCRYPTION_ENV_LOCK.lock().await;
+        let key_bytes_b64 = StorageEncryption::generate_key();
+        let _guard = EncryptionEnvGuard::set(&key_bytes_b64);
+
+        // Build a v0 envelope using the SAME key just set in the env var,
+        // by loading it back through the real provider.
+        let encryption = StorageEncryption::from_env().unwrap();
+        let v1_envelope = encryption
+            .encrypt(b"legacy value", b"irrelevant-for-v0")
+            .unwrap();
+        // Downgrade it to a v0-shaped envelope: no key_id, v=0, and
+        // re-seal the same plaintext with the empty-AAD v0 convention so
+        // it is a GENUINE v0 envelope, not just a relabeled v1 one (a
+        // relabeled v1 ciphertext would fail to decrypt under the v0
+        // empty-AAD path regardless of this flag -- see the negative
+        // test below for that case specifically).
+        let _ = v1_envelope; // only needed the key; build v0 directly:
+        let v0_json = {
+            use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+            use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+            let raw_key = BASE64.decode(&key_bytes_b64).unwrap();
+            let cipher = Aes256Gcm::new_from_slice(&raw_key).unwrap();
+            let nonce_bytes = [9u8; 12];
+            let nonce = Nonce::from_slice(&nonce_bytes);
+            let ciphertext = cipher.encrypt(nonce, b"legacy value".as_ref()).unwrap();
+            format!(
+                r#"{{"data":"{}","nonce":"{}","algorithm":"AES-256-GCM","key_derivation":"direct"}}"#,
+                BASE64.encode(&ciphertext),
+                BASE64.encode(nonce_bytes)
+            )
+        };
+
+        let inner: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+        inner
+            .store_kv("legacy:v0:key", v0_json.as_bytes(), None)
+            .await
+            .unwrap();
+
+        let wrapped_strict =
+            wrap_with_encryption_if_enabled(inner.clone(), &config(false, false)).unwrap();
+        assert!(
+            wrapped_strict.get_kv("legacy:v0:key").await.is_err(),
+            "allow_legacy_v0: false must reject a format-version-0 envelope"
+        );
+
+        let wrapped_permissive =
+            wrap_with_encryption_if_enabled(inner.clone(), &config(false, true)).unwrap();
+        assert_eq!(
+            wrapped_permissive.get_kv("legacy:v0:key").await.unwrap(),
+            Some(b"legacy value".to_vec()),
+            "allow_legacy_v0: true must decrypt a format-version-0 envelope"
+        );
     }
 }
