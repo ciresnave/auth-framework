@@ -499,6 +499,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Need the PR's base commit object (not just the merge ref) to
+          # build and bench it as the "base" side of the comparison below.
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -512,24 +516,29 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # Deliberately keyed on the base branch name, not Cargo.lock's hash: a
-      # criterion baseline needs to survive across the version bump every
-      # push produces (which rotates the cargo-registry cache key above on
-      # nearly every run), or comparison has nothing to compare against.
-      # restore-keys lets a PR run fall back to the most recent baseline
-      # saved for its base branch.
-      - name: Cache criterion baseline
-        uses: actions/cache@v4
-        with:
-          path: target/criterion
-          key: criterion-baseline-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            criterion-baseline-${{ github.base_ref || github.ref_name }}-
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libpq-dev libssl-dev pkg-config
+
+      # A criterion baseline cached across separate workflow runs compares
+      # runs that may have executed on different runner VMs -- noise far
+      # above criterion's own regression threshold, which makes the gate
+      # fire on unrelated PRs (see auth-framework#119's round-5 review).
+      # Instead, build and bench the PR's base commit in a worktree that
+      # shares this job's own target dir, so both sides of the comparison
+      # run back-to-back on this same runner.
+      - name: Benchmark base commit (same runner)
+        shell: bash -eo pipefail {0}
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
+        run: |
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          git worktree add /tmp/base-checkout "$base_sha"
+          (cd /tmp/base-checkout && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo bench --bench auth_performance -- --save-baseline base)
+          git worktree remove /tmp/base-checkout --force
 
       - name: Run performance benchmarks
         shell: bash -eo pipefail {0}
@@ -538,7 +547,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: |
-          cargo bench --bench auth_performance 2>&1 | tee benchmark_results.txt
+          cargo bench --bench auth_performance -- --baseline base 2>&1 | tee benchmark_results.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -553,9 +562,9 @@ jobs:
           # directly rather than reconstructing the sign convention from a
           # formatted percentage (criterion's "change:" is negative for a
           # SPEEDUP and positive for a regression, which the previous pattern
-          # had backwards). Absent entirely on a run with no prior baseline
-          # (see the "Cache criterion baseline" step above), in which case
-          # there is nothing to regress against and the gate correctly passes.
+          # had backwards). The "base" baseline is always present now (built
+          # fresh, same runner, in the step above), so there is no longer a
+          # no-baseline case where this file has nothing to say.
           if grep -q "Performance has regressed" benchmark_results.txt; then
             echo "Performance regression detected!"
             exit 1
