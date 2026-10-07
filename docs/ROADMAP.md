@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc10`
+- Current crate version: `0.6.0-rc11`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -78,7 +78,6 @@ The original roadmap was heavily weighted toward foundational work that is now a
 - [x] Storage abstraction layer exists
 - [x] PostgreSQL support exists
 - [x] Redis support exists
-- [x] MySQL support exists
 - [x] Migration tooling exists
 - [x] Docker Compose assets exist
 - [x] Cross-platform release workflow exists

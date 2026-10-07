@@ -34,60 +34,18 @@ If all three apply to your deployment, you inherit `h2`'s advisory through this 
 
 - `cargo audit` on this repo will continue to report this finding until `actix-web`/`actix-http` update their own `h2` dependency. This is expected and tracked, not a regression to chase in future changelogs.
 
-## 🚨 Important Security Notice: RUSTSEC-2023-0071
+## 🚨 Security Notice: RUSTSEC-2023-0071 (Resolved)
 
-### Current Vulnerability Status
-
-**RUSTSEC-2023-0071** (Marvin Attack on RSA) affects this framework when using MySQL storage through the SQLx dependency chain. This is a **timing side-channel vulnerability** in RSA PKCS#1 v1.5 decryption operations.
-
-**Key Details:**
-
-- **CVE**: CVE-2023-49092
-- **Severity**: Medium (CVSS 5.9)
-- **Risk Assessment**: **EXTREMELY LOW** in typical production environments
-- **Affected Features**: MySQL storage (`mysql-storage` feature)
-
-### Risk Analysis
-
-The vulnerability poses **minimal practical risk** because:
-
-1. **Network Access Required**: Attacker needs ability to trigger RSA operations remotely
-2. **Complex Attack**: Requires sophisticated timing analysis over many operations
-3. **Limited Exposure**: RSA operations in SQLx are primarily for TLS connection setup
-4. **Infrastructure Protection**: Production environments typically have network isolation
-
-### 🔒 **RECOMMENDED SOLUTION**: Use PostgreSQL
-
-**We strongly recommend using PostgreSQL instead of MySQL** to completely eliminate this vulnerability:
-
-```toml
-[features]
-default = ["postgres-storage"]  # Instead of mysql-storage
-```
-
-**Benefits of PostgreSQL Migration:**
-
-- ✅ **Complete RSA elimination** - No RSA dependencies in the chain
-- ✅ **Better performance** - Native Rust PostgreSQL drivers
-- ✅ **Enhanced features** - Superior JSON support, full-text search
-- ✅ **Minimal migration effort** - SQLx provides database-agnostic interface
-
-### Alternative Mitigation Strategies
-
-If PostgreSQL migration is not immediately feasible:
-
-1. **Network Isolation**: Ensure database connections are not exposed to untrusted networks
-2. **VPN/Private Networks**: Use secure, isolated network channels for database communication
-3. **Connection Pooling**: Use connection pooling to reduce RSA handshake frequency
-4. **Monitoring**: Monitor for unusual timing patterns in database operations
-
-### Current Status
-
-- **Production Safe**: Framework is secure for production use with proper network isolation
-- **No Immediate Action Required**: Vulnerability is not practically exploitable in typical deployments
-- **Long-term Recommendation**: Migrate to PostgreSQL for optimal security posture
-
-For detailed technical analysis, see [`RUSTSEC-2023-0071_COMPREHENSIVE_ANALYSIS.md`](RUSTSEC-2023-0071_COMPREHENSIVE_ANALYSIS.md).
+**RUSTSEC-2023-0071** (Marvin Attack on RSA, a timing side-channel in RSA
+PKCS#1 v1.5 decryption) previously affected this framework via several
+paths: jsonwebtoken's RS*/PS* JWT support, the JARM RSA-OAEP JWE path, and
+MySQL storage's `rsa` dependency through SQLx's `caching_sha2_password`
+auth-plugin support. The JWT and JARM paths were rewritten against
+`aws-lc-rs` (not subject to this advisory). **MySQL storage
+(`mysql-storage`) has been removed from this crate entirely**, closing
+that path for good -- use `postgres-storage`, `sqlite-storage`, or
+`redis-storage` instead. See `CHANGELOG.md` for the migration note if you
+were relying on MySQL support.
 
 ## Supported Versions
 

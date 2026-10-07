@@ -344,7 +344,6 @@ See [Docker Deployment Guide](DOCKER_DEPLOYMENT.md) and [Deployment Guide](DEPLO
 | ---------- | ---------------------------- | ----------------------------- |
 | In-Memory  | *(always available)*         | Development, testing          |
 | PostgreSQL | `postgres-storage` (default) | Production (recommended)      |
-| MySQL      | `mysql-storage`              | Existing MySQL infrastructure |
 | SQLite     | `sqlite-storage`             | Single-server, embedded       |
 | Redis      | `redis-storage`              | Caching layer, sessions       |
 | Tiered     | `tiered-storage`             | PostgreSQL + Redis combined   |

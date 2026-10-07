@@ -74,23 +74,22 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration -- -D warnings
+        run: cargo clippy --all-targets --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration -- -D warnings
 
       - name: Run all tests (lib + integration)
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration --workspace
+        run: cargo test --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration --workspace
 
       # tests/storage_postgres.rs and tests/storage_redis.rs are #[ignore]d
       # (cargo's convention for tests needing an external service) and were
       # never actually run here despite this job provisioning healthy
-      # postgres/redis services for them (issue #17). tests/storage_mysql.rs
-      # stays ignored -- no mysql service is provisioned in this job -- and
-      # now carries a reason string saying so. Split into two steps (not one
-      # `run: |` block) so a failure in one does not stop the other from
-      # running and reporting under GitHub Actions' default `bash -e` shell.
+      # postgres/redis services for them (issue #17). Split into two steps
+      # (not one `run: |` block) so a failure in one does not stop the other
+      # from running and reporting under GitHub Actions' default `bash -e`
+      # shell.
       - name: Run ignored postgres storage integration tests
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
@@ -138,7 +137,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --examples --no-run --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration
+        run: cargo test --examples --no-run --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration
 
       - name: Verify benchmarks compile
         env:
@@ -194,7 +193,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --lib --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration
+        run: cargo test --lib --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration
 
   minimal-profile:
     name: Minimal Profile
@@ -288,7 +287,7 @@ jobs:
           - name: baseline
             features: api-server,postgres-storage,redis-storage
           - name: storage-backends
-            features: api-server,postgres-storage,mysql-storage,sqlite-storage,redis-storage,tiered-storage,distributed-rate-limiting
+            features: api-server,postgres-storage,sqlite-storage,redis-storage,tiered-storage,distributed-rate-limiting
           - name: api-integrations
             features: api-server,postgres-storage,redis-storage,axum-integration,actix-integration,warp-integration,openid-connect
           - name: admin-surfaces
@@ -369,6 +368,59 @@ jobs:
 
       - name: Run cargo-deny
         run: cargo deny --all-features check
+
+  security-audit-rsa-absence:
+    name: Security Audit (rsa absence)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # `rsa` (RUSTSEC-2023-0071, the Marvin Attack, no fixed upgrade
+      # available) must be ABSENT from every feature combination this repo
+      # ships by default, except the two features that still have their own
+      # tracked, separate exception: `saml` (bergshamra's `KeyData::Rsa`
+      # path on bergshamra 0.3.x, see #105's history) and `openid-connect`
+      # (the `openidconnect` crate itself has a hard, non-optional
+      # dependency on `rsa` -- see #113). Both are deliberately excluded
+      # from the combos checked below, not overlooked.
+      #
+      # `cargo tree -i rsa` exits NONZERO with "did not match any packages"
+      # when the crate is absent -- that is the PASS condition here,
+      # inverted from normal CI exit-code conventions. Match on the actual
+      # stdout/stderr text, not the exit code alone, or this gate silently
+      # inverts itself.
+      - name: Assert rsa is absent from shipped, non-exempt feature combinations
+        shell: bash
+        run: |
+          set -o pipefail
+          fail=0
+          check() {
+            local name="$1"
+            local features="$2"
+            local out
+            if [ -z "$features" ]; then
+              out=$(cargo tree -i rsa 2>&1) && status=0 || status=$?
+            else
+              out=$(cargo tree -i rsa --no-default-features --features "$features" 2>&1) && status=0 || status=$?
+            fi
+            if echo "$out" | grep -q "did not match any packages\|nothing to print"; then
+              echo "OK: rsa absent for '$name'"
+            else
+              echo "FAIL: rsa present (or unexpected cargo-tree error) for '$name':"
+              echo "$out"
+              fail=1
+            fi
+          }
+          check "default" ""
+          check "baseline" "api-server,postgres-storage,redis-storage"
+          check "storage-backends" "api-server,postgres-storage,sqlite-storage,redis-storage,tiered-storage,distributed-rate-limiting"
+          check "admin-surfaces" "api-server,postgres-storage,redis-storage,cli,tui,web-gui,admin-binary"
+          check "observability-performance" "api-server,postgres-storage,redis-storage,config-hot-reload,enhanced-observability,event-sourcing,performance-optimization"
+          check "crypto-sms-test" "api-server,postgres-storage,redis-storage,axum-integration,enhanced-crypto,fips-compliance,smskit,smskit-web-axum,docker-tests"
+          exit $fail
 
   build:
     name: Build and Test Docker Image

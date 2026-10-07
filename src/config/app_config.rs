@@ -33,7 +33,7 @@ pub struct AppConfig {
 /// Database connection settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
-    /// Database connection URL (PostgreSQL, MySQL, SQLite, etc.)
+    /// Database connection URL (PostgreSQL, SQLite, etc.)
     pub url: String,
     /// Maximum number of concurrent database connections
     pub max_connections: u32,
@@ -276,20 +276,11 @@ impl AppConfig {
         }
 
         if database_url.starts_with("mysql://") {
-            #[cfg(feature = "mysql-storage")]
-            {
-                return super::StorageConfig::MySQL {
-                    connection_string: database_url.to_string(),
-                    table_prefix: "auth_".to_string(),
-                };
-            }
-
-            #[cfg(not(feature = "mysql-storage"))]
-            {
-                return super::StorageConfig::Custom(
-                    "mysql-storage feature is required for MySQL DATABASE_URL".to_string(),
-                );
-            }
+            return super::StorageConfig::Custom(
+                "MySQL storage support has been removed; use postgres-storage, \
+                 sqlite-storage, or redis-storage instead"
+                    .to_string(),
+            );
         }
 
         if database_url.starts_with("sqlite:") {

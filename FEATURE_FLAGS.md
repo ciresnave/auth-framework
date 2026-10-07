@@ -34,7 +34,6 @@ These capabilities are always available regardless of feature flags:
 | ------------------ | --------------------------- | ------------------------------------------- |
 | `postgres-storage` | `sqlx`, `tokio-postgres`    | PostgreSQL storage (default)                |
 | `sqlite-storage`   | `sqlx`                      | SQLite storage for development/embedded use |
-| `mysql-storage`    | `sqlx`                      | MySQL/MariaDB storage                       |
 | `redis-storage`    | `redis`                     | Redis storage for caching and sessions      |
 | `tiered-storage`   | `postgres-storage`, `redis` | Combined PostgreSQL + Redis tiered storage  |
 

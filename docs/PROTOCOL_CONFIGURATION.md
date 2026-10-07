@@ -873,7 +873,6 @@ These protocols and features are compiled into every build:
 | *(default)*        | In-memory (development only) |
 | `postgres-storage` | PostgreSQL via `sqlx`        |
 | `redis-storage`    | Redis via `redis`            |
-| `mysql-storage`    | MySQL via `sqlx`             |
 | `sqlite-storage`   | SQLite via `sqlx`            |
 
 ### Web Framework Integrations

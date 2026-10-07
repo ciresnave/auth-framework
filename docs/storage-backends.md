@@ -13,7 +13,6 @@ Choose the right backend for your deployment scenario:
 | Single-node production deployment            |          PostgreSQL | `postgres-storage` (**default**) |
 | Multi-node or horizontally scaled deployment |  PostgreSQL + Redis |         `tiered-storage`         |
 | Session caching / distributed rate limiting  |               Redis |         `redis-storage`          |
-| Existing MySQL/MariaDB infrastructure        |               MySQL |         `mysql-storage`          |
 | High-throughput, single-process              |      UnifiedStorage |   `performance-optimization`     |
 
 **Default build:** The `postgres-storage` feature is enabled by default. New
@@ -28,7 +27,6 @@ development and tests, but it should not be treated as a production fallback.
 | In-memory         |     ✅ (no flag)      | Zero-dependency dev/test backend; always present       |
 | **PostgreSQL**    | ✅ `postgres-storage` | Production-grade ACID store; most users need it        |
 | Redis             |  ⬜ `redis-storage`   | Requires a Redis cluster; opt-in for performance/scale |
-| MySQL             |  ⬜ `mysql-storage`   | Alternative to Postgres; bring your own infra          |
 | Tiered (Redis+PG) |  ⬜ `tiered-storage`  | Optimization feature; higher operational complexity    |
 | UnifiedStorage    |  ⬜ `performance-optimization` | In-process DashMap; single-process only       |
 
@@ -49,7 +47,6 @@ Auth-framework supports multiple storage backends:
 - **In-Memory** (`MemoryStorage`): Fast, lightweight, perfect for development
 - **Redis** (`RedisStorage`): High-performance distributed caching
 - **PostgreSQL** (`PostgresStorage`): Robust ACID-compliant storage
-- **MySQL** (`MySqlStorage`): Alternative relational storage
 - **UnifiedStorage**: DashMap-based high-performance in-process storage
 - **EncryptedStorage**: Transparent encryption wrapper for any backend
 
@@ -273,28 +270,6 @@ CREATE TABLE IF NOT EXISTS kv_store (
 - Compliance and audit trail requirements
 - Long-term data retention
 - Complex queries and analytics
-
----
-
-## MySQL Storage
-
-MySQL provides an alternative relational storage backend for existing
-MySQL/MariaDB infrastructure. Requires the `mysql-storage` feature.
-
-### Setup
-
-```toml
-[dependencies]
-auth-framework = { version = "0.5", features = ["mysql-storage"] }
-```
-
-```rust
-use auth_framework::storage::MySqlStorage;
-use sqlx::MySqlPool;
-
-let pool = MySqlPool::connect("mysql://user:pass@localhost/auth_db").await?;
-let storage = MySqlStorage::new(pool);
-```
 
 ---
 
