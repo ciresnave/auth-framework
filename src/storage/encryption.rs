@@ -13,13 +13,20 @@ use std::fs;
 use std::time::Duration;
 use zeroize::Zeroize;
 
-/// Serializes every test anywhere in this crate's lib-unit-test binary
-/// that reads or writes `AUTH_STORAGE_ENCRYPTION_KEY`/
-/// `AUTH_STORAGE_ENCRYPTION_KEYS_FILE`, since those are process-global
-/// state shared across all tests running in parallel threads within one
-/// `cargo test --lib` invocation. Acquire this (and clean up the env var
-/// via [`EncryptionEnvGuard`], not a bare `set_var`/`remove_var` pair) in
-/// any test that touches those variables.
+/// Serializes the tests in this crate's lib-unit-test binary that
+/// EXPLICITLY read or write `AUTH_STORAGE_ENCRYPTION_KEY`/
+/// `AUTH_STORAGE_ENCRYPTION_KEYS_FILE` via this lock, since those are
+/// process-global state shared across all tests running in parallel
+/// threads within one `cargo test --lib` invocation. Acquire this (and
+/// clean up the env var via [`EncryptionEnvGuard`], not a bare
+/// `set_var`/`remove_var` pair) in any new test that touches those
+/// variables.
+///
+/// **Not a guarantee every such test already does** -- some pre-existing
+/// tests elsewhere in this crate build a persistent storage backend
+/// through the real factory (and therefore read these env vars via
+/// [`StorageEncryption::from_env`]) without taking this lock first; that
+/// gap predates this lock and isn't closed by introducing it.
 /// A `tokio::sync::Mutex`, not `std::sync::Mutex`, because several callers
 /// (in `#[tokio::test]` functions) need to hold this guard across `.await`
 /// points -- use `.lock().await` there, or `.blocking_lock()` in a plain
@@ -41,6 +48,8 @@ pub(crate) struct EncryptionEnvGuard;
 #[cfg(test)]
 impl EncryptionEnvGuard {
     pub(crate) fn set(key: &str) -> Self {
+        // SAFETY: unsound only under concurrent access; the caller holds
+        // `TEST_ENCRYPTION_ENV_LOCK` for this guard's entire lifetime.
         unsafe {
             std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEY", key);
             std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
@@ -52,6 +61,8 @@ impl EncryptionEnvGuard {
 #[cfg(test)]
 impl Drop for EncryptionEnvGuard {
     fn drop(&mut self) {
+        // SAFETY: see `EncryptionEnvGuard::set` -- the same lock is held
+        // for this guard's entire lifetime, including this drop.
         unsafe {
             std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
         }
@@ -229,11 +240,32 @@ impl EnvKeyProvider {
             )));
         }
 
+        // Decode every entry, zeroizing its base64 string regardless of
+        // success or failure, before checking for any error -- so a
+        // failure partway through doesn't leave later entries' strings
+        // (never reached by a `?`-propagating loop) un-zeroized, and
+        // doesn't leave already-decoded key bytes from earlier entries
+        // sitting in `keys` when we return Err below.
         let mut keys = HashMap::new();
+        let mut first_error = None;
         for (id, mut encoded) in parsed.keys {
-            let key = decode_key(&encoded);
+            match decode_key(&encoded) {
+                Ok(key) => {
+                    keys.insert(id, key);
+                }
+                Err(e) if first_error.is_none() => {
+                    first_error = Some(e);
+                }
+                Err(_) => {}
+            }
             encoded.zeroize();
-            keys.insert(id, key?);
+        }
+
+        if let Some(error) = first_error {
+            for key_bytes in keys.values_mut() {
+                key_bytes.zeroize();
+            }
+            return Err(error);
         }
 
         Ok(LoadedKeys {
@@ -299,17 +331,22 @@ fn decode_key(encoded: &str) -> Result<[u8; 32]> {
 /// but does not eliminate the exposure).
 ///
 /// **Zeroization scope (accurate, not aspirational):** this module
-/// zeroizes raw key material it owns as soon as it's done with it -- the
-/// `[u8; 32]` key bytes in [`LoadedKeys`] (after the AES-GCM ciphers are
-/// built), [`decode_key`]'s intermediate decoded `Vec<u8>`, and the
-/// base64-encoded key strings/file contents read by [`EnvKeyProvider`].
-/// It does **not** zeroize: any copy the standard library or `aes-gcm`
-/// makes internally that this code doesn't control (notably `aes` 0.8.4's
-/// own key-schedule storage inside the `Aes256Gcm` cipher object, which
-/// has no zeroize support in the version this crate depends on), or a
-/// plaintext value this module decrypts and hands back to its caller
-/// (that's the actual return value the caller needs -- it isn't leftover
-/// residue to clean up).
+/// zeroizes raw key material and intermediate plaintext it owns, on every
+/// exit path (success AND error/early-return), as soon as it's done with
+/// it -- the `[u8; 32]` key bytes in [`LoadedKeys`] (after the AES-GCM
+/// ciphers are built, or before an early validation error returns),
+/// [`decode_key`]'s intermediate decoded `Vec<u8>`, the base64-encoded key
+/// strings/file contents read by [`EnvKeyProvider`] (every entry, even
+/// ones after a failure elsewhere in the same batch), and
+/// [`migrate_kv_to_encrypted`]'s intermediate plaintext/raw buffers once
+/// they've been used. It does **not** zeroize: any copy the standard
+/// library or `aes-gcm` makes internally that this code doesn't control
+/// (notably `aes` 0.8.4's own key-schedule storage inside the `Aes256Gcm`
+/// cipher object, which has no zeroize support in the version this crate
+/// depends on), or a plaintext value a public method (`decrypt`,
+/// `decrypt_from_storage`) hands back to its caller (that's the actual
+/// return value the caller needs -- it isn't leftover residue this module
+/// can clean up on the caller's behalf).
 pub struct StorageEncryption {
     current_key_id: String,
     ciphers: HashMap<String, Aes256Gcm>,
@@ -321,23 +358,36 @@ impl StorageEncryption {
     /// this returns `Err` rather than any fallback.
     pub fn new(provider: &dyn KeyProvider) -> Result<Self> {
         let mut loaded = provider.load_keys()?;
-        if loaded.current_key_id.is_empty() {
-            return Err(AuthError::config(
+
+        // Validate first, but zeroize the raw key bytes on EVERY exit
+        // path (including these early validation failures) -- not just
+        // the success path -- so a rejected key never lingers in memory
+        // any longer than the other branch does.
+        let validation_error = if loaded.current_key_id.is_empty() {
+            Some(AuthError::config(
                 "Key provider's current_key_id must not be empty",
-            ));
-        }
-        if loaded.keys.keys().any(|id| id.is_empty()) {
-            return Err(AuthError::config(
+            ))
+        } else if loaded.keys.keys().any(|id| id.is_empty()) {
+            Some(AuthError::config(
                 "Key provider returned a key with an empty id -- an empty id is reserved \
                  to mean \"format-version-0 envelope, no key id at all\"",
-            ));
-        }
-        if !loaded.keys.contains_key(&loaded.current_key_id) {
-            return Err(AuthError::config(format!(
+            ))
+        } else if !loaded.keys.contains_key(&loaded.current_key_id) {
+            Some(AuthError::config(format!(
                 "Key provider's current_key_id '{}' is not among the keys it loaded",
                 loaded.current_key_id
-            )));
+            )))
+        } else {
+            None
+        };
+
+        if let Some(error) = validation_error {
+            for key_bytes in loaded.keys.values_mut() {
+                key_bytes.zeroize();
+            }
+            return Err(error);
         }
+
         let ciphers = loaded
             .keys
             .iter()
@@ -766,16 +816,26 @@ where
 pub struct KvEncryptionMigrationReport {
     /// Whether this run was a dry run (no writes performed).
     pub dry_run: bool,
-    /// Total keys examined under the given prefix.
+    /// Total keys examined under the given prefix. Always equal to
+    /// `already_encrypted + legacy_v0_found + encrypted + vanished +
+    /// failed.len()`.
     pub scanned: u64,
     /// Keys that were already a current-format envelope -- left
     /// untouched.
     pub already_encrypted: u64,
     /// Keys that were a format-version-0 envelope (no AAD, no key id)
-    /// and got rewritten under the current format (or would have, in a
-    /// dry run). See [`migrate_kv_to_encrypted`]'s own docs for why this
-    /// matters: a v0 envelope has no protection against being copied onto
-    /// a different record's key, regardless of any config flag.
+    /// that decrypted successfully -- counted here whether or not they
+    /// were actually rewritten (see `upgraded_from_legacy`). A v0
+    /// envelope has no AAD binding its plaintext to this specific
+    /// record, so this plaintext's association with this key could not
+    /// be cryptographically verified -- it is exactly as trustworthy as
+    /// it was before migration, no more, no less.
+    pub legacy_v0_found: u64,
+    /// Keys whose format-version-0 envelope was actually rewritten under
+    /// the current format. Zero unless this was a real (non-dry) run
+    /// AND `accept_legacy_v0` was `true` -- see
+    /// [`migrate_kv_to_encrypted`]'s docs for why that flag exists and
+    /// what rewriting a v0 envelope does and does not verify.
     pub upgraded_from_legacy: u64,
     /// Keys that were plaintext (not an envelope at all) and got
     /// encrypted (or would have, in a dry run).
@@ -783,25 +843,54 @@ pub struct KvEncryptionMigrationReport {
     /// Keys that were read but had vanished by the time of the write-back
     /// (concurrent deletion) -- not an error, just skipped.
     pub vanished: u64,
+    /// Keys (names only, never values) whose envelope could not be
+    /// decrypted at all (wrong key, corrupted, or a format-version-0
+    /// envelope that doesn't decrypt under any loaded key). Skipped, not
+    /// treated as fatal -- the rest of the run still completes.
+    pub failed: Vec<String>,
 }
 
 /// Re-encrypts every already-plaintext value under `prefix` in the given
 /// KV storage, in place.
 ///
 /// - **Idempotent and resumable**: a value already in the *current*
-///   envelope format is left untouched. A value in the original
-///   format-version-0 shape (no AAD, no key id -- see [`EncryptedData`])
-///   is decrypted and re-encrypted under the current format, regardless
-///   of `storage_encryption.allow_legacy_v0` -- this is how a v0 envelope
-///   stops being one, since nothing else in this crate ever upgrades it.
-///   Re-running this function (e.g. after it was interrupted) only ever
-///   touches the plaintext and v0 values still remaining -- there's no
-///   separate resume cursor to manage.
-/// - **Dry-run first**: pass `dry_run: true` to get an accurate
-///   [`KvEncryptionMigrationReport`] without writing anything.
-/// - **Never logs plaintext**: this function does not log key values at
-///   any point, encrypted or not (only aggregate counts); callers should
-///   preserve that if they add their own logging around it.
+///   envelope format is left untouched. Re-running this function (e.g.
+///   after it was interrupted, or because some keys were skipped as
+///   `failed`) only ever touches the plaintext and not-yet-upgraded v0
+///   values still remaining -- there's no separate resume cursor to
+///   manage.
+/// - **A single undecryptable envelope never aborts the run**: if one
+///   key's envelope can't be decrypted (wrong key, corrupted, or a v0
+///   envelope that doesn't decrypt under any loaded key), it's recorded
+///   by name in [`KvEncryptionMigrationReport::failed`] and skipped --
+///   every other key is still processed. Anyone who can write one
+///   envelope-shaped value under `prefix` can otherwise make an `?` on
+///   the first failure block the entire run.
+/// - **Dry-run is accurate, not optimistic**: `dry_run: true` actually
+///   attempts every decrypt it would need for a real run (it just skips
+///   the write-back), so its counts -- including `failed` -- match what
+///   a real run would do, rather than assuming every v0 envelope found
+///   would succeed.
+/// - **Format-version-0 upgrades require `accept_legacy_v0: true` AND a
+///   real (non-dry) run.** A v0 envelope has no AAD, so decrypting it
+///   proves nothing about *which record* its plaintext actually belongs
+///   to -- it decrypts successfully under any loaded key regardless of
+///   where it's stored. **This function cannot detect a v0 envelope
+///   that's been copied from one record onto another**; it can only
+///   decrypt-then-re-encrypt whatever is there, inheriting that
+///   plaintext's association with this key exactly as unverified as it
+///   was before. `accept_legacy_v0` exists so that upgrading is never a
+///   silent, implicit side effect of running this function -- an
+///   operator must explicitly accept that risk. With it `false` (or in
+///   a dry run), v0 envelopes are still *decrypted* for reporting
+///   accuracy (see the bullet above) and counted in
+///   [`KvEncryptionMigrationReport::legacy_v0_found`], but never
+///   written back; `upgraded_from_legacy` only increases on an actual
+///   real-run upgrade. Every real upgrade logs one `tracing::warn!` line
+///   naming the key (never its value).
+/// - **Never logs plaintext or ciphertext**: only key *names* and
+///   aggregate counts are ever logged; callers should preserve that if
+///   they add their own logging around this.
 /// - **Not safe to run concurrently with live writes to the same keys**:
 ///   this does a read, then a write-back, with no compare-and-swap. If
 ///   something else writes a fresh value to a key between this function's
@@ -832,6 +921,7 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     encryption: &StorageEncryption,
     prefix: &str,
     dry_run: bool,
+    accept_legacy_v0: bool,
 ) -> Result<KvEncryptionMigrationReport> {
     let mut report = KvEncryptionMigrationReport {
         dry_run,
@@ -842,7 +932,7 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     report.scanned = keys.len() as u64;
 
     for key in keys {
-        let Some(raw) = storage.get_kv(&key).await? else {
+        let Some(mut raw) = storage.get_kv(&key).await? else {
             // Deleted concurrently between list_kv_keys and get_kv.
             report.vanished += 1;
             continue;
@@ -854,16 +944,39 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
                 continue;
             }
 
-            // Format-version-0 envelope: decrypt it (v0 has no AAD, so
-            // the key passed here is ignored by `decrypt`'s v0 path --
-            // see its own docs) and re-encrypt under the current format
-            // with real AAD, regardless of `allow_legacy_v0` -- this
-            // function is exactly how a v0 envelope stops being one.
-            report.upgraded_from_legacy += 1;
-            if !dry_run {
-                let plaintext = encryption.decrypt(&envelope, key.as_bytes())?;
-                let new_envelope = encryption.encrypt_for_storage(&plaintext, key.as_bytes())?;
-                storage.store_kv(&key, &new_envelope, None).await?;
+            // Format-version-0 envelope: always attempt the decrypt (so
+            // dry-run reporting is accurate), but never let a failure
+            // here abort the rest of the run.
+            match encryption.decrypt(&envelope, key.as_bytes()) {
+                Err(_) => {
+                    tracing::warn!(
+                        key = %key,
+                        "migrate_kv_to_encrypted: could not decrypt format-version-0 \
+                         envelope with any loaded key -- skipping, not aborting the rest \
+                         of the run"
+                    );
+                    report.failed.push(key);
+                }
+                Ok(mut plaintext) => {
+                    report.legacy_v0_found += 1;
+                    if !dry_run && accept_legacy_v0 {
+                        tracing::warn!(
+                            key = %key,
+                            "migrate_kv_to_encrypted: upgrading format-version-0 envelope \
+                             to the current format -- v0 has no AAD, so this plaintext's \
+                             association with this specific key was not cryptographically \
+                             verified by this upgrade"
+                        );
+                        let encrypt_result =
+                            encryption.encrypt_for_storage(&plaintext, key.as_bytes());
+                        plaintext.zeroize();
+                        let new_envelope = encrypt_result?;
+                        storage.store_kv(&key, &new_envelope, None).await?;
+                        report.upgraded_from_legacy += 1;
+                    } else {
+                        plaintext.zeroize();
+                    }
+                }
             }
             continue;
         }
@@ -871,7 +984,10 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
         report.encrypted += 1;
         if !dry_run {
             let envelope = encryption.encrypt_for_storage(&raw, key.as_bytes())?;
+            raw.zeroize();
             storage.store_kv(&key, &envelope, None).await?;
+        } else {
+            raw.zeroize();
         }
     }
 
@@ -1377,14 +1493,19 @@ mod tests {
             .await
             .unwrap();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false)
+        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, true)
             .await
             .unwrap();
         assert_eq!(
+            report.legacy_v0_found, 1,
+            "a decryptable v0 envelope must be counted as found"
+        );
+        assert_eq!(
             report.upgraded_from_legacy, 1,
-            "a v0 envelope must be counted as upgraded, not already_encrypted"
+            "with accept_legacy_v0 true on a real run, it must actually be upgraded"
         );
         assert_eq!(report.already_encrypted, 0);
+        assert!(report.failed.is_empty());
 
         let raw_after = storage.get_kv("secret:legacy").await.unwrap().unwrap();
         let envelope_after: EncryptedData = serde_json::from_slice(&raw_after).unwrap();
@@ -1405,11 +1526,183 @@ mod tests {
         assert_eq!(decrypted, b"v0 secret".to_vec());
 
         // Idempotent: running it again finds nothing left to upgrade.
-        let report2 = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false)
+        let report2 = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
             .await
             .unwrap();
         assert_eq!(report2.upgraded_from_legacy, 0);
         assert_eq!(report2.already_encrypted, 1);
+    }
+
+    /// Without `accept_legacy_v0`, a decryptable v0 envelope is reported
+    /// (`legacy_v0_found`) but never written back as the current format --
+    /// this is the fix for the laundering finding: upgrading must never be
+    /// an implicit side effect of just running the migration.
+    #[tokio::test]
+    async fn test_migration_does_not_upgrade_legacy_v0_without_accept_flag() {
+        let mut keys = HashMap::new();
+        keys.insert("1".to_string(), [7u8; 32]);
+        let encryption = StorageEncryption::new(&FixedKeyProvider(LoadedKeys {
+            current_key_id: "1".to_string(),
+            keys,
+        }))
+        .unwrap();
+
+        let cipher = {
+            let key = Key::<Aes256Gcm>::from_slice(&[7u8; 32]);
+            Aes256Gcm::new(key)
+        };
+        let nonce_bytes = [3u8; 12];
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher.encrypt(nonce, b"v0 secret".as_ref()).unwrap();
+        let v0_json = format!(
+            r#"{{"data":"{}","nonce":"{}","algorithm":"AES-256-GCM","key_derivation":"direct"}}"#,
+            BASE64.encode(&ciphertext),
+            BASE64.encode(nonce_bytes)
+        );
+
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv("secret:legacy", v0_json.as_bytes(), None)
+            .await
+            .unwrap();
+
+        // Real run (not dry), but accept_legacy_v0 is false.
+        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            report.legacy_v0_found, 1,
+            "the v0 envelope must still be detected/decrypted"
+        );
+        assert_eq!(
+            report.upgraded_from_legacy, 0,
+            "without accept_legacy_v0, nothing must actually be rewritten"
+        );
+
+        let raw_after = storage.get_kv("secret:legacy").await.unwrap().unwrap();
+        assert_eq!(
+            raw_after,
+            v0_json.as_bytes(),
+            "the stored envelope must be byte-for-byte unchanged without accept_legacy_v0"
+        );
+    }
+
+    /// Fix for the "one bad record aborts the whole run" finding: a v0
+    /// envelope that fails to decrypt under any loaded key must be
+    /// skipped and reported by name, not abort processing of the other
+    /// keys in the same run.
+    #[tokio::test]
+    async fn test_migration_skips_undecryptable_v0_envelope_without_aborting() {
+        let mut keys = HashMap::new();
+        keys.insert("1".to_string(), [9u8; 32]);
+        let encryption = StorageEncryption::new(&FixedKeyProvider(LoadedKeys {
+            current_key_id: "1".to_string(),
+            keys,
+        }))
+        .unwrap();
+
+        // A v0-shaped envelope with ciphertext that will NOT decrypt
+        // under the loaded key (wrong key material entirely).
+        let bad_cipher = {
+            let key = Key::<Aes256Gcm>::from_slice(&[0u8; 32]);
+            Aes256Gcm::new(key)
+        };
+        let nonce_bytes = [1u8; 12];
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let bad_ciphertext = bad_cipher
+            .encrypt(nonce, b"undecryptable".as_ref())
+            .unwrap();
+        let bad_v0_json = format!(
+            r#"{{"data":"{}","nonce":"{}","algorithm":"AES-256-GCM","key_derivation":"direct"}}"#,
+            BASE64.encode(&bad_ciphertext),
+            BASE64.encode(nonce_bytes)
+        );
+
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv("secret:bad", bad_v0_json.as_bytes(), None)
+            .await
+            .unwrap();
+        storage
+            .store_kv("secret:good_a", b"plaintext-a", None)
+            .await
+            .unwrap();
+        storage
+            .store_kv("secret:good_b", b"plaintext-b", None)
+            .await
+            .unwrap();
+
+        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, true)
+            .await
+            .expect("one undecryptable record must not abort the whole migration");
+
+        assert_eq!(report.scanned, 3);
+        assert_eq!(
+            report.failed,
+            vec!["secret:bad".to_string()],
+            "the undecryptable key must be named in `failed`, not silently dropped"
+        );
+        assert_eq!(
+            report.encrypted, 2,
+            "the other two plaintext keys must still be processed despite the bad one"
+        );
+
+        let good_a_after = storage.get_kv("secret:good_a").await.unwrap().unwrap();
+        assert!(StorageEncryption::looks_like_envelope(&good_a_after));
+        let good_b_after = storage.get_kv("secret:good_b").await.unwrap().unwrap();
+        assert!(StorageEncryption::looks_like_envelope(&good_b_after));
+
+        // The bad record itself is untouched (still its original bytes).
+        let bad_after = storage.get_kv("secret:bad").await.unwrap().unwrap();
+        assert_eq!(bad_after, bad_v0_json.as_bytes());
+    }
+
+    /// Fix for "dry run lies": a dry run must actually attempt the v0
+    /// decrypt (not just assume success), so an undecryptable v0 envelope
+    /// shows up in `failed` during a dry run too, matching what a real
+    /// run would report.
+    #[tokio::test]
+    async fn test_migration_dry_run_detects_undecryptable_v0_envelope() {
+        let mut keys = HashMap::new();
+        keys.insert("1".to_string(), [5u8; 32]);
+        let encryption = StorageEncryption::new(&FixedKeyProvider(LoadedKeys {
+            current_key_id: "1".to_string(),
+            keys,
+        }))
+        .unwrap();
+
+        let bad_cipher = {
+            let key = Key::<Aes256Gcm>::from_slice(&[0u8; 32]);
+            Aes256Gcm::new(key)
+        };
+        let nonce_bytes = [2u8; 12];
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let bad_ciphertext = bad_cipher
+            .encrypt(nonce, b"undecryptable".as_ref())
+            .unwrap();
+        let bad_v0_json = format!(
+            r#"{{"data":"{}","nonce":"{}","algorithm":"AES-256-GCM","key_derivation":"direct"}}"#,
+            BASE64.encode(&bad_ciphertext),
+            BASE64.encode(nonce_bytes)
+        );
+
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv("secret:bad", bad_v0_json.as_bytes(), None)
+            .await
+            .unwrap();
+
+        let dry_report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", true, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            dry_report.failed,
+            vec!["secret:bad".to_string()],
+            "a dry run must actually attempt the decrypt and report the same failure a \
+             real run would, not optimistically assume every v0 envelope would succeed"
+        );
+        assert_eq!(dry_report.upgraded_from_legacy, 0);
+        assert_eq!(dry_report.legacy_v0_found, 0);
     }
 
     #[tokio::test]
@@ -1425,7 +1718,7 @@ mod tests {
             .unwrap();
         let encryption = StorageEncryption::new_random();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", true)
+        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", true, false)
             .await
             .unwrap();
 
@@ -1448,7 +1741,7 @@ mod tests {
             .unwrap();
         let encryption = StorageEncryption::new_random();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false)
+        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
             .await
             .unwrap();
         assert_eq!(report.encrypted, 1);
@@ -1488,7 +1781,7 @@ mod tests {
 
         // Resume: should skip "secret:a" (already encrypted) and finish
         // "secret:b".
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false)
+        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
             .await
             .unwrap();
         assert_eq!(report.scanned, 2);
@@ -1504,7 +1797,7 @@ mod tests {
         assert!(StorageEncryption::looks_like_envelope(&raw_b_after));
 
         // Running it again changes nothing further.
-        let report2 = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false)
+        let report2 = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
             .await
             .unwrap();
         assert_eq!(report2.already_encrypted, 2);
@@ -1524,7 +1817,7 @@ mod tests {
             .unwrap();
         let encryption = StorageEncryption::new_random();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false)
+        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
             .await
             .unwrap();
         assert_eq!(report.scanned, 1);

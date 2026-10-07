@@ -423,9 +423,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initialization returns an error -- it does not silently fall back to
   plaintext -- if encryption is enabled (the default) and no key can be
   loaded. In-memory storage is exempt (nothing persists across a
-  restart, so "at rest" has no referent for it); every persistent
-  backend (Postgres/Redis/SQLite/custom) is wrapped. Covers the KV
-  layer only (API keys, TOTP secrets, OAuth2 client registries, MFA
+  restart, so "at rest" has no referent for it); Postgres/Redis/SQLite
+  are wrapped. `StorageConfig::Custom` is rejected outright by the
+  factory (it has no backend to construct), not silently left
+  unwrapped. Covers the KV layer only (API keys, TOTP secrets, OAuth2
+  client registries, MFA
   codes, and most other KV-backed subsystems); core token/session
   storage goes through each backend's own typed columns, not `store_kv`,
   and is **not** covered by this change -- `EncryptedStorage`'s own doc
@@ -444,28 +446,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wrap_with_encryption_if_enabled` helper.
 - **Migration tool** for data written before encryption was turned on:
   `storage::encryption::migrate_kv_to_encrypted` re-encrypts plaintext KV
-  rows under a given prefix, in place. Idempotent and resumable (an
-  already-encrypted row is detected and left untouched, so re-running
-  after an interruption only finishes what's left -- no separate resume
-  cursor needed), dry-run-first (`dry_run: true` reports counts without
-  writing), and never logs plaintext (only aggregate counts). Exposed as
-  `auth-framework-admin security encrypt-kv [--prefix <p>] [--dry-run]
-  [--confirm]` (requires the `cli` feature; refuses to run if
-  `storage_encryption.enabled` is `false`, and requires `--confirm` for
-  an empty `--prefix`). **Known limitation, documented loudly (CLI help
-  text and `docs/storage-backends.md`, not just rustdoc):**
-  `AuthStorage::get_kv` doesn't return a value's remaining TTL, so a
-  migrated value loses its TTL (becomes non-expiring) -- real risk for
-  OAuth codes, email-verification tokens, MFA/SMS codes, WebAuthn
-  challenges, rate-limit windows, and expiring API keys if migrated under
-  a prefix that includes them. Also not safe to run against a live
-  deployment without pausing writers to the scoped prefix first (plain
+  rows under a given prefix, in place. Idempotent and resumable (a row
+  already in the current envelope format is left untouched; a single
+  row that fails to decrypt is skipped and named in the report's
+  `failed` list rather than aborting the rest of the run; re-running
+  only finishes what's left -- no separate resume cursor needed),
+  dry-run-first (`dry_run: true` actually attempts every decrypt it
+  would need so its counts match a real run, then skips the write-back),
+  and never logs plaintext or ciphertext (only key names and aggregate
+  counts). A format-version-0 (pre-this-redesign) envelope is detected
+  and reported (`legacy_v0_found`) but requires a separate
+  `accept_legacy_v0: true` to actually be rewritten -- see "Hardened"
+  below for why that's a separate, explicit opt-in rather than automatic.
+  Exposed as `auth-framework-admin security encrypt-kv [--prefix <p>]
+  [--dry-run] [--confirm] [--accept-legacy-v0]` (requires the `cli`
+  feature; refuses to run if `storage_encryption.enabled` is `false`,
+  and requires `--confirm` for an empty `--prefix` on a real run).
+  **Known limitation, documented loudly (CLI help text and
+  `docs/storage-backends.md`, not just rustdoc):** `AuthStorage::get_kv`
+  doesn't return a value's remaining TTL, so a migrated value loses its
+  TTL (becomes non-expiring) -- real risk for OAuth codes,
+  email-verification tokens, MFA/SMS codes, WebAuthn challenges,
+  rate-limit windows, and expiring API keys if migrated under a prefix
+  that includes them. Also not safe to run against a live deployment
+  without pausing writers to the scoped prefix first (plain
   read-then-write, no compare-and-swap).
 - A new blanket `impl<T: AuthStorage + ?Sized> AuthStorage for Arc<T>`
   lets `Arc<dyn AuthStorage>` (as returned by the storage factory) be
   wrapped in `EncryptedStorage` directly, without downcasting to a
   concrete backend type first.
-- **Hardened across two rounds of independent adversarial review, before
+- **Hardened across three rounds of independent adversarial review, before
   merge.** Both rounds judged the AES-256-GCM core itself sound (random
   12-byte nonce, tag checked, record-key AAD, factory fails closed).
   **Round 1** found five gaps:
@@ -513,10 +523,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      places that a caveat elsewhere didn't retract; replaced with
      accurate wording in both.
   8. `src/auth.rs`'s `new_validated` builds a Redis backend directly too
-     (separate from both the factory and the `auth_modular` path fixed
-     in round 1) -- there is a window between that construction and
-     `initialize()` replacing it where it's unwrapped; documented on the
-     method pending a proper fix.
+     (a third, independent unwrapped-storage path, separate from both
+     the factory and the `auth_modular` path fixed in round 1) -- fixed
+     the same way, via the same shared `wrap_with_encryption_if_enabled`
+     helper.
   Minor fixes from round 1: the nonce-reuse-bound code comment overstated
   the safety margin (corrected to NIST SP 800-38D's actual 2^32-per-key
   guidance, not a ~2^48 birthday bound); an empty key id is now rejected;
@@ -553,6 +563,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a key and write to that same key can replay the old value. Would
   need a monotonic counter or timestamp in the AAD to close; not done
   here.
+  **Round 3**, re-reviewing round 2's v0 fix, found one more real
+  problem plus a hard CI gate and documentation self-contradictions:
+  9. **Migration silently laundered a swapped v0 envelope.** Round 2's
+     fix made `migrate_kv_to_encrypted` decrypt-and-re-encrypt every v0
+     envelope it found, unconditionally. But a v0 envelope has no AAD,
+     so decrypting one proves nothing about whether its plaintext
+     actually belongs to the record it's stored under -- if one was
+     copied from one record onto another (by an attacker or a bug),
+     re-encrypting it under the current format doesn't catch that, it
+     launders the swap into a well-formed, AAD-bound v1 envelope that
+     then reads back successfully forever after, even through the
+     strict (`allow_legacy_v0: false`) wrapper. Fixed:
+     - A v0 upgrade now requires both a real (non-dry) run AND a new
+       `accept_legacy_v0: true` parameter -- migration never upgrades a
+       v0 envelope as a silent side effect of just running it.
+     - A new `legacy_v0_found` report field counts v0 envelopes that
+       decrypted successfully, independent of whether `accept_legacy_v0`
+       was set, so dry-run output and CLI counts are accurate either
+       way.
+     - Every actual upgrade logs one `tracing::warn!` line naming the
+       key (never its value), so an upgrade is visible to log review,
+       not silent.
+  10. **One undecryptable record used to abort the entire migration
+      run** (a bare `?` on the v0 decrypt), and the dry run never
+      attempted the decrypt it would need for a real run, so it
+      couldn't predict that failure -- anyone who could write one
+      envelope-shaped value under the scanned prefix could silently
+      block migration of everything else under it, and dry-run output
+      would lie about what a real run would do. Fixed: a v0 decrypt
+      failure is now recorded by key name in a new
+      `KvEncryptionMigrationReport::failed` field and skipped, not
+      propagated with `?`; dry runs now actually attempt every decrypt
+      a real run would.
+  11. **Four new `unsafe` blocks (the test-only `EncryptionEnvGuard` and
+      the two Redis fail-closed regression tests) had no `// SAFETY:`
+      comment**, which this crate's own `tests/code_quality_audit.rs`
+      enforces as a required CI check (`Test Suite`, `Coverage`) --
+      genuinely red on the previous head, not a false positive. Fixed
+      by adding the comments; each explains that the enclosing
+      `TEST_ENCRYPTION_ENV_LOCK` guard already serializes the access
+      these unsafe blocks make unsound without it.
+  12. Several CHANGELOG entries from rounds 1-2 had drifted from the
+      code they described by the time round 2 landed: item 8 (above)
+      said `new_validated`'s fix was "documented, pending a proper fix"
+      when the code already wrapped it; the zeroization entry said
+      base64 key strings were not zeroized when round 2's own code
+      already zeroized some of them (now fixed further -- see below);
+      the "every persistent backend is wrapped" wording still appeared
+      unqualified in two places a caveat elsewhere didn't retract.
+      Corrected throughout this file rather than leaving the drift for
+      a future reader to untangle.
+  Minor fixes from round 3: `StorageEncryption::new` and
+  `EnvKeyProvider::load_from_file` now zeroize already-decoded key
+  material on every exit path, including early validation failures and
+  partway through a multi-key batch -- not just the success path;
+  `migrate_kv_to_encrypted`'s intermediate plaintext/raw buffers are
+  zeroized once they've been used; the zeroization doc comment reflects
+  both. The test-env-var lock's own doc no longer claims every
+  env-var-reading test in this crate takes it (some pre-existing ones,
+  unrelated to this PR, don't). Noted (not fixed -- a portfolio-wide CI
+  decision, not this PR's to make) that the three new `encrypt_kv_*`
+  CLI tests, and the pre-existing admin maintenance smoke test, only
+  compile and run under the `admin-binary` feature, which CI's required
+  "Test Suite" job doesn't enable; only the "Coverage" job
+  (`--all-features`) exercises them today.
 
 ### Changed
 

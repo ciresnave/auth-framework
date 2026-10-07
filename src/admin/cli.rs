@@ -801,6 +801,7 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
             prefix,
             dry_run,
             confirm,
+            accept_legacy_v0,
         } => {
             let config = state.config.read().await;
             let storage_config = config.auth.storage.clone();
@@ -863,6 +864,7 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                 &encryption,
                 &prefix,
                 dry_run,
+                accept_legacy_v0,
             )
             .await?;
 
@@ -880,10 +882,43 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                 },
                 report.encrypted.to_string().yellow()
             );
+            if report.legacy_v0_found > 0 {
+                println!(
+                    "  Legacy (v0) envelopes found: {}",
+                    report.legacy_v0_found.to_string().yellow()
+                );
+                println!(
+                    "  {}: {}",
+                    if dry_run || !accept_legacy_v0 {
+                        "Would upgrade (pass --accept-legacy-v0 on a real run to apply)"
+                    } else {
+                        "Upgraded"
+                    },
+                    report.upgraded_from_legacy.to_string().yellow()
+                );
+                if !dry_run && !accept_legacy_v0 {
+                    println!(
+                        "  {}",
+                        "NOT upgraded: --accept-legacy-v0 was not passed. A v0 envelope has \
+                         no AAD, so upgrading it cannot verify its plaintext actually \
+                         belongs to this record -- re-run with --accept-legacy-v0 once \
+                         you've understood that."
+                            .yellow()
+                    );
+                }
+            }
             if report.vanished > 0 {
                 println!(
                     "  Vanished (deleted concurrently): {}",
                     report.vanished.to_string().dimmed()
+                );
+            }
+            if !report.failed.is_empty() {
+                println!(
+                    "  {} ({}): {}",
+                    "Failed to decrypt, skipped".red(),
+                    report.failed.len().to_string().red(),
+                    report.failed.join(", ")
                 );
             }
         }
@@ -1332,6 +1367,18 @@ mod tests {
         assert_eq!(entries.len(), 1);
     }
 
+    // NOTE on CI coverage: `pub mod admin` (src/lib.rs) is gated on the
+    // `admin-binary` feature, not just `cli`, so every test in this
+    // module -- including the three `encrypt_kv_*` tests below -- only
+    // compiles and runs under that feature. CI's required "Test Suite"
+    // job does not enable `admin-binary`
+    // (.github/workflows/ci-cd.yml's `enhanced-rbac,postgres-storage,
+    // redis-storage,openid-connect,axum-integration` combo), and the
+    // "Feature Matrix (admin-surfaces)" job that does enable it only
+    // `cargo check`s, not `cargo test`s. Only the "Coverage" job
+    // (`--all-features`) actually runs these tests today. Flagged, not
+    // fixed here -- changing CI's required-job feature matrix is a
+    // portfolio-wide decision outside this PR's scope.
     #[cfg(feature = "cli")]
     fn security_state(storage_encryption: crate::config::StorageEncryptionConfig) -> AppState {
         let auth_config = AuthConfig::new()
@@ -1362,6 +1409,7 @@ mod tests {
                     prefix: String::new(),
                     dry_run: true,
                     confirm: false,
+                    accept_legacy_v0: false,
                 },
             },
         )
@@ -1388,6 +1436,7 @@ mod tests {
                     prefix: String::new(),
                     dry_run: false,
                     confirm: false,
+                    accept_legacy_v0: false,
                 },
             },
         )
@@ -1423,6 +1472,7 @@ mod tests {
                     prefix: String::new(),
                     dry_run: true,
                     confirm: false,
+                    accept_legacy_v0: false,
                 },
             },
         )

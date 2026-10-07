@@ -434,6 +434,36 @@ no compare-and-swap, so running it against a *live* deployment can
 overwrite a value someone else wrote in between — prefer running it
 offline, or pause writers to the scoped prefix first.
 
+**Format-version-0 (legacy, pre-this-redesign) envelopes need a separate,
+explicit opt-in.** If a deployment already has encrypted data from the
+original `EncryptedStorage` (no AAD, no key id), that data decrypts but is
+**not** automatically rewritten to the current format: the migration tool
+detects it and reports it (`legacy_v0_found`), but by default leaves it
+untouched, because upgrading it is not risk-free. A format-version-0
+envelope has no AAD binding its plaintext to the record it's stored
+under, so decrypting one proves nothing about whether it actually belongs
+there — if one was ever copied from one record onto another (whether by
+an attacker or a bug), decrypting-then-re-encrypting it under the current
+format doesn't detect that; it just launders the swap into a well-formed,
+AAD-bound envelope that will look correct from then on. Pass
+`--accept-legacy-v0` only once you've accepted that risk:
+
+```bash
+auth-framework-admin security encrypt-kv --prefix "user:" --dry-run          # reports legacy_v0_found, upgrades nothing
+auth-framework-admin security encrypt-kv --prefix "user:" --accept-legacy-v0 # actually upgrades them
+```
+
+Reading legacy data through the running application has the same
+opt-in shape: `storage_encryption.allow_legacy_v0` (default `false`)
+gates whether `EncryptedStorage::get_kv` will decrypt a format-version-0
+envelope at all, separately from whether migration has run.
+
+A single record that fails to decrypt (wrong key, corrupted, or a
+format-version-0 envelope that doesn't decrypt under any loaded key)
+never aborts the rest of a migration run — it's skipped and named (key
+only, never its value) in the report's `failed` list, in both dry runs
+and real ones.
+
 ---
 
 ## Storage Backend Comparison

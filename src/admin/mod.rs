@@ -668,7 +668,8 @@ pub enum SecurityAction {
     },
     /// Encrypt any plaintext KV-layer values at rest (for data written
     /// before encryption was enabled). Safe to re-run: already-encrypted
-    /// values are left untouched.
+    /// values are left untouched; a value that fails to decrypt is
+    /// skipped and reported by name, not treated as fatal.
     ///
     /// WARNING: this re-stores every migrated value with no TTL, even if
     /// the original had one (OAuth codes, email-verification tokens,
@@ -676,6 +677,13 @@ pub enum SecurityAction {
     /// expiring API keys all lose their expiry). Scope `--prefix` to a
     /// durable-secret namespace; an empty prefix touches everything and
     /// requires `--confirm`.
+    ///
+    /// A value in the original (pre-redesign) format-version-0 shape has
+    /// no AAD, so decrypting it cannot verify that its plaintext actually
+    /// belongs to the record it's filed under -- upgrading one is never
+    /// a silent side effect of running this command; pass
+    /// `--accept-legacy-v0` to actually upgrade any found, after
+    /// understanding that risk.
     EncryptKv {
         /// Only operate on keys starting with this prefix (default: all keys).
         #[arg(long, default_value = "")]
@@ -688,6 +696,12 @@ pub enum SecurityAction {
         /// --dry-run, which makes no changes.
         #[arg(long)]
         confirm: bool,
+        /// Required to actually rewrite a format-version-0 envelope to
+        /// the current format. Without it, such envelopes are detected
+        /// and reported but left untouched. See the WARNING above about
+        /// what this upgrade can and cannot verify.
+        #[arg(long)]
+        accept_legacy_v0: bool,
     },
 }
 
