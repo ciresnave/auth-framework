@@ -161,4 +161,4 @@ request cleanup.
 - **`ldap-auth`** — LDAP / Active Directory authentication backend
 - **`otp-auth`** — HOTP (RFC 4226) counter-based one-time passwords
 - **`passkeys`** — FIDO U2F / passkey support (includes FIDO1 module)
-- **`saml`** — SAML 2.0 assertion parsing and validation
+- **`saml`** — SAML 2.0 assertion parsing and validation. **Linux/macOS only for now** (not Windows) -- see [#106](https://github.com/ciresnave/auth-framework/issues/106); we are actively looking for a way around this.

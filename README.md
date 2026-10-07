@@ -207,7 +207,7 @@ Historical release notes below include the test counts and quality metrics repor
 
 ### 🏗️ Production Infrastructure
 
-- **Complete Server Stack**: OAuth 2.0 server, OIDC provider, JWT server, SAML SP, WebAuthn RP, and API gateway
+- **Complete Server Stack**: OAuth 2.0 server, OIDC provider, JWT server, SAML SP ([Linux/macOS only for now](https://github.com/ciresnave/auth-framework/issues/106) -- we're looking for a way to support Windows too), WebAuthn RP, and API gateway
 - **Multiple Storage Backends**: PostgreSQL (recommended), Redis (high-performance), MySQL, in-memory (development) with connection pooling
 - **Framework Integration**: Native middleware for Axum, Actix Web, Warp, and extensible for any framework
 - **Distributed Architecture**: Cross-node authentication validation and distributed rate limiting

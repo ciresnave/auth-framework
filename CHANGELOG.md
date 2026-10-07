@@ -23,9 +23,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change, not a regression -- 1024-bit RSA has been considered
   insufficiently secure for new deployments for years -- but it is a real
   behavior change for any integrator whose external IdP or JARM
-  recipient key falls outside the new range. SAML (`saml` feature) and
-  `mysql-storage` still depend on `rsa` via separate paths, tracked
-  separately.
+  recipient key falls outside the new range. `mysql-storage` still
+  depends on `rsa` via a separate path (sqlx-mysql's
+  `caching_sha2_password` auth plugin), tracked separately as
+  CireSnave's own disposition.
+
+- SAML (`saml` feature) no longer depends on the `rsa` crate either:
+  `bergshamra` is bumped 0.3.1 -> 0.9.2 and switched from its default
+  `rustcrypto` backend to its `aws-lc` backend (via a new direct
+  `kryptering` dependency), so IdP signing-key verification now goes
+  through `aws-lc-rs` for RSA, P-256, and P-384 keys instead of the
+  `rsa`/`p256`/`p384` RustCrypto crates. `KeyData` construction changed
+  from bergshamra's old public enum (`KeyData::Rsa{..}`,
+  `KeyData::EcP256{..}`, `KeyData::EcP384{..}`) to the new opaque
+  `KeyData::from_spki_der(kryptering::KeyAlgorithm, der)` API.
+  **Behavior changes, found by adversarial review (not just an internal
+  implementation detail):**
+  - the same 2048-bit RSA key-size floor from the jsonwebtoken/JARM
+    change above now applies to SAML IdP signing keys too -- a
+    previously-accepted sub-2048-bit RSA IdP certificate now fails SAML
+    signature verification at login time, not at startup;
+  - the `aws-lc` backend drops several weaker signature algorithms that
+    bergshamra's default `rustcrypto` backend (and its optional
+    `legacy-algorithms` feature, not enabled here) supported: RSA-SHA224,
+    RSA-PSS with SHA1/SHA224/SHA3-*, ECDSA with SHA1/SHA224/SHA3-*, and
+    (via `legacy-algorithms` specifically) DSA, MD5, and RIPEMD160.
+    RSA-SHA1 -- the one legacy combination real-world SAML IdPs still
+    sometimes use -- is unaffected and continues to work.
+  - **Breaking: `saml` no longer builds on Windows.** `kryptering`'s
+    `aws-lc` feature only compiles on Linux and non-FIPS macOS
+    (x86_64/aarch64); it hard-errors via `compile_error!` on Windows and
+    other platforms (`kryptering-0.6.0/src/lib.rs`). CI (ubuntu-only)
+    does not catch this. CireSnave's ruling (2026-10-04): accept this
+    loss for now -- **we are actively searching for a way to support
+    SAML on Windows again**; see
+    [#106](https://github.com/ciresnave/auth-framework/issues/106) for
+    the options being tracked (an upstream fix to `kryptering`, bypassing
+    it for just this one code path, or a platform-conditional dependency
+    split).
 
 - **Breaking:** each storage-backend feature now enables only its own
   `sqlx` sub-feature -- `postgres-storage` -> `sqlx/postgres`,
