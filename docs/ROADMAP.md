@@ -78,7 +78,6 @@ The original roadmap was heavily weighted toward foundational work that is now a
 - [x] Storage abstraction layer exists
 - [x] PostgreSQL support exists
 - [x] Redis support exists
-- [x] MySQL support exists
 - [x] Migration tooling exists
 - [x] Docker Compose assets exist
 - [x] Cross-platform release workflow exists

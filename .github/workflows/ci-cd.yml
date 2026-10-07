@@ -74,23 +74,22 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration -- -D warnings
+        run: cargo clippy --all-targets --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration -- -D warnings
 
       - name: Run all tests (lib + integration)
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration --workspace
+        run: cargo test --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration --workspace
 
       # tests/storage_postgres.rs and tests/storage_redis.rs are #[ignore]d
       # (cargo's convention for tests needing an external service) and were
       # never actually run here despite this job provisioning healthy
-      # postgres/redis services for them (issue #17). tests/storage_mysql.rs
-      # stays ignored -- no mysql service is provisioned in this job -- and
-      # now carries a reason string saying so. Split into two steps (not one
-      # `run: |` block) so a failure in one does not stop the other from
-      # running and reporting under GitHub Actions' default `bash -e` shell.
+      # postgres/redis services for them (issue #17). Split into two steps
+      # (not one `run: |` block) so a failure in one does not stop the other
+      # from running and reporting under GitHub Actions' default `bash -e`
+      # shell.
       - name: Run ignored postgres storage integration tests
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
@@ -138,7 +137,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --examples --no-run --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration
+        run: cargo test --examples --no-run --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration
 
       - name: Verify benchmarks compile
         env:
@@ -194,7 +193,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --lib --features enhanced-rbac,postgres-storage,mysql-storage,redis-storage,openid-connect,axum-integration
+        run: cargo test --lib --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration
 
   minimal-profile:
     name: Minimal Profile
@@ -288,7 +287,7 @@ jobs:
           - name: baseline
             features: api-server,postgres-storage,redis-storage
           - name: storage-backends
-            features: api-server,postgres-storage,mysql-storage,sqlite-storage,redis-storage,tiered-storage,distributed-rate-limiting
+            features: api-server,postgres-storage,sqlite-storage,redis-storage,tiered-storage,distributed-rate-limiting
           - name: api-integrations
             features: api-server,postgres-storage,redis-storage,axum-integration,actix-integration,warp-integration,openid-connect
           - name: admin-surfaces

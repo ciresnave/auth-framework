@@ -9,7 +9,6 @@
 //! | In-memory (DashMap) | *(always available)* | [`dashmap_memory`] |
 //! | Redis | `redis-storage` | [`redis`] |
 //! | PostgreSQL | `postgres-storage` | [`postgres`] |
-//! | MySQL | `mysql-storage` | [`mysql`] |
 //! | SQLite | `sqlite-storage` | [`sqlite`] |
 //! | AES-256-GCM encrypted wrapper | *(always available)* | [`encryption`] |
 //!
@@ -21,8 +20,6 @@ pub mod dashmap_memory; // DashMap-based storage proof-of-concept
 pub mod encryption; // AES-256-GCM encryption for storage at rest
 pub(crate) mod factory;
 pub mod memory;
-#[cfg(feature = "mysql-storage")]
-pub mod mysql;
 #[cfg(feature = "postgres-storage")]
 pub mod postgres;
 #[cfg(feature = "redis")]

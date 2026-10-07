@@ -35,18 +35,11 @@
         #     Marvin Attack's concern. Tracked: bump bergshamra to >=0.9.2 and
         #     select its `aws-lc` feature (confirmed available by reading
         #     kushaldas/kryptering's own Cargo.toml) instead of `rustcrypto`.
-        #   - `mysql-storage` / any build with `postgres-storage` enabled
-        #     (which is in `default`): sqlx-mysql's own `rsa = "0.9"` is a
-        #     plain, non-optional, non-feature-gated dependency in sqlx-mysql
-        #     0.8.6's own Cargo.toml (its caching_sha2_password auth-plugin
-        #     support) -- and this crate's own `sqlx` dependency declaration
-        #     unconditionally enabled sqlx's "mysql" sub-feature regardless of
-        #     which storage backend was actually requested, so `postgres-storage`
-        #     alone (in `default`) pulled it in too. Tracked: split `sqlx`'s
-        #     features so each of postgres-storage/mysql-storage/sqlite-storage
-        #     enables only its own sqlx sub-feature; the mysql-storage
-        #     disposition itself (drop it, accept a scoped exception, or wait
-        #     on upstream sqlx) is CireSnave's call once that split lands.
+        #   - (RESOLVED) `mysql-storage`: sqlx-mysql's own `rsa = "0.9"`
+        #     (its caching_sha2_password auth-plugin support) was the path
+        #     here; `mysql-storage` has been removed from this crate
+        #     entirely (CireSnave: "Drop MySQL. I'm not a huge fan of
+        #     Oracle products anyway."), closing it.
         # Previously-confirmed-exposed, now fixed (kept for history, not
         # current status): jsonwebtoken's "rust_crypto" feature routed
         # RS256/RS384/RS512 through the `rsa` crate -- switched to

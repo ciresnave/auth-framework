@@ -392,7 +392,6 @@ pub trait AuthStorage: Send + Sync {
 | In-Memory        | *(always available)*         | `MemoryStorage::new()`               |
 | PostgreSQL       | `postgres-storage` (default) | `PostgresStorage::new(pool: PgPool)` |
 | Redis            | `redis-storage`              | `RedisStorage::new(url).await?`      |
-| MySQL            | `mysql-storage`              | `MySqlStorage::new(pool)`            |
 | UnifiedStorage   | `performance-optimization`   | `UnifiedStorage::new()`              |
 | EncryptedStorage | *(always available)*         | `EncryptedStorage::new(inner, key)`  |
 
@@ -770,7 +769,6 @@ let _env = TestEnvironment::new()
 | `postgres-storage` | PostgreSQL storage backend | **Yes** |
 | `enhanced-rbac` | Enterprise RBAC + API server | **Yes** |
 | `redis-storage` | Redis storage backend | No |
-| `mysql-storage` | MySQL storage backend | No |
 | `actix-integration` | Actix-web framework integration | No |
 | `warp-integration` | Warp framework integration | No |
 | `axum-integration` | Axum framework integration | No |

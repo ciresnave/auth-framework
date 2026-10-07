@@ -70,7 +70,7 @@ This split exists to support both simple app integration and advanced compositio
 
 > 🔐 **Security Notice**: This framework requires a JWT secret to be configured before use. See [`SECURITY_GUIDE.md`](docs/guides/SECURITY_GUIDE.md) for critical security requirements and best practices.
 >
-> ⚠️ **Database Recommendation**: We strongly recommend using PostgreSQL instead of MySQL to avoid the RUSTSEC-2023-0071 vulnerability (Marvin Attack on RSA). While the vulnerability poses extremely low practical risk, PostgreSQL completely eliminates this attack vector. See [`SECURITY.md`](SECURITY.md) for details.
+> ⚠️ **MySQL storage removed**: `mysql-storage` has been removed entirely (it was the last path to the RUSTSEC-2023-0071 RSA timing sidechannel in this crate). Use `postgres-storage`, `sqlite-storage`, or `redis-storage` instead. See [`SECURITY.md`](SECURITY.md) for details.
 
 ## 🆕 What's New in Latest Version
 
@@ -208,7 +208,7 @@ Historical release notes below include the test counts and quality metrics repor
 ### 🏗️ Production Infrastructure
 
 - **Complete Server Stack**: OAuth 2.0 server, OIDC provider, JWT server, SAML SP ([Linux/macOS only for now](https://github.com/ciresnave/auth-framework/issues/106) -- we're looking for a way to support Windows too), WebAuthn RP, and API gateway
-- **Multiple Storage Backends**: PostgreSQL (recommended), Redis (high-performance), MySQL, in-memory (development) with connection pooling
+- **Multiple Storage Backends**: PostgreSQL (recommended), Redis (high-performance), SQLite, in-memory (development) with connection pooling
 - **Framework Integration**: Native middleware for Axum, Actix Web, Warp, and extensible for any framework
 - **Distributed Architecture**: Cross-node authentication validation and distributed rate limiting
 - **Permission System**: Role-based access control (RBAC) with fine-grained permissions and attribute-based access control (ABAC)
@@ -601,7 +601,7 @@ println!("Can read: {}, Can write: {}, Can delete: {}", can_read, can_write, can
 
 ### Storage Configuration
 
-> **Security Recommendation**: Use PostgreSQL for optimal security. PostgreSQL eliminates the RUSTSEC-2023-0071 vulnerability present in MySQL storage.
+> **Note**: MySQL storage (`mysql-storage`) has been removed entirely -- it was the last path to the RUSTSEC-2023-0071 RSA timing sidechannel in this crate. Use PostgreSQL, SQLite, or Redis instead.
 
 #### PostgreSQL Storage (Recommended)
 

@@ -24,7 +24,6 @@ classDiagram
         Memory
         Redis
         Postgres
-        MySQL
         Custom
     }
     class JwtAlgorithm {

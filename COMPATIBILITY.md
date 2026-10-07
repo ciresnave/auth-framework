@@ -86,7 +86,6 @@ before building stable integrations on top of them.
 | Configuration hot-reload                 | `config-hot-reload`                   |
 | Distributed rate limiting (Redis)        | `distributed-rate-limiting`           |
 | Unicode username normalization           | `unicode-support`                     |
-| MySQL storage backend                    | `mysql-storage`                       |
 | Redis storage backend                    | `redis-storage`                       |
 | Tiered storage (Redis + Postgres)        | `tiered-storage`                      |
 | HSM / PKCS#11 integration (cryptoki)     | *(always compiled, API experimental)* |
@@ -147,11 +146,13 @@ target release. Migration guidance is published in the [changelog](CHANGELOG.md)
 | --------------------- | ------------------ | :-----: | ------------ | ------------------------------------------------------- |
 | **In-memory**         | *(none)*           |    ✅    | Stable       | Suitable for development and testing only               |
 | **PostgreSQL**        | `postgres-storage` |    ✅    | Stable       | Recommended for production                              |
-| **MySQL / MariaDB**   | `mysql-storage`    |    ⬜    | Experimental | Functional; fewer CI test cycles than Postgres          |
 | **Redis**             | `redis-storage`    |    ⬜    | Stable       | For distributed session storage and caching             |
 | **Tiered (Redis+PG)** | `tiered-storage`   |    ⬜    | Experimental | Hot-path Redis cache with Postgres persistence          |
 | **SQLite**            | Experimental       |    \u26a0\ufe0f    | Preview      | Available via `sqlite-storage` feature for lightweight/embedded deployments |
 | **SurrealDB**         | *(planned)*        |    ⬜    | Roadmap      | Planned as an optional community-maintained integration |
+
+**MySQL / MariaDB** (`mysql-storage`) was removed in 0.6.0 -- see
+`CHANGELOG.md` for the migration note.
 
 **Choosing a storage backend for production:**
 

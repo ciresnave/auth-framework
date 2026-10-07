@@ -96,13 +96,6 @@ pub enum StorageConfig {
         table_prefix: String,
     },
 
-    /// MySQL storage
-    #[cfg(feature = "mysql-storage")]
-    MySQL {
-        connection_string: String,
-        table_prefix: String,
-    },
-
     /// SQLite storage
     #[cfg(feature = "sqlite-storage")]
     Sqlite { connection_string: String },
@@ -450,8 +443,6 @@ impl std::fmt::Display for StorageConfig {
             Self::Redis { url, .. } => write!(f, "redis({})", url),
             #[cfg(feature = "postgres-storage")]
             Self::Postgres { .. } => write!(f, "postgres"),
-            #[cfg(feature = "mysql-storage")]
-            Self::MySQL { .. } => write!(f, "mysql"),
             #[cfg(feature = "sqlite-storage")]
             Self::Sqlite { .. } => write!(f, "sqlite"),
             Self::Custom(name) => write!(f, "custom({})", name),
@@ -1343,16 +1334,9 @@ impl AuthConfig {
                 if self.is_production_environment() && !self.is_test_environment() {
                     return Err(AuthError::config(
                         "Memory storage is not suitable for production environments. \
-                         Use PostgreSQL, Redis, MySQL, or SQLite storage.",
+                         Use PostgreSQL, Redis, or SQLite storage.",
                     ));
                 }
-            }
-            #[cfg(feature = "mysql-storage")]
-            StorageConfig::MySQL { .. } => {
-                tracing::warn!(
-                    "MySQL storage has known RSA vulnerability (RUSTSEC-2023-0071). \
-                     Consider using PostgreSQL for enhanced security."
-                );
             }
             _ => {} // PostgreSQL and Redis are production-ready
         }
@@ -1797,16 +1781,6 @@ impl StorageConfigBuilder {
     #[cfg(feature = "postgres-storage")]
     pub fn postgres(mut self, connection_string: impl Into<String>) -> Self {
         self.builder.config.storage = StorageConfig::Postgres {
-            connection_string: connection_string.into(),
-            table_prefix: "auth_".to_string(),
-        };
-        self
-    }
-
-    /// Use MySQL storage.
-    #[cfg(feature = "mysql-storage")]
-    pub fn mysql(mut self, connection_string: impl Into<String>) -> Self {
-        self.builder.config.storage = StorageConfig::MySQL {
             connection_string: connection_string.into(),
             table_prefix: "auth_".to_string(),
         };

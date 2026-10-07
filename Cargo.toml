@@ -389,16 +389,14 @@
   ], optional = true }
   warp = { version = "0.4.2", features = ["server", "test"], optional = true }
 
-  # Database integrations (optional). Deliberately does NOT list "mysql",
-  # "sqlite", or "postgres" here -- those are enabled per-backend by
-  # mysql-storage/sqlite-storage/postgres-storage below (see those
-  # features' own comments), not unconditionally by every build that
-  # turns on `sqlx` at all. sqlx-mysql pulls in the `rsa` crate
-  # (RUSTSEC-2023-0071) for its caching_sha2_password auth-plugin support;
-  # before this split, enabling ANY one storage backend (including
-  # `postgres-storage`, which is in `default`) silently built sqlx with
-  # full mysql support and therefore `rsa`, regardless of whether
-  # mysql-storage was ever requested.
+  # Database integrations (optional). Deliberately does NOT list "sqlite"
+  # or "postgres" here -- those are enabled per-backend by
+  # sqlite-storage/postgres-storage below (see those features' own
+  # comments), not unconditionally by every build that turns on `sqlx` at
+  # all. `mysql-storage` (and MySQL support generally) was removed
+  # entirely -- sqlx-mysql's own `rsa` dependency (RUSTSEC-2023-0071) for
+  # its caching_sha2_password auth-plugin was the last remaining path to
+  # that crate in this codebase; see CHANGELOG.md for the migration note.
   sqlx = { version = "0.8.6", features = [
     "chrono",
     "runtime-tokio-rustls",
@@ -435,10 +433,7 @@ pasetors = "0.7.7"
     "postgres-storage",
   ] # PostgreSQL recommended
   enhanced-device-flow = ["oauth-device-flows"]
-  # Each storage feature enables only its own sqlx sub-feature -- mysql-storage
-  # is the only one that pulls sqlx-mysql (and therefore `rsa`,
-  # RUSTSEC-2023-0071, via its caching_sha2_password auth-plugin support).
-  mysql-storage = ["dep:sqlx", "sqlx/mysql"]
+  # Each storage feature enables only its own sqlx sub-feature.
   sqlite-storage = ["dep:sqlx", "sqlx/sqlite"]
   openid-connect = ["openidconnect"]
   postgres-storage = ["dep:sqlx", "sqlx/postgres", "tokio-postgres"]
