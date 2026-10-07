@@ -879,6 +879,12 @@ For complete configuration documentation, see:
 4. **Rate Limiting**: Enable rate limiting to prevent brute force attacks.
 5. **Token Expiration**: Set appropriate token lifetimes based on your security requirements.
 6. **Audit Logging**: Enable comprehensive audit logging for security monitoring.
+7. **Storage Encryption at Rest**: On by default for every persistent storage
+   backend — set `AUTH_STORAGE_ENCRYPTION_KEY` (initialization fails closed
+   without it). The key source is currently an environment variable or local
+   file, not a KMS — see [Encrypted Storage](docs/storage-backends.md#encrypted-storage)
+   for the full picture, including that limitation and the migration tool for
+   existing plaintext data.
 
 ## RSA Key Format Support
 

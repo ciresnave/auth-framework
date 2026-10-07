@@ -797,6 +797,66 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
             println!("  Sessions revoked: {}", sessions.len().to_string().cyan());
             println!("  Tokens revoked:   {}", tokens.len().to_string().cyan());
         }
+        SecurityAction::EncryptKv { prefix, dry_run } => {
+            let config = state.config.read().await;
+            let storage_config = config.auth.storage.clone();
+            let storage_pool_size = None;
+            drop(config);
+
+            let backend = crate::storage::factory::build_storage_backend_unencrypted(
+                &storage_config,
+                storage_pool_size,
+            )
+            .await?;
+            let encryption =
+                crate::storage::encryption::StorageEncryption::from_env().map_err(|e| {
+                    AuthError::Cli(format!(
+                        "Cannot run EncryptKv: no storage encryption key is configured ({e}). \
+                     Set AUTH_STORAGE_ENCRYPTION_KEY / AUTH_STORAGE_ENCRYPTION_KEYS_FILE first."
+                    ))
+                })?;
+
+            if dry_run {
+                println!(
+                    "🔍 Dry run: scanning KV storage under prefix '{}'...",
+                    prefix.cyan()
+                );
+            } else {
+                println!(
+                    "🔐 Encrypting plaintext KV values under prefix '{}'...",
+                    prefix.cyan()
+                );
+            }
+
+            let report = crate::storage::encryption::migrate_kv_to_encrypted(
+                backend.as_ref(),
+                &encryption,
+                &prefix,
+                dry_run,
+            )
+            .await?;
+
+            println!("  Scanned:           {}", report.scanned.to_string().cyan());
+            println!(
+                "  Already encrypted: {}",
+                report.already_encrypted.to_string().green()
+            );
+            println!(
+                "  {}:  {}",
+                if dry_run {
+                    "Would encrypt"
+                } else {
+                    "Encrypted"
+                },
+                report.encrypted.to_string().yellow()
+            );
+            if report.vanished > 0 {
+                println!(
+                    "  Vanished (deleted concurrently): {}",
+                    report.vanished.to_string().dimmed()
+                );
+            }
+        }
     }
 
     Ok(())

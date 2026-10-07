@@ -1,6 +1,6 @@
 # AuthFramework Development Roadmap
 
-Last updated: September 26, 2026 (dependency-freshness tracking, item 63e)
+Last updated: October 7, 2026 (storage encryption at rest, board decision 124)
 
 ## Strategic Vision
 
@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc11`
+- Current crate version: `0.6.0-rc12`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -259,6 +259,24 @@ path rather than bumping the version number.
 - [x] More explicit performance benchmarking and regression gates for auth hot paths
 - [x] Improved distributed coordination and large-scale deployment guidance
 - [x] Define which storage backends should be enabled by default versus left optional for footprint or platform reasons
+- [x] Storage encryption at rest for the KV layer, on by default, fail-closed
+      (`StorageEncryption`/`EncryptedStorage`, board decision 124)
+- [ ] **Replace the env/file encryption key source with something better.**
+      Per board decision 124 (CireSnave): "env/file keys are fine for right
+      now but ensure it is noted in the roadmap that we will need to replace
+      that with something better." `EnvKeyProvider` is a deliberately narrow
+      starting point -- an attacker with read access to the process
+      environment or key file can decrypt everything it protects. The
+      `KeyProvider` trait exists specifically so a KMS-backed (AWS
+      KMS/Vault/age) provider can replace it without changing
+      `StorageEncryption` or `EncryptedStorage` at all. Not yet scheduled.
+- [ ] Extend storage-at-rest encryption to core token/session storage.
+      Today's `EncryptedStorage` only covers the generic KV layer
+      (`store_kv`/`get_kv`); `store_token`/`store_session` and friends go
+      through each backend's own typed columns and are not covered. Needs
+      either per-column encryption in each backend implementation or a
+      deeper `AuthStorage` trait change -- bigger than a KV-layer wrapper,
+      deliberately out of scope for the KV-layer work above.
 
 ### Community and Project Hygiene
 

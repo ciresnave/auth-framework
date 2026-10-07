@@ -24,6 +24,7 @@ fn create_working_config() -> AuthConfig {
         audience: "test-audience".to_string(),
         secret: Some("test-secret-key-with-sufficient-length-for-security".to_string()),
         storage: StorageConfig::Memory,
+        storage_encryption: auth_framework::config::StorageEncryptionConfig::default(),
         rate_limiting: RateLimitConfig {
             enabled: false,
             max_requests: 100,

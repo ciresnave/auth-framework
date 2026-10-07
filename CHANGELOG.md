@@ -371,6 +371,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     security presets do) are unaffected; this only changes behavior
     for configurations that relied on the *implicit* default.
 
+### Added
+
+- **Storage encryption at rest, redesigned.** `src/storage/encryption.rs`
+  (`StorageEncryption`/`EncryptedStorage`) existed before this release but
+  was unwired and had three real gaps found by the storage audit
+  (`docs/STORAGE-AUDIT.md`): no AAD binding a ciphertext to its own
+  storage key, UTF-8-only `encrypt`/`decrypt` (silently wrong for raw
+  binary secrets), and a single hardcoded key with no rotation path. All
+  three are fixed:
+  - A `KeyProvider` trait decouples the key *source* from
+    `StorageEncryption` itself. `EnvKeyProvider` (the only implementation
+    today, per board decision 124: env/file keys are accepted for now,
+    with a KMS-backed replacement tracked on the roadmap) reads
+    `AUTH_STORAGE_ENCRYPTION_KEY`/`AUTH_STORAGE_ENCRYPTION_KEY_ID`, or
+    `AUTH_STORAGE_ENCRYPTION_KEYS_FILE` for multi-key rotation.
+  - `EncryptedData` is now a versioned envelope (`key_id` field): a value
+    encrypted under an old key keeps decrypting after the current key
+    rotates, as long as the old key stays loadable.
+  - `encrypt`/`decrypt` operate on raw `&[u8]` (no more UTF-8
+    round-tripping) and take an AAD parameter; `EncryptedStorage` passes
+    the storage key itself as AAD, so a ciphertext copied from one record
+    to another fails to decrypt instead of silently applying to the
+    wrong record.
+  - Per-record nonces are randomly generated (proven unique across 1000
+    encryptions in a test, not just asserted); mutation-tested for both
+    the AAD-rejection and nonce-uniqueness guarantees (verified the
+    corresponding test actually fails when each guarantee is
+    deliberately removed, then restored).
+  - `EncryptedStorage::list_kv_keys` now overrides the trait default
+    (passthrough of key *names*, not values) instead of inheriting the
+    `AuthStorage` default that silently returns an empty list -- fixes a
+    real break the storage audit found: wrapping any backend in
+    `EncryptedStorage` would have silently emptied RBAC role reload,
+    maintenance/backup, and analytics.
+  - `EncryptedStorage::get_kv` now reads a legacy (pre-encryption or
+    opted-out) plaintext value back as-is instead of failing to decrypt
+    it, so turning encryption on for an existing deployment doesn't break
+    reads of data written before the key existed.
+- **Wired into the storage factory, on by default.** A new
+  `AuthConfig::storage_encryption: StorageEncryptionConfig` (default
+  `enabled: true`) controls whether the storage factory wraps the
+  configured backend in `EncryptedStorage`. **Fails closed:**
+  initialization returns an error -- it does not silently fall back to
+  plaintext -- if encryption is enabled (the default) and no key can be
+  loaded. In-memory storage is exempt (nothing persists across a
+  restart, so "at rest" has no referent for it); every persistent
+  backend (Postgres/Redis/SQLite/custom) is wrapped. Covers the KV
+  layer only (API keys, TOTP secrets, OAuth2 client registries, MFA
+  codes, and most other KV-backed subsystems); core token/session
+  storage goes through each backend's own typed columns, not `store_kv`,
+  and is **not** covered by this change -- `EncryptedStorage`'s own doc
+  comment and `StorageEncryptionConfig`'s doc comment both say so, and
+  this is tracked as follow-up work rather than silently left unscoped.
+  A custom storage backend supplied via `AuthFramework::new_with_storage`/
+  `replace_storage` bypasses the factory entirely and is not auto-wrapped.
+- **Migration tool** for data written before encryption was turned on:
+  `storage::encryption::migrate_kv_to_encrypted` re-encrypts plaintext KV
+  rows under a given prefix, in place. Idempotent and resumable (an
+  already-encrypted row is detected and left untouched, so re-running
+  after an interruption only finishes what's left -- no separate resume
+  cursor needed), dry-run-first (`dry_run: true` reports counts without
+  writing), and never logs plaintext (only aggregate counts). Exposed as
+  `auth-framework-admin security encrypt-kv [--prefix <p>] [--dry-run]`
+  (requires the `cli` feature). Known limitation, documented on the
+  function: `AuthStorage::get_kv` doesn't return a value's remaining TTL,
+  so a migrated value loses its TTL (becomes non-expiring) -- fine for
+  the durable secrets this is meant for, but check before running it over
+  a TTL'd namespace.
+- A new blanket `impl<T: AuthStorage + ?Sized> AuthStorage for Arc<T>`
+  lets `Arc<dyn AuthStorage>` (as returned by the storage factory) be
+  wrapped in `EncryptedStorage` directly, without downcasting to a
+  concrete backend type first.
+
 ### Changed
 
 - **Dependency:** `maxminddb` 0.27.3 -> 0.32.0 (closes #9). The calls this crate

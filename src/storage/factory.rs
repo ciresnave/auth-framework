@@ -1,9 +1,78 @@
-use crate::config::StorageConfig;
+use crate::config::{StorageConfig, StorageEncryptionConfig};
 use crate::errors::{AuthError, Result};
+use crate::storage::encryption::{EncryptedStorage, StorageEncryption};
 use crate::storage::{AuthStorage, MemoryStorage};
 use std::sync::Arc;
 
-pub(crate) async fn build_storage_backend(
+/// Builds the configured storage backend and, unless explicitly disabled,
+/// wraps it in [`EncryptedStorage`] so KV-layer values are encrypted at
+/// rest. In-memory storage holds nothing across a restart, so "at rest"
+/// encryption has no referent for it and is skipped regardless of
+/// `encryption_config`. Every other backend (Postgres/Redis/SQLite/
+/// custom) actually persists, so it gets wrapped per the config,
+/// defaulting to on (board decision 124).
+pub(crate) async fn build_storage_backend_with_encryption(
+    config: &StorageConfig,
+    pool_size: Option<u32>,
+    encryption_config: &StorageEncryptionConfig,
+) -> Result<Arc<dyn AuthStorage>> {
+    let backend = build_storage_backend_inner(config, pool_size).await?;
+
+    if matches!(config, StorageConfig::Memory) {
+        return Ok(backend);
+    }
+
+    wrap_with_encryption_if_enabled(backend, encryption_config)
+}
+
+/// Builds the configured storage backend WITHOUT wrapping it in
+/// [`EncryptedStorage`], regardless of `StorageEncryptionConfig`.
+///
+/// This exists for [`crate::storage::encryption::migrate_kv_to_encrypted`]:
+/// migration needs to see each row's *raw* bytes to decide whether it's
+/// already an encrypted envelope, which the transparently-decrypting
+/// wrapper would hide. Most callers want [`build_storage_backend_with_encryption`]
+/// instead.
+///
+/// Currently only used by the admin CLI's `security encrypt-kv` command
+/// (hence the `cli` feature gate); if another caller needs it, drop the
+/// gate.
+#[cfg(feature = "cli")]
+pub async fn build_storage_backend_unencrypted(
+    config: &StorageConfig,
+    pool_size: Option<u32>,
+) -> Result<Arc<dyn AuthStorage>> {
+    build_storage_backend_inner(config, pool_size).await
+}
+
+fn wrap_with_encryption_if_enabled(
+    backend: Arc<dyn AuthStorage>,
+    encryption_config: &StorageEncryptionConfig,
+) -> Result<Arc<dyn AuthStorage>> {
+    if !encryption_config.enabled {
+        tracing::warn!(
+            "Storage encryption at rest is explicitly disabled (storage_encryption.enabled = false) -- \
+             KV-layer values (API keys, TOTP secrets, OAuth2 client registries, etc.) will be stored in plaintext."
+        );
+        return Ok(backend);
+    }
+
+    // Fail closed: if encryption is on (the default) and no usable key
+    // can be loaded, refuse to start rather than silently falling back to
+    // plaintext storage.
+    let encryption = StorageEncryption::from_env().map_err(|e| {
+        AuthError::configuration(format!(
+            "Storage encryption at rest is enabled (the default) but no encryption key could be \
+             loaded: {e}. Either configure AUTH_STORAGE_ENCRYPTION_KEY / \
+             AUTH_STORAGE_ENCRYPTION_KEYS_FILE, or set storage_encryption.enabled = false to \
+             explicitly opt out (not recommended for any backend that persists data)."
+        ))
+    })?;
+
+    Ok(Arc::new(EncryptedStorage::new(backend, encryption)))
+}
+
+async fn build_storage_backend_inner(
     config: &StorageConfig,
     _pool_size: Option<u32>,
 ) -> Result<Arc<dyn AuthStorage>> {

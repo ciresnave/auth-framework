@@ -666,6 +666,17 @@ pub enum SecurityAction {
         #[arg(long)]
         check_ip: Option<String>,
     },
+    /// Encrypt any plaintext KV-layer values at rest (for data written
+    /// before encryption was enabled). Safe to re-run: already-encrypted
+    /// values are left untouched.
+    EncryptKv {
+        /// Only operate on keys starting with this prefix (default: all keys).
+        #[arg(long, default_value = "")]
+        prefix: String,
+        /// Preview what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[cfg(test)]

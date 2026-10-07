@@ -324,14 +324,71 @@ println!("Hits: {}, Misses: {}", stats.hits, stats.misses);
 ## Encrypted Storage
 
 `EncryptedStorage` wraps any other storage backend and transparently encrypts
-data at rest. Always available — no feature flag required.
+KV-layer values (`store_kv`/`get_kv`) at rest with AES-256-GCM. Always
+available — no feature flag required.
+
+**On by default.** `AuthFramework` wraps every persistent backend
+(Postgres/Redis/SQLite/custom) in `EncryptedStorage` automatically unless you
+set `storage_encryption.enabled = false`. In-memory storage is exempt
+(nothing persists across a restart). This fails closed: if encryption is on
+(the default) and no key can be loaded, framework initialization returns an
+error rather than silently storing data in plaintext.
+
+Set the key via environment variable:
+
+```bash
+export AUTH_STORAGE_ENCRYPTION_KEY=$(openssl rand -base64 32)
+```
+
+or generate one in Rust:
 
 ```rust
-use auth_framework::storage::{EncryptedStorage, MemoryStorage};
+use auth_framework::storage::encryption::StorageEncryption;
 
-let inner = MemoryStorage::new();
-let storage = EncryptedStorage::new(inner, encryption_key);
+println!("{}", StorageEncryption::generate_key());
 ```
+
+For key rotation, use `AUTH_STORAGE_ENCRYPTION_KEYS_FILE` instead (a JSON file
+naming the current key id plus every key still needed for decrypting older
+data) — see `StorageEncryption`'s rustdoc for the exact format.
+
+To opt out explicitly for a given deployment (not recommended for any backend
+that persists data):
+
+```rust
+use auth_framework::config::{AuthConfig, StorageEncryptionConfig};
+
+let config = AuthConfig::new()
+    .storage_encryption(StorageEncryptionConfig { enabled: false });
+```
+
+**Known limitation:** the key itself currently comes from an environment
+variable or a local file (`EnvKeyProvider`) — not a KMS. Anyone with read
+access to the process environment or the key file can decrypt everything
+this protects. This is a deliberate, accepted starting point (board decision
+124), not an endpoint: the `KeyProvider` trait exists so a KMS-backed
+provider can replace `EnvKeyProvider` later without changing
+`StorageEncryption` or `EncryptedStorage` at all. Tracked in
+`docs/ROADMAP.md`.
+
+**Coverage:** this covers the generic KV layer only — API keys, TOTP
+secrets, OAuth2 client registries, MFA codes, and most other KV-backed
+subsystems (see `docs/STORAGE-AUDIT.md`). Core token and session storage use
+each backend's own typed columns, not `store_kv`, and are **not** covered yet
+(also tracked in `docs/ROADMAP.md`).
+
+**Migrating existing plaintext data:** if you're turning encryption on for a
+deployment that already has plaintext KV data, run the migration tool to
+re-encrypt it in place (idempotent and safe to re-run):
+
+```bash
+auth-framework-admin security encrypt-kv --dry-run   # preview
+auth-framework-admin security encrypt-kv             # apply
+```
+
+Reads of not-yet-migrated plaintext rows keep working either way — new
+writes are always encrypted, and old rows are read back as plaintext until
+either they're naturally rewritten or the migration tool runs.
 
 ---
 

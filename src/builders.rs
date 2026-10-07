@@ -417,9 +417,12 @@ impl AuthBuilder {
         if let Some(storage) = self.custom_storage.take() {
             framework.replace_storage(storage);
         } else if let Some(pool_size) = self.storage_pool_size {
-            let storage =
-                crate::storage::factory::build_storage_backend(&config.storage, Some(pool_size))
-                    .await?;
+            let storage = crate::storage::factory::build_storage_backend_with_encryption(
+                &config.storage,
+                Some(pool_size),
+                &config.storage_encryption,
+            )
+            .await?;
             framework.replace_storage(storage);
         }
         framework.initialize().await?;

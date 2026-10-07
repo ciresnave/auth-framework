@@ -41,6 +41,11 @@ pub struct AuthConfig {
     /// Storage configuration
     pub storage: StorageConfig,
 
+    /// Whether KV-layer storage is encrypted at rest, and how. See
+    /// [`StorageEncryptionConfig`].
+    #[serde(default)]
+    pub storage_encryption: StorageEncryptionConfig,
+
     /// Rate limiting configuration
     pub rate_limiting: RateLimitConfig,
 
@@ -102,6 +107,43 @@ pub enum StorageConfig {
 
     /// Custom storage backend
     Custom(String),
+}
+
+/// Controls whether values written through the generic key-value storage
+/// layer ([`crate::storage::AuthStorage::store_kv`]/`get_kv`) are encrypted
+/// at rest.
+///
+/// Enabled by default per board decision 124: operators who truly need to
+/// opt out (e.g. a storage backend that already encrypts at the disk/volume
+/// level) can set `enabled: false` explicitly, but the framework never
+/// silently stores new data unencrypted.
+///
+/// **Scope:** this only covers the KV layer (API keys, TOTP secrets, OAuth2
+/// client registries, MFA codes, and most other KV-backed subsystems --
+/// see `docs/STORAGE-AUDIT.md`). Core token and session storage go through
+/// each backend's own typed columns, not `store_kv`, and are not covered by
+/// this flag; see [`crate::storage::encryption::EncryptedStorage`]'s own
+/// "Coverage note" for why, and the roadmap for the planned follow-up.
+///
+/// The key itself comes from [`crate::storage::encryption::EnvKeyProvider`]
+/// (`AUTH_STORAGE_ENCRYPTION_KEY`/`AUTH_STORAGE_ENCRYPTION_KEYS_FILE`) --
+/// an env/file key source, per board decision 124, with the limitation
+/// that implies documented in `docs/storage-backends.md`. A KMS-backed
+/// provider can replace it later without changing this config shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageEncryptionConfig {
+    /// Whether to encrypt KV-layer storage at rest. Defaults to `true` --
+    /// if no encryption key can be loaded while this is `true`, framework
+    /// initialization fails rather than silently storing data in
+    /// plaintext.
+    pub enabled: bool,
+}
+
+impl Default for StorageEncryptionConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// Rate limiting configuration.
@@ -354,6 +396,7 @@ impl Default for AuthConfig {
             audience: "api".to_string(),
             secret: None,
             storage: StorageConfig::Memory,
+            storage_encryption: StorageEncryptionConfig::default(),
             rate_limiting: RateLimitConfig::default(),
             security: SecurityConfig::default(),
             cors: CorsConfig::default(),
@@ -926,6 +969,22 @@ impl AuthConfig {
     /// ```
     pub fn storage(mut self, storage: StorageConfig) -> Self {
         self.storage = storage;
+        self
+    }
+
+    /// Configure whether KV-layer storage is encrypted at rest. See
+    /// [`StorageEncryptionConfig`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use auth_framework::config::{AuthConfig, StorageEncryptionConfig};
+    ///
+    /// let config = AuthConfig::new()
+    ///     .storage_encryption(StorageEncryptionConfig { enabled: false });
+    /// ```
+    pub fn storage_encryption(mut self, storage_encryption: StorageEncryptionConfig) -> Self {
+        self.storage_encryption = storage_encryption;
         self
     }
 

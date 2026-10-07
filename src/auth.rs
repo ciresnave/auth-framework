@@ -580,8 +580,12 @@ impl AuthFramework {
 
         // Set up storage backend if not already configured
         if !self.storage_overridden {
-            let storage =
-                crate::storage::factory::build_storage_backend(&self.config.storage, None).await?;
+            let storage = crate::storage::factory::build_storage_backend_with_encryption(
+                &self.config.storage,
+                None,
+                &self.config.storage_encryption,
+            )
+            .await?;
             self.replace_storage(storage);
             self.storage_overridden = false;
         }
