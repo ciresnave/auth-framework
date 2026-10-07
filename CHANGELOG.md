@@ -475,7 +475,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lets `Arc<dyn AuthStorage>` (as returned by the storage factory) be
   wrapped in `EncryptedStorage` directly, without downcasting to a
   concrete backend type first.
-- **Hardened across three rounds of independent adversarial review, before
+- **Hardened across four rounds of independent adversarial review, before
   merge.** Both rounds judged the AES-256-GCM core itself sound (random
   12-byte nonce, tag checked, record-key AAD, factory fails closed).
   **Round 1** found five gaps:
@@ -514,10 +514,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      vulnerable to the record-swap attack indefinitely. Fixed with a new
      `allow_legacy_v0` flag (default `false`, same shape as
      `allow_plaintext_reads`) gating v0 decryption through
-     `EncryptedStorage`, and by making `migrate_kv_to_encrypted` actively
-     decrypt-and-re-encrypt every v0 envelope it finds to the current
-     format, regardless of that flag (migration is specifically how a v0
-     envelope stops being one).
+     `EncryptedStorage`, and by making `migrate_kv_to_encrypted` able to
+     decrypt-and-re-encrypt a v0 envelope it finds to the current format.
+     **Superseded by round 3, item 9 below:** actually *writing* that
+     upgrade turned out to need its own separate opt-in, not happen
+     unconditionally -- see there for why.
   7. The factory's and `docs/storage-backends.md`'s "every persistent
      backend" claim (point 4 above) still overstated things in two
      places that a caveat elsewhere didn't retract; replaced with
@@ -537,13 +538,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Minor fixes from round 2: the comment on `default_format_version`
   incorrectly claimed serde doesn't call it for a missing field (it
   does -- it just happens to return the same `0` the bare type default
-  would); zeroization is now accurately scoped in its own doc comment
-  rather than overclaimed as comprehensive -- only the raw `[u8; 32]` key
-  bytes in `LoadedKeys` and the intermediate decoded key `Vec<u8>` in
-  `decode_key` are actually zeroized; base64-encoded key strings, moved
-  copies, and the `aes` crate's internal key schedule (no zeroize
-  support in the version used here) are not, and the doc comment says so
-  instead of implying otherwise.
+  would); round 2's own code already added zeroization for the
+  intermediate decoded key `Vec<u8>` in `decode_key` and the
+  base64-encoded key strings `EnvKeyProvider` reads, but this CHANGELOG
+  entry originally (incorrectly) said those strings were *not*
+  zeroized -- an internal contradiction within round 2 itself, not
+  caught until round 4 (see item 7 there). Corrected here rather than
+  left for a future reader to untangle; `aes`'s internal key schedule
+  remains the one genuinely out-of-this-code's-control exception.
   Test-coverage gaps closed, round 1: the AAD-rejection test only covered
   `StorageEncryption` directly (a wrapper passing a constant AAD instead
   of the real storage key would have left every original test green) --
@@ -625,9 +627,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unrelated to this PR, don't). Noted (not fixed -- a portfolio-wide CI
   decision, not this PR's to make) that the three new `encrypt_kv_*`
   CLI tests, and the pre-existing admin maintenance smoke test, only
-  compile and run under the `admin-binary` feature, which CI's required
-  "Test Suite" job doesn't enable; only the "Coverage" job
-  (`--all-features`) exercises them today.
+  compile and run under the `admin-binary` feature -- **fixed in round 4
+  (item 12 below)**, not left as noted-only.
+  **Round 4**, re-reviewing round 3's fixes (this time by actually
+  running the tests and mutations in a temp worktree), found one
+  high-severity issue plus several more documentation/test gaps:
+  13. **HIGH: storage key names are themselves bearer secrets in this
+      crate** (`api_key:{raw_api_key}` in `auth_modular::user_manager`,
+      `device:{device_code}` in `api::oauth_advanced`), and every piece
+      of code this PR added that logs or reports a key name -- the
+      `tracing::warn!` lines in `migrate_kv_to_encrypted`, the CLI's
+      printed `failed` list, and `EncryptedStorage::get_kv`'s own error
+      messages -- was doing so with the **raw** key, meaning a working
+      bearer credential could land in logs or a terminal. The "key only,
+      never its value" framing was true and provided no actual
+      protection. Fixed with a new `safe_log_id` helper: keeps the
+      non-secret namespace (the portion before the first `:`) plus a
+      short one-way hash of the full key, used everywhere a record is
+      now named instead of the raw key, including `failed`'s entries.
+  14. Two test gaps where a described mutation survived: (a) the only
+      dry-run-with-`accept_legacy_v0`-true test used an undecryptable v0
+      record, so it never reached the branch that actually gates the
+      write -- a mutation deleting the `!dry_run` check from that branch
+      passed every existing test; added a test with a *decryptable* v0
+      record under those same options, asserting the record is left
+      byte-for-byte unchanged. (b) every CLI test used a fresh, empty
+      in-memory backend, so the CLI's "don't upgrade without
+      `--accept-legacy-v0`" path was never exercised against real v0
+      data; added a CLI test against a real SQLite-backed record.
+  15. The CLI exited `0` even when some records failed to decrypt
+      (printed the list, returned `Ok`). Fixed: a non-empty `failed`
+      list is now a non-zero-exit error.
+  16. The CLI's "would upgrade" message printed `upgraded_from_legacy`,
+      which is always `0` by construction whenever that message's own
+      condition (not a real+flagged run) is true -- so it always showed
+      "would upgrade: 0". Fixed to print `legacy_v0_found`, and to not
+      tell an operator to pass `--accept-legacy-v0` when a dry run was
+      already given that flag.
+  17. Three stale "regardless of this flag" / "upgrades v0 ... that does
+      not require this flag" statements (`EncryptedStorage::new`'s doc,
+      `allow_legacy_v0`'s config doc, and `get_kv`'s own v0-rejection
+      error message) still described round 2's pre-round-3 behavior.
+      Replaced with accurate wording explaining the two flags
+      (`allow_legacy_v0` for *reading*, `accept_legacy_v0` for migration
+      *rewriting*) are independent.
+  18. The `failed` field's own documentation (and
+      `docs/storage-backends.md`'s) claimed it covers any undecryptable
+      envelope ("wrong key, corrupted"), but the code only
+      decrypt-checks v0 envelopes -- an undecryptable current-format
+      (v1) envelope (e.g. a rotated-out key) is counted as
+      `already_encrypted`, not `failed`, since it's not migration's
+      concern. Docs corrected to say so.
+  Minor fixes from round 4: `StorageEncryption::new` and
+  `EnvKeyProvider::load_from_file` had two remaining un-zeroized exit
+  paths -- the "current key id not present" early return, and a
+  `HashMap::new()` (now `with_capacity`) that could in principle leave a
+  stale decoded key in an old, freed allocation during a resize;
+  `migrate_kv_to_encrypted`'s plaintext-record branch could leave `raw`
+  unwiped if `encrypt_for_storage` itself failed (the `?` propagated
+  before the zeroize line ran) -- fixed the same way the v0-upgrade
+  branch already was. Two `// SAFETY:` comments (on the `auth.rs`/
+  `auth_modular` regression tests) said the shared lock "serializes all
+  access" to the env vars, when the lock's own doc admits some
+  unrelated, pre-existing tests read them unlocked -- narrowed to what's
+  actually true (safe against *other lock-taking tests*, not universally).
+  `migrate_kv_to_encrypted`'s `dry_run`/`accept_legacy_v0` became a
+  single `MigrationOptions` struct instead of two adjacent `bool`
+  parameters, so a transposed call can't silently turn a dry run into a
+  real upgrade; `KvEncryptionMigrationReport` and `MigrationOptions` are
+  now `#[non_exhaustive]` so a later field addition isn't a breaking
+  change.
+  12. (Referenced above.) `admin-binary` added to the required "Test
+      Suite" job's `cargo test` step (not its separate "Run Clippy"
+      step, which would newly fail that job on the pre-existing,
+      unrelated issue #120) -- this PR's `encrypt_kv_*` tests, and the
+      pre-existing admin maintenance smoke test, now actually run in a
+      required CI job instead of only in the non-required Coverage job.
 
 ### Changed
 

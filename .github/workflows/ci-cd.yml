@@ -81,7 +81,16 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration --workspace
+        # admin-binary added (PM ruling, auth-framework#119 round 4): the
+        # three encrypt_kv_* tests and the pre-existing admin maintenance
+        # smoke test live in src/admin, which is gated on this feature --
+        # without it, this required job never compiled or ran them (only
+        # the separate, non-required Coverage job's --all-features did).
+        # Deliberately NOT added to the "Run Clippy" step above: that
+        # would also pull in src/admin/web.rs under clippy's stricter
+        # lints, newly failing this job on the pre-existing, already
+        # filed, unrelated issue #120 (unwrap_used/await_holding_lock).
+        run: cargo test --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration,admin-binary --workspace
 
       # tests/storage_postgres.rs and tests/storage_redis.rs are #[ignore]d
       # (cargo's convention for tests needing an external service) and were

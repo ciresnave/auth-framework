@@ -863,8 +863,10 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                 backend.as_ref(),
                 &encryption,
                 &prefix,
-                dry_run,
-                accept_legacy_v0,
+                crate::storage::encryption::MigrationOptions {
+                    dry_run,
+                    accept_legacy_v0,
+                },
             )
             .await?;
 
@@ -887,23 +889,32 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                     "  Legacy (v0) envelopes found: {}",
                     report.legacy_v0_found.to_string().yellow()
                 );
-                println!(
-                    "  {}: {}",
-                    if dry_run || !accept_legacy_v0 {
-                        "Would upgrade (pass --accept-legacy-v0 on a real run to apply)"
-                    } else {
-                        "Upgraded"
-                    },
-                    report.upgraded_from_legacy.to_string().yellow()
-                );
-                if !dry_run && !accept_legacy_v0 {
+                if dry_run {
+                    println!(
+                        "  Would upgrade: {}{}",
+                        report.legacy_v0_found.to_string().yellow(),
+                        if accept_legacy_v0 {
+                            "" // Already have the flag; nothing more to tell them.
+                        } else {
+                            " (pass --accept-legacy-v0 on a real run to apply)"
+                        }
+                    );
+                } else if accept_legacy_v0 {
+                    println!(
+                        "  Upgraded: {}",
+                        report.upgraded_from_legacy.to_string().yellow()
+                    );
+                } else {
                     println!(
                         "  {}",
-                        "NOT upgraded: --accept-legacy-v0 was not passed. A v0 envelope has \
-                         no AAD, so upgrading it cannot verify its plaintext actually \
-                         belongs to this record -- re-run with --accept-legacy-v0 once \
-                         you've understood that."
-                            .yellow()
+                        format!(
+                            "NOT upgraded ({}): --accept-legacy-v0 was not passed. A v0 \
+                             envelope has no AAD, so upgrading it cannot verify its \
+                             plaintext actually belongs to this record -- re-run with \
+                             --accept-legacy-v0 once you've understood that.",
+                            report.legacy_v0_found
+                        )
+                        .yellow()
                     );
                 }
             }
@@ -920,6 +931,11 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                     report.failed.len().to_string().red(),
                     report.failed.join(", ")
                 );
+                return Err(AuthError::Cli(format!(
+                    "{} record(s) could not be decrypted and were skipped -- see the list \
+                     above. Investigate before considering this migration complete.",
+                    report.failed.len()
+                )));
             }
         }
     }
@@ -1369,21 +1385,38 @@ mod tests {
 
     // NOTE on CI coverage: `pub mod admin` (src/lib.rs) is gated on the
     // `admin-binary` feature, not just `cli`, so every test in this
-    // module -- including the three `encrypt_kv_*` tests below -- only
-    // compiles and runs under that feature. CI's required "Test Suite"
-    // job does not enable `admin-binary`
-    // (.github/workflows/ci-cd.yml's `enhanced-rbac,postgres-storage,
-    // redis-storage,openid-connect,axum-integration` combo), and the
-    // "Feature Matrix (admin-surfaces)" job that does enable it only
-    // `cargo check`s, not `cargo test`s. Only the "Coverage" job
-    // (`--all-features`) actually runs these tests today. Flagged, not
-    // fixed here -- changing CI's required-job feature matrix is a
-    // portfolio-wide decision outside this PR's scope.
+    // module -- including the `encrypt_kv_*` tests below -- only
+    // compiles and runs under that feature. `admin-binary` was added to
+    // the required "Test Suite" job's `cargo test` step in this same PR
+    // (.github/workflows/ci-cd.yml) specifically so these tests run
+    // there; it was deliberately NOT added to that job's separate "Run
+    // Clippy" step, which would otherwise newly fail that job on the
+    // pre-existing, already filed, unrelated issue #120
+    // (unwrap_used/await_holding_lock in src/admin/web.rs).
     #[cfg(feature = "cli")]
     fn security_state(storage_encryption: crate::config::StorageEncryptionConfig) -> AppState {
         let auth_config = AuthConfig::new()
             .secret("0123456789abcdef0123456789abcdef")
             .storage_encryption(storage_encryption);
+        let settings = AuthFrameworkSettings {
+            auth: auth_config,
+            api_server: None,
+            threat_intelligence: None,
+            session: None,
+            custom: std::collections::HashMap::new(),
+        };
+        AppState::new(settings).unwrap()
+    }
+
+    #[cfg(all(feature = "cli", feature = "sqlite-storage"))]
+    fn security_state_with_storage(
+        storage_encryption: crate::config::StorageEncryptionConfig,
+        storage: StorageConfig,
+    ) -> AppState {
+        let mut auth_config = AuthConfig::new()
+            .secret("0123456789abcdef0123456789abcdef")
+            .storage_encryption(storage_encryption);
+        auth_config.storage = storage;
         let settings = AuthFrameworkSettings {
             auth: auth_config,
             api_server: None,
@@ -1478,5 +1511,164 @@ mod tests {
         )
         .await
         .expect("a dry run with an empty prefix must not require --confirm");
+    }
+
+    /// Kills the mutation at the CLI layer corresponding to always
+    /// passing `true` for `accept_legacy_v0` regardless of the flag: a
+    /// real (non-dry) `encrypt-kv` run WITHOUT `--accept-legacy-v0`,
+    /// over a real persistent backend holding a decryptable v0 record,
+    /// must leave that record byte-for-byte unchanged. The earlier CLI
+    /// tests used a fresh, empty in-memory backend each time, so this
+    /// path was never exercised against real v0 data.
+    #[cfg(all(feature = "cli", feature = "sqlite-storage"))]
+    #[tokio::test]
+    async fn encrypt_kv_leaves_legacy_v0_record_untouched_without_accept_flag() {
+        let _lock = crate::storage::encryption::TEST_ENCRYPTION_ENV_LOCK
+            .lock()
+            .await;
+        let key_b64 = crate::storage::encryption::StorageEncryption::generate_key();
+        let _guard = crate::storage::encryption::EncryptionEnvGuard::set(&key_b64);
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("encrypt-kv-v0-smoke.db");
+        let database_url = format!(
+            "sqlite://{}?mode=rwc",
+            db_path.to_string_lossy().replace('\\', "/")
+        );
+        let storage_config = StorageConfig::Sqlite {
+            connection_string: database_url,
+        };
+
+        // Hand-build a v0 envelope (no key_id, no AAD) with the SAME key
+        // just set in the env var, and seed it directly into the
+        // backend, bypassing the CLI entirely.
+        let encryption = crate::storage::encryption::StorageEncryption::from_env().unwrap();
+        let v0_json = {
+            use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+            use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+            let raw_key = BASE64.decode(&key_b64).unwrap();
+            let cipher = Aes256Gcm::new_from_slice(&raw_key).unwrap();
+            let nonce_bytes = [4u8; 12];
+            let nonce = Nonce::from_slice(&nonce_bytes);
+            let ciphertext = cipher.encrypt(nonce, b"legacy totp seed".as_ref()).unwrap();
+            format!(
+                r#"{{"data":"{}","nonce":"{}","algorithm":"AES-256-GCM","key_derivation":"direct"}}"#,
+                BASE64.encode(&ciphertext),
+                BASE64.encode(nonce_bytes)
+            )
+        };
+        let _ = &encryption; // only needed to prove the key loads; seeding uses raw bytes directly.
+
+        let backend =
+            crate::storage::factory::build_storage_backend_unencrypted(&storage_config, None)
+                .await
+                .unwrap();
+        backend
+            .store_kv("secret:legacy", v0_json.as_bytes(), None)
+            .await
+            .unwrap();
+        drop(backend);
+
+        let state = security_state_with_storage(Default::default(), storage_config.clone());
+
+        run_cli(
+            state,
+            CliCommand::Security {
+                action: SecurityAction::EncryptKv {
+                    prefix: "secret:".to_string(),
+                    dry_run: false,
+                    confirm: false,
+                    accept_legacy_v0: false,
+                },
+            },
+        )
+        .await
+        .expect("a real run without --accept-legacy-v0 must still succeed overall");
+
+        let backend_after =
+            crate::storage::factory::build_storage_backend_unencrypted(&storage_config, None)
+                .await
+                .unwrap();
+        let raw_after = backend_after
+            .get_kv("secret:legacy")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            raw_after,
+            v0_json.as_bytes(),
+            "without --accept-legacy-v0, a real encrypt-kv run must leave a legacy v0 \
+             record byte-for-byte unchanged, not silently upgrade it"
+        );
+    }
+
+    /// A record that fails to decrypt must make the CLI command exit
+    /// with an error (non-zero exit code when actually run as a
+    /// binary), not print the failure and return success anyway.
+    #[cfg(all(feature = "cli", feature = "sqlite-storage"))]
+    #[tokio::test]
+    async fn encrypt_kv_errors_when_any_record_fails_to_decrypt() {
+        let _lock = crate::storage::encryption::TEST_ENCRYPTION_ENV_LOCK
+            .lock()
+            .await;
+        let key_b64 = crate::storage::encryption::StorageEncryption::generate_key();
+        let _guard = crate::storage::encryption::EncryptionEnvGuard::set(&key_b64);
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("encrypt-kv-failed-smoke.db");
+        let database_url = format!(
+            "sqlite://{}?mode=rwc",
+            db_path.to_string_lossy().replace('\\', "/")
+        );
+        let storage_config = StorageConfig::Sqlite {
+            connection_string: database_url,
+        };
+
+        // A v0-shaped envelope with ciphertext that will NOT decrypt
+        // under the configured key (wrong key material entirely).
+        let bad_v0_json = {
+            use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+            use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+            let cipher = Aes256Gcm::new_from_slice(&[0u8; 32]).unwrap();
+            let nonce_bytes = [7u8; 12];
+            let nonce = Nonce::from_slice(&nonce_bytes);
+            let ciphertext = cipher.encrypt(nonce, b"undecryptable".as_ref()).unwrap();
+            format!(
+                r#"{{"data":"{}","nonce":"{}","algorithm":"AES-256-GCM","key_derivation":"direct"}}"#,
+                BASE64.encode(&ciphertext),
+                BASE64.encode(nonce_bytes)
+            )
+        };
+
+        let backend =
+            crate::storage::factory::build_storage_backend_unencrypted(&storage_config, None)
+                .await
+                .unwrap();
+        backend
+            .store_kv("secret:bad", bad_v0_json.as_bytes(), None)
+            .await
+            .unwrap();
+        drop(backend);
+
+        let state = security_state_with_storage(Default::default(), storage_config);
+
+        let err = run_cli(
+            state,
+            CliCommand::Security {
+                action: SecurityAction::EncryptKv {
+                    prefix: "secret:".to_string(),
+                    dry_run: false,
+                    confirm: false,
+                    accept_legacy_v0: true,
+                },
+            },
+        )
+        .await
+        .expect_err("a record that fails to decrypt must make the command return an error");
+
+        assert!(
+            err.to_string().contains("could not be decrypted"),
+            "the error should explain that some records failed to decrypt, got: {err}"
+        );
     }
 }

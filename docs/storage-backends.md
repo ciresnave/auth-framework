@@ -458,11 +458,17 @@ opt-in shape: `storage_encryption.allow_legacy_v0` (default `false`)
 gates whether `EncryptedStorage::get_kv` will decrypt a format-version-0
 envelope at all, separately from whether migration has run.
 
-A single record that fails to decrypt (wrong key, corrupted, or a
-format-version-0 envelope that doesn't decrypt under any loaded key)
-never aborts the rest of a migration run — it's skipped and named (key
-only, never its value) in the report's `failed` list, in both dry runs
-and real ones.
+A format-version-0 record that fails to decrypt under any loaded key
+(wrong/missing key, or corrupted) never aborts the rest of a migration
+run — it's skipped and listed in the report's `failed` field, in both
+dry runs and real ones. (Only v0 envelopes are decrypt-checked this way;
+an already-current-format envelope that can't decrypt, e.g. because its
+key was rotated out, isn't migration's concern and is counted as
+already-encrypted instead.) Entries in `failed` are a **safe identifier**
+— a non-secret namespace plus a short hash — never the raw storage key:
+some keys in this crate are themselves bearer secrets (e.g. the raw API
+key in `api_key:{...}`), so logging or printing one verbatim would leak
+a working credential.
 
 ---
 

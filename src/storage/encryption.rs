@@ -230,9 +230,14 @@ impl EnvKeyProvider {
             ))
         });
         contents.zeroize();
-        let parsed = parsed?;
+        let mut parsed = parsed?;
 
         if !parsed.keys.contains_key(&parsed.current) {
+            // Zeroize every base64 key string before returning -- this
+            // early return must not be the one exit path that skips it.
+            for encoded in parsed.keys.values_mut() {
+                encoded.zeroize();
+            }
             return Err(AuthError::config(format!(
                 "AUTH_STORAGE_ENCRYPTION_KEYS_FILE '{path}': current key id '{}' \
                  is not present in 'keys'",
@@ -245,8 +250,10 @@ impl EnvKeyProvider {
         // failure partway through doesn't leave later entries' strings
         // (never reached by a `?`-propagating loop) un-zeroized, and
         // doesn't leave already-decoded key bytes from earlier entries
-        // sitting in `keys` when we return Err below.
-        let mut keys = HashMap::new();
+        // sitting in `keys` when we return Err below. Pre-sized so
+        // `insert` never triggers a reallocation that could leave a
+        // decoded key copy behind in the old, freed backing array.
+        let mut keys = HashMap::with_capacity(parsed.keys.len());
         let mut first_error = None;
         for (id, mut encoded) in parsed.keys {
             match decode_key(&encoded) {
@@ -298,6 +305,27 @@ impl EnvKeyProvider {
     fn warn_if_file_too_permissive(_path: &str) {}
 }
 
+/// Produces a safe-to-log identifier for a storage key, for error
+/// messages, tracing, and migration reports -- **never** the raw key
+/// itself. In this crate, some storage keys literally ARE bearer
+/// secrets (e.g. `api_key:{raw_api_key}` in
+/// `auth_modular::user_manager`, `device:{device_code}` in
+/// `api::oauth_advanced`), so logging or printing a key name verbatim
+/// can leak a working credential into logs or a terminal.
+///
+/// Keeps the portion up to (not including) the first `:` (the
+/// namespace, e.g. `api_key`, which is not secret) plus a short,
+/// one-way hash of the *full* key, so an operator with direct storage
+/// access can still correlate a reported identifier back to the real
+/// record (by recomputing the same hash over a candidate key) without
+/// the identifier itself being usable as a credential.
+fn safe_log_id(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let namespace = key.split(':').next().unwrap_or("");
+    let hash = Sha256::digest(key.as_bytes());
+    format!("{namespace}:{}", hex::encode(&hash[..4]))
+}
+
 fn decode_key(encoded: &str) -> Result<[u8; 32]> {
     let mut key_bytes = BASE64
         .decode(encoded)
@@ -331,19 +359,26 @@ fn decode_key(encoded: &str) -> Result<[u8; 32]> {
 /// but does not eliminate the exposure).
 ///
 /// **Zeroization scope (accurate, not aspirational):** this module
-/// zeroizes raw key material and intermediate plaintext it owns, on every
-/// exit path (success AND error/early-return), as soon as it's done with
-/// it -- the `[u8; 32]` key bytes in [`LoadedKeys`] (after the AES-GCM
-/// ciphers are built, or before an early validation error returns),
-/// [`decode_key`]'s intermediate decoded `Vec<u8>`, the base64-encoded key
-/// strings/file contents read by [`EnvKeyProvider`] (every entry, even
-/// ones after a failure elsewhere in the same batch), and
-/// [`migrate_kv_to_encrypted`]'s intermediate plaintext/raw buffers once
-/// they've been used. It does **not** zeroize: any copy the standard
-/// library or `aes-gcm` makes internally that this code doesn't control
-/// (notably `aes` 0.8.4's own key-schedule storage inside the `Aes256Gcm`
-/// cipher object, which has no zeroize support in the version this crate
-/// depends on), or a plaintext value a public method (`decrypt`,
+/// zeroizes raw key material and intermediate plaintext it owns on every
+/// exit path it controls (success, a validation error, or an encryption
+/// failure partway through), as soon as it's done with it -- the
+/// `[u8; 32]` key bytes in [`LoadedKeys`] (after the AES-GCM ciphers are
+/// built, or before any validation error returns, including the
+/// "current key id not found" check), [`decode_key`]'s intermediate
+/// decoded `Vec<u8>`, every base64-encoded key string
+/// [`EnvKeyProvider`] reads (file contents and every per-key entry, even
+/// ones after a failure elsewhere in the same batch, and even when the
+/// file's `current` id isn't present in `keys`), and
+/// [`migrate_kv_to_encrypted`]'s intermediate plaintext/raw buffers,
+/// including when the subsequent re-encrypt or write-back fails. It does
+/// **not** zeroize: any copy the standard library or `aes-gcm` makes
+/// internally that this code doesn't control (notably `aes` 0.8.4's own
+/// key-schedule storage inside the `Aes256Gcm` cipher object, which has
+/// no zeroize support in the version this crate depends on; and
+/// `HashMap` growth can in principle leave a stale decoded-key copy in an
+/// old, freed backing allocation during a resize -- mitigated, not
+/// eliminated, by pre-sizing the maps this module builds with
+/// `with_capacity`), or a plaintext value a public method (`decrypt`,
 /// `decrypt_from_storage`) hands back to its caller (that's the actual
 /// return value the caller needs -- it isn't leftover residue this module
 /// can clean up on the caller's behalf).
@@ -640,12 +675,13 @@ impl<T> EncryptedStorage<T> {
     /// AAD binding it to its own storage key, so with this `true`, a
     /// writer who knows one record's v0 envelope can copy it onto a
     /// different record's key and it still decrypts -- the exact swap the
-    /// current format's AAD exists to prevent. [`migrate_kv_to_encrypted`]
-    /// upgrades every v0 envelope it finds to the current format
-    /// regardless of this flag (it talks to the inner storage directly,
-    /// bypassing this policy check), so this only needs to be `true` if
-    /// something *other* than the migration tool needs to read v0 data
-    /// through this wrapper before migration runs.
+    /// current format's AAD exists to prevent. This flag is independent
+    /// of [`migrate_kv_to_encrypted`]'s own, separate
+    /// `accept_legacy_v0` parameter (that one gates whether migration
+    /// actually *rewrites* a v0 envelope; this one gates whether this
+    /// wrapper's `get_kv` will *read* one at all) -- set this one `true`
+    /// if something needs to read v0 data through this wrapper before,
+    /// or without ever, running migration.
     pub fn new(
         storage: T,
         encryption: StorageEncryption,
@@ -767,13 +803,13 @@ where
         if let Some(envelope) = StorageEncryption::parse_envelope(&raw) {
             if envelope.v == 0 && !self.allow_legacy_v0 {
                 return Err(AuthError::internal(format!(
-                    "Value for key '{key}' is a format-version-0 envelope (no AAD binding \
+                    "Value for record '{}' is a format-version-0 envelope (no AAD binding \
                      it to its own storage key), and storage_encryption.allow_legacy_v0 is \
                      false. Run the migration tool (`auth-framework-admin security \
-                     encrypt-kv`) to upgrade it to the current format -- that does not \
-                     require this flag -- or temporarily set \
-                     storage_encryption.allow_legacy_v0 = true if something else needs to \
-                     read it first."
+                     encrypt-kv --accept-legacy-v0`) to upgrade it to the current format, \
+                     or temporarily set storage_encryption.allow_legacy_v0 = true if \
+                     something else needs to read it first.",
+                    safe_log_id(key)
                 )));
             }
             let decrypted = self.encryption.decrypt(&envelope, key.as_bytes())?;
@@ -785,11 +821,12 @@ where
         }
 
         Err(AuthError::internal(format!(
-            "Value for key '{key}' is not a valid encrypted envelope, and \
+            "Value for record '{}' is not a valid encrypted envelope, and \
              storage_encryption.allow_plaintext_reads is false. If this key genuinely \
              predates encryption being enabled, run the migration tool \
              (`auth-framework-admin security encrypt-kv`) or temporarily set \
-             storage_encryption.allow_plaintext_reads = true while migrating."
+             storage_encryption.allow_plaintext_reads = true while migrating.",
+            safe_log_id(key)
         )))
     }
 
@@ -812,7 +849,12 @@ where
 }
 
 /// Outcome of [`migrate_kv_to_encrypted`].
+///
+/// `#[non_exhaustive]`: use `..Default::default()` when constructing one
+/// (tests do), since a later field addition here must not be a breaking
+/// change for callers who build a value of this type.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct KvEncryptionMigrationReport {
     /// Whether this run was a dry run (no writes performed).
     pub dry_run: bool,
@@ -843,11 +885,36 @@ pub struct KvEncryptionMigrationReport {
     /// Keys that were read but had vanished by the time of the write-back
     /// (concurrent deletion) -- not an error, just skipped.
     pub vanished: u64,
-    /// Keys (names only, never values) whose envelope could not be
-    /// decrypted at all (wrong key, corrupted, or a format-version-0
-    /// envelope that doesn't decrypt under any loaded key). Skipped, not
-    /// treated as fatal -- the rest of the run still completes.
+    /// Format-version-0 records whose envelope could not be decrypted
+    /// under any loaded key (wrong/missing key, or corrupted). Skipped,
+    /// not treated as fatal -- the rest of the run still completes.
+    /// **Only v0 envelopes are decrypt-checked by this function** --
+    /// a current-format (v1) envelope that can't decrypt (e.g. its key
+    /// was rotated out) is not migration's concern (it's already in the
+    /// target format) and is counted in `already_encrypted`, not here.
+    /// Entries are a **safe identifier** (see [`safe_log_id`]), never the
+    /// raw storage key -- some keys in this crate are themselves bearer
+    /// secrets (e.g. `api_key:{raw_key}`).
     pub failed: Vec<String>,
+}
+
+/// Options for [`migrate_kv_to_encrypted`]. A named struct rather than
+/// two adjacent `bool` parameters, specifically so a caller can't
+/// transpose them -- `(false, true)` instead of `(true, false)` would
+/// otherwise silently turn an intended dry run into a real upgrade.
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
+pub struct MigrationOptions {
+    /// Preview only; don't write anything. See
+    /// [`migrate_kv_to_encrypted`]'s own docs for exactly what a dry run
+    /// still does (it attempts every decrypt a real run would, for
+    /// accurate reporting).
+    pub dry_run: bool,
+    /// Required, together with `dry_run: false`, to actually rewrite a
+    /// format-version-0 envelope to the current format. See
+    /// [`migrate_kv_to_encrypted`]'s own docs for why this is a separate,
+    /// explicit opt-in.
+    pub accept_legacy_v0: bool,
 }
 
 /// Re-encrypts every already-plaintext value under `prefix` in the given
@@ -887,10 +954,16 @@ pub struct KvEncryptionMigrationReport {
 ///   [`KvEncryptionMigrationReport::legacy_v0_found`], but never
 ///   written back; `upgraded_from_legacy` only increases on an actual
 ///   real-run upgrade. Every real upgrade logs one `tracing::warn!` line
-///   naming the key (never its value).
-/// - **Never logs plaintext or ciphertext**: only key *names* and
-///   aggregate counts are ever logged; callers should preserve that if
-///   they add their own logging around this.
+///   naming a safe identifier for the record (never its raw key or
+///   value -- see below).
+/// - **Never logs or reports the raw storage key, plaintext, or
+///   ciphertext**: in this crate, some storage keys are themselves
+///   bearer secrets (e.g. `api_key:{raw_api_key}`), so logging a key
+///   name verbatim can leak a working credential. Everywhere this
+///   function logs or reports a record (`tracing::warn!` lines,
+///   [`KvEncryptionMigrationReport::failed`]), it uses a short,
+///   non-reversible, safe identifier instead of the raw key; callers
+///   should preserve that if they add their own logging around this.
 /// - **Not safe to run concurrently with live writes to the same keys**:
 ///   this does a read, then a write-back, with no compare-and-swap. If
 ///   something else writes a fresh value to a key between this function's
@@ -920,9 +993,12 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     storage: &S,
     encryption: &StorageEncryption,
     prefix: &str,
-    dry_run: bool,
-    accept_legacy_v0: bool,
+    options: MigrationOptions,
 ) -> Result<KvEncryptionMigrationReport> {
+    let MigrationOptions {
+        dry_run,
+        accept_legacy_v0,
+    } = options;
     let mut report = KvEncryptionMigrationReport {
         dry_run,
         ..Default::default()
@@ -950,18 +1026,18 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
             match encryption.decrypt(&envelope, key.as_bytes()) {
                 Err(_) => {
                     tracing::warn!(
-                        key = %key,
+                        record = %safe_log_id(&key),
                         "migrate_kv_to_encrypted: could not decrypt format-version-0 \
                          envelope with any loaded key -- skipping, not aborting the rest \
                          of the run"
                     );
-                    report.failed.push(key);
+                    report.failed.push(safe_log_id(&key));
                 }
                 Ok(mut plaintext) => {
                     report.legacy_v0_found += 1;
                     if !dry_run && accept_legacy_v0 {
                         tracing::warn!(
-                            key = %key,
+                            record = %safe_log_id(&key),
                             "migrate_kv_to_encrypted: upgrading format-version-0 envelope \
                              to the current format -- v0 has no AAD, so this plaintext's \
                              association with this specific key was not cryptographically \
@@ -983,8 +1059,9 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
 
         report.encrypted += 1;
         if !dry_run {
-            let envelope = encryption.encrypt_for_storage(&raw, key.as_bytes())?;
+            let encrypt_result = encryption.encrypt_for_storage(&raw, key.as_bytes());
             raw.zeroize();
+            let envelope = encrypt_result?;
             storage.store_kv(&key, &envelope, None).await?;
         } else {
             raw.zeroize();
@@ -1493,9 +1570,17 @@ mod tests {
             .await
             .unwrap();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, true)
-            .await
-            .unwrap();
+        let report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: false,
+                accept_legacy_v0: true,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(
             report.legacy_v0_found, 1,
             "a decryptable v0 envelope must be counted as found"
@@ -1526,9 +1611,17 @@ mod tests {
         assert_eq!(decrypted, b"v0 secret".to_vec());
 
         // Idempotent: running it again finds nothing left to upgrade.
-        let report2 = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
-            .await
-            .unwrap();
+        let report2 = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: false,
+                accept_legacy_v0: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(report2.upgraded_from_legacy, 0);
         assert_eq!(report2.already_encrypted, 1);
     }
@@ -1567,9 +1660,17 @@ mod tests {
             .unwrap();
 
         // Real run (not dry), but accept_legacy_v0 is false.
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
-            .await
-            .unwrap();
+        let report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: false,
+                accept_legacy_v0: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(
             report.legacy_v0_found, 1,
             "the v0 envelope must still be detected/decrypted"
@@ -1632,15 +1733,24 @@ mod tests {
             .await
             .unwrap();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, true)
-            .await
-            .expect("one undecryptable record must not abort the whole migration");
+        let report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: false,
+                accept_legacy_v0: true,
+            },
+        )
+        .await
+        .expect("one undecryptable record must not abort the whole migration");
 
         assert_eq!(report.scanned, 3);
         assert_eq!(
             report.failed,
-            vec!["secret:bad".to_string()],
-            "the undecryptable key must be named in `failed`, not silently dropped"
+            vec![safe_log_id("secret:bad")],
+            "the undecryptable record must be named (as a safe identifier, not the raw \
+             key) in `failed`, not silently dropped"
         );
         assert_eq!(
             report.encrypted, 2,
@@ -1692,17 +1802,115 @@ mod tests {
             .await
             .unwrap();
 
-        let dry_report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", true, true)
-            .await
-            .unwrap();
+        let dry_report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: true,
+                accept_legacy_v0: true,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(
             dry_report.failed,
-            vec!["secret:bad".to_string()],
+            vec![safe_log_id("secret:bad")],
             "a dry run must actually attempt the decrypt and report the same failure a \
              real run would, not optimistically assume every v0 envelope would succeed"
         );
         assert_eq!(dry_report.upgraded_from_legacy, 0);
         assert_eq!(dry_report.legacy_v0_found, 0);
+    }
+
+    /// Fix for the high-severity finding: some storage keys in this
+    /// crate ARE bearer secrets (`api_key:{raw_key}`), so a safe log
+    /// identifier must never contain the raw key material -- only the
+    /// namespace and a hash.
+    #[test]
+    fn test_safe_log_id_never_contains_the_raw_secret() {
+        let raw_secret = "ak_live_super_secret_bearer_token_12345";
+        let key = format!("api_key:{raw_secret}");
+        let id = safe_log_id(&key);
+
+        assert!(
+            !id.contains(raw_secret),
+            "safe_log_id must never contain the raw secret portion of the key, got: {id}"
+        );
+        assert!(
+            id.starts_with("api_key:"),
+            "safe_log_id should keep the (non-secret) namespace prefix, got: {id}"
+        );
+        // Deterministic, so an operator with storage access can
+        // recompute it to correlate a logged identifier back to a
+        // specific record.
+        assert_eq!(id, safe_log_id(&key));
+    }
+
+    /// Kills the mutation `if !dry_run && accept_legacy_v0` ->
+    /// `if accept_legacy_v0` (dropping the dry-run check): with
+    /// accept_legacy_v0 true but dry_run also true, over a DECRYPTABLE
+    /// v0 record, nothing must be written -- the only existing
+    /// dry-run-with-flag test used an undecryptable record, which never
+    /// reaches this branch at all.
+    #[tokio::test]
+    async fn test_dry_run_with_accept_legacy_v0_does_not_write_a_decryptable_v0_record() {
+        let mut keys = HashMap::new();
+        keys.insert("1".to_string(), [4u8; 32]);
+        let encryption = StorageEncryption::new(&FixedKeyProvider(LoadedKeys {
+            current_key_id: "1".to_string(),
+            keys,
+        }))
+        .unwrap();
+
+        let cipher = {
+            let key = Key::<Aes256Gcm>::from_slice(&[4u8; 32]);
+            Aes256Gcm::new(key)
+        };
+        let nonce_bytes = [6u8; 12];
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher.encrypt(nonce, b"v0 secret".as_ref()).unwrap();
+        let v0_json = format!(
+            r#"{{"data":"{}","nonce":"{}","algorithm":"AES-256-GCM","key_derivation":"direct"}}"#,
+            BASE64.encode(&ciphertext),
+            BASE64.encode(nonce_bytes)
+        );
+
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv("secret:legacy", v0_json.as_bytes(), None)
+            .await
+            .unwrap();
+
+        // dry_run: true AND accept_legacy_v0: true.
+        let report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: true,
+                accept_legacy_v0: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            report.legacy_v0_found, 1,
+            "a dry run must still report a decryptable v0 record as found"
+        );
+        assert_eq!(
+            report.upgraded_from_legacy, 0,
+            "a dry run must never actually upgrade anything, even with accept_legacy_v0 true"
+        );
+
+        let raw_after = storage.get_kv("secret:legacy").await.unwrap().unwrap();
+        assert_eq!(
+            raw_after,
+            v0_json.as_bytes(),
+            "a dry run with accept_legacy_v0 true must leave the record byte-for-byte \
+             unchanged"
+        );
     }
 
     #[tokio::test]
@@ -1718,9 +1926,17 @@ mod tests {
             .unwrap();
         let encryption = StorageEncryption::new_random();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", true, false)
-            .await
-            .unwrap();
+        let report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: true,
+                accept_legacy_v0: false,
+            },
+        )
+        .await
+        .unwrap();
 
         assert!(report.dry_run);
         assert_eq!(report.scanned, 2);
@@ -1741,9 +1957,17 @@ mod tests {
             .unwrap();
         let encryption = StorageEncryption::new_random();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
-            .await
-            .unwrap();
+        let report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: false,
+                accept_legacy_v0: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(report.encrypted, 1);
 
         let raw = storage.get_kv("secret:a").await.unwrap().unwrap();
@@ -1781,9 +2005,17 @@ mod tests {
 
         // Resume: should skip "secret:a" (already encrypted) and finish
         // "secret:b".
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
-            .await
-            .unwrap();
+        let report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: false,
+                accept_legacy_v0: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(report.scanned, 2);
         assert_eq!(report.already_encrypted, 1);
         assert_eq!(report.encrypted, 1);
@@ -1797,9 +2029,17 @@ mod tests {
         assert!(StorageEncryption::looks_like_envelope(&raw_b_after));
 
         // Running it again changes nothing further.
-        let report2 = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
-            .await
-            .unwrap();
+        let report2 = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: false,
+                accept_legacy_v0: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(report2.already_encrypted, 2);
         assert_eq!(report2.encrypted, 0);
     }
@@ -1817,9 +2057,17 @@ mod tests {
             .unwrap();
         let encryption = StorageEncryption::new_random();
 
-        let report = migrate_kv_to_encrypted(&storage, &encryption, "secret:", false, false)
-            .await
-            .unwrap();
+        let report = migrate_kv_to_encrypted(
+            &storage,
+            &encryption,
+            "secret:",
+            MigrationOptions {
+                dry_run: false,
+                accept_legacy_v0: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(report.scanned, 1);
 
         let other_untouched = storage.get_kv("other:b").await.unwrap().unwrap();

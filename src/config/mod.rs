@@ -161,11 +161,13 @@ pub struct StorageEncryptionConfig {
     /// knows one record's v0 envelope can copy it onto a different
     /// record's key and it will still decrypt, because v0 decryption
     /// tries every loaded key with an empty AAD regardless of which
-    /// record it's stored under. Set this to `true` **only transiently**
-    /// while migrating pre-existing v0 data (see
-    /// `storage::encryption::migrate_kv_to_encrypted`, which upgrades
-    /// every v0 envelope it finds to the current format and does not
-    /// depend on this flag to do so); leave it `false` otherwise.
+    /// record it's stored under. This flag only controls whether
+    /// `EncryptedStorage::get_kv` *reads* a v0 envelope at all -- it is
+    /// independent of `storage::encryption::migrate_kv_to_encrypted`'s
+    /// own `accept_legacy_v0` parameter, which separately gates whether
+    /// migration actually *rewrites* one. Set this to `true` only if
+    /// something needs to read v0 data through this wrapper before, or
+    /// without ever, running migration; leave it `false` otherwise.
     pub allow_legacy_v0: bool,
 }
 
