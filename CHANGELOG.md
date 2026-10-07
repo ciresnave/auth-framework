@@ -23,10 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change, not a regression -- 1024-bit RSA has been considered
   insufficiently secure for new deployments for years -- but it is a real
   behavior change for any integrator whose external IdP or JARM
-  recipient key falls outside the new range. `mysql-storage` still
-  depends on `rsa` via a separate path (sqlx-mysql's
-  `caching_sha2_password` auth plugin), tracked separately as
-  CireSnave's own disposition.
+  recipient key falls outside the new range. `mysql-storage` depended
+  on `rsa` via a separate path (sqlx-mysql's `caching_sha2_password`
+  auth plugin) -- see the `mysql-storage` removal entry below, which
+  closes this.
 
 - SAML (`saml` feature) no longer depends on the `rsa` crate either:
   `bergshamra` is bumped 0.3.1 -> 0.9.2 and switched from its default
@@ -61,6 +61,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the options being tracked (an upstream fix to `kryptering`, bypassing
     it for just this one code path, or a platform-conditional dependency
     split).
+
+- **Breaking: `mysql-storage` has been removed entirely.** Per
+  CireSnave: "Drop MySQL. I'm not a huge fan of Oracle products
+  anyway." This was the last remaining path to the `rsa` crate
+  (RUSTSEC-2023-0071) via `sqlx-mysql`'s `caching_sha2_password`
+  auth-plugin dependency. `MySqlStorage`, `StorageConfig::MySQL`, the
+  `mysql` config builder method, and `MySqlMigrationManager` are all
+  gone; a `mysql://` `DATABASE_URL` now returns a clear config error
+  instead of silently requiring a feature that no longer exists.
+  **Migration:** use `postgres-storage`, `sqlite-storage`, or
+  `redis-storage` instead. If MySQL support is a hard requirement, pin
+  to the last version that had it: `0.4.4` (stable) or `0.5.0-rc25`
+  (release candidate) -- neither will receive further updates.
+  Separately found and fixed while verifying `rsa` is now absent from
+  every default-feature build: the `openid-connect` feature's
+  `openidconnect` crate has its own hard, non-optional dependency on
+  `rsa`, unrelated to MySQL -- tracked as
+  [#113](https://github.com/ciresnave/auth-framework/issues/113), not
+  fixed by this change. A new CI job ("Security Audit (rsa absence)")
+  now asserts `rsa` is absent from every shipped feature combination
+  except `saml` and `openid-connect`, which have their own tracked
+  exceptions (`deny.toml` documents both).
 
 - **Breaking:** each storage-backend feature now enables only its own
   `sqlx` sub-feature -- `postgres-storage` -> `sqlx/postgres`,

@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.6.0-rc10"
+  version       = "0.6.0-rc11"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -148,15 +148,18 @@
   rand = { version = "0.10.0", features = ["std_rng"] }
   rand_core = "0.6"
   ring = "0.17.14"
-  # The `rsa` crate (RUSTSEC-2023-0071) is no longer a dependency of this
-  # crate at all, in any feature combination: jsonwebtoken's RS*/PS* and
-  # auth-framework's own RSA JWKS export / JARM RSA-OAEP JWE were
-  # rewritten against `aws-lc-rs`, mysql-storage's own sqlx-mysql
-  # dependency is isolated to that one feature (see the `sqlx` dependency
-  # comment below), and `saml`'s need for it via bergshamra 0.3.x's
-  # `KeyData::Rsa` variant is gone as of bergshamra >=0.9.2's `aws-lc`
-  # feature (see that dependency's own comment). If `rsa` reappears here,
-  # something regressed -- it should not need re-adding.
+  # The `rsa` crate (RUSTSEC-2023-0071) is not a DIRECT dependency of this
+  # crate, and is absent from every DEFAULT-feature build: jsonwebtoken's
+  # RS*/PS* and auth-framework's own RSA JWKS export / JARM RSA-OAEP JWE
+  # were rewritten against `aws-lc-rs`, `mysql-storage` (sqlx-mysql's own
+  # path) has been removed entirely, and `saml`'s need for it via
+  # bergshamra 0.3.x's `KeyData::Rsa` variant is gone as of bergshamra
+  # >=0.9.2's `aws-lc` feature. It is STILL transitively present via the
+  # `openid-connect` feature's `openidconnect` crate (a hard, non-optional
+  # dependency in openidconnect's own Cargo.toml) -- tracked as #113, see
+  # deny.toml's RUSTSEC-2023-0071 entry for the full exception list. The
+  # "Security Audit (rsa absence)" CI job enforces absence for every
+  # shipped feature combination except `saml` and `openid-connect`.
 
   # Time handling
   time = { version = "0.3.47", features = ["formatting", "parsing", "serde"] }

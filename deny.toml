@@ -22,39 +22,29 @@
         # RSA Marvin Attack (timing sidechannel), no fix available (patched = []
         # in the advisory; open since 2023-11-22, still unfixed 3 years later).
         #
-        # UPDATE (supersedes the rest of this entry in full -- the JARM
-        # decrypt path and jsonwebtoken's RS*/PS* support, previously the two
-        # confirmed exposures, no longer use the `rsa` crate at all as of the
-        # aws-lc-rs rewrite (CireSnave: "I want broken RSA out of our
-        # codebase and its dependencies"). `rsa` remains in the dependency
-        # tree, and this advisory remains unresolved, ONLY via:
-        #   - `saml` feature: api/saml.rs::key_from_x509_der needs bergshamra
-        #     0.3.x's `KeyData::Rsa` variant, which requires `rsa::RsaPublicKey`
-        #     directly -- a third-party crate's choice, not this crate's own
-        #     RSA code. Public-key-only (SAML IdP cert verification), not the
-        #     Marvin Attack's concern. Tracked: bump bergshamra to >=0.9.2 and
-        #     select its `aws-lc` feature (confirmed available by reading
-        #     kushaldas/kryptering's own Cargo.toml) instead of `rustcrypto`.
-        #   - (RESOLVED) `mysql-storage`: sqlx-mysql's own `rsa = "0.9"`
-        #     (its caching_sha2_password auth-plugin support) was the path
-        #     here; `mysql-storage` has been removed from this crate
-        #     entirely (CireSnave: "Drop MySQL. I'm not a huge fan of
-        #     Oracle products anyway."), closing it.
-        # Previously-confirmed-exposed, now fixed (kept for history, not
-        # current status): jsonwebtoken's "rust_crypto" feature routed
-        # RS256/RS384/RS512 through the `rsa` crate -- switched to
-        # jsonwebtoken's "aws_lc_rs" feature, confirmed to cover the identical
-        # Algorithm set. oidc_advanced_jarm.rs::decrypt_rsa_oaep_a256gcm's raw
-        # RSA-OAEP private-key decrypt of attacker-supplied ciphertext (the
-        # CONFIRMED attacker-reachable exposure named in the prior version of
-        # this entry) is rewritten against aws-lc-rs, whose decrypt returns an
-        # opaque `Unspecified` error uniform across every RSA-OAEP-layer
-        # failure mode.
+        # Per CireSnave: "I want broken RSA out of our codebase and its
+        # dependencies." Closed so far: jsonwebtoken's RS*/PS* support and
+        # the JARM RSA-OAEP decrypt path (rewritten against aws-lc-rs, not
+        # subject to this advisory), the `saml` feature's bergshamra-based
+        # IdP-key path (bumped bergshamra to 0.9.2's `aws-lc` backend), and
+        # `mysql-storage` (removed from this crate entirely -- CireSnave:
+        # "Drop MySQL. I'm not a huge fan of Oracle products anyway.").
         #
-        # Acceptance: CireSnave's, by name, 2026-09-24 (original ruling,
-        # since escalated to full removal, in progress per the above).
-        # Re-check trigger: the bergshamra bump and sqlx feature split land
-        # (both tracked above), or RustSec publishes a patched `rsa` release.
+        # `rsa` remains in the dependency tree, and this advisory remains
+        # unresolved, via exactly ONE remaining path: the `openid-connect`
+        # feature's `openidconnect` crate (v4.0.1) has `rsa` as a hard,
+        # non-optional, non-feature-gated dependency in its own Cargo.toml
+        # (confirmed by reading its manifest directly) -- no feature
+        # combination of `openidconnect` avoids it. Tracked: #113. Default
+        # features (no `saml`, no `openid-connect`) do not pull in `rsa` at
+        # all, confirmed via `cargo tree -i rsa` and enforced by the
+        # "Security Audit (rsa absence)" CI job below, which checks every
+        # shipped feature combination except these two known exceptions.
+        #
+        # Acceptance: CireSnave's, by name, 2026-09-24 (original ruling).
+        # Re-check trigger: #113 resolves (upstream adds a backend choice,
+        # or this crate replaces `openidconnect`), or RustSec publishes a
+        # patched `rsa` release.
         "RUSTSEC-2023-0071",
         # h2 0.3.27 unbounded empty DATA frames - transitive dependency via
         # actix-http (actix-integration feature). actix-web's latest release is
