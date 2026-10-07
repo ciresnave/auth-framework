@@ -358,8 +358,10 @@ that persists data):
 ```rust
 use auth_framework::config::{AuthConfig, StorageEncryptionConfig};
 
-let config = AuthConfig::new()
-    .storage_encryption(StorageEncryptionConfig { enabled: false });
+let config = AuthConfig::new().storage_encryption(StorageEncryptionConfig {
+    enabled: false,
+    allow_plaintext_reads: false,
+});
 ```
 
 **Known limitation:** the key itself currently comes from an environment
@@ -371,24 +373,61 @@ provider can replace `EnvKeyProvider` later without changing
 `StorageEncryption` or `EncryptedStorage` at all. Tracked in
 `docs/ROADMAP.md`.
 
-**Coverage:** this covers the generic KV layer only — API keys, TOTP
-secrets, OAuth2 client registries, MFA codes, and most other KV-backed
-subsystems (see `docs/STORAGE-AUDIT.md`). Core token and session storage use
-each backend's own typed columns, not `store_kv`, and are **not** covered yet
-(also tracked in `docs/ROADMAP.md`).
+**Coverage — what is and isn't wrapped:**
+
+- This covers the generic KV layer only — API keys, TOTP secrets, OAuth2
+  client registries, MFA codes, and most other KV-backed subsystems (see
+  `docs/STORAGE-AUDIT.md`). Core token and session storage use each
+  backend's own typed columns, not `store_kv`, and are **not** covered yet
+  (also tracked in `docs/ROADMAP.md`).
+- Storage supplied directly via `AuthFramework::new_with_storage`,
+  `replace_storage`, or the builder's `custom_storage` bypasses the
+  storage factory entirely and is **not** auto-wrapped — if you build
+  your own storage this way and want it encrypted, wrap it yourself with
+  `EncryptedStorage::new`.
+- `StorageConfig::Custom` is rejected by the factory outright (it has no
+  backend to construct), so it's never silently unwrapped either — it's
+  simply an error unless you use one of the methods above.
+- `auth_modular::AuthFramework` (the separate "modular" entry point) only
+  supports Redis and Memory for storage construction (a pre-existing,
+  unrelated gap — Postgres/SQLite configs there silently fall back to
+  Memory); its Redis path is wrapped the same way the main factory's is.
+
+**Reading data that isn't a valid envelope:** by default
+(`allow_plaintext_reads: false`), a KV value that doesn't parse as one of
+this module's envelopes is a hard read error — this is deliberate: it stops
+someone who can write to the backing store from overwriting an encrypted
+secret with chosen plaintext (or a corrupted value) and having it accepted
+silently. Set `allow_plaintext_reads: true` **only** as a temporary
+migration-window setting (see below); set it back to `false` once migration
+is done.
 
 **Migrating existing plaintext data:** if you're turning encryption on for a
 deployment that already has plaintext KV data, run the migration tool to
-re-encrypt it in place (idempotent and safe to re-run):
+re-encrypt it in place (idempotent and safe to re-run) *before* (or
+immediately after, with `allow_plaintext_reads: true` set for the
+transition) real traffic needs to read it:
 
 ```bash
-auth-framework-admin security encrypt-kv --dry-run   # preview
-auth-framework-admin security encrypt-kv             # apply
+auth-framework-admin security encrypt-kv --dry-run            # preview, all keys
+auth-framework-admin security encrypt-kv --prefix "user:" --dry-run  # preview, scoped
+auth-framework-admin security encrypt-kv --prefix "user:"     # apply, scoped
+auth-framework-admin security encrypt-kv --confirm            # apply to ALL keys (needs --confirm)
 ```
 
-Reads of not-yet-migrated plaintext rows keep working either way — new
-writes are always encrypted, and old rows are read back as plaintext until
-either they're naturally rewritten or the migration tool runs.
+**Scope `--prefix`, don't migrate everything at once if you can avoid it.**
+The migration tool re-stores every value it touches with no TTL, even if
+the original had one — `AuthStorage::get_kv` doesn't expose a value's
+remaining TTL, so there's nothing to preserve it with. OAuth authorization
+codes, email-verification tokens, MFA/SMS one-time codes, WebAuthn
+challenges, rate-limit windows, and expiring API keys all lose their expiry
+if migrated this way, becoming non-expiring. Scope `--prefix` to a
+durable-secret namespace (API keys, TOTP secrets, client registries); an
+empty `--prefix` (which touches everything) requires `--confirm` for
+exactly this reason. The migration also does a plain read-then-write with
+no compare-and-swap, so running it against a *live* deployment can
+overwrite a value someone else wrote in between — prefer running it
+offline, or pause writers to the scoped prefix first.
 
 ---
 

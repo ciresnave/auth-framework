@@ -669,6 +669,13 @@ pub enum SecurityAction {
     /// Encrypt any plaintext KV-layer values at rest (for data written
     /// before encryption was enabled). Safe to re-run: already-encrypted
     /// values are left untouched.
+    ///
+    /// WARNING: this re-stores every migrated value with no TTL, even if
+    /// the original had one (OAuth codes, email-verification tokens,
+    /// MFA/SMS codes, WebAuthn challenges, rate-limit windows, and
+    /// expiring API keys all lose their expiry). Scope `--prefix` to a
+    /// durable-secret namespace; an empty prefix touches everything and
+    /// requires `--confirm`.
     EncryptKv {
         /// Only operate on keys starting with this prefix (default: all keys).
         #[arg(long, default_value = "")]
@@ -676,6 +683,10 @@ pub enum SecurityAction {
         /// Preview what would change without writing anything.
         #[arg(long)]
         dry_run: bool,
+        /// Required when --prefix is empty, acknowledging the TTL-loss
+        /// warning above.
+        #[arg(long)]
+        confirm: bool,
     },
 }
 

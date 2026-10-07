@@ -809,6 +809,16 @@ mod tests {
         let mut config = AppConfig::default();
         config.database.url = database_url;
 
+        // SQLite is persistent, so storage encryption defaults to on and
+        // fails closed without a key. No other test in this binary reads
+        // or depends on this env var's absence, so set it for the
+        // duration of this test rather than threading an opt-out through
+        // AppConfig (which has no such field) and CliHandler.
+        let encryption_key = crate::storage::encryption::StorageEncryption::generate_key();
+        unsafe {
+            std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEY", &encryption_key);
+        }
+
         let mut seed_framework = config.build_auth_framework().await.unwrap();
         seed_framework.register_method("jwt", AuthMethodEnum::Jwt(JwtMethod::new()));
 
@@ -973,5 +983,9 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(entries.len(), 1);
+
+        unsafe {
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
+        }
     }
 }

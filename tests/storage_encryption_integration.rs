@@ -47,12 +47,14 @@ async fn sqlite_backend_fails_closed_without_a_key() {
     // storage_encryption defaults to enabled.
 
     let mut framework = AuthFramework::new(config);
-    let result = framework.initialize().await;
-
+    let err = framework.initialize().await.expect_err(
+        "initialize() must fail when encryption is on (the default) and no key is \
+                      configured, not silently fall back to plaintext storage",
+    );
+    let message = err.to_string();
     assert!(
-        result.is_err(),
-        "initialize() must fail when encryption is on (the default) and no key is configured, \
-         not silently fall back to plaintext storage"
+        message.contains("no encryption key could be loaded"),
+        "error message should name the actual failure (no key loaded), got: {message}"
     );
 }
 
@@ -66,8 +68,10 @@ async fn sqlite_backend_succeeds_when_encryption_explicitly_disabled() {
 
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("opt_out.db");
-    let config = base_config(sqlite_config(&db_path))
-        .storage_encryption(StorageEncryptionConfig { enabled: false });
+    let config = base_config(sqlite_config(&db_path)).storage_encryption(StorageEncryptionConfig {
+        enabled: false,
+        allow_plaintext_reads: false,
+    });
 
     let mut framework = AuthFramework::new(config);
     framework

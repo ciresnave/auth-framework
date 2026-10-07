@@ -797,11 +797,37 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
             println!("  Sessions revoked: {}", sessions.len().to_string().cyan());
             println!("  Tokens revoked:   {}", tokens.len().to_string().cyan());
         }
-        SecurityAction::EncryptKv { prefix, dry_run } => {
+        SecurityAction::EncryptKv {
+            prefix,
+            dry_run,
+            confirm,
+        } => {
             let config = state.config.read().await;
             let storage_config = config.auth.storage.clone();
+            let storage_encryption_enabled = config.auth.storage_encryption.enabled;
             let storage_pool_size = None;
             drop(config);
+
+            if !storage_encryption_enabled {
+                return Err(AuthError::Cli(
+                    "storage_encryption.enabled is false in the current configuration -- \
+                     this deployment has explicitly opted out of encryption at rest, so \
+                     running encrypt-kv would act against that choice. Enable \
+                     storage_encryption first if you want this data encrypted."
+                        .to_string(),
+                ));
+            }
+
+            if prefix.is_empty() && !confirm {
+                return Err(AuthError::Cli(
+                    "An empty --prefix touches every KV key, including any with a TTL \
+                     (OAuth codes, email-verification tokens, MFA/SMS codes, WebAuthn \
+                     challenges, rate-limit windows, expiring API keys) -- migrating those \
+                     strips their TTL, making them non-expiring. Pass --confirm to proceed \
+                     anyway, or scope --prefix to a durable-secret namespace."
+                        .to_string(),
+                ));
+            }
 
             let backend = crate::storage::factory::build_storage_backend_unencrypted(
                 &storage_config,
@@ -1128,6 +1154,12 @@ mod tests {
             .token_lifetime(std::time::Duration::from_secs(3600));
         auth_config.storage = StorageConfig::Sqlite {
             connection_string: database_url,
+        };
+        // This test exercises maintenance/backup, not storage encryption;
+        // opt out explicitly rather than requiring a key just for this.
+        auth_config.storage_encryption = crate::config::StorageEncryptionConfig {
+            enabled: false,
+            allow_plaintext_reads: false,
         };
 
         let settings = AuthFrameworkSettings {

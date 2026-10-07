@@ -38,14 +38,20 @@ pub(crate) async fn build_storage_backend_with_encryption(
 /// (hence the `cli` feature gate); if another caller needs it, drop the
 /// gate.
 #[cfg(feature = "cli")]
-pub async fn build_storage_backend_unencrypted(
+pub(crate) async fn build_storage_backend_unencrypted(
     config: &StorageConfig,
     pool_size: Option<u32>,
 ) -> Result<Arc<dyn AuthStorage>> {
     build_storage_backend_inner(config, pool_size).await
 }
 
-fn wrap_with_encryption_if_enabled(
+/// Wraps `backend` in [`EncryptedStorage`] per `encryption_config`, or
+/// returns it unwrapped if encryption is explicitly disabled. `pub(crate)`
+/// (not private) so other storage-construction sites outside this module
+/// -- currently `auth_modular::AuthFramework::new`'s own, separate Redis
+/// construction path -- get the same wrapping behavior instead of silently
+/// bypassing it.
+pub(crate) fn wrap_with_encryption_if_enabled(
     backend: Arc<dyn AuthStorage>,
     encryption_config: &StorageEncryptionConfig,
 ) -> Result<Arc<dyn AuthStorage>> {
@@ -69,7 +75,11 @@ fn wrap_with_encryption_if_enabled(
         ))
     })?;
 
-    Ok(Arc::new(EncryptedStorage::new(backend, encryption)))
+    Ok(Arc::new(EncryptedStorage::new(
+        backend,
+        encryption,
+        encryption_config.allow_plaintext_reads,
+    )))
 }
 
 async fn build_storage_backend_inner(

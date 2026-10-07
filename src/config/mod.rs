@@ -138,11 +138,27 @@ pub struct StorageEncryptionConfig {
     /// initialization fails rather than silently storing data in
     /// plaintext.
     pub enabled: bool,
+    /// Whether a KV value that isn't a valid encrypted envelope is read
+    /// back as plaintext (`true`) or rejected as an error (`false`,
+    /// default).
+    ///
+    /// Set this to `true` **only transiently**, while migrating an
+    /// existing deployment's plaintext data to encrypted (see
+    /// `storage::encryption::migrate_kv_to_encrypted` and the
+    /// `security encrypt-kv` CLI command). Leaving it `true` permanently
+    /// means anyone who can write to the backing store can overwrite an
+    /// encrypted value with chosen plaintext (or corrupt one) and have it
+    /// accepted silently forever, which defeats the point of encrypting
+    /// at rest. Set it back to `false` once migration is complete.
+    pub allow_plaintext_reads: bool,
 }
 
 impl Default for StorageEncryptionConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            allow_plaintext_reads: false,
+        }
     }
 }
 

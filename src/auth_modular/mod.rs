@@ -179,16 +179,29 @@ impl AuthFramework {
             ));
         };
 
-        // Create storage backend
+        // Create storage backend. NOTE: unlike the main `AuthFramework`
+        // (src/auth.rs), this modular framework only supports Redis and
+        // Memory here -- any other `StorageConfig` (Postgres, SQLite,
+        // Custom) silently falls back to Memory. That gap predates this
+        // encryption work and is out of its scope, but the encryption
+        // wrapping itself must not be skipped just because this path
+        // builds storage differently from `storage::factory` --
+        // `wrap_with_encryption_if_enabled` is reused here for parity.
         let storage: Arc<dyn AuthStorage> = match &config.storage {
             #[cfg(feature = "redis-storage")]
-            crate::config::StorageConfig::Redis { url, key_prefix } => Arc::new(
-                crate::storage::RedisStorage::new(url, key_prefix).map_err(|e| {
-                    crate::errors::AuthError::configuration(format!(
-                        "Failed to create Redis storage: {e}"
-                    ))
-                })?,
-            ),
+            crate::config::StorageConfig::Redis { url, key_prefix } => {
+                let redis: Arc<dyn AuthStorage> = Arc::new(
+                    crate::storage::RedisStorage::new(url, key_prefix).map_err(|e| {
+                        crate::errors::AuthError::configuration(format!(
+                            "Failed to create Redis storage: {e}"
+                        ))
+                    })?,
+                );
+                crate::storage::factory::wrap_with_encryption_if_enabled(
+                    redis,
+                    &config.storage_encryption,
+                )?
+            }
             _ => Arc::new(MemoryStorage::new()),
         };
 

@@ -11,6 +11,25 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::time::Duration;
+use zeroize::Zeroize;
+
+/// Current envelope format version. Bumped whenever the envelope's fields
+/// or decryption rules change in a way that needs disambiguating from
+/// older data still on disk.
+const CURRENT_FORMAT_VERSION: u8 = 1;
+
+fn default_format_version() -> u8 {
+    // Envelopes serialized before this field existed (format version 0,
+    // the original public `EncryptedStorage`: fields `data`/`nonce`/
+    // `algorithm`/`key_derivation`, no `key_id`, no AAD at encryption
+    // time) deserialize with this field absent, which serde fills with
+    // its type default (`0u8`) -- NOT this function. This function only
+    // supplies the default when constructing a fresh `EncryptedData` in
+    // Rust without naming the field, which no code in this crate does
+    // (`encrypt` always sets it explicitly). Kept for documentation
+    // symmetry with the other `#[serde(default)]` fields below.
+    0
+}
 
 /// Encrypted data container with metadata.
 ///
@@ -18,6 +37,14 @@ use std::time::Duration;
 /// can still be decrypted after the *current* key rotates, as long as the
 /// old key is still loadable (see [`KeyProvider`]). Writers always use the
 /// current key; readers look up whichever key the envelope names.
+///
+/// `v` and `key_derivation` exist for backward compatibility with the
+/// original, pre-this-redesign public `EncryptedStorage` (format version
+/// 0): that format had no `key_id` and no AAD binding at encryption time.
+/// An envelope with `v == 0` (including any envelope missing the `v` field
+/// entirely, since `#[serde(default)]` fills it with `0`) is decrypted
+/// against every loaded key with an empty AAD, matching the old behavior;
+/// see [`StorageEncryption::decrypt`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptedData {
     /// Base64 encoded encrypted data
@@ -26,10 +53,19 @@ pub struct EncryptedData {
     pub nonce: String,
     /// Algorithm identifier
     pub algorithm: String,
-    /// Which key (by id) encrypted this value. Required for key rotation:
-    /// old envelopes keep working under their original key id even after
-    /// [`KeyProvider::current_key_id`] moves on to a newer one.
+    /// Which key (by id) encrypted this value. Empty for format version 0
+    /// (the original `EncryptedStorage`, which had no key-id concept).
+    #[serde(default)]
     pub key_id: String,
+    /// Envelope format version. `0` (including an absent field, which
+    /// deserializes to `0`) is the original pre-redesign format; `1` is
+    /// the current format (versioned `key_id`, AAD-bound encryption).
+    #[serde(default = "default_format_version")]
+    pub v: u8,
+    /// Present only for format-version-0 compatibility (the original
+    /// field name was `key_derivation`); current envelopes don't set it.
+    #[serde(default)]
+    pub key_derivation: String,
 }
 
 /// Supplies the encryption key(s) [`StorageEncryption`] uses.
@@ -54,7 +90,10 @@ pub trait KeyProvider: Send + Sync {
 /// load, and which one is current.
 pub struct LoadedKeys {
     pub current_key_id: String,
-    /// All loadable keys, including the current one, by key id.
+    /// All loadable keys, including the current one, by key id. A key id
+    /// must not be empty -- [`StorageEncryption::new`] rejects any that
+    /// are, since an empty id can't be told apart from format-version-0
+    /// envelopes (which have no key id at all).
     pub keys: HashMap<String, [u8; 32]>,
 }
 
@@ -81,7 +120,9 @@ pub struct LoadedKeys {
 ///   `{"current": "<key_id>", "keys": {"<key_id>": "<base64 key>", ...}}`
 ///   for rotation -- old keys stay loadable (decrypt-only in practice,
 ///   since `current` picks what new writes use) as long as they're listed
-///   here. If set, this takes priority over the two env vars above.
+///   here. If set, this takes priority over the two env vars above. On
+///   Unix, a keys file readable by group or other triggers a `tracing::warn!`
+///   (best-effort; not enforced, and not checked at all on Windows).
 pub struct EnvKeyProvider;
 
 impl KeyProvider for EnvKeyProvider {
@@ -117,6 +158,8 @@ impl EnvKeyProvider {
             keys: HashMap<String, String>,
         }
 
+        Self::warn_if_file_too_permissive(path);
+
         let contents = fs::read_to_string(path).map_err(|e| {
             AuthError::config(format!(
                 "Failed to read AUTH_STORAGE_ENCRYPTION_KEYS_FILE '{path}': {e}"
@@ -147,6 +190,29 @@ impl EnvKeyProvider {
             keys,
         })
     }
+
+    /// Best-effort, Unix-only warning: a keys file readable by group or
+    /// other defeats the point of a file-based key. Not enforced (never
+    /// blocks startup) because permission semantics vary too much across
+    /// deployment environments (containers, CI, Windows) to safely hard-fail.
+    #[cfg(unix)]
+    fn warn_if_file_too_permissive(path: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(path) {
+            let mode = metadata.permissions().mode();
+            if mode & 0o077 != 0 {
+                tracing::warn!(
+                    path = path,
+                    mode = format!("{mode:o}"),
+                    "AUTH_STORAGE_ENCRYPTION_KEYS_FILE is readable by group or other -- \
+                     restrict it to the owner only (chmod 600)."
+                );
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn warn_if_file_too_permissive(_path: &str) {}
 }
 
 fn decode_key(encoded: &str) -> Result<[u8; 32]> {
@@ -168,6 +234,16 @@ fn decode_key(encoded: &str) -> Result<[u8; 32]> {
 /// key it was stored under -- so a ciphertext copied from one record to
 /// another fails to decrypt instead of silently "succeeding" with the
 /// wrong value.
+///
+/// **Known limitation (replay of an older value under the same key):** AAD
+/// binds a ciphertext to *which record* it belongs to, not to *when* it was
+/// written. Someone who can both read an old ciphertext for a given key and
+/// write to that same key can replay the old value -- AES-GCM's
+/// authentication only proves "this is a genuine envelope for this record,"
+/// not "this is the most recent one." Mitigating this needs a monotonic
+/// counter or timestamp bound into the AAD, not done here (most KV-layer
+/// values in this crate are replaced wholesale on every write, which bounds
+/// but does not eliminate the exposure).
 pub struct StorageEncryption {
     current_key_id: String,
     ciphers: HashMap<String, Aes256Gcm>,
@@ -178,7 +254,18 @@ impl StorageEncryption {
     /// provider. Fails closed: if the provider can't load a usable key,
     /// this returns `Err` rather than any fallback.
     pub fn new(provider: &dyn KeyProvider) -> Result<Self> {
-        let loaded = provider.load_keys()?;
+        let mut loaded = provider.load_keys()?;
+        if loaded.current_key_id.is_empty() {
+            return Err(AuthError::config(
+                "Key provider's current_key_id must not be empty",
+            ));
+        }
+        if loaded.keys.keys().any(|id| id.is_empty()) {
+            return Err(AuthError::config(
+                "Key provider returned a key with an empty id -- an empty id is reserved \
+                 to mean \"format-version-0 envelope, no key id at all\"",
+            ));
+        }
         if !loaded.keys.contains_key(&loaded.current_key_id) {
             return Err(AuthError::config(format!(
                 "Key provider's current_key_id '{}' is not among the keys it loaded",
@@ -187,12 +274,18 @@ impl StorageEncryption {
         }
         let ciphers = loaded
             .keys
-            .into_iter()
+            .iter()
             .map(|(id, key_bytes)| {
-                let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
-                (id, Aes256Gcm::new(key))
+                let key = Key::<Aes256Gcm>::from_slice(key_bytes);
+                (id.clone(), Aes256Gcm::new(key))
             })
             .collect();
+        // The cipher objects above have their own internal copies of the
+        // key material; zeroize the raw bytes we held so they don't sit
+        // around in this struct any longer than necessary.
+        for key_bytes in loaded.keys.values_mut() {
+            key_bytes.zeroize();
+        }
         Ok(Self {
             current_key_id: loaded.current_key_id,
             ciphers,
@@ -214,6 +307,7 @@ impl StorageEncryption {
         let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
         let mut ciphers = HashMap::new();
         ciphers.insert("test".to_string(), Aes256Gcm::new(key));
+        key_bytes.zeroize();
         Self {
             current_key_id: "test".to_string(),
             ciphers,
@@ -226,7 +320,9 @@ impl StorageEncryption {
         use rand::Rng;
         let mut key_bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut key_bytes);
-        BASE64.encode(key_bytes)
+        let encoded = BASE64.encode(key_bytes);
+        key_bytes.zeroize();
+        encoded
     }
 
     /// Encrypt raw bytes. `aad` (associated data) is authenticated but not
@@ -239,12 +335,13 @@ impl StorageEncryption {
             AuthError::internal("Current encryption key missing from loaded cipher set")
         })?;
 
-        // 96-bit nonce, freshly random every call. AES-GCM's security
-        // depends on never reusing a nonce under the same key; a random
-        // 96-bit nonce makes accidental reuse astronomically unlikely
-        // (birthday bound ~2^48 encryptions under one key before a
-        // collision becomes plausible) without needing a counter the
-        // caller would have to persist and coordinate across instances.
+        // 96-bit nonce, freshly random every call. NIST SP 800-38D caps a
+        // randomly generated 96-bit IV at 2^32 invocations under a single
+        // key before the collision probability becomes unacceptable (the
+        // "32-bit random IV construction" guidance) -- not the ~2^64/2
+        // birthday bound a naive calculation might suggest. A given
+        // deployment's key should be rotated well before approaching that
+        // count; this crate does not currently track or enforce it.
         let mut nonce_bytes = [0u8; 12];
         rand::rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
@@ -264,6 +361,8 @@ impl StorageEncryption {
             nonce: BASE64.encode(nonce_bytes),
             algorithm: "AES-256-GCM".to_string(),
             key_id: self.current_key_id.clone(),
+            v: CURRENT_FORMAT_VERSION,
+            key_derivation: String::new(),
         })
     }
 
@@ -271,6 +370,12 @@ impl StorageEncryption {
     /// [`Self::encrypt`] (the storage key the envelope is stored under) --
     /// a mismatch (e.g. a ciphertext copied to a different record) fails
     /// decryption rather than succeeding with the wrong plaintext.
+    ///
+    /// A format-version-0 envelope (see [`EncryptedData`]) is decrypted
+    /// with an empty AAD against every loaded key in turn, matching the
+    /// original `EncryptedStorage`'s behavior (no AAD, no key id) --
+    /// AES-GCM's authentication tag makes trying the wrong key safe (it
+    /// just fails), so this cannot silently produce the wrong plaintext.
     pub fn decrypt(&self, encrypted: &EncryptedData, aad: &[u8]) -> Result<Vec<u8>> {
         if encrypted.algorithm != "AES-256-GCM" {
             return Err(AuthError::internal(format!(
@@ -278,14 +383,6 @@ impl StorageEncryption {
                 encrypted.algorithm
             )));
         }
-
-        let cipher = self.ciphers.get(&encrypted.key_id).ok_or_else(|| {
-            AuthError::internal(format!(
-                "No loaded key for key_id '{}' -- it may have been rotated out \
-                 without being kept in the keys file for decrypt-only use",
-                encrypted.key_id
-            ))
-        })?;
 
         let ciphertext = BASE64
             .decode(&encrypted.data)
@@ -297,6 +394,33 @@ impl StorageEncryption {
             return Err(AuthError::internal("Invalid nonce length"));
         }
         let nonce = Nonce::from_slice(&nonce_bytes);
+
+        if encrypted.v == 0 {
+            // Format version 0 (the original EncryptedStorage): no key id,
+            // no AAD. Try every loaded key; the auth tag rejects wrong ones.
+            for cipher in self.ciphers.values() {
+                if let Ok(plaintext) = cipher.decrypt(
+                    nonce,
+                    Payload {
+                        msg: &ciphertext,
+                        aad: b"",
+                    },
+                ) {
+                    return Ok(plaintext);
+                }
+            }
+            return Err(AuthError::internal(
+                "Failed to decrypt format-version-0 envelope with any loaded key",
+            ));
+        }
+
+        let cipher = self.ciphers.get(&encrypted.key_id).ok_or_else(|| {
+            AuthError::internal(format!(
+                "No loaded key for key_id '{}' -- it may have been rotated out \
+                 without being kept in the keys file for decrypt-only use",
+                encrypted.key_id
+            ))
+        })?;
 
         let plaintext = cipher
             .decrypt(
@@ -333,9 +457,18 @@ impl StorageEncryption {
         self.decrypt(&encrypted, aad)
     }
 
-    /// Returns `true` if `data` looks like one of this module's own
-    /// serialized envelopes (used by the at-rest migration tool to skip
-    /// rows that are already encrypted, making re-runs idempotent).
+    /// Returns `true` if `data` parses as one of this module's own
+    /// serialized envelopes -- either the current format or the original
+    /// format-version-0 shape (see [`EncryptedData`]). Used by
+    /// [`EncryptedStorage::get_kv`] to decide whether a stored value should
+    /// be decrypted at all, and by [`migrate_kv_to_encrypted`] to skip rows
+    /// that are already encrypted (idempotency).
+    ///
+    /// This is a **shape** check only (valid JSON naming the right
+    /// algorithm) -- it does not verify the ciphertext decrypts. A value
+    /// that parses as an envelope but fails to decrypt (wrong key,
+    /// corrupted, or tampered with) is a hard error from
+    /// [`Self::decrypt_from_storage`], never silently treated as plaintext.
     pub fn looks_like_envelope(data: &[u8]) -> bool {
         std::str::from_utf8(data)
             .ok()
@@ -360,13 +493,25 @@ impl StorageEncryption {
 pub struct EncryptedStorage<T> {
     inner: T,
     encryption: StorageEncryption,
+    /// See [`Self::get_kv`]'s doc comment for exactly what this controls.
+    allow_plaintext_reads: bool,
 }
 
 impl<T> EncryptedStorage<T> {
-    pub fn new(storage: T, encryption: StorageEncryption) -> Self {
+    /// `allow_plaintext_reads` should be `true` only transiently, while
+    /// migrating an existing deployment's plaintext data (see
+    /// [`migrate_kv_to_encrypted`]) -- it is what makes [`Self::get_kv`]
+    /// tolerate a value that isn't a valid envelope instead of erroring.
+    /// Leaving it `true` permanently means anyone who can write to the
+    /// backing store can overwrite an encrypted value with chosen
+    /// plaintext (or corrupt one) and have it accepted silently, which
+    /// defeats the point of encrypting at rest. Pass `false` for normal
+    /// operation.
+    pub fn new(storage: T, encryption: StorageEncryption, allow_plaintext_reads: bool) -> Self {
         Self {
             inner: storage,
             encryption,
+            allow_plaintext_reads,
         }
     }
 
@@ -426,6 +571,27 @@ where
         self.inner.count_active_sessions().await
     }
 
+    // Bulk methods — delegate directly to `inner`'s own overrides (if any)
+    // instead of inheriting the `AuthStorage` trait's one-at-a-time default
+    // loop, so a backend that implements real batching here keeps that
+    // benefit even when wrapped. Token/session bulk methods are unaffected
+    // by encryption (see the coverage note above) either way.
+    async fn store_tokens_bulk(&self, tokens: &[AuthToken]) -> Result<()> {
+        self.inner.store_tokens_bulk(tokens).await
+    }
+
+    async fn delete_tokens_bulk(&self, token_ids: &[String]) -> Result<()> {
+        self.inner.delete_tokens_bulk(token_ids).await
+    }
+
+    async fn store_sessions_bulk(&self, sessions: &[(String, SessionData)]) -> Result<()> {
+        self.inner.store_sessions_bulk(sessions).await
+    }
+
+    async fn delete_sessions_bulk(&self, session_ids: &[String]) -> Result<()> {
+        self.inner.delete_sessions_bulk(session_ids).await
+    }
+
     // Key-value methods — encrypted, with the storage key itself as AAD so
     // a ciphertext can't be swapped between records.
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
@@ -433,25 +599,42 @@ where
         self.inner.store_kv(key, &encrypted_value, ttl).await
     }
 
+    /// Reads back a value stored by [`Self::store_kv`], decrypting it.
+    ///
+    /// A value that **parses as one of this module's envelopes**
+    /// ([`StorageEncryption::looks_like_envelope`]) is always decrypted;
+    /// a decryption failure (wrong key, corrupted, tampered) is a hard
+    /// `Err`, never silently returned as-is.
+    ///
+    /// A value that does **not** parse as an envelope at all is ambiguous:
+    /// it could be genuine pre-encryption plaintext, or it could be a
+    /// plaintext value an attacker (or a bug) overwrote the encrypted one
+    /// with. This method only tolerates that ambiguity -- returning the
+    /// raw bytes as-is -- when `allow_plaintext_reads` is `true`. With it
+    /// `false` (the default via the storage factory once migration is
+    /// done), a non-envelope value is also a hard `Err`, so overwriting an
+    /// encrypted record with plaintext cannot silently succeed.
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let Some(raw) = self.inner.get_kv(key).await? else {
             return Ok(None);
         };
 
-        // Backward compatibility for data written before encryption was
-        // turned on (or before this wrapper existed at all): a value that
-        // isn't one of our envelopes is read back as plaintext rather
-        // than failing to decrypt. New writes always go through
-        // `store_kv` above, which always encrypts -- so a deployment
-        // converges to fully encrypted as rows are naturally rewritten,
-        // and [`migrate_kv_to_encrypted`] can force that conversion for
-        // rows that are never rewritten on their own.
-        if !StorageEncryption::looks_like_envelope(&raw) {
+        if StorageEncryption::looks_like_envelope(&raw) {
+            let decrypted = self.encryption.decrypt_from_storage(&raw, key.as_bytes())?;
+            return Ok(Some(decrypted));
+        }
+
+        if self.allow_plaintext_reads {
             return Ok(Some(raw));
         }
 
-        let decrypted_data = self.encryption.decrypt_from_storage(&raw, key.as_bytes())?;
-        Ok(Some(decrypted_data))
+        Err(AuthError::internal(format!(
+            "Value for key '{key}' is not a valid encrypted envelope, and \
+             storage_encryption.allow_plaintext_reads is false. If this key genuinely \
+             predates encryption being enabled, run the migration tool \
+             (`auth-framework-admin security encrypt-kv`) or temporarily set \
+             storage_encryption.allow_plaintext_reads = true while migrating."
+        )))
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
@@ -503,6 +686,12 @@ pub struct KvEncryptionMigrationReport {
 /// - **Never logs plaintext**: this function does not log key values at
 ///   any point, encrypted or not (only aggregate counts); callers should
 ///   preserve that if they add their own logging around it.
+/// - **Not safe to run concurrently with live writes to the same keys**:
+///   this does a read, then a write-back, with no compare-and-swap. If
+///   something else writes a fresh value to a key between this function's
+///   read and write, the write-back here overwrites it with the stale
+///   value it read. Run this offline, or at least pause writers to the
+///   given `prefix`, before running it against a live deployment.
 ///
 /// `storage` and `encryption` are the same values the caller would pass to
 /// [`EncryptedStorage::new`] -- this function talks to the *inner*,
@@ -510,12 +699,17 @@ pub struct KvEncryptionMigrationReport {
 /// already transparently decrypt (and thus hide which rows still need
 /// migrating).
 ///
-/// **Known limitation:** [`AuthStorage::get_kv`] doesn't return a value's
-/// remaining TTL, so a migrated value is re-stored with no TTL (it becomes
-/// non-expiring) even if the original had one. This is safe for the
-/// durable secrets this migration is meant for (API keys, TOTP secrets,
-/// client registries), which are not normally TTL'd, but operators storing
-/// short-lived data under the given `prefix` should confirm that first.
+/// **Known limitation (TTL loss):** [`AuthStorage::get_kv`] doesn't return
+/// a value's remaining TTL, so a migrated value is re-stored with no TTL
+/// (it becomes non-expiring) even if the original had one. This is a real
+/// risk for TTL'd data such as OAuth authorization codes, email-verification
+/// tokens, MFA/SMS one-time codes, WebAuthn challenges, rate-limit windows,
+/// or expiring API keys: migrating those under a prefix that includes them
+/// makes them (and any lockout window keyed the same way) stop expiring.
+/// Callers should scope `prefix` to durable-secret namespaces only (API
+/// keys, TOTP secrets, client registries) and avoid migrating over the
+/// entire KV keyspace in one call; the CLI (`security encrypt-kv`) requires
+/// an explicit `--confirm` to use an empty prefix for exactly this reason.
 pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     storage: &S,
     encryption: &StorageEncryption,
@@ -643,6 +837,30 @@ mod tests {
         );
     }
 
+    struct FixedKeyProvider(LoadedKeys);
+    impl KeyProvider for FixedKeyProvider {
+        fn load_keys(&self) -> Result<LoadedKeys> {
+            Ok(LoadedKeys {
+                current_key_id: self.0.current_key_id.clone(),
+                keys: self.0.keys.clone(),
+            })
+        }
+    }
+
+    #[test]
+    fn test_construction_rejects_empty_key_id() {
+        let mut keys = HashMap::new();
+        keys.insert(String::new(), [1u8; 32]);
+        let result = StorageEncryption::new(&FixedKeyProvider(LoadedKeys {
+            current_key_id: String::new(),
+            keys,
+        }));
+        assert!(
+            result.is_err(),
+            "an empty key id must be rejected (it's reserved for format-version-0 envelopes)"
+        );
+    }
+
     /// Key rotation: an envelope encrypted under an OLD key must still
     /// decrypt once the current key id has moved on, as long as the old
     /// key is still present in the loaded key set.
@@ -666,26 +884,11 @@ mod tests {
 
     #[test]
     fn test_old_key_still_decrypts_after_rotation() {
-        let old_provider_only = {
-            let mut keys = HashMap::new();
-            keys.insert("1".to_string(), [7u8; 32]);
-            LoadedKeys {
-                current_key_id: "1".to_string(),
-                keys,
-            }
-        };
-        struct OldOnly(LoadedKeys);
-        impl KeyProvider for OldOnly {
-            fn load_keys(&self) -> Result<LoadedKeys> {
-                Ok(LoadedKeys {
-                    current_key_id: self.0.current_key_id.clone(),
-                    keys: self.0.keys.clone(),
-                })
-            }
-        }
-        let enc_before_rotation = StorageEncryption::new(&OldOnly(LoadedKeys {
-            current_key_id: old_provider_only.current_key_id.clone(),
-            keys: old_provider_only.keys.clone(),
+        let mut keys = HashMap::new();
+        keys.insert("1".to_string(), [7u8; 32]);
+        let enc_before_rotation = StorageEncryption::new(&FixedKeyProvider(LoadedKeys {
+            current_key_id: "1".to_string(),
+            keys,
         }))
         .unwrap();
         let old_envelope = enc_before_rotation
@@ -715,6 +918,47 @@ mod tests {
         assert_eq!(decrypted_old, b"written before rotation");
     }
 
+    /// Format-version-0 compatibility: an envelope shaped like the
+    /// original (pre-redesign) `EncryptedStorage` produced -- no `key_id`,
+    /// no `v`, no AAD at encryption time -- must still decrypt under the
+    /// new `StorageEncryption`, since real deployments may already hold
+    /// data in that shape.
+    #[test]
+    fn test_decrypts_format_version_0_envelope() {
+        let mut keys = HashMap::new();
+        keys.insert("1".to_string(), [3u8; 32]);
+        let enc = StorageEncryption::new(&FixedKeyProvider(LoadedKeys {
+            current_key_id: "1".to_string(),
+            keys,
+        }))
+        .unwrap();
+
+        // Hand-build a format-version-0 envelope the way the original
+        // `EncryptedStorage::encrypt` did: no AAD, no key_id, no v.
+        let cipher = {
+            let key = Key::<Aes256Gcm>::from_slice(&[3u8; 32]);
+            Aes256Gcm::new(key)
+        };
+        let nonce_bytes = [5u8; 12];
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(nonce, b"legacy-format plaintext".as_ref())
+            .unwrap();
+        let legacy_json = format!(
+            r#"{{"data":"{}","nonce":"{}","algorithm":"AES-256-GCM","key_derivation":"direct"}}"#,
+            BASE64.encode(&ciphertext),
+            BASE64.encode(nonce_bytes)
+        );
+
+        assert!(StorageEncryption::looks_like_envelope(
+            legacy_json.as_bytes()
+        ));
+        let decrypted = enc
+            .decrypt_from_storage(legacy_json.as_bytes(), b"irrelevant-for-v0")
+            .unwrap();
+        assert_eq!(decrypted, b"legacy-format plaintext".to_vec());
+    }
+
     #[tokio::test]
     async fn test_list_kv_keys_passes_through_unencrypted() {
         let inner = MemoryStorage::new();
@@ -726,7 +970,7 @@ mod tests {
             .store_kv("prefix:b", b"ignored by this test", None)
             .await
             .unwrap();
-        let wrapped = EncryptedStorage::new(inner, StorageEncryption::new_random());
+        let wrapped = EncryptedStorage::new(inner, StorageEncryption::new_random(), false);
 
         let mut keys = wrapped.list_kv_keys("prefix:").await.unwrap();
         keys.sort();
@@ -741,7 +985,7 @@ mod tests {
     #[tokio::test]
     async fn test_encrypted_storage_roundtrip() {
         let inner = MemoryStorage::new();
-        let wrapped = EncryptedStorage::new(inner, StorageEncryption::new_random());
+        let wrapped = EncryptedStorage::new(inner, StorageEncryption::new_random(), false);
 
         wrapped
             .store_kv("user:alice:totp_secret", b"JBSWY3DPEHPK3PXP", None)
@@ -756,7 +1000,8 @@ mod tests {
     /// `EncryptedStorage`) must NOT show the plaintext.
     #[tokio::test]
     async fn test_encrypted_storage_actually_encrypts_the_underlying_value() {
-        let wrapped = EncryptedStorage::new(MemoryStorage::new(), StorageEncryption::new_random());
+        let wrapped =
+            EncryptedStorage::new(MemoryStorage::new(), StorageEncryption::new_random(), false);
 
         wrapped
             .store_kv("user:alice:totp_secret", b"JBSWY3DPEHPK3PXP", None)
@@ -780,21 +1025,111 @@ mod tests {
         );
     }
 
-    /// A value stored by some pre-encryption version of the framework (or
-    /// while `storage_encryption.enabled = false`) must still be readable
-    /// after encryption is turned on, not error out because it isn't a
-    /// valid envelope.
+    /// Proves the wrapper's own AAD wiring (not just `StorageEncryption`
+    /// directly, which `test_decrypt_rejects_wrong_aad` already covers) --
+    /// swapping two records' raw envelopes in the INNER backend must make
+    /// both unreadable through the wrapper, because each envelope's AAD no
+    /// longer matches the key it's stored under. If the wrapper passed a
+    /// constant (e.g. empty) AAD instead of the real key, this swap would
+    /// go undetected and both reads would "succeed" with the wrong value.
     #[tokio::test]
-    async fn test_reads_legacy_plaintext_without_error() {
+    async fn test_wrapper_rejects_ciphertext_swapped_between_records() {
+        let mut keys = HashMap::new();
+        keys.insert("1".to_string(), [11u8; 32]);
+        let loaded = LoadedKeys {
+            current_key_id: "1".to_string(),
+            keys,
+        };
+        let encryption_for_wrapper = StorageEncryption::new(&FixedKeyProvider(LoadedKeys {
+            current_key_id: loaded.current_key_id.clone(),
+            keys: loaded.keys.clone(),
+        }))
+        .unwrap();
+        // An independent `StorageEncryption` built from the SAME key, used
+        // only to verify what AAD the wrapper actually used -- never to
+        // produce the envelopes under test.
+        let encryption_for_verification =
+            StorageEncryption::new(&FixedKeyProvider(loaded)).unwrap();
+
+        let inner = MemoryStorage::new();
+        let wrapped = EncryptedStorage::new(inner, encryption_for_wrapper, false);
+
+        wrapped
+            .store_kv("user:alice:totp_secret", b"alice-secret", None)
+            .await
+            .unwrap();
+
+        let inner = wrapped.into_inner();
+        let raw = inner
+            .get_kv("user:alice:totp_secret")
+            .await
+            .unwrap()
+            .unwrap();
+
+        // The wrapper must have used the storage key itself as AAD: decrypting
+        // with that exact AAD must succeed...
+        let decrypted = encryption_for_verification
+            .decrypt(
+                &serde_json::from_slice(&raw).unwrap(),
+                b"user:alice:totp_secret",
+            )
+            .unwrap();
+        assert_eq!(decrypted, b"alice-secret".to_vec());
+
+        // ...and decrypting the SAME envelope under a DIFFERENT record's key
+        // name must fail. If the wrapper instead used some constant AAD (the
+        // exact mutation this test exists to catch), this swap-style check
+        // would succeed instead of failing.
+        let wrong_aad_result = encryption_for_verification.decrypt(
+            &serde_json::from_slice(&raw).unwrap(),
+            b"user:bob:totp_secret",
+        );
+        assert!(
+            wrong_aad_result.is_err(),
+            "the wrapper's envelope must not decrypt under a different record's key name -- \
+             if it does, the wrapper is using a constant AAD instead of the real storage key"
+        );
+    }
+
+    /// A value stored by some pre-encryption version of the framework (or
+    /// while `storage_encryption.enabled = false`) is readable when
+    /// `allow_plaintext_reads` is explicitly true (the migration-window
+    /// setting).
+    #[tokio::test]
+    async fn test_reads_legacy_plaintext_when_allowed() {
         let inner = MemoryStorage::new();
         inner
             .store_kv("legacy:key", b"pre-existing plaintext value", None)
             .await
             .unwrap();
-        let wrapped = EncryptedStorage::new(inner, StorageEncryption::new_random());
+        let wrapped = EncryptedStorage::new(inner, StorageEncryption::new_random(), true);
 
         let value = wrapped.get_kv("legacy:key").await.unwrap();
         assert_eq!(value, Some(b"pre-existing plaintext value".to_vec()));
+    }
+
+    /// With `allow_plaintext_reads` false (the normal, post-migration
+    /// setting), a value that isn't a valid envelope -- whether genuine
+    /// untouched legacy plaintext, a corrupted envelope, or an attacker's
+    /// overwrite -- must be a hard error, not silently accepted. This is
+    /// the fix for the finding that an attacker able to write to the
+    /// backing store could otherwise overwrite an encrypted secret with
+    /// chosen plaintext and have it accepted forever.
+    #[tokio::test]
+    async fn test_rejects_non_envelope_value_when_plaintext_reads_disallowed() {
+        let inner = MemoryStorage::new();
+        inner
+            .store_kv("user:alice:totp_secret", b"attacker-chosen-plaintext", None)
+            .await
+            .unwrap();
+        let wrapped = EncryptedStorage::new(inner, StorageEncryption::new_random(), false);
+
+        let result = wrapped.get_kv("user:alice:totp_secret").await;
+        assert!(
+            result.is_err(),
+            "a non-envelope value must be rejected, not silently treated as plaintext, \
+             when allow_plaintext_reads is false"
+        );
     }
 
     #[tokio::test]
