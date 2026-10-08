@@ -163,13 +163,24 @@ pub trait AuthStorage: Send + Sync {
     async fn cleanup_expired(&self) -> Result<()>;
 }
 
-/// Lets any `Arc<dyn AuthStorage>` (or `Arc<ConcreteBackend>`) be used
-/// anywhere an `AuthStorage` is expected -- in particular, so a boxed
-/// trait object coming out of the storage factory can still be wrapped in
-/// [`crate::storage::encryption::EncryptedStorage`] without downcasting to
-/// a concrete backend type first.
+/// Lets a boxed `Arc<dyn AuthStorage>` coming out of the storage factory be
+/// wrapped in [`crate::storage::encryption::EncryptedStorage`] without
+/// downcasting to a concrete backend type first.
+///
+/// Deliberately scoped to the trait-object case only (`Arc<dyn
+/// AuthStorage>`), not a generic `impl<T: AuthStorage + ?Sized> AuthStorage
+/// for Arc<T>`: a generic impl would apply to every `Arc<ConcreteBackend>`
+/// too, and Rust's method resolution prefers an exact-type impl over
+/// autoderef -- so `some_arc.get_session(..)` would resolve to this impl's
+/// `(**self).get_session(..)` indirection instead of calling
+/// `ConcreteBackend::get_session` directly, adding an extra `async_trait`
+/// boxed-future hop to every storage call made through an `Arc<Concrete>`
+/// anywhere in the crate (including benchmarks and tests), not just the
+/// one factory path that actually needs this. Measured: this cost a real
+/// ~20-30% regression on the `session_operations/get_session` benchmark
+/// before being scoped down to `dyn AuthStorage` here.
 #[async_trait]
-impl<T: AuthStorage + ?Sized> AuthStorage for Arc<T> {
+impl AuthStorage for Arc<dyn AuthStorage> {
     async fn store_tokens_bulk(&self, tokens: &[AuthToken]) -> Result<()> {
         (**self).store_tokens_bulk(tokens).await
     }

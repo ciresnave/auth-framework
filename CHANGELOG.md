@@ -765,6 +765,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       round 4's items were numbered 13-18 then a stray, collided "12".
       Corrected throughout this file rather than compounding the drift
       further with round 5's own numbering.
+  Round 6 (found by the PM, after rebasing this PR onto main's newly-fixed
+  same-runner performance gate -- auth-framework#122 -- which then caught
+  a real regression this PR introduced): `impl<T: AuthStorage + ?Sized>
+  AuthStorage for Arc<T>` was written generically, so it also matched
+  `Arc<ConcreteBackend>` (e.g. `Arc<MockStorage>`), not just the
+  `Arc<dyn AuthStorage>` case the storage factory actually needed. Rust's
+  method resolution prefers an exact-type trait impl over autoderef, so
+  every `some_arc.get_session(..)`-style call through a concrete-typed
+  `Arc` anywhere in the crate silently started resolving to this impl's
+  `(**self).get_session(..)` indirection instead of calling the backend
+  directly -- one extra `async_trait` boxed-future hop per call.
+  Negligible next to a real network round trip, but large enough to move
+  the `session_operations/get_session` micro-benchmark (~120ns baseline)
+  by 20-30%, which is exactly what #122's new gate caught. Fixed by
+  narrowing the impl to the one concrete type it needs:
+  `impl AuthStorage for Arc<dyn AuthStorage>`.
   **Breaking changes introduced across this PR** (the version bump
   below covers all of them, not just round 1's original scope):
   `StorageEncryption::new` now takes `&dyn KeyProvider` instead of no
