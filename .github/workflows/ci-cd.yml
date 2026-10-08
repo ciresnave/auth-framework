@@ -394,10 +394,9 @@ jobs:
 
       # `rsa` (RUSTSEC-2023-0071, the Marvin Attack, no fixed upgrade
       # available) must be ABSENT from every feature combination this repo
-      # ships, except `openid-connect`, whose `openidconnect` crate has a
-      # hard, non-optional dependency on `rsa` (tracked as #113). `saml` is
-      # NOT exempt: since bergshamra 0.9.2 (aws-lc backend, #105) its tree
-      # is rsa-free and is checked below.
+      # ships. There are no exemptions: `saml` is rsa-free since bergshamra
+      # 0.9.2 (aws-lc backend, #105) and `openid-connect` is a no-op alias
+      # since the unused `openidconnect` dependency was removed (#113).
       #
       # `cargo tree -i rsa` exits NONZERO with "did not match any packages"
       # when the crate is absent -- that is the PASS condition here,
@@ -406,9 +405,11 @@ jobs:
       # inverts itself.
       #
       # Self-test: before the real checks, the same `check` function is run
-      # against `openid-connect` (known to contain `rsa`) and MUST report
-      # FAIL. If it reports OK the gate is blind (e.g. the match text
-      # drifted) and the step fails.
+      # against two throwaway crates built here: one that depends on `rsa`
+      # (MUST report FOUND) and one that does not (MUST report OK). If either
+      # answer is wrong the gate is blind or inverted (e.g. the match text
+      # drifted) and the step fails. The control no longer depends on any
+      # feature of this crate, so it cannot go stale when features change.
       - name: Assert rsa is absent from shipped, non-exempt feature combinations
         shell: bash
         run: |
@@ -420,11 +421,14 @@ jobs:
           check() {
             local name="$1"
             local features="$2"
+            local dir="${3:-.}"
             local out
             if [ -z "$features" ]; then
-              out=$(cargo tree -i rsa --target all 2>&1) || true
+              out=$(cd "$dir" && cargo tree -i rsa --target all 2>&1) || true
+            elif [ "$features" = "__ALL__" ]; then
+              out=$(cd "$dir" && cargo tree -i rsa --target all --all-features 2>&1) || true
             else
-              out=$(cargo tree -i rsa --target all --no-default-features --features "$features" 2>&1) || true
+              out=$(cd "$dir" && cargo tree -i rsa --target all --no-default-features --features "$features" 2>&1) || true
             fi
             if echo "$out" | grep -q "did not match any packages\|nothing to print"; then
               echo "OK: rsa absent for '$name'"
@@ -439,15 +443,39 @@ jobs:
             echo "$out"
             return 2
           }
-          # Self-test: the control MUST return 1 (rsa FOUND), not 0 (blind)
+          # Self-test controls: throwaway crates outside this workspace.
+          mkcrate() { # <dir> <extra dependency lines>
+            mkdir -p "$1/src"
+            : > "$1/src/lib.rs"
+            {
+              echo '[package]'
+              echo 'name = "rsa-gate-control"'
+              echo 'version = "0.0.0"'
+              echo 'edition = "2021"'
+              echo '[dependencies]'
+              echo "$2"
+            } > "$1/Cargo.toml"
+          }
+          ctl_with=$(mktemp -d)
+          ctl_without=$(mktemp -d)
+          mkcrate "$ctl_with" 'rsa = "0.9"'
+          mkcrate "$ctl_without" ''
+          # The control that HAS rsa MUST return 1 (rsa FOUND): not 0 (blind)
           # and not 2 (cargo errored, which proves nothing).
           st=0
-          check "self-test: openid-connect (rsa expected present)" "openid-connect" || st=$?
+          check "self-test: throwaway crate depending on rsa" "" "$ctl_with" || st=$?
           if [ "$st" -ne 1 ]; then
-            echo "SELF-TEST FAILED: expected 'rsa found' (1) for openid-connect, got $st"
+            echo "SELF-TEST FAILED: expected 'rsa found' (1) for the crate that depends on rsa, got $st"
             exit 1
           fi
-          echo "self-test passed: gate detects rsa in openid-connect (matched line above)"
+          # The control WITHOUT rsa MUST return 0 (rsa absent).
+          st=0
+          check "self-test: throwaway crate without rsa" "" "$ctl_without" || st=$?
+          if [ "$st" -ne 0 ]; then
+            echo "SELF-TEST FAILED: expected 'rsa absent' (0) for the crate without rsa, got $st"
+            exit 1
+          fi
+          echo "self-test passed: gate reports FOUND for a crate depending on rsa and OK for one without"
           run() { check "$@" || fail=1; }
           run "default" ""
           run "baseline" "api-server,postgres-storage,redis-storage"
@@ -457,6 +485,8 @@ jobs:
           run "crypto-sms-test" "api-server,postgres-storage,redis-storage,axum-integration,enhanced-crypto,fips-compliance,smskit,smskit-web-axum,docker-tests"
           run "saml" "saml"
           run "saml-api" "api-server,saml"
+          run "openid-connect (no-op alias)" "openid-connect"
+          run "all features" "__ALL__"
           exit $fail
 
   build:
