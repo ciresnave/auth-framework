@@ -210,6 +210,20 @@ impl AuthStorage for RedisStorage {
         Ok(value)
     }
 
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        let mut conn = self.get_connection().await?;
+        let kv_key = self.kv_key(key);
+        // PTTL: -2 = no such key, -1 = no expiry, otherwise milliseconds left.
+        let millis: i64 = conn
+            .pttl(&kv_key)
+            .await
+            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        Ok(u64::try_from(millis)
+            .ok()
+            .filter(|millis| *millis > 0)
+            .map(Duration::from_millis))
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
         let kv_key = self.kv_key(key);

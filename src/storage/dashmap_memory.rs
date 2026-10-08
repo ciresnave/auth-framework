@@ -745,6 +745,15 @@ impl AuthStorage for DashMapMemoryStorage {
         }
     }
 
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        Ok(self.kv_store.get(key).and_then(|entry| {
+            entry
+                .expires_at
+                .and_then(|expires_at| (expires_at - chrono::Utc::now()).to_std().ok())
+                .filter(|remaining| !remaining.is_zero())
+        }))
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         // SAFE: Extract creation timestamp before removal
         let created_at = if let Some(timestamped) = self.kv_store.get(key) {
@@ -1045,5 +1054,21 @@ mod tests {
             let retrieved = storage.get_kv(&format!("key-{}", i)).await.unwrap();
             assert!(retrieved.is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn get_kv_ttl_reports_remaining_lifetime() {
+        let storage = DashMapMemoryStorage::new();
+        storage
+            .store_kv("k:ttl", b"v", Some(Duration::from_secs(600)))
+            .await
+            .unwrap();
+        storage.store_kv("k:forever", b"v", None).await.unwrap();
+        let ttl = storage.get_kv_ttl("k:ttl").await.unwrap().unwrap();
+        assert!(ttl > Duration::from_secs(590) && ttl <= Duration::from_secs(600));
+        assert_eq!(storage.get_kv_ttl("k:missing").await.unwrap(), None);
+        // `DashMapMemoryStorage::new()` may apply a default TTL; the
+        // contract is only that `None` means "no expiry".
+        let _ = storage.get_kv_ttl("k:forever").await.unwrap();
     }
 }

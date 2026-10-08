@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Maintenance backup/restore (#121): a snapshot file no longer holds
+  recoverable plaintext. When the framework encrypts at rest (the default
+  for every persistent backend), the whole snapshot file -- KV secrets,
+  access/refresh tokens, sessions, user emails -- is sealed under the
+  storage encryption key (AES-256-GCM, snapshot-specific AAD); restore
+  opens it before resetting anything, so a wrong or missing key leaves
+  live data untouched. In-memory storage and
+  `storage_encryption.enabled = false` still write plaintext snapshots.
+  Restore also preserves KV TTLs now (it used to make every entry
+  permanent) via a new `AuthStorage::get_kv_ttl` method (default: `None`,
+  i.e. TTL unknown); the bundled memory, Redis, SQLite and PostgreSQL
+  backends override it. Custom backends should too. Snapshots written
+  before this change restore as before.
 - Fixed GHSA-jfmh-j245-wpjg: MFA verification no longer derives a
   fallback secret.
 - Fixed GHSA-rf2h-7m78-hhjm: revoking a refresh token now invalidates

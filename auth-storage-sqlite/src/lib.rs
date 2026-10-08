@@ -280,6 +280,20 @@ impl AuthStorage for SqliteStorage {
         }
     }
 
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        let now = chrono::Utc::now().timestamp();
+        let row = sqlx::query("SELECT expires_at FROM kv_store WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage_err)?;
+        Ok(row
+            .and_then(|row| row.get::<Option<i64>, _>("expires_at"))
+            .and_then(|expires_at| u64::try_from(expires_at - now).ok())
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs))
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         sqlx::query("DELETE FROM kv_store WHERE key = ?")
             .bind(key)

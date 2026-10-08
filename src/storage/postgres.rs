@@ -420,6 +420,27 @@ impl AuthStorage for PostgresStorage {
         }
     }
 
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<std::time::Duration>> {
+        let row = sqlx::query(
+            r#"SELECT EXTRACT(EPOCH FROM (expires_at - NOW()))::float8 AS seconds
+               FROM kv_store
+               WHERE key = $1 AND expires_at IS NOT NULL AND expires_at > NOW()"#,
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                "Failed to fetch kv ttl: {}",
+                e
+            )))
+        })?;
+        Ok(row
+            .and_then(|row| row.try_get::<f64, _>("seconds").ok())
+            .filter(|seconds| *seconds > 0.0)
+            .map(std::time::Duration::from_secs_f64))
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         sqlx::query(r#"DELETE FROM kv_store WHERE key = $1"#)
             .bind(key)

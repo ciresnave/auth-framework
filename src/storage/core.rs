@@ -261,6 +261,10 @@ impl AuthStorage for Arc<dyn AuthStorage> {
         (**self).get_kv(key).await
     }
 
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        (**self).get_kv_ttl(key).await
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         (**self).delete_kv(key).await
     }
@@ -551,6 +555,10 @@ impl AuthStorage for MemoryStorage {
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         // Delegate to DashMap implementation for deadlock-free operations
         self.inner.get_kv(key).await
+    }
+
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        self.inner.get_kv_ttl(key).await
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
@@ -882,6 +890,23 @@ impl AuthStorage for RedisStorage {
             .map_err(|e| StorageError::operation_failed(format!("Failed to get KV: {e}")))?;
 
         Ok(value)
+    }
+
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        let mut conn = self.get_connection().await?;
+        let storage_key = self.key(&format!("kv:{key}"));
+
+        // PTTL: -2 = no such key, -1 = no expiry, otherwise milliseconds left.
+        let millis: i64 = redis::cmd("PTTL")
+            .arg(&storage_key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| StorageError::operation_failed(format!("Failed to get KV TTL: {e}")))?;
+
+        Ok(u64::try_from(millis)
+            .ok()
+            .filter(|millis| *millis > 0)
+            .map(Duration::from_millis))
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
