@@ -843,6 +843,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   propagate filesystem I/O errors; this crate serves `ServeDir` only as a nested service
   (admin web UI `/static`), not through `try_call`. `axum-test` resolves to 21.1.0, which
   needs the Rust 1.89 MSRV set above.
+- **Deprecated / Breaking:** the `openid-connect` Cargo feature is now a no-op alias (remove
+  before 1.0) and the optional `openidconnect` dependency is removed (#113). No code in this
+  crate ever called that crate: OpenID Connect ID tokens are validated by this crate's own JWT
+  code whether or not the feature is enabled. `features = ["openid-connect"]` keeps resolving,
+  but the feature no longer adds `openidconnect`, `oauth2`, or the `rsa` crate that
+  `openidconnect` required. The "Security Audit (rsa absence)" CI gate no longer exempts any
+  feature, and its self-test now builds throwaway crates (one with `rsa`, one without) instead
+  of relying on a feature of this crate. `rsa` stays listed in `Cargo.lock` through the
+  `sqlx-mysql` 0.8.6 stub entry (in no resolved dependency graph) until `sqlx` 0.9 is taken.
+- **Tests:** golden-file render test for the seven admin web GUI pages (#129, tests only, no
+  version of its own; covered by the version bump of this change set). Regenerate the goldens with
+  `ADMIN_GOLDEN_UPDATE=1 cargo test --lib --features web-gui admin::web::tests::admin_pages_match_golden`.
 
 ### Removed
 
