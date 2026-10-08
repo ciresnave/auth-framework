@@ -835,6 +835,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** minimum supported Rust version raised 1.88 -> 1.89 (`rust-version`, the CI MSRV
   job, the Docker builder image, and the install docs). Needed for current releases of
   RustCrypto and test dependencies (for example `aes` 0.9.3 and `axum-test` 21.1.0).
+- **Dependencies:** `toml` 0.9 -> 1, `dirs` 6 -> 7, `base64` 0.22 -> 0.23, `askama` 0.15 -> 0.16,
+  `tower-http` 0.6 -> 0.7, and dev/test-only `axum-test` 19 -> 21 and `testcontainers` 0.27 -> 0.28.
+  No source change was needed. `base64` is declared with `default-features = false,
+  features = ["std"]` because 0.23 makes its `simd-unsafe` engines a default feature and this
+  crate uses only the scalar engines. `tower-http` 0.7.1 changes `ServeDir::try_call` to
+  propagate filesystem I/O errors; this crate serves `ServeDir` only as a nested service
+  (admin web UI `/static`), not through `try_call`. `axum-test` resolves to 21.1.0, which
+  needs the Rust 1.89 MSRV set above.
 
 ### Removed
 
