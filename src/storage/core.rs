@@ -144,6 +144,18 @@ pub trait AuthStorage: Send + Sync {
     /// Retrieve arbitrary key-value data.
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>>;
 
+    /// Remaining time-to-live of a key-value entry.
+    ///
+    /// Returns `Ok(None)` when the key is absent, has no expiry, **or the
+    /// backend does not track TTLs** (the default). Callers that must carry
+    /// an entry's lifetime across a copy (backup/restore, migration) use
+    /// this together with [`get_kv`](Self::get_kv); a backend that honours
+    /// the TTL passed to [`store_kv`](Self::store_kv) should override it so
+    /// those entries do not silently become non-expiring.
+    async fn get_kv_ttl(&self, _key: &str) -> Result<Option<Duration>> {
+        Ok(None)
+    }
+
     /// Delete arbitrary key-value data.
     async fn delete_kv(&self, key: &str) -> Result<()>;
 
