@@ -17,6 +17,17 @@ This guide reflects the current WebAuthn and SAML routes mounted by `ApiServer`.
 
 ### 1. Initialize registration
 
+Registration requires `Authorization: Bearer {token}`. The token must belong to
+the account named by `username`, or to an admin. The server does not verify
+attestation statements, so the only supported attestation preference is `none`
+(`WEBAUTHN_ATTESTATION=none`, the default); any other value makes
+`registration/init` fail with `ATTESTATION_UNSUPPORTED`. The `registration/complete`
+call must use the same bearer token as `registration/init`, and the client data
+must include the `origin`.
+
+Sign-in (`authentication/init` + `authentication/complete`) needs the `username`;
+the access token it returns is issued for that account's id.
+
 Request:
 
 ```http
@@ -59,7 +70,7 @@ Current response shape:
       "require_resident_key": false,
       "user_verification": "preferred"
     },
-    "attestation": "direct",
+    "attestation": "none",
     "session_id": "webauthn_550e8400-e29b-41d4-a716-446655440000"
   }
 }

@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 /// ```rust
 /// use auth_framework::api::webauthn::WebAuthnConfig;
 ///
-/// // Minimal — defaults to "localhost" / "AuthFramework" / "direct"
+/// // Minimal — defaults to "localhost" / "AuthFramework" / "none"
 /// let cfg = WebAuthnConfig::default();
 /// assert_eq!(cfg.rp_id, "localhost");
 ///
@@ -32,7 +32,10 @@ pub struct WebAuthnConfig {
     pub rp_id: String,
     /// Human-readable Relying Party name.
     pub rp_name: String,
-    /// Attestation conveyance preference (`"direct"`, `"indirect"`, `"none"`).
+    /// Attestation conveyance preference. This server does not verify
+    /// attestation statements, so only `"none"` is accepted by the
+    /// registration endpoints; any other value makes them refuse rather
+    /// than request an attestation that would then be ignored.
     pub attestation: String,
     /// Timeout for ceremonies in milliseconds (default: 60 000).
     pub timeout_ms: u64,
@@ -43,7 +46,7 @@ impl Default for WebAuthnConfig {
         Self {
             rp_id: "localhost".to_string(),
             rp_name: "AuthFramework".to_string(),
-            attestation: "direct".to_string(),
+            attestation: "none".to_string(),
             timeout_ms: 60_000,
         }
     }
@@ -65,7 +68,7 @@ impl WebAuthnConfig {
     /// |----------|---------|
     /// | `WEBAUTHN_RP_ID` | `"localhost"` |
     /// | `WEBAUTHN_RP_NAME` | `"AuthFramework"` |
-    /// | `WEBAUTHN_ATTESTATION` | `"direct"` |
+    /// | `WEBAUTHN_ATTESTATION` | `"none"` |
     /// | `WEBAUTHN_TIMEOUT_MS` | `60000` |
     pub fn from_env() -> Self {
         Self {
@@ -73,7 +76,7 @@ impl WebAuthnConfig {
             rp_name: std::env::var("WEBAUTHN_RP_NAME")
                 .unwrap_or_else(|_| "AuthFramework".to_string()),
             attestation: std::env::var("WEBAUTHN_ATTESTATION")
-                .unwrap_or_else(|_| "direct".to_string()),
+                .unwrap_or_else(|_| "none".to_string()),
             timeout_ms: std::env::var("WEBAUTHN_TIMEOUT_MS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -92,6 +95,15 @@ impl WebAuthnConfig {
         self.timeout_ms = ms;
         self
     }
+}
+
+/// Whether this server can honour an attestation conveyance preference.
+///
+/// The server does not verify attestation statements, so it only accepts
+/// `"none"`: asking an authenticator for an attestation it then ignores
+/// would look like provenance checking while providing none.
+pub(crate) fn attestation_supported(preference: &str) -> bool {
+    preference == "none"
 }
 
 /// Request to initiate WebAuthn registration
@@ -218,29 +230,125 @@ pub struct AuthenticatorSelectionCriteria {
     pub user_verification: String,
 }
 
-/// Initiate WebAuthn registration process
+type SharedStorage = std::sync::Arc<dyn crate::storage::AuthStorage>;
+
+/// Resolve a username to its account id via the `user:username:{name}`
+/// index every registration path maintains.
+async fn resolve_user_id(storage: &SharedStorage, username: &str) -> Option<String> {
+    let bytes = storage
+        .get_kv(&format!("user:username:{username}"))
+        .await
+        .ok()
+        .flatten()?;
+    String::from_utf8(bytes).ok().filter(|id| !id.is_empty())
+}
+
+/// `true` when `user:{id}` exists, parses, and is not deactivated.
+async fn account_is_active(storage: &SharedStorage, user_id: &str) -> bool {
+    match storage.get_kv(&format!("user:{user_id}")).await {
+        Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes)
+            .map(|record| record["active"].as_bool() != Some(false))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Authenticate the caller from the `Authorization: Bearer` header.
+///
+/// Returns the `(code, message)` of the error response on failure.
+async fn require_caller(
+    state: &ApiState,
+    headers: &HeaderMap,
+) -> Result<crate::tokens::AuthToken, (&'static str, &'static str)> {
+    let token = extract_bearer_token(headers).ok_or(("UNAUTHORIZED", "Authentication required"))?;
+    validate_api_token(&state.auth_framework, &token)
+        .await
+        .map_err(|_| ("UNAUTHORIZED", "Invalid or expired token"))
+}
+
+/// A caller may manage an account's passkeys if it is that account, or an admin.
+fn may_manage(caller: &crate::tokens::AuthToken, target_user_id: &str) -> bool {
+    caller.user_id == target_user_id || caller.roles.contains("admin")
+}
+
+/// Credentials are stored per ACCOUNT ID, never per caller-supplied name.
+fn credential_key(user_id: &str, credential_id: &str) -> String {
+    format!("webauthn_credential:{user_id}:{credential_id}")
+}
+
+fn credential_index_key(user_id: &str) -> String {
+    format!("webauthn_creds_index:{user_id}")
+}
+
+/// Check the client-data `origin` against the relying-party id. A missing
+/// origin is a refusal: the origin binding is what ties the ceremony to
+/// this site, so it cannot be optional.
+fn check_origin(client_data: &serde_json::Value, expected_rp_id: &str) -> Result<(), &'static str> {
+    const MISMATCH: &str = "Origin mismatch: does not match relying party ID";
+    let origin = client_data
+        .get("origin")
+        .and_then(|o| o.as_str())
+        .ok_or("Missing origin in client data")?;
+    match url::Url::parse(origin) {
+        Ok(origin_url) if origin_url.host_str() == Some(expected_rp_id) => Ok(()),
+        Ok(_) => Err(MISMATCH),
+        Err(_) if origin == expected_rp_id => Ok(()),
+        Err(_) => Err(MISMATCH),
+    }
+}
+
+/// Initiate WebAuthn registration process.
+///
+/// Requires a bearer token. The caller must be the account named by
+/// `username`, or an admin: registering a credential gives the holder of
+/// its private key the ability to sign in as the account.
 pub async fn webauthn_registration_init(
     State(state): State<ApiState>,
+    headers: HeaderMap,
     Json(request): Json<WebAuthnRegistrationInitRequest>,
 ) -> Json<ApiResponse<WebAuthnRegistrationResponse>> {
+    let caller = match require_caller(&state, &headers).await {
+        Ok(caller) => caller,
+        Err((code, message)) => return Json(ApiResponse::error_typed(code, message)),
+    };
+
     // Validate username format before processing
     if let Err(e) = crate::utils::validation::validate_username(&request.username) {
         return Json(ApiResponse::error_typed("VALIDATION_ERROR", format!("{e}")));
     }
+
+    let webauthn_cfg = WebAuthnConfig::from_env();
+    if !attestation_supported(&webauthn_cfg.attestation) {
+        return Json(ApiResponse::error_typed(
+            "ATTESTATION_UNSUPPORTED",
+            "This server cannot verify attestation statements; set WEBAUTHN_ATTESTATION=none",
+        ));
+    }
+
+    // Same answer whether the account is missing or belongs to someone
+    // else, so this cannot be used to probe which usernames exist.
+    let storage = state.auth_framework.storage();
+    let target_user_id = match resolve_user_id(&storage, &request.username).await {
+        Some(id) if may_manage(&caller, &id) && account_is_active(&storage, &id).await => id,
+        _ => {
+            return Json(ApiResponse::error_typed(
+                "FORBIDDEN",
+                "You can only register credentials for your own account",
+            ));
+        }
+    };
 
     // Generate a secure challenge
     let mut challenge_bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut challenge_bytes);
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(challenge_bytes);
 
-    // Generate user ID (base64url-encoded username as per WebAuthn spec)
-    let user_id =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(request.username.as_bytes());
+    // The WebAuthn user handle is the opaque account id, not the username.
+    let user_handle =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(target_user_id.as_bytes());
 
     // Create session ID for tracking this registration
     let session_id = format!("webauthn_{}", uuid::Uuid::new_v4());
-
-    let webauthn_cfg = WebAuthnConfig::from_env();
 
     let response = WebAuthnRegistrationResponse {
         challenge: challenge.clone(),
@@ -249,7 +357,7 @@ pub async fn webauthn_registration_init(
             name: webauthn_cfg.rp_name,
         },
         user: PublicKeyCredentialUserEntity {
-            id: user_id,
+            id: user_handle,
             name: request.username.clone(),
             display_name: request.display_name.unwrap_or(request.username.clone()),
         },
@@ -261,29 +369,36 @@ pub async fn webauthn_registration_init(
             require_resident_key: Some(false),
             user_verification: request.user_verification.unwrap_or("preferred".to_string()),
         }),
-        // "direct" requests the authenticator to include attestation data,
-        // enabling the server to verify the authenticator's identity and provenance.
-        // Use "none" only if you explicitly do not need device attestation verification.
+        // The server does not verify attestation statements, so it only
+        // ever asks for "none" (see `attestation_supported`).
         attestation: webauthn_cfg.attestation,
         session_id: session_id.clone(),
     };
 
-    // Store the challenge and session info with a 5-minute TTL
+    // Store the challenge, the target account and the authenticated
+    // caller with a 5-minute TTL. The caller is bound so the session id
+    // alone is not a capability.
     let session_key = format!("webauthn_reg_session:{}", session_id);
     let session_data = serde_json::json!({
         "challenge": challenge,
-        "username": request.username,
+        "user_id": target_user_id,
+        "caller_id": caller.user_id,
         "timestamp": chrono::Utc::now().timestamp()
     });
-    let _ = state
-        .auth_framework
-        .storage()
+    if let Err(e) = storage
         .store_kv(
             &session_key,
             session_data.to_string().as_bytes(),
             Some(std::time::Duration::from_secs(300)),
         )
-        .await;
+        .await
+    {
+        tracing::error!("Failed to store WebAuthn registration session: {}", e);
+        return Json(ApiResponse::error_typed(
+            "INTERNAL_ERROR",
+            "Failed to start registration",
+        ));
+    }
 
     Json(ApiResponse::success_with_message(
         response,
@@ -291,30 +406,38 @@ pub async fn webauthn_registration_init(
     ))
 }
 
-/// Complete WebAuthn registration process
+/// Complete WebAuthn registration process.
+///
+/// Requires the same bearer token that started the ceremony. The server
+/// does not verify attestation statements (see [`attestation_supported`]):
+/// the credential is trusted because an authenticated session for the
+/// account registered it, not because of what the authenticator claims.
 pub async fn webauthn_registration_complete(
     State(state): State<ApiState>,
+    headers: HeaderMap,
     Json(request): Json<WebAuthnRegistrationCompleteRequest>,
 ) -> Json<ApiResponse<()>> {
+    let caller = match require_caller(&state, &headers).await {
+        Ok(caller) => caller,
+        Err((code, message)) => return Json(ApiResponse::error_typed(code, message)),
+    };
+
     // Retrieve the stored session to validate the challenge
     let session_key = format!("webauthn_reg_session:{}", request.session_id);
     let storage = state.auth_framework.storage();
 
-    let (username, stored_challenge) = match storage.get_kv(&session_key).await {
+    let (user_id, session_caller, stored_challenge) = match storage.get_kv(&session_key).await {
         Ok(Some(data)) => {
             let session: serde_json::Value =
                 serde_json::from_slice(&data).unwrap_or(serde_json::Value::Null);
-            let uname = session
-                .get("username")
-                .and_then(|u| u.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let challenge = session
-                .get("challenge")
-                .and_then(|c| c.as_str())
-                .unwrap_or("")
-                .to_string();
-            (uname, challenge)
+            let field = |name: &str| {
+                session
+                    .get(name)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            (field("user_id"), field("caller_id"), field("challenge"))
         }
         _ => {
             return Json(ApiResponse::validation_error(
@@ -322,15 +445,49 @@ pub async fn webauthn_registration_complete(
             ));
         }
     };
+    if user_id.is_empty() || stored_challenge.is_empty() {
+        return Json(ApiResponse::validation_error(
+            "Session not found or expired",
+        ));
+    }
+
+    // Only the caller that started the ceremony may finish it. Checked
+    // before the session is consumed so a stranger cannot burn it.
+    if session_caller != caller.user_id {
+        return Json(ApiResponse::error_typed(
+            "FORBIDDEN",
+            "This registration session belongs to another account",
+        ));
+    }
 
     // Delete session immediately to prevent replay attacks
     if let Err(e) = storage.delete_kv(&session_key).await {
         tracing::warn!("Failed to delete WebAuthn registration session: {}", e);
     }
 
+    // The account may have been deactivated since the ceremony began.
+    if !account_is_active(&storage, &user_id).await {
+        return Json(ApiResponse::error_typed(
+            "FORBIDDEN",
+            "You can only register credentials for your own account",
+        ));
+    }
+
     // Basic validation of credential data
     if request.credential_id.is_empty() || request.attestation_object.is_empty() {
         return Json(ApiResponse::validation_error("Invalid credential data"));
+    }
+    let key_ok = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&request.credential_public_key)
+        .or_else(|_| {
+            base64::engine::general_purpose::STANDARD.decode(&request.credential_public_key)
+        })
+        .map(|key| !key.is_empty() && key.len() <= 1024)
+        .unwrap_or(false);
+    if !key_ok {
+        return Json(ApiResponse::validation_error(
+            "Invalid credential public key",
+        ));
     }
 
     // Verify client_data_json: challenge, origin, and type
@@ -375,49 +532,44 @@ pub async fn webauthn_registration_complete(
         ));
     }
 
-    // Verify origin matches the configured RP ID
-    let expected_rp_id = WebAuthnConfig::from_env().rp_id;
-    if let Some(origin) = client_data.get("origin").and_then(|o| o.as_str()) {
-        // Origin should contain the RP ID as its hostname
-        if let Ok(origin_url) = url::Url::parse(origin) {
-            if origin_url.host_str() != Some(&expected_rp_id) {
-                return Json(ApiResponse::validation_error(
-                    "Origin mismatch: does not match relying party ID",
-                ));
-            }
-        } else if origin != expected_rp_id {
-            return Json(ApiResponse::validation_error(
-                "Origin mismatch: does not match relying party ID",
-            ));
-        }
+    // Verify origin matches the configured RP ID (a missing origin is refused)
+    if let Err(message) = check_origin(&client_data, &WebAuthnConfig::from_env().rp_id) {
+        return Json(ApiResponse::validation_error(message));
     }
 
     // Store the registered credential (including initial signature counter)
-    let credential_key = format!("webauthn_credential:{}:{}", username, request.credential_id);
+    let credential_key = credential_key(&user_id, &request.credential_id);
     let credential_data = serde_json::json!({
         "credential_id": request.credential_id,
         "credential_public_key": request.credential_public_key,
-        "username": username,
+        "user_id": user_id,
         "registered_at": chrono::Utc::now().timestamp(),
         "sign_count": 0u64
     });
-    let _ = storage
+    if let Err(e) = storage
         .store_kv(
             &credential_key,
             credential_data.to_string().as_bytes(),
             None,
         )
-        .await;
+        .await
+    {
+        tracing::error!("Failed to store WebAuthn credential: {}", e);
+        return Json(ApiResponse::error_typed(
+            "INTERNAL_ERROR",
+            "Failed to store credential",
+        ));
+    }
 
     // Update the user's credential index so authentication can enumerate them
-    let index_key = format!("webauthn_creds_index:{}", username);
+    let index_key = credential_index_key(&user_id);
     let mut existing_ids: Vec<String> = match storage.get_kv(&index_key).await {
         Ok(Some(data)) => serde_json::from_slice(&data).unwrap_or_default(),
         _ => Vec::new(),
     };
     if !existing_ids.contains(&request.credential_id) {
         existing_ids.push(request.credential_id.clone());
-        let _ = storage
+        if let Err(e) = storage
             .store_kv(
                 &index_key,
                 serde_json::to_string(&existing_ids)
@@ -425,7 +577,14 @@ pub async fn webauthn_registration_complete(
                     .as_bytes(),
                 None,
             )
-            .await;
+            .await
+        {
+            tracing::error!("Failed to update WebAuthn credential index: {}", e);
+            return Json(ApiResponse::error_typed(
+                "INTERNAL_ERROR",
+                "Failed to store credential",
+            ));
+        }
     }
 
     Json(ApiResponse::<()>::ok_with_message(
@@ -445,11 +604,18 @@ pub async fn webauthn_authentication_init(
     let session_id = format!("webauthn_auth_{}", uuid::Uuid::new_v4());
     let storage = state.auth_framework.storage();
 
-    // Retrieve user's registered credentials from storage
+    // Retrieve the account's registered credentials from storage. An
+    // unknown username yields an empty list, exactly like an account with
+    // no credentials, so this does not reveal which usernames exist.
     let username = request.username.as_deref().unwrap_or("");
-    let allow_credentials = if !username.is_empty() {
-        // Look up registered credential IDs via the user's credential index
-        let index_key = format!("webauthn_creds_index:{}", username);
+    let account_id = if username.is_empty() {
+        None
+    } else {
+        resolve_user_id(&storage, username).await
+    };
+    let allow_credentials = if let Some(account_id) = account_id.as_deref() {
+        // Look up registered credential IDs via the account's credential index
+        let index_key = credential_index_key(account_id);
         match storage.get_kv(&index_key).await {
             Ok(Some(data)) => {
                 if let Ok(ids) = serde_json::from_slice::<Vec<String>>(&data) {
@@ -515,7 +681,7 @@ pub async fn webauthn_authentication_complete(
             let uname = session
                 .get("username")
                 .and_then(|u| u.as_str())
-                .unwrap_or("webauthn_user")
+                .unwrap_or("")
                 .to_string();
             let challenge = session
                 .get("challenge")
@@ -578,32 +744,30 @@ pub async fn webauthn_authentication_complete(
         ));
     }
 
-    // Verify origin matches the configured RP ID
-    let expected_rp_id = WebAuthnConfig::from_env().rp_id;
-    if let Some(origin) = client_data.get("origin").and_then(|o| o.as_str()) {
-        if let Ok(origin_url) = url::Url::parse(origin) {
-            if origin_url.host_str() != Some(&expected_rp_id) {
-                return Json(ApiResponse::validation_error_typed(
-                    "Origin mismatch: does not match relying party ID",
-                ));
-            }
-        } else if origin != expected_rp_id {
-            return Json(ApiResponse::validation_error_typed(
-                "Origin mismatch: does not match relying party ID",
-            ));
-        }
+    // Verify origin matches the configured RP ID (a missing origin is refused)
+    if let Err(message) = check_origin(&client_data, &WebAuthnConfig::from_env().rp_id) {
+        return Json(ApiResponse::validation_error_typed(message));
     }
 
+    // Resolve the session's username to the REAL account, which must exist
+    // and be active, before anything is looked up or minted. This failure
+    // and "no such credential" below get the same answer, so the response
+    // cannot be used to probe which usernames exist.
+    let user_id = match resolve_user_id(&storage, &username).await {
+        Some(id) if account_is_active(&storage, &id).await => id,
+        _ => {
+            return Json(ApiResponse::validation_error_typed("Authentication failed"));
+        }
+    };
+
     // Retrieve stored credential to verify it exists and check signature counter
-    let credential_key = format!("webauthn_credential:{}:{}", username, request.credential_id);
+    let credential_key = credential_key(&user_id, &request.credential_id);
     let stored_credential = match storage.get_kv(&credential_key).await {
         Ok(Some(data)) => {
             serde_json::from_slice::<serde_json::Value>(&data).unwrap_or(serde_json::Value::Null)
         }
         _ => {
-            return Json(ApiResponse::validation_error_typed(
-                "Credential not found for this user",
-            ));
+            return Json(ApiResponse::validation_error_typed("Authentication failed"));
         }
     };
 
@@ -753,7 +917,7 @@ pub async fn webauthn_authentication_complete(
     // Generate authentication token for the verified user
     let token_lifetime = state.auth_framework.config().token_lifetime;
     let token = match state.auth_framework.token_manager().create_jwt_token(
-        &username,
+        &user_id,
         vec![],
         Some(token_lifetime),
     ) {
@@ -770,7 +934,7 @@ pub async fn webauthn_authentication_complete(
         "access_token": token,
         "token_type": "Bearer",
         "expires_in": token_lifetime.as_secs(),
-        "user_id": username,
+        "user_id": user_id,
         "authentication_method": "webauthn"
     });
 
@@ -780,50 +944,43 @@ pub async fn webauthn_authentication_complete(
     ))
 }
 
-/// List user's registered WebAuthn credentials (requires authentication; user can only list own credentials)
+/// List an account's registered WebAuthn credentials. `username` names the
+/// account; the caller must be that account or an admin.
 pub async fn list_webauthn_credentials(
     State(state): State<ApiState>,
     headers: HeaderMap,
     axum::extract::Path(username): axum::extract::Path<String>,
 ) -> Json<ApiResponse<Vec<serde_json::Value>>> {
-    // Require authentication
-    let token = match extract_bearer_token(&headers) {
-        Some(t) => t,
-        None => {
-            return Json(ApiResponse::error_typed(
-                "UNAUTHORIZED",
-                "Authentication required",
-            ));
-        }
+    let caller = match require_caller(&state, &headers).await {
+        Ok(caller) => caller,
+        Err((code, message)) => return Json(ApiResponse::error_typed(code, message)),
     };
-    let auth_token = match validate_api_token(&state.auth_framework, &token).await {
-        Ok(t) => t,
-        Err(_) => {
-            return Json(ApiResponse::error_typed(
-                "UNAUTHORIZED",
-                "Invalid or expired token",
-            ));
-        }
-    };
-
-    // Authorize: user can only list their own credentials (admins can list any)
-    if auth_token.user_id != username && !auth_token.roles.contains("admin") {
-        return Json(ApiResponse::error_typed(
-            "FORBIDDEN",
-            "You can only view your own credentials",
-        ));
-    }
 
     let storage = state.auth_framework.storage();
-    let index_key = format!("webauthn_creds_index:{}", username);
+    let user_id = match resolve_user_id(&storage, &username).await {
+        Some(id) if may_manage(&caller, &id) => id,
+        // An admin may ask about a name that does not exist: empty, not an error.
+        None if caller.roles.contains("admin") => {
+            return Json(ApiResponse::success_with_message(
+                Vec::new(),
+                format!("WebAuthn credentials retrieved for user: {}", username),
+            ));
+        }
+        _ => {
+            return Json(ApiResponse::error_typed(
+                "FORBIDDEN",
+                "You can only view your own credentials",
+            ));
+        }
+    };
 
-    let credentials = match storage.get_kv(&index_key).await {
+    let credentials = match storage.get_kv(&credential_index_key(&user_id)).await {
         Ok(Some(data)) => {
             if let Ok(ids) = serde_json::from_slice::<Vec<String>>(&data) {
                 let mut creds = Vec::new();
                 for id in ids {
-                    let cred_key = format!("webauthn_credential:{}:{}", username, id);
-                    if let Ok(Some(cred_data)) = storage.get_kv(&cred_key).await
+                    if let Ok(Some(cred_data)) =
+                        storage.get_kv(&credential_key(&user_id, &id)).await
                         && let Ok(cred) = serde_json::from_slice::<serde_json::Value>(&cred_data)
                     {
                         creds.push(cred);
@@ -843,42 +1000,29 @@ pub async fn list_webauthn_credentials(
     ))
 }
 
-/// Delete a WebAuthn credential (requires authentication; user can only delete own credentials)
+/// Delete a WebAuthn credential. `username` names the account; the caller
+/// must be that account or an admin.
 pub async fn delete_webauthn_credential(
     State(state): State<ApiState>,
     headers: HeaderMap,
     axum::extract::Path((username, credential_id)): axum::extract::Path<(String, String)>,
 ) -> Json<ApiResponse<()>> {
-    // Require authentication
-    let token = match extract_bearer_token(&headers) {
-        Some(t) => t,
-        None => {
-            return Json(ApiResponse::error(
-                "UNAUTHORIZED",
-                "Authentication required",
-            ));
-        }
+    let caller = match require_caller(&state, &headers).await {
+        Ok(caller) => caller,
+        Err((code, message)) => return Json(ApiResponse::error(code, message)),
     };
-    let auth_token = match validate_api_token(&state.auth_framework, &token).await {
-        Ok(t) => t,
-        Err(_) => {
-            return Json(ApiResponse::error(
-                "UNAUTHORIZED",
-                "Invalid or expired token",
-            ));
-        }
-    };
-
-    // Authorize: user can only delete their own credentials (admins can delete any)
-    if auth_token.user_id != username && !auth_token.roles.contains("admin") {
-        return Json(ApiResponse::error(
-            "FORBIDDEN",
-            "You can only delete your own credentials",
-        ));
-    }
 
     let storage = state.auth_framework.storage();
-    let credential_key = format!("webauthn_credential:{}:{}", username, credential_id);
+    let user_id = match resolve_user_id(&storage, &username).await {
+        Some(id) if may_manage(&caller, &id) => id,
+        _ => {
+            return Json(ApiResponse::error(
+                "FORBIDDEN",
+                "You can only delete your own credentials",
+            ));
+        }
+    };
+    let credential_key = credential_key(&user_id, &credential_id);
 
     // Check credential exists before deleting
     match storage.get_kv(&credential_key).await {
@@ -892,7 +1036,7 @@ pub async fn delete_webauthn_credential(
             }
 
             // Update the credentials index
-            let index_key = format!("webauthn_creds_index:{}", username);
+            let index_key = credential_index_key(&user_id);
             if let Ok(Some(idx_data)) = storage.get_kv(&index_key).await
                 && let Ok(mut ids) = serde_json::from_slice::<Vec<String>>(&idx_data)
             {
@@ -930,8 +1074,38 @@ mod tests {
         let cfg = WebAuthnConfig::default();
         assert_eq!(cfg.rp_id, "localhost");
         assert_eq!(cfg.rp_name, "AuthFramework");
-        assert_eq!(cfg.attestation, "direct");
+        assert_eq!(cfg.attestation, "none");
         assert_eq!(cfg.timeout_ms, 60_000);
+    }
+
+    #[test]
+    fn check_origin_accepts_only_the_relying_party_host() {
+        let ok = |origin: &str| {
+            check_origin(&serde_json::json!({ "origin": origin }), "localhost").is_ok()
+        };
+        assert!(ok("https://localhost"));
+        assert!(ok("https://localhost:8443"));
+        assert!(ok("localhost"), "non-URL equal to the rp id");
+        for hostile in [
+            "https://localhost.evil.com",
+            "https://evil.com",
+            "https://localhost@evil.com",
+            "https://evil.com/localhost",
+            "https://notlocalhost",
+            "",
+        ] {
+            assert!(!ok(hostile), "{hostile:?} must be refused");
+        }
+        assert!(check_origin(&serde_json::json!({}), "localhost").is_err());
+        assert!(check_origin(&serde_json::json!({ "origin": 5 }), "localhost").is_err());
+    }
+
+    #[test]
+    fn test_only_attestation_none_is_supported() {
+        assert!(attestation_supported("none"));
+        for unsupported in ["direct", "indirect", "enterprise", ""] {
+            assert!(!attestation_supported(unsupported), "{unsupported}");
+        }
     }
 
     #[test]
