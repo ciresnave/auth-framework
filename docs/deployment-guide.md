@@ -4,7 +4,7 @@ This guide covers deploying AuthFramework in production environments.
 
 ## Prerequisites
 
-- **Rust** ≥ 1.88 (if building from source)
+- **Rust** ≥ 1.89 (if building from source)
 - A supported storage backend (PostgreSQL recommended for production)
 - TLS certificates for all endpoints
 
