@@ -299,6 +299,7 @@
 
   # OpenID Connect support (optional) - Updated to fix RSA dependency
   openidconnect = { version = "4.0.1", optional = true }
+  rsa = { version = "0.9", optional = true }
 
   # Archive extraction for threat intelligence feeds (tar.gz, zip)
   flate2 = "1"
@@ -464,7 +465,7 @@ pasetors = "0.7.7"
   # actix_web::HttpServer with HTTP/2 enabled.
   actix-integration = ["actix-web", "futures-util"]
   admin-binary = ["cli", "tui", "web-gui"]
-  api-server = ["axum", "tower", "tower-http"]
+  api-server = ["axum", "tower", "tower-http", "dep:rsa"]
   axum-integration = ["axum", "serde_urlencoded", "tower", "tower-http"]
   cli = [
     "clap",
