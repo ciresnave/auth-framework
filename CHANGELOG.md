@@ -796,6 +796,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI:** the "Performance Tests" gate now re-measures (base and head, same
+  runner) any benchmark that exceeds the 20% threshold, up to 3 times, and
+  fails only if every repeat also regresses, so single-benchmark noise no
+  longer produces a false red.
 - **Dependency:** `maxminddb` 0.27.3 -> 0.32.0 (closes #9). The calls this crate
   makes (`Reader::open_readfile`, `lookup`, `decode::<geoip2::City>`) are unchanged.
   Upstream changes that reach us: a database with an unsupported format version, IP
