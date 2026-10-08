@@ -796,6 +796,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI:** the "Security Audit (rsa absence)" gate now self-tests (it must
+  report `rsa` present for `openid-connect` before the real checks count),
+  runs `cargo tree --target all`, and also covers the `saml` feature, which
+  has been rsa-free since bergshamra 0.9.2. Only `openid-connect` (#113)
+  remains exempt.
+
 - **CI:** the "Performance Tests" gate now re-measures (base and head, same
   runner) any benchmark that exceeds the 20% threshold, up to 3 times, and
   fails only if every repeat also regresses, so single-benchmark noise no
