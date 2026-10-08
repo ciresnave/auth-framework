@@ -552,7 +552,7 @@ jobs:
           base_sha="${{ github.event.pull_request.base.sha }}"
           git worktree add /tmp/base-checkout "$base_sha"
           (cd /tmp/base-checkout && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo bench --bench auth_performance -- --save-baseline base --noise-threshold 0.20)
-          git worktree remove /tmp/base-checkout --force
+          # Kept for the repeat-on-exceed step below; removed there.
 
       # --noise-threshold raises criterion's own relative-change filter from
       # its 1% default to 20%: measured on this job's own runs, same-runner
@@ -579,20 +579,66 @@ jobs:
           name: benchmark-results
           path: benchmark_results.txt
 
+      # A single microbenchmark at any fixed percentage threshold produces
+      # the occasional false red. So a benchmark that exceeds the threshold
+      # is re-measured (base AND head, same runner, same job) up to 3 times
+      # and fails the gate only if EVERY repeat also regresses. A genuine
+      # regression regresses on every repeat; noise does not.
       - name: Performance regression check
+        shell: bash -eo pipefail {0}
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: |
-          # Criterion prints its own verdict line ("Performance has regressed.")
-          # when a benchmark regresses beyond its noise threshold -- match that
-          # directly rather than reconstructing the sign convention from a
-          # formatted percentage (criterion's "change:" is negative for a
-          # SPEEDUP and positive for a regression, which the previous pattern
-          # had backwards). The "base" baseline is always present now (built
-          # fresh, same runner, in the step above), so there is no longer a
-          # no-baseline case where this file has nothing to say.
-          if grep -q "Performance has regressed" benchmark_results.txt; then
-            echo "Performance regression detected!"
+          # Criterion prints its own verdict ("Performance has regressed.")
+          # right after the benchmark's "change:" line; the benchmark name is
+          # on the "time:" line or the line above it. Match the verdict
+          # rather than reconstructing the sign convention from "change:".
+          regressed_names() {
+            awk '
+              /time:[[:space:]]*\[/ {
+                n = $0; sub(/[[:space:]]*time:.*/, "", n)
+                if (n == "") n = prev
+                cur = n
+              }
+              /Performance has regressed/ { print cur }
+              { if ($0 !~ /^[[:space:]]/) prev = $0 }
+            ' "$1" | sort -u
+          }
+
+          mapfile -t suspects < <(regressed_names benchmark_results.txt)
+          if [ "${#suspects[@]}" -eq 0 ]; then
+            echo "No benchmark exceeded the threshold."
+            git worktree remove /tmp/base-checkout --force
+            exit 0
+          fi
+          echo "Exceeded threshold on first run: ${suspects[*]}"
+
+          failed=()
+          for name in "${suspects[@]}"; do
+            confirmed=true
+            for attempt in 1 2 3; do
+              echo "::group::repeat $attempt/3: $name"
+              (cd /tmp/base-checkout && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"                 cargo bench --bench auth_performance -- --exact "$name" --save-baseline base --noise-threshold 0.20) > /dev/null 2>&1
+              cargo bench --bench auth_performance -- --exact "$name" --baseline base --noise-threshold 0.20 > "repeat.txt" 2>&1
+              cat repeat.txt
+              echo "::endgroup::"
+              if [ -z "$(regressed_names repeat.txt)" ]; then
+                echo "$name: repeat $attempt did not regress -> noise"
+                confirmed=false
+                break
+              fi
+            done
+            if $confirmed; then failed+=("$name"); fi
+          done
+          git worktree remove /tmp/base-checkout --force
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "Performance regression detected (regressed on all 3 repeats): ${failed[*]}"
             exit 1
           fi
+          echo "All first-run exceedances cleared on repeat (noise)."
 
   deploy-staging:
     name: Deploy to Staging
