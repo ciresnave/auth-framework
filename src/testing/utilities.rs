@@ -321,7 +321,6 @@ impl Default for MockStorage {
 #[async_trait::async_trait]
 impl AuthStorage for MockStorage {
     async fn store_token(&self, token: &AuthToken) -> Result<()> {
-        std::thread::sleep(std::time::Duration::from_micros(500)); // TEMP DEMO
         if self.should_fail {
             return Err(AuthError::internal("Mock storage configured to fail"));
         }
