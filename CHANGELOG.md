@@ -786,6 +786,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version or zero-node tree is now rejected at open (our callers already treat an
   open error as "no geolocation"), and decoding is bounded (`ResourceLimit` error)
   against crafted databases. The removed `simdutf8` feature was not enabled here.
+- **CI:** the required "Performance Tests" gate now builds and benches a PR's
+  base commit in a worktree on the same runner immediately before its head
+  commit's run, comparing the two with criterion's `--baseline` instead of
+  restoring a cached baseline saved by an earlier, possibly different-PR, run
+  on a possibly different runner VM. The cached cross-run baseline produced
+  false regressions unrelated to the PR under review (cross-machine noise far
+  above criterion's own threshold). Job name is unchanged, so this does not
+  affect which checks branch protection requires.
 
 ### Removed
 
