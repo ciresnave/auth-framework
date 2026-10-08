@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Logs - Auth Framework Admin</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+      color: #333;
+    }
+  
+    nav {
+      background: #1a1a2e;
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+    }
+  
+    nav a {
+      color: #e0e0e0;
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+  
+    nav a:hover {
+      color: #fff;
+    }
+  
+    nav .brand {
+      font-weight: bold;
+      font-size: 1.1rem;
+      color: #fff;
+      margin-right: 1rem;
+    }
+  
+    nav .active {
+      color: #fff;
+      border-bottom: 2px solid #4fc3f7;
+    }
+  
+    .container {
+      max-width: 960px;
+      margin: 1.5rem auto;
+      padding: 0 1rem;
+    }
+  
+    .card {
+      background: #fff;
+      border-radius: 6px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+  
+    h1 {
+      margin-top: 0;
+    }
+  
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+  
+    th,
+    td {
+      text-align: left;
+      padding: 0.5rem;
+      border-bottom: 1px solid #eee;
+      font-size: 0.9rem;
+    }
+  
+    th {
+      background: #fafafa;
+      font-size: 0.85rem;
+      color: #555;
+      text-transform: uppercase;
+    }
+  
+    .level-error {
+      color: #c62828;
+      font-weight: bold;
+    }
+  
+    .level-warn {
+      color: #e65100;
+    }
+  
+    .level-info {
+      color: #1565c0;
+    }
+  
+    .level-debug {
+      color: #777;
+    }
+  </style>
+</head>
+
+<body>
+  <nav>
+    <span class="brand">AuthFramework</span>
+    <a href="/">Dashboard</a>
+    <a href="/config">Config</a>
+    <a href="/users">Users</a>
+    <a href="/security">Security</a>
+    <a href="/servers">Servers</a>
+    <a href="/logs" class="active">Logs</a>
+    <a href="/logout">Logout</a>
+  </nav>
+  <div class="container">
+    <h1>Audit Logs</h1>
+    <div class="card">
+      
+      <p>No audit log entries are currently available.</p>
+      
+    </div>
+  </div>
+</body>
+
+</html>

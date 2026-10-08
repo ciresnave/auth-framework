@@ -2054,4 +2054,132 @@ mod tests {
         // Should be allowed (200 OK, not a redirect)
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    // ---- Rendered-output golden test for the admin web GUI templates ----
+    //
+    // `test_protected_html_routes_render_with_live_data` only asserts HTTP 200, and the
+    // handlers answer 200 with an "Internal Server Error" body when an askama template
+    // fails to render, so nothing else here pins the rendered HTML. This test renders every
+    // page through the real router and compares it with a stored golden file.
+    //
+    // Regenerate after an intentional template change (review the diff before committing):
+    //   ADMIN_GOLDEN_UPDATE=1 cargo test --lib --features web-gui admin::web::tests::admin_pages_match_golden
+    // Golden files are written by this test, never hand-edited.
+
+    fn golden_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/admin_pages")
+    }
+
+    /// Make a rendered page comparable across runs and platforms: line endings (template
+    /// files are checked out CRLF on Windows), the users page's created-at timestamp, the
+    /// random user id, and the servers page's uptime (wall-clock dependent).
+    fn normalise_admin_html(html: &str) -> String {
+        let html = html.replace("\r\n", "\n");
+        let timestamp =
+            regex::Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(\+00:00|Z)").unwrap();
+        let html = timestamp.replace_all(&html, "<TIMESTAMP>");
+        let user_id = regex::Regex::new(r"user_[A-Za-z0-9]{16}").unwrap();
+        let html = user_id.replace_all(&html, "<USER_ID>");
+        let uptime = regex::Regex::new(
+            r#"(<div class="stat-value">)[^<]*(</div>\s*<div class="stat-label">Uptime)"#,
+        )
+        .unwrap();
+        uptime.replace_all(&html, "${1}<UPTIME>${2}").into_owned()
+    }
+
+    #[test]
+    fn normalise_admin_html_masks_only_the_volatile_parts() {
+        // Control for the normaliser itself: it must mask exactly these and nothing else.
+        let raw = "<td>2026-10-04T05:46:03.062014900+00:00</td>\r\n\
+                   <input name=\"user_id\" value=\"user_y8cPBJ443aQBIVP5\">\r\n\
+                   <div class=\"stat-value\">3h 2m</div>\r\n\
+                   <div class=\"stat-label\">Uptime</div>\r\n\
+                   <div class=\"stat-value\">0</div>\r\n\
+                   <div class=\"stat-label\">Sessions</div>\r\n\
+                   <p>user_id label stays, 2026 stays</p>";
+        let expected = "<td><TIMESTAMP></td>\n\
+                        <input name=\"user_id\" value=\"<USER_ID>\">\n\
+                        <div class=\"stat-value\"><UPTIME></div>\n\
+                        <div class=\"stat-label\">Uptime</div>\n\
+                        <div class=\"stat-value\">0</div>\n\
+                        <div class=\"stat-label\">Sessions</div>\n\
+                        <p>user_id label stays, 2026 stays</p>";
+        assert_eq!(normalise_admin_html(raw), expected);
+    }
+
+    #[tokio::test]
+    async fn admin_pages_match_golden() {
+        let state = create_test_state(true).await;
+        let af = state.auth_framework.clone().expect("framework attached");
+        af.register_user("alice", "alice@example.com", "Password123!")
+            .await
+            .unwrap();
+        let session_token = insert_admin_session(&state);
+        let app = create_web_app(state, "127.0.0.1", 9090, true)
+            .await
+            .unwrap();
+
+        let update = std::env::var("ADMIN_GOLDEN_UPDATE").is_ok_and(|v| v == "1");
+        let pages = [
+            ("dashboard", "/"),
+            ("config", "/config"),
+            ("users", "/users"),
+            ("security", "/security"),
+            ("servers", "/servers"),
+            ("logs", "/logs"),
+            ("login", "/login"),
+        ];
+        for (name, path) in pages {
+            let mut request = Request::builder().uri(path);
+            if name != "login" {
+                request = request.header(
+                    http::header::COOKIE,
+                    format!("auth_session={session_token}"),
+                );
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path} failed");
+            let body = normalise_admin_html(&response_body_string(response).await);
+
+            // The handlers return this fallback body (with status 200) when a template
+            // fails to render.
+            assert!(
+                !body.contains("Internal Server Error"),
+                "{name}: template render failed"
+            );
+            if name == "users" {
+                // Control: the page really lists live data, so a golden of an empty or
+                // wrong page cannot pass.
+                assert!(
+                    body.contains("alice"),
+                    "users page does not list the registered user"
+                );
+            }
+
+            let golden = golden_dir().join(format!("{name}.html"));
+            if update {
+                std::fs::create_dir_all(golden_dir()).unwrap();
+                std::fs::write(&golden, &body).unwrap();
+                continue;
+            }
+            let expected = std::fs::read_to_string(&golden)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}: {e}; regenerate with ADMIN_GOLDEN_UPDATE=1",
+                        golden.display()
+                    )
+                })
+                .replace("\r\n", "\n");
+            assert_eq!(
+                body,
+                expected,
+                "{name} page differs from {}; if intentional, regenerate with ADMIN_GOLDEN_UPDATE=1",
+                golden.display()
+            );
+        }
+    }
 }

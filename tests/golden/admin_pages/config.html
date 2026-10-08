@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Config - Auth Framework Admin</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+      color: #333;
+    }
+  
+    nav {
+      background: #1a1a2e;
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+    }
+  
+    nav a {
+      color: #e0e0e0;
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+  
+    nav a:hover {
+      color: #fff;
+    }
+  
+    nav .brand {
+      font-weight: bold;
+      font-size: 1.1rem;
+      color: #fff;
+      margin-right: 1rem;
+    }
+  
+    nav .active {
+      color: #fff;
+      border-bottom: 2px solid #4fc3f7;
+    }
+  
+    .container {
+      max-width: 960px;
+      margin: 1.5rem auto;
+      padding: 0 1rem;
+    }
+  
+    .card {
+      background: #fff;
+      border-radius: 6px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+  
+    h1 {
+      margin-top: 0;
+    }
+  
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+  
+    th,
+    td {
+      text-align: left;
+      padding: 0.5rem;
+      border-bottom: 1px solid #eee;
+    }
+  
+    th {
+      background: #fafafa;
+      font-size: 0.85rem;
+      color: #555;
+      text-transform: uppercase;
+    }
+  
+    input[type="text"] {
+      padding: 0.3rem 0.5rem;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      width: 150px;
+    }
+  
+    button {
+      padding: 0.3rem 0.8rem;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+  
+    button:hover {
+      background: #16213e;
+    }
+  
+    .info {
+      color: #555;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+
+<body>
+  <nav>
+    <span class="brand">AuthFramework</span>
+    <a href="/">Dashboard</a>
+    <a href="/config" class="active">Config</a>
+    <a href="/users">Users</a>
+    <a href="/security">Security</a>
+    <a href="/servers">Servers</a>
+    <a href="/logs">Logs</a>
+    <a href="/logout">Logout</a>
+  </nav>
+  <div class="container">
+    <h1>Configuration</h1>
+    <div class="card">
+      
+      <p class="info">Runtime-safe configuration fields can be updated live from this page.</p>
+      
+    
+      
+      <table>
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Value</th>
+            <th>Description</th>
+            <th>Update</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td>token_lifetime_secs</td>
+            <td>3600</td>
+            <td>Access token lifetime in seconds</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="token_lifetime_secs">
+                <input type="text" name="value" value="3600">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>refresh_token_lifetime_secs</td>
+            <td>604800</td>
+            <td>Refresh token lifetime in seconds</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="refresh_token_lifetime_secs">
+                <input type="text" name="value" value="604800">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>enable_multi_factor</td>
+            <td>false</td>
+            <td>Enable or disable MFA globally</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="enable_multi_factor">
+                <input type="text" name="value" value="false">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>rate_limiting_enabled</td>
+            <td>true</td>
+            <td>Enable request rate limiting</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="rate_limiting_enabled">
+                <input type="text" name="value" value="true">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>rate_limit_max_requests</td>
+            <td>100</td>
+            <td>Maximum requests allowed per rate-limit window</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="rate_limit_max_requests">
+                <input type="text" name="value" value="100">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>rate_limit_window_secs</td>
+            <td>60</td>
+            <td>Rate-limit window in seconds</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="rate_limit_window_secs">
+                <input type="text" name="value" value="60">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>rate_limit_burst</td>
+            <td>10</td>
+            <td>Rate-limit burst allowance</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="rate_limit_burst">
+                <input type="text" name="value" value="10">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>min_password_length</td>
+            <td>8</td>
+            <td>Minimum allowed password length</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="min_password_length">
+                <input type="text" name="value" value="8">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>require_password_complexity</td>
+            <td>true</td>
+            <td>Require mixed-case, numeric, and symbolic passwords</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="require_password_complexity">
+                <input type="text" name="value" value="true">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>secure_cookies</td>
+            <td>true</td>
+            <td>Set the Secure flag on session cookies</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="secure_cookies">
+                <input type="text" name="value" value="true">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>csrf_protection</td>
+            <td>true</td>
+            <td>Enable CSRF protection</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="csrf_protection">
+                <input type="text" name="value" value="true">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>session_timeout_secs</td>
+            <td>86400</td>
+            <td>Session timeout in seconds</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="session_timeout_secs">
+                <input type="text" name="value" value="86400">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>audit_enabled</td>
+            <td>true</td>
+            <td>Enable audit logging</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="audit_enabled">
+                <input type="text" name="value" value="true">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>audit_log_success</td>
+            <td>true</td>
+            <td>Record successful authentication events</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="audit_log_success">
+                <input type="text" name="value" value="true">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>audit_log_failures</td>
+            <td>true</td>
+            <td>Record failed authentication events</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="audit_log_failures">
+                <input type="text" name="value" value="true">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>audit_log_permissions</td>
+            <td>true</td>
+            <td>Record authorization checks</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="audit_log_permissions">
+                <input type="text" name="value" value="true">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+          <tr>
+            <td>audit_log_tokens</td>
+            <td>false</td>
+            <td>Record token issuance and revocation events</td>
+            <td>
+              
+              <form method="post" action="/config/edit?csrf_token=test-csrf-token" style="display:inline">
+                <input type="hidden" name="key" value="audit_log_tokens">
+                <input type="text" name="value" value="false">
+                <button type="submit">Apply</button>
+              </form>
+              
+            </td>
+          </tr>
+          
+        </tbody>
+      </table>
+      
+    </div>
+    </div>
+</body>
+
+</html>

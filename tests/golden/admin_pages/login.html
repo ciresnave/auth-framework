@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Login - Auth Framework Admin</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #1a1a2e;
+      color: #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+  
+    .login-box {
+      background: #fff;
+      border-radius: 8px;
+      padding: 2rem;
+      width: 320px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+  
+    .login-box h1 {
+      margin-top: 0;
+      text-align: center;
+      color: #1a1a2e;
+    }
+  
+    .login-box input {
+      display: block;
+      width: 100%;
+      padding: 0.5rem;
+      margin-bottom: 0.75rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-size: 0.95rem;
+    }
+  
+    .login-box button {
+      display: block;
+      width: 100%;
+      padding: 0.6rem;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+  
+    .login-box button:hover {
+      background: #16213e;
+    }
+  
+    .error {
+      background: #fee;
+      color: #c00;
+      padding: 0.5rem;
+      border-radius: 4px;
+      margin-bottom: 0.75rem;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="login-box">
+    <h1>AuthFramework</h1>
+    
+    
+    <form method="post" action="/login">
+      <input type="text" name="username" placeholder="Username" required>
+      <input type="password" name="password" placeholder="Password" required>
+      <button type="submit">Login</button>
+    </form>
+  </div>
+</body>
+
+</html>
