@@ -12,9 +12,19 @@ use tokio::runtime::Runtime;
 /// Benchmark authentication token operations
 fn bench_token_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let storage = Arc::new(MockStorage::new());
 
     let mut group = c.benchmark_group("token_operations");
+
+    // Each sub-benchmark gets its own MockStorage instance, not one shared
+    // across the whole group: store_token's own measurement loop inserts a
+    // new randomly-keyed token on every sample, and a storage instance left
+    // over from an earlier sub-benchmark would make a later one's measured
+    // dataset size (and therefore its timing) depend on how many iterations
+    // criterion happened to run before it -- see count_active_sessions
+    // below, where this exact pattern caused a reproducible false "has
+    // regressed" (auth-framework#119, found by CI's performance gate after
+    // auth-framework#122 made it compare same-runner).
+    let storage = Arc::new(MockStorage::new());
 
     // Benchmark token storage
     group.bench_function("store_token", |b| {
@@ -41,8 +51,11 @@ fn bench_token_operations(c: &mut Criterion) {
             let _: () = storage.store_token(&token).await.unwrap();
             black_box(());
         });
-    }); // Benchmark token retrieval
+    });
+
+    // Benchmark token retrieval
     group.bench_function("get_token", |b| {
+        let storage = Arc::new(MockStorage::new());
         let token_id = "bench_token_123";
         rt.block_on(async {
             let token = AuthToken {
@@ -77,12 +90,22 @@ fn bench_token_operations(c: &mut Criterion) {
 /// Benchmark session management operations
 fn bench_session_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let storage = Arc::new(MockStorage::new());
 
     let mut group = c.benchmark_group("session_operations");
 
+    // Each sub-benchmark below gets its own MockStorage instance (see the
+    // matching comment in bench_token_operations above): count_active_sessions
+    // in particular scans every stored session, so sharing one instance
+    // with store_session's randomly-keyed, ever-growing measurement loop
+    // made its timing depend on how many store_session samples criterion
+    // happened to run first -- a reproducible false regression this file
+    // has carried since before encryption-at-rest (auth-framework#119)
+    // existed, only caught once auth-framework#122 made the performance
+    // gate compare correctly.
+
     // Benchmark session storage
     group.bench_function("store_session", |b| {
+        let storage = Arc::new(MockStorage::new());
         b.to_async(&rt).iter(|| async {
             let session_id = format!("session_{}", fastrand::u64(..));
             let session_data = SessionData {
@@ -106,6 +129,7 @@ fn bench_session_operations(c: &mut Criterion) {
 
     // Benchmark session retrieval
     group.bench_function("get_session", |b| {
+        let storage = Arc::new(MockStorage::new());
         let session_id = "bench_session_123";
         rt.block_on(async {
             let session_data = SessionData {
@@ -131,6 +155,7 @@ fn bench_session_operations(c: &mut Criterion) {
 
     // Benchmark active session counting
     group.bench_function("count_active_sessions", |b| {
+        let storage = Arc::new(MockStorage::new());
         rt.block_on(async {
             // Pre-populate with sessions
             for i in 0..100 {

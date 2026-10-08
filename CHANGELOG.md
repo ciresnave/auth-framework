@@ -810,6 +810,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false regressions unrelated to the PR under review (cross-machine noise far
   above criterion's own threshold). Job name is unchanged, so this does not
   affect which checks branch protection requires.
+- **Benchmarks:** `bench_token_operations` and `bench_session_operations` in
+  `benches/auth_performance.rs` now give each sub-benchmark (`store_token`/
+  `get_token`, `store_session`/`get_session`/`count_active_sessions`) its own
+  `MockStorage` instance instead of sharing one across the whole group.
+  `count_active_sessions` scans every stored session, and sharing a storage
+  instance with `store_session`'s randomly-keyed, ever-growing measurement
+  loop made `count_active_sessions`'s timing depend on how many
+  `store_session` samples criterion happened to run first -- a reproducible
+  false regression this file carried since before storage encryption at
+  rest (auth-framework#119) existed, only surfaced once the gate fix above
+  started comparing correctly same-runner.
 
 ### Removed
 
