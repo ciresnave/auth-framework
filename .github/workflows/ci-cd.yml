@@ -414,32 +414,40 @@ jobs:
         run: |
           set -o pipefail
           fail=0
-          # check <name> <features> -> prints OK/FAIL, returns 0 if rsa absent
+          # check <name> <features> -> returns 0 if rsa is absent, 1 if rsa
+          # was FOUND (prints the matched `rsa vX.Y.Z` line), 2 if cargo
+          # itself errored (neither a clean absence nor an rsa tree).
           check() {
             local name="$1"
             local features="$2"
             local out
             if [ -z "$features" ]; then
-              out=$(cargo tree -i rsa --target all 2>&1) && status=0 || status=$?
+              out=$(cargo tree -i rsa --target all 2>&1) || true
             else
-              out=$(cargo tree -i rsa --target all --no-default-features --features "$features" 2>&1) && status=0 || status=$?
+              out=$(cargo tree -i rsa --target all --no-default-features --features "$features" 2>&1) || true
             fi
             if echo "$out" | grep -q "did not match any packages\|nothing to print"; then
               echo "OK: rsa absent for '$name'"
               return 0
             fi
-            echo "FAIL: rsa present (or unexpected cargo-tree error) for '$name':"
+            if echo "$out" | grep -qE '^rsa v[0-9]'; then
+              echo "FOUND: rsa present for '$name': $(echo "$out" | grep -E '^rsa v[0-9]' | head -1)"
+              echo "$out"
+              return 1
+            fi
+            echo "ERROR: unexpected cargo-tree output for '$name':"
             echo "$out"
-            return 1
+            return 2
           }
-          echo "::group::self-test (expect FAIL below)"
-          if check "self-test: openid-connect (rsa expected present)" "openid-connect" >/dev/null; then
-            echo "::endgroup::"
-            echo "SELF-TEST FAILED: gate reported rsa absent for openid-connect, which depends on it; the gate is blind"
+          # Self-test: the control MUST return 1 (rsa FOUND), not 0 (blind)
+          # and not 2 (cargo errored, which proves nothing).
+          st=0
+          check "self-test: openid-connect (rsa expected present)" "openid-connect" || st=$?
+          if [ "$st" -ne 1 ]; then
+            echo "SELF-TEST FAILED: expected 'rsa found' (1) for openid-connect, got $st"
             exit 1
           fi
-          echo "::endgroup::"
-          echo "self-test passed: gate detects rsa in openid-connect"
+          echo "self-test passed: gate detects rsa in openid-connect (matched line above)"
           run() { check "$@" || fail=1; }
           run "default" ""
           run "baseline" "api-server,postgres-storage,redis-storage"
