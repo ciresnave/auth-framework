@@ -248,8 +248,12 @@ impl AppConfig {
         let pool_size = self.primary_storage_pool_size();
 
         let mut framework = crate::AuthFramework::new(auth_config.clone());
-        let storage =
-            crate::storage::factory::build_storage_backend(&auth_config.storage, pool_size).await?;
+        let storage = crate::storage::factory::build_storage_backend_with_encryption(
+            &auth_config.storage,
+            pool_size,
+            &auth_config.storage_encryption,
+        )
+        .await?;
         framework.replace_storage(storage);
         framework.initialize().await?;
         Ok(framework)

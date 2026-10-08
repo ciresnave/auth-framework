@@ -371,6 +371,429 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     security presets do) are unaffected; this only changes behavior
     for configurations that relied on the *implicit* default.
 
+### Added
+
+- **Storage encryption at rest, redesigned.** `src/storage/encryption.rs`
+  (`StorageEncryption`/`EncryptedStorage`) existed before this release but
+  was unwired and had three real gaps found by the storage audit
+  (`docs/STORAGE-AUDIT.md`): no AAD binding a ciphertext to its own
+  storage key, UTF-8-only `encrypt`/`decrypt` (silently wrong for raw
+  binary secrets), and a single hardcoded key with no rotation path. All
+  three are fixed:
+  - A `KeyProvider` trait decouples the key *source* from
+    `StorageEncryption` itself. `EnvKeyProvider` (the only implementation
+    today, per board decision 124: env/file keys are accepted for now,
+    with a KMS-backed replacement tracked on the roadmap) reads
+    `AUTH_STORAGE_ENCRYPTION_KEY`/`AUTH_STORAGE_ENCRYPTION_KEY_ID`, or
+    `AUTH_STORAGE_ENCRYPTION_KEYS_FILE` for multi-key rotation.
+  - `EncryptedData` is now a versioned envelope (`key_id` field): a value
+    encrypted under an old key keeps decrypting after the current key
+    rotates, as long as the old key stays loadable.
+  - `encrypt`/`decrypt` operate on raw `&[u8]` (no more UTF-8
+    round-tripping) and take an AAD parameter; `EncryptedStorage` passes
+    the storage key itself as AAD, so a ciphertext copied from one record
+    to another fails to decrypt instead of silently applying to the
+    wrong record.
+  - Per-record nonces are randomly generated (proven unique across 1000
+    encryptions in a test, not just asserted); mutation-tested for both
+    the AAD-rejection and nonce-uniqueness guarantees (verified the
+    corresponding test actually fails when each guarantee is
+    deliberately removed, then restored).
+  - `EncryptedStorage::list_kv_keys` now overrides the trait default
+    (passthrough of key *names*, not values) instead of inheriting the
+    `AuthStorage` default that silently returns an empty list -- fixes a
+    real break the storage audit found: wrapping any backend in
+    `EncryptedStorage` would have silently emptied RBAC role reload,
+    maintenance/backup, and analytics.
+  - `EncryptedStorage::get_kv` decrypts anything that parses as one of
+    this module's envelopes (current format, or the original pre-redesign
+    format-version-0 shape -- both are supported so data from the public
+    `EncryptedStorage` that predates this PR keeps decrypting). A value
+    that is **not** a valid envelope is only tolerated as plaintext when
+    `storage_encryption.allow_plaintext_reads` is explicitly `true` (a
+    migration-window setting, default `false`) -- with it `false`, such a
+    value is a hard error instead, so overwriting an encrypted record
+    with attacker-chosen (or corrupted) plaintext can't be silently
+    accepted. Found by independent adversarial review before merge; see
+    "Hardened after adversarial review" below.
+- **Wired into the storage factory, on by default.** A new
+  `AuthConfig::storage_encryption: StorageEncryptionConfig` (default
+  `enabled: true`) controls whether the storage factory wraps the
+  configured backend in `EncryptedStorage`. **Fails closed:**
+  initialization returns an error -- it does not silently fall back to
+  plaintext -- if encryption is enabled (the default) and no key can be
+  loaded. In-memory storage is exempt (nothing persists across a
+  restart, so "at rest" has no referent for it); Postgres/Redis/SQLite
+  are wrapped. `StorageConfig::Custom` is rejected outright by the
+  factory (it has no backend to construct), not silently left
+  unwrapped. Covers the KV layer only (API keys, TOTP secrets, OAuth2
+  client registries, MFA
+  codes, and most other KV-backed subsystems); core token/session
+  storage goes through each backend's own typed columns, not `store_kv`,
+  and is **not** covered by this change -- `EncryptedStorage`'s own doc
+  comment and `StorageEncryptionConfig`'s doc comment both say so, and
+  this is tracked as follow-up work rather than silently left unscoped.
+  A custom storage backend supplied via `AuthFramework::new_with_storage`/
+  `replace_storage`/the builder's `custom_storage` bypasses the factory
+  entirely and is not auto-wrapped (wrap it yourself if you want this);
+  `StorageConfig::Custom` is rejected by the factory outright, so it's
+  never silently left unwrapped either. `auth_modular::AuthFramework`
+  (the separate "modular" entry point) has its own, independent storage
+  construction path that only supports Redis and Memory (a pre-existing,
+  unrelated gap -- Postgres/SQLite configs there silently fall back to
+  Memory); its Redis path now gets the same `EncryptedStorage` wrapping
+  as the main factory's, via a shared, newly-`pub(crate)`
+  `wrap_with_encryption_if_enabled` helper.
+- **Migration tool** for data written before encryption was turned on:
+  `storage::encryption::migrate_kv_to_encrypted` re-encrypts plaintext KV
+  rows under a given prefix, in place. Idempotent and resumable (a row
+  already in the current envelope format is left untouched; a single
+  row that fails to decrypt is skipped and named in the report's
+  `failed` list rather than aborting the rest of the run; re-running
+  only finishes what's left -- no separate resume cursor needed),
+  dry-run-first (`dry_run: true` actually attempts every decrypt it
+  would need so its counts match a real run, then skips the write-back),
+  and never logs plaintext or ciphertext (only key names and aggregate
+  counts). A format-version-0 (pre-this-redesign) envelope is detected
+  and reported (`legacy_v0_found`) but requires a separate
+  `accept_legacy_v0: true` to actually be rewritten -- see "Hardened"
+  below for why that's a separate, explicit opt-in rather than automatic.
+  Exposed as `auth-framework-admin security encrypt-kv [--prefix <p>]
+  [--dry-run] [--confirm] [--accept-legacy-v0]` (requires the `cli`
+  feature; refuses to run if `storage_encryption.enabled` is `false`,
+  and requires `--confirm` for an empty `--prefix` on a real run).
+  **Known limitation, documented loudly (CLI help text and
+  `docs/storage-backends.md`, not just rustdoc):** `AuthStorage::get_kv`
+  doesn't return a value's remaining TTL, so a migrated value loses its
+  TTL (becomes non-expiring) -- real risk for OAuth codes,
+  email-verification tokens, MFA/SMS codes, WebAuthn challenges,
+  rate-limit windows, and expiring API keys if migrated under a prefix
+  that includes them. Also not safe to run against a live deployment
+  without pausing writers to the scoped prefix first (plain
+  read-then-write, no compare-and-swap).
+- A new blanket `impl<T: AuthStorage + ?Sized> AuthStorage for Arc<T>`
+  lets `Arc<dyn AuthStorage>` (as returned by the storage factory) be
+  wrapped in `EncryptedStorage` directly, without downcasting to a
+  concrete backend type first.
+- **Hardened across five rounds of independent adversarial review, before
+  merge.** The first two rounds judged the AES-256-GCM core itself sound
+  (random 12-byte nonce, tag checked, record-key AAD, factory fails
+  closed); the fourth round, after the real holes below were fixed,
+  confirmed no further logic bug and no new leak.
+  **Round 1** found five gaps:
+  1. `get_kv` previously accepted ANY non-envelope value as plaintext
+     unconditionally -- including an attacker overwriting an encrypted
+     value with chosen plaintext, or a corrupted envelope. Fixed by the
+     new `allow_plaintext_reads` flag (default `false`) described above.
+  2. The original public `EncryptedStorage`'s envelopes (no `key_id`, no
+     AAD) would have failed to deserialize into the new shape and been
+     silently misread as plaintext, and the migration tool would have
+     double-encrypted them. Fixed with `#[serde(default)]` compatibility
+     fields and an explicit `v` format-version field.
+  3. The migration tool's TTL loss (noted above) -- **mitigated, not
+     fixed** (there's no way to fix it without `AuthStorage::get_kv`
+     returning a TTL, which is a bigger trait change left for later):
+     documented loudly in the CLI help text and
+     `docs/storage-backends.md`, and an empty `--prefix` requires
+     `--confirm` for a real (non-dry-run) application.
+  4. The factory's "every persistent backend is wrapped" claim was true
+     of the factory itself but overstated for the crate as a whole --
+     `new_with_storage`/`replace_storage`/custom storage bypass it (now
+     documented, still not wrapped -- callers must wrap it themselves),
+     and `auth_modular::AuthFramework`'s separate Redis path did too (now
+     actually fixed, via a shared `wrap_with_encryption_if_enabled`).
+  5. The migration's read-then-write has no compare-and-swap --
+     **mitigated, not fixed** (doing so needs a conditional write the
+     `AuthStorage` trait doesn't expose): documented as offline-only /
+     pause-writers-first rather than implied safe for a live deployment.
+  **Round 2**, re-reviewing round 1's fixes, found one more real hole and
+  several documentation/testing gaps:
+  6. **Format-version-0 (`v == 0`) envelopes decrypted with an empty AAD
+     against every loaded key, unconditionally** -- the exact protection
+     AAD exists to provide never applied to them, and
+     `migrate_kv_to_encrypted` counted a v0 envelope as already done
+     instead of upgrading it, so a deployment with any v0 data stayed
+     vulnerable to the record-swap attack indefinitely. Fixed with a new
+     `allow_legacy_v0` flag (default `false`, same shape as
+     `allow_plaintext_reads`) gating v0 decryption through
+     `EncryptedStorage`, and by making `migrate_kv_to_encrypted` able to
+     decrypt-and-re-encrypt a v0 envelope it finds to the current format.
+     **Superseded by round 3, item 9 below:** actually *writing* that
+     upgrade turned out to need its own separate opt-in, not happen
+     unconditionally -- see there for why.
+  7. The factory's and `docs/storage-backends.md`'s "every persistent
+     backend" claim (point 4 above) still overstated things in two
+     places that a caveat elsewhere didn't retract; replaced with
+     accurate wording in both.
+  8. `src/auth.rs`'s `new_validated` builds a Redis backend directly too
+     (a third, independent unwrapped-storage path, separate from both
+     the factory and the `auth_modular` path fixed in round 1) -- fixed
+     the same way, via the same shared `wrap_with_encryption_if_enabled`
+     helper.
+  Minor fixes from round 1: the nonce-reuse-bound code comment overstated
+  the safety margin (corrected to NIST SP 800-38D's actual 2^32-per-key
+  guidance, not a ~2^48 birthday bound); an empty key id is now rejected;
+  a keys file readable by group or other warns on Unix;
+  `EncryptedStorage` now delegates the four `*_bulk` methods to `inner`
+  (performance only); the CLI's `encrypt-kv` refuses to run if
+  `storage_encryption.enabled` is `false`.
+  Minor fixes from round 2: the comment on `default_format_version`
+  incorrectly claimed serde doesn't call it for a missing field (it
+  does -- it just happens to return the same `0` the bare type default
+  would); round 2's own code already added zeroization for the
+  intermediate decoded key `Vec<u8>` in `decode_key` and the
+  base64-encoded key strings `EnvKeyProvider` reads, but this CHANGELOG
+  entry originally (incorrectly) said those strings were *not*
+  zeroized -- an internal contradiction within round 2 itself, not
+  caught until round 4 (see round 4's own "Minor fixes" paragraph
+  below, which closed the remaining gaps on this same code path).
+  Corrected here rather than left for a future reader to untangle;
+  `aes`'s internal key schedule remains the one genuinely
+  out-of-this-code's-control exception.
+  Test-coverage gaps closed, round 1: the AAD-rejection test only covered
+  `StorageEncryption` directly (a wrapper passing a constant AAD instead
+  of the real storage key would have left every original test green) --
+  a new test proves the *wrapper's* own `store_kv`/`get_kv` specifically
+  use the storage key as AAD; the fail-closed integration test now
+  asserts the actual error message. Round 2: the empty-key-id test now
+  exercises the check it claims to (previously a different, earlier
+  check caught the same input first, so removing the intended check
+  still left the test green); a new test proves `allow_plaintext_reads`
+  is actually threaded through the storage factory, not just accepted
+  and ignored; a new test proves a tampered-to-look-like-v0 envelope
+  (a real v1 ciphertext with its `v`/`key_id` fields stripped) is
+  correctly rejected rather than decrypting under the empty-AAD v0 path.
+  Known, accepted-not-fixed limitation (documented on `StorageEncryption`
+  itself): AAD binds a ciphertext to *which record* it belongs to, not to
+  *when* it was written -- someone who can both read an old ciphertext
+  for a key and write to that same key can replay the old value. Would
+  need a monotonic counter or timestamp in the AAD to close; not done
+  here.
+  **Round 3**, re-reviewing round 2's v0 fix, found one more real
+  problem plus a hard CI gate and documentation self-contradictions:
+  9. **Migration silently laundered a swapped v0 envelope.** Round 2's
+     fix made `migrate_kv_to_encrypted` decrypt-and-re-encrypt every v0
+     envelope it found, unconditionally. But a v0 envelope has no AAD,
+     so decrypting one proves nothing about whether its plaintext
+     actually belongs to the record it's stored under -- if one was
+     copied from one record onto another (by an attacker or a bug),
+     re-encrypting it under the current format doesn't catch that, it
+     launders the swap into a well-formed, AAD-bound v1 envelope that
+     then reads back successfully forever after, even through the
+     strict (`allow_legacy_v0: false`) wrapper. Fixed:
+     - A v0 upgrade now requires both a real (non-dry) run AND a new
+       `accept_legacy_v0: true` parameter -- migration never upgrades a
+       v0 envelope as a silent side effect of just running it.
+     - A new `legacy_v0_found` report field counts v0 envelopes that
+       decrypted successfully, independent of whether `accept_legacy_v0`
+       was set, so dry-run output and CLI counts are accurate either
+       way.
+     - Every actual upgrade logs one `tracing::warn!` line naming the
+       key (never its value), so an upgrade is visible to log review,
+       not silent.
+  10. **One undecryptable record used to abort the entire migration
+      run** (a bare `?` on the v0 decrypt), and the dry run never
+      attempted the decrypt it would need for a real run, so it
+      couldn't predict that failure -- anyone who could write one
+      envelope-shaped value under the scanned prefix could silently
+      block migration of everything else under it, and dry-run output
+      would lie about what a real run would do. Fixed: a v0 decrypt
+      failure is now recorded by key name in a new
+      `KvEncryptionMigrationReport::failed` field and skipped, not
+      propagated with `?`; dry runs now actually attempt every decrypt
+      a real run would.
+  11. **Four new `unsafe` blocks (the test-only `EncryptionEnvGuard` and
+      the two Redis fail-closed regression tests) had no `// SAFETY:`
+      comment**, which this crate's own `tests/code_quality_audit.rs`
+      enforces as a required CI check (`Test Suite`, `Coverage`) --
+      genuinely red on the previous head, not a false positive. Fixed
+      by adding the comments; each explains that the enclosing
+      `TEST_ENCRYPTION_ENV_LOCK` guard already serializes the access
+      these unsafe blocks make unsound without it.
+  12. Several CHANGELOG entries from rounds 1-2 had drifted from the
+      code they described by the time round 2 landed: item 8 (above)
+      said `new_validated`'s fix was "documented, pending a proper fix"
+      when the code already wrapped it; the zeroization entry said
+      base64 key strings were not zeroized when round 2's own code
+      already zeroized some of them (now fixed further -- see below);
+      the "every persistent backend is wrapped" wording still appeared
+      unqualified in two places a caveat elsewhere didn't retract.
+      Corrected throughout this file rather than leaving the drift for
+      a future reader to untangle.
+  Minor fixes from round 3: `StorageEncryption::new` and
+  `EnvKeyProvider::load_from_file` now zeroize already-decoded key
+  material on every exit path, including early validation failures and
+  partway through a multi-key batch -- not just the success path;
+  `migrate_kv_to_encrypted`'s intermediate plaintext/raw buffers are
+  zeroized once they've been used; the zeroization doc comment reflects
+  both. The test-env-var lock's own doc no longer claims every
+  env-var-reading test in this crate takes it (some pre-existing ones,
+  unrelated to this PR, don't). Noted (not fixed -- a portfolio-wide CI
+  decision, not this PR's to make) that the three new `encrypt_kv_*`
+  CLI tests, and the pre-existing admin maintenance smoke test, only
+  compile and run under the `admin-binary` feature -- **fixed in round 4
+  (item 19 below), then completed in round 5 (item 20) once round 5
+  found `admin-binary` alone wasn't enough**, not left as noted-only.
+  **Round 4**, re-reviewing round 3's fixes (this time by actually
+  running the tests and mutations in a temp worktree), found one
+  high-severity issue plus several more documentation/test gaps:
+  13. **HIGH: storage key names are themselves bearer secrets in this
+      crate** (`api_key:{raw_api_key}` in `auth_modular::user_manager`,
+      `device:{device_code}` in `api::oauth_advanced`), and every piece
+      of code this PR added that logs or reports a key name -- the
+      `tracing::warn!` lines in `migrate_kv_to_encrypted`, the CLI's
+      printed `failed` list, and `EncryptedStorage::get_kv`'s own error
+      messages -- was doing so with the **raw** key, meaning a working
+      bearer credential could land in logs or a terminal. The "key only,
+      never its value" framing was true and provided no actual
+      protection. Fixed with a new `safe_log_id` helper: keeps the
+      non-secret namespace (the portion before the first `:`) plus a
+      short one-way hash of the full key, used everywhere a record is
+      now named instead of the raw key, including `failed`'s entries.
+  14. Two test gaps where a described mutation survived: (a) the only
+      dry-run-with-`accept_legacy_v0`-true test used an undecryptable v0
+      record, so it never reached the branch that actually gates the
+      write -- a mutation deleting the `!dry_run` check from that branch
+      passed every existing test; added a test with a *decryptable* v0
+      record under those same options, asserting the record is left
+      byte-for-byte unchanged. (b) every CLI test used a fresh, empty
+      in-memory backend, so the CLI's "don't upgrade without
+      `--accept-legacy-v0`" path was never exercised against real v0
+      data; added a CLI test against a real SQLite-backed record.
+  15. The CLI exited `0` even when some records failed to decrypt
+      (printed the list, returned `Ok`). Fixed: a non-empty `failed`
+      list is now a non-zero-exit error.
+  16. The CLI's "would upgrade" message printed `upgraded_from_legacy`,
+      which is always `0` by construction whenever that message's own
+      condition (not a real+flagged run) is true -- so it always showed
+      "would upgrade: 0". Fixed to print `legacy_v0_found`, and to not
+      tell an operator to pass `--accept-legacy-v0` when a dry run was
+      already given that flag.
+  17. Three stale "regardless of this flag" / "upgrades v0 ... that does
+      not require this flag" statements (`EncryptedStorage::new`'s doc,
+      `allow_legacy_v0`'s config doc, and `get_kv`'s own v0-rejection
+      error message) still described round 2's pre-round-3 behavior.
+      Replaced with accurate wording explaining the two flags
+      (`allow_legacy_v0` for *reading*, `accept_legacy_v0` for migration
+      *rewriting*) are independent.
+  18. The `failed` field's own documentation (and
+      `docs/storage-backends.md`'s) claimed it covers any undecryptable
+      envelope ("wrong key, corrupted"), but the code only
+      decrypt-checks v0 envelopes -- an undecryptable current-format
+      (v1) envelope (e.g. a rotated-out key) is counted as
+      `already_encrypted`, not `failed`, since it's not migration's
+      concern. Docs corrected to say so.
+  Minor fixes from round 4: `StorageEncryption::new` and
+  `EnvKeyProvider::load_from_file` had two remaining un-zeroized exit
+  paths -- the "current key id not present" early return, and a
+  `HashMap::new()` (now `with_capacity`) that could in principle leave a
+  stale decoded key in an old, freed allocation during a resize;
+  `migrate_kv_to_encrypted`'s plaintext-record branch could leave `raw`
+  unwiped if `encrypt_for_storage` itself failed (the `?` propagated
+  before the zeroize line ran) -- fixed the same way the v0-upgrade
+  branch already was. Two `// SAFETY:` comments (on the `auth.rs`/
+  `auth_modular` regression tests) said the shared lock "serializes all
+  access" to the env vars, when the lock's own doc admits some
+  unrelated, pre-existing tests read them unlocked -- narrowed to what's
+  actually true (safe against *other lock-taking tests*, not universally).
+  `migrate_kv_to_encrypted`'s `dry_run`/`accept_legacy_v0` became a
+  single `MigrationOptions` struct instead of two adjacent `bool`
+  parameters, so a transposed call can't silently turn a dry run into a
+  real upgrade; `KvEncryptionMigrationReport` and `MigrationOptions` are
+  now `#[non_exhaustive]` so a later field addition isn't a breaking
+  change.
+  19. (Referenced above.) `admin-binary` added to the required "Test
+      Suite" job's `cargo test` step (not its separate "Run Clippy"
+      step, which would newly fail that job on the pre-existing,
+      unrelated issue #120). **Round 5 found this was incomplete**:
+      several of the `encrypt_kv_*` tests, and the pre-existing admin
+      maintenance smoke test, are ADDITIONALLY gated on
+      `sqlite-storage` (they need a real, persistent backend), which
+      `admin-binary` does not enable -- so "Test Suite" still never ran
+      them. Also, both "Test Suite" and "Coverage" are required checks
+      on `main` (an earlier version of this entry incorrectly called
+      Coverage non-required); the fix was never about moving these
+      tests into *a* required job, since one already ran them, but
+      about making *every* required job's own log show them passing or
+      failing, instead of only Coverage's. Fixed by adding
+      `sqlite-storage` alongside `admin-binary` in that same step.
+  **Round 5**, re-reviewing round 4's fixes (this time by actually
+  running the tests and mutations in a throwaway worktree), confirmed
+  no logic bug and no new leak -- the round-4 key-leak fix holds across
+  the whole PR. What remained was one more real gap in `safe_log_id`
+  itself, plus false written claims and the CI gap above:
+  20. `safe_log_id`'s "never the raw key" guarantee was false for a key
+      with no `:` at all: `key.split(':').next()` on a colonless key
+      returns the *whole* key, not a namespace prefix. Every actual key
+      shape in this crate's own code has a fixed, non-secret literal
+      before its first `:`, so there was no in-repo exposure -- but
+      `EncryptedStorage` is a public type with downstream callers who
+      could pass arbitrary key strings. Fixed: a colonless key now
+      falls back to the literal `key:` prefix instead of the key
+      itself; added a test.
+  21. `MigrationOptions`' doc said `..Default::default()` works when
+      constructing one -- true only from *inside* this crate;
+      `#[non_exhaustive]` makes that a compile error (E0639) for an
+      external caller. Fixed by adding `.with_dry_run()` /
+      `.with_accept_legacy_v0()` builder methods (consistent with
+      "a named struct instead of adjacent bools" from round 4) rather
+      than just documenting the more awkward
+      `let mut o = MigrationOptions::default(); o.dry_run = true;` form.
+  22. Two `// SAFETY:` comments (round 4's own fix for the *previous*
+      round's overclaim) ended up inverted: "unsound only against
+      another test that ALSO takes the lock" states the wrong
+      direction -- the lock makes access *sound* against other
+      lock-taking callers, and is silent about (not a guarantee
+      against) ones that don't. Corrected the wording in all three
+      spots (the two regression tests plus `EncryptionEnvGuard::set`,
+      which had the same issue).
+  23. Several more stale/drifted statements: the migration function's
+      own doc still described `failed` as covering "wrong key,
+      corrupted" generically (not v0-only, contradicting the field's
+      own accurate doc) and said failures were "recorded by name"
+      (they're a safe identifier, not the raw key); the CLI help text
+      for `encrypt-kv` still said failures were merely "reported ...
+      not treated as fatal" after round 4 made that exit non-zero; the
+      zeroization doc said "maps" (plural) were pre-sized when only
+      `load_from_file`'s multi-key loop actually is (the single-env-var
+      path never resizes at all, so there was nothing to pre-size
+      there). All corrected to what's actually true.
+  24. This entry's own round count and cross-references had drifted:
+      "across four rounds" with "both rounds judged ... sound" read as
+      if only two rounds existed; round 2's zeroization-contradiction
+      fix pointed at "item 7" in round 4, which round 4 does not have;
+      round 4's items were numbered 13-18 then a stray, collided "12".
+      Corrected throughout this file rather than compounding the drift
+      further with round 5's own numbering.
+  Round 6 (found by the PM, after rebasing this PR onto main's newly-fixed
+  same-runner performance gate -- auth-framework#122 -- which then caught
+  a real regression this PR introduced): `impl<T: AuthStorage + ?Sized>
+  AuthStorage for Arc<T>` was written generically, so it also matched
+  `Arc<ConcreteBackend>` (e.g. `Arc<MockStorage>`), not just the
+  `Arc<dyn AuthStorage>` case the storage factory actually needed. Rust's
+  method resolution prefers an exact-type trait impl over autoderef, so
+  every `some_arc.get_session(..)`-style call through a concrete-typed
+  `Arc` anywhere in the crate silently started resolving to this impl's
+  `(**self).get_session(..)` indirection instead of calling the backend
+  directly -- one extra `async_trait` boxed-future hop per call.
+  Negligible next to a real network round trip, but large enough to move
+  the `session_operations/get_session` micro-benchmark (~120ns baseline)
+  by 20-30%, which is exactly what #122's new gate caught. Fixed by
+  narrowing the impl to the one concrete type it needs:
+  `impl AuthStorage for Arc<dyn AuthStorage>`.
+  **Breaking changes introduced across this PR** (the version bump
+  below covers all of them, not just round 1's original scope):
+  `StorageEncryption::new` now takes `&dyn KeyProvider` instead of no
+  arguments; `encrypt`/`decrypt` take raw `&[u8]` and an `aad`
+  parameter instead of `&str`; `EncryptedStorage::new` takes two
+  additional `bool` flags; `AuthConfig` gained a public
+  `storage_encryption` field; and, most significantly from an
+  operator's perspective, storage encryption is now enabled by default
+  and a persistent backend refuses to start without a configured key --
+  an existing deployment upgrading into this release must configure
+  `AUTH_STORAGE_ENCRYPTION_KEY` (or explicitly opt out) before it will
+  start at all.
+
 ### Changed
 
 - **Dependency:** `maxminddb` 0.27.3 -> 0.32.0 (closes #9). The calls this crate

@@ -123,6 +123,21 @@ application code chose, with zero additional at-rest encryption layer ever
 applied.** This is a real, verified capability gap in application wiring,
 not a backend-specific one — it affects every backend identically.
 
+**Resolved (P1, 0.6.0-rc12):** `storage/factory.rs` now wraps every
+persistent backend in `EncryptedStorage` by default, with a redesigned
+`StorageEncryption` (versioned multi-key envelope, AAD-bound nonces, raw-byte
+support), fail-closed startup if no key is configured, and a migration tool
+for data already written as plaintext. Because the TOTP-secret
+plaintext-at-rest finding above (this audit's single most severe finding)
+is itself a `store_kv` call, it is directly fixed by this: every new TOTP
+secret is now encrypted at rest by default, and the migration tool can
+re-encrypt already-stored ones. **Scope note, not fully closed:** this
+wrapper covers the KV layer only. Core token/session storage in general
+(`store_token`/`store_session`) still goes through each backend's own typed
+columns, not `store_kv`, and is not covered. See `docs/ROADMAP.md`'s
+"Storage and Scaling" section for that follow-up, and `CHANGELOG.md`'s
+`[0.6.0]` "Added" section for the full change.
+
 ## Part 4 — Backend divergence (TTL enforcement, checked specifically)
 
 No divergence found in TTL enforcement at read time: memory

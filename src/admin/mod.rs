@@ -666,6 +666,46 @@ pub enum SecurityAction {
         #[arg(long)]
         check_ip: Option<String>,
     },
+    /// Encrypt any plaintext KV-layer values at rest (for data written
+    /// before encryption was enabled). Safe to re-run: already-encrypted
+    /// values are left untouched. A value that fails to decrypt is
+    /// skipped (identified in the output by a safe identifier, never
+    /// its raw key) rather than aborting the rest of the run, but the
+    /// command as a whole then exits with a non-zero status so a
+    /// failure is never silently missed.
+    ///
+    /// WARNING: this re-stores every migrated value with no TTL, even if
+    /// the original had one (OAuth codes, email-verification tokens,
+    /// MFA/SMS codes, WebAuthn challenges, rate-limit windows, and
+    /// expiring API keys all lose their expiry). Scope `--prefix` to a
+    /// durable-secret namespace; an empty prefix touches everything and
+    /// requires `--confirm`.
+    ///
+    /// A value in the original (pre-redesign) format-version-0 shape has
+    /// no AAD, so decrypting it cannot verify that its plaintext actually
+    /// belongs to the record it's filed under -- upgrading one is never
+    /// a silent side effect of running this command; pass
+    /// `--accept-legacy-v0` to actually upgrade any found, after
+    /// understanding that risk.
+    EncryptKv {
+        /// Only operate on keys starting with this prefix (default: all keys).
+        #[arg(long, default_value = "")]
+        prefix: String,
+        /// Preview what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Required when --prefix is empty and this is NOT a dry run,
+        /// acknowledging the TTL-loss warning above. Not needed for
+        /// --dry-run, which makes no changes.
+        #[arg(long)]
+        confirm: bool,
+        /// Required to actually rewrite a format-version-0 envelope to
+        /// the current format. Without it, such envelopes are detected
+        /// and reported but left untouched. See the WARNING above about
+        /// what this upgrade can and cannot verify.
+        #[arg(long)]
+        accept_legacy_v0: bool,
+    },
 }
 
 #[cfg(test)]

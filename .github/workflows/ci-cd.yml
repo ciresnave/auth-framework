@@ -81,7 +81,21 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration --workspace
+        # admin-binary and sqlite-storage added (PM ruling,
+        # auth-framework#119 rounds 4-5): every test in src/admin is
+        # gated on admin-binary, and several of those (the CLI
+        # encrypt-kv tests against a real backend, and the pre-existing
+        # admin maintenance smoke test) are ADDITIONALLY gated on
+        # sqlite-storage specifically -- without both features, this
+        # required job never compiled or ran them (only the separate,
+        # also-required Coverage job's --all-features did, so they were
+        # not entirely uncovered, but this job's own log couldn't show
+        # them passing or failing). Deliberately NOT added to the "Run
+        # Clippy" step above: that would also pull in src/admin/web.rs
+        # under clippy's stricter lints, newly failing this job on the
+        # pre-existing, already filed, unrelated issue #120
+        # (unwrap_used/await_holding_lock).
+        run: cargo test --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration,admin-binary,sqlite-storage --workspace
 
       # tests/storage_postgres.rs and tests/storage_redis.rs are #[ignore]d
       # (cargo's convention for tests needing an external service) and were

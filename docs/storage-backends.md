@@ -324,14 +324,151 @@ println!("Hits: {}, Misses: {}", stats.hits, stats.misses);
 ## Encrypted Storage
 
 `EncryptedStorage` wraps any other storage backend and transparently encrypts
-data at rest. Always available — no feature flag required.
+KV-layer values (`store_kv`/`get_kv`) at rest with AES-256-GCM. Always
+available — no feature flag required.
+
+**On by default, for backends built through the storage factory.**
+`AuthFramework` wraps Postgres/Redis/SQLite in `EncryptedStorage`
+automatically unless you set `storage_encryption.enabled = false`.
+In-memory storage is exempt (nothing persists across a restart).
+`StorageConfig::Custom` is rejected outright, not silently left
+unwrapped. Storage supplied directly via `AuthFramework::new_with_storage`,
+`replace_storage`, or the builder's `custom_storage` **bypasses this
+factory entirely and is not auto-wrapped** -- see "Coverage" below. This
+fails closed for the backends that are wrapped: if encryption is on (the
+default) and no key can be loaded, framework initialization returns an
+error rather than silently storing data in plaintext.
+
+Set the key via environment variable:
+
+```bash
+export AUTH_STORAGE_ENCRYPTION_KEY=$(openssl rand -base64 32)
+```
+
+or generate one in Rust:
 
 ```rust
-use auth_framework::storage::{EncryptedStorage, MemoryStorage};
+use auth_framework::storage::encryption::StorageEncryption;
 
-let inner = MemoryStorage::new();
-let storage = EncryptedStorage::new(inner, encryption_key);
+println!("{}", StorageEncryption::generate_key());
 ```
+
+For key rotation, use `AUTH_STORAGE_ENCRYPTION_KEYS_FILE` instead (a JSON file
+naming the current key id plus every key still needed for decrypting older
+data) — see `StorageEncryption`'s rustdoc for the exact format.
+
+To opt out explicitly for a given deployment (not recommended for any backend
+that persists data):
+
+```rust
+use auth_framework::config::{AuthConfig, StorageEncryptionConfig};
+
+let config = AuthConfig::new().storage_encryption(StorageEncryptionConfig {
+    enabled: false,
+    ..Default::default()
+});
+```
+
+**Known limitation:** the key itself currently comes from an environment
+variable or a local file (`EnvKeyProvider`) — not a KMS. Anyone with read
+access to the process environment or the key file can decrypt everything
+this protects. This is a deliberate, accepted starting point (board decision
+124), not an endpoint: the `KeyProvider` trait exists so a KMS-backed
+provider can replace `EnvKeyProvider` later without changing
+`StorageEncryption` or `EncryptedStorage` at all. Tracked in
+`docs/ROADMAP.md`.
+
+**Coverage — what is and isn't wrapped:**
+
+- This covers the generic KV layer only — API keys, TOTP secrets, OAuth2
+  client registries, MFA codes, and most other KV-backed subsystems (see
+  `docs/STORAGE-AUDIT.md`). Core token and session storage use each
+  backend's own typed columns, not `store_kv`, and are **not** covered yet
+  (also tracked in `docs/ROADMAP.md`).
+- Storage supplied directly via `AuthFramework::new_with_storage`,
+  `replace_storage`, or the builder's `custom_storage` bypasses the
+  storage factory entirely and is **not** auto-wrapped — if you build
+  your own storage this way and want it encrypted, wrap it yourself with
+  `EncryptedStorage::new`.
+- `StorageConfig::Custom` is rejected by the factory outright (it has no
+  backend to construct), so it's never silently unwrapped either — it's
+  simply an error unless you use one of the methods above.
+- `auth_modular::AuthFramework` (the separate "modular" entry point) only
+  supports Redis and Memory for storage construction (a pre-existing,
+  unrelated gap — Postgres/SQLite configs there silently fall back to
+  Memory); its Redis path is wrapped the same way the main factory's is.
+
+**Reading data that isn't a valid envelope:** by default
+(`allow_plaintext_reads: false`), a KV value that doesn't parse as one of
+this module's envelopes is a hard read error — this is deliberate: it stops
+someone who can write to the backing store from overwriting an encrypted
+secret with chosen plaintext (or a corrupted value) and having it accepted
+silently. Set `allow_plaintext_reads: true` **only** as a temporary
+migration-window setting (see below); set it back to `false` once migration
+is done.
+
+**Migrating existing plaintext data:** if you're turning encryption on for a
+deployment that already has plaintext KV data, run the migration tool to
+re-encrypt it in place (idempotent and safe to re-run) *before* (or
+immediately after, with `allow_plaintext_reads: true` set for the
+transition) real traffic needs to read it:
+
+```bash
+auth-framework-admin security encrypt-kv --dry-run            # preview, all keys
+auth-framework-admin security encrypt-kv --prefix "user:" --dry-run  # preview, scoped
+auth-framework-admin security encrypt-kv --prefix "user:"     # apply, scoped
+auth-framework-admin security encrypt-kv --confirm            # apply to ALL keys (needs --confirm)
+```
+
+**Scope `--prefix`, don't migrate everything at once if you can avoid it.**
+The migration tool re-stores every value it touches with no TTL, even if
+the original had one — `AuthStorage::get_kv` doesn't expose a value's
+remaining TTL, so there's nothing to preserve it with. OAuth authorization
+codes, email-verification tokens, MFA/SMS one-time codes, WebAuthn
+challenges, rate-limit windows, and expiring API keys all lose their expiry
+if migrated this way, becoming non-expiring. Scope `--prefix` to a
+durable-secret namespace (API keys, TOTP secrets, client registries); an
+empty `--prefix` (which touches everything) requires `--confirm` for
+exactly this reason. The migration also does a plain read-then-write with
+no compare-and-swap, so running it against a *live* deployment can
+overwrite a value someone else wrote in between — prefer running it
+offline, or pause writers to the scoped prefix first.
+
+**Format-version-0 (legacy, pre-this-redesign) envelopes need a separate,
+explicit opt-in.** If a deployment already has encrypted data from the
+original `EncryptedStorage` (no AAD, no key id), that data decrypts but is
+**not** automatically rewritten to the current format: the migration tool
+detects it and reports it (`legacy_v0_found`), but by default leaves it
+untouched, because upgrading it is not risk-free. A format-version-0
+envelope has no AAD binding its plaintext to the record it's stored
+under, so decrypting one proves nothing about whether it actually belongs
+there — if one was ever copied from one record onto another (whether by
+an attacker or a bug), decrypting-then-re-encrypting it under the current
+format doesn't detect that; it just launders the swap into a well-formed,
+AAD-bound envelope that will look correct from then on. Pass
+`--accept-legacy-v0` only once you've accepted that risk:
+
+```bash
+auth-framework-admin security encrypt-kv --prefix "user:" --dry-run          # reports legacy_v0_found, upgrades nothing
+auth-framework-admin security encrypt-kv --prefix "user:" --accept-legacy-v0 # actually upgrades them
+```
+
+Reading legacy data through the running application has the same
+opt-in shape: `storage_encryption.allow_legacy_v0` (default `false`)
+gates whether `EncryptedStorage::get_kv` will decrypt a format-version-0
+envelope at all, separately from whether migration has run.
+
+A format-version-0 record that fails to decrypt under any loaded key
+(wrong/missing key, or corrupted) never aborts the rest of a migration
+run — it's skipped and listed in the report's `failed` field, in both
+dry runs and real ones. (Only v0 envelopes are decrypt-checked this way;
+an already-current-format envelope that can't decrypt, e.g. because its
+key was rotated out, isn't migration's concern and is counted as
+already-encrypted instead.) Entries in `failed` are a **safe identifier**
+— a non-secret namespace plus a short hash — never the raw storage key:
+some keys in this crate are themselves bearer secrets (e.g. the raw API
+key in `api_key:{...}`), so logging or printing one verbatim would leak
+a working credential.
 
 ---
 

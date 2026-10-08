@@ -41,6 +41,11 @@ pub struct AuthConfig {
     /// Storage configuration
     pub storage: StorageConfig,
 
+    /// Whether KV-layer storage is encrypted at rest, and how. See
+    /// [`StorageEncryptionConfig`].
+    #[serde(default)]
+    pub storage_encryption: StorageEncryptionConfig,
+
     /// Rate limiting configuration
     pub rate_limiting: RateLimitConfig,
 
@@ -102,6 +107,78 @@ pub enum StorageConfig {
 
     /// Custom storage backend
     Custom(String),
+}
+
+/// Controls whether values written through the generic key-value storage
+/// layer ([`crate::storage::AuthStorage::store_kv`]/`get_kv`) are encrypted
+/// at rest.
+///
+/// Enabled by default per board decision 124: operators who truly need to
+/// opt out (e.g. a storage backend that already encrypts at the disk/volume
+/// level) can set `enabled: false` explicitly, but the framework never
+/// silently stores new data unencrypted.
+///
+/// **Scope:** this only covers the KV layer (API keys, TOTP secrets, OAuth2
+/// client registries, MFA codes, and most other KV-backed subsystems --
+/// see `docs/STORAGE-AUDIT.md`). Core token and session storage go through
+/// each backend's own typed columns, not `store_kv`, and are not covered by
+/// this flag; see [`crate::storage::encryption::EncryptedStorage`]'s own
+/// "Coverage note" for why, and the roadmap for the planned follow-up.
+///
+/// The key itself comes from [`crate::storage::encryption::EnvKeyProvider`]
+/// (`AUTH_STORAGE_ENCRYPTION_KEY`/`AUTH_STORAGE_ENCRYPTION_KEYS_FILE`) --
+/// an env/file key source, per board decision 124, with the limitation
+/// that implies documented in `docs/storage-backends.md`. A KMS-backed
+/// provider can replace it later without changing this config shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageEncryptionConfig {
+    /// Whether to encrypt KV-layer storage at rest. Defaults to `true` --
+    /// if no encryption key can be loaded while this is `true`, framework
+    /// initialization fails rather than silently storing data in
+    /// plaintext.
+    pub enabled: bool,
+    /// Whether a KV value that isn't a valid encrypted envelope is read
+    /// back as plaintext (`true`) or rejected as an error (`false`,
+    /// default).
+    ///
+    /// Set this to `true` **only transiently**, while migrating an
+    /// existing deployment's plaintext data to encrypted (see
+    /// `storage::encryption::migrate_kv_to_encrypted` and the
+    /// `security encrypt-kv` CLI command). Leaving it `true` permanently
+    /// means anyone who can write to the backing store can overwrite an
+    /// encrypted value with chosen plaintext (or corrupt one) and have it
+    /// accepted silently forever, which defeats the point of encrypting
+    /// at rest. Set it back to `false` once migration is complete.
+    pub allow_plaintext_reads: bool,
+    /// Whether a format-version-0 envelope (the original, pre-redesign
+    /// `EncryptedStorage`'s shape: no `key_id`, no AAD at encryption time)
+    /// is decrypted (`true`) or rejected as an error (`false`, default).
+    ///
+    /// Format-version-0 envelopes have no AAD binding a ciphertext to its
+    /// own storage key, which is exactly the protection the current
+    /// format's AAD exists to provide: with this `true`, a writer who
+    /// knows one record's v0 envelope can copy it onto a different
+    /// record's key and it will still decrypt, because v0 decryption
+    /// tries every loaded key with an empty AAD regardless of which
+    /// record it's stored under. This flag only controls whether
+    /// `EncryptedStorage::get_kv` *reads* a v0 envelope at all -- it is
+    /// independent of `storage::encryption::migrate_kv_to_encrypted`'s
+    /// own `accept_legacy_v0` parameter, which separately gates whether
+    /// migration actually *rewrites* one. Set this to `true` only if
+    /// something needs to read v0 data through this wrapper before, or
+    /// without ever, running migration; leave it `false` otherwise.
+    pub allow_legacy_v0: bool,
+}
+
+impl Default for StorageEncryptionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allow_plaintext_reads: false,
+            allow_legacy_v0: false,
+        }
+    }
 }
 
 /// Rate limiting configuration.
@@ -354,6 +431,7 @@ impl Default for AuthConfig {
             audience: "api".to_string(),
             secret: None,
             storage: StorageConfig::Memory,
+            storage_encryption: StorageEncryptionConfig::default(),
             rate_limiting: RateLimitConfig::default(),
             security: SecurityConfig::default(),
             cors: CorsConfig::default(),
@@ -926,6 +1004,24 @@ impl AuthConfig {
     /// ```
     pub fn storage(mut self, storage: StorageConfig) -> Self {
         self.storage = storage;
+        self
+    }
+
+    /// Configure whether KV-layer storage is encrypted at rest. See
+    /// [`StorageEncryptionConfig`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use auth_framework::config::{AuthConfig, StorageEncryptionConfig};
+    ///
+    /// let config = AuthConfig::new().storage_encryption(StorageEncryptionConfig {
+    ///     enabled: false,
+    ///     ..Default::default()
+    /// });
+    /// ```
+    pub fn storage_encryption(mut self, storage_encryption: StorageEncryptionConfig) -> Self {
+        self.storage_encryption = storage_encryption;
         self
     }
 

@@ -404,14 +404,27 @@ impl AuthFramework {
             token_manager.rotate_hmac_key(&current_secret_bytes);
         }
 
-        // Create storage backend with proper error handling
+        // Create storage backend with proper error handling. NOTE: this
+        // is a synchronous constructor, so it can't call the real
+        // (async) storage factory -- `initialize()` replaces this with
+        // the properly-constructed, properly-wrapped storage later
+        // (see `storage_overridden` there), so the only exposure window
+        // is between this constructor returning and `initialize()`
+        // running. `wrap_with_encryption_if_enabled` is sync, so it's
+        // applied here too for parity with that later replacement.
         let storage: Arc<dyn AuthStorage> = match &config.storage {
             #[cfg(feature = "redis-storage")]
-            crate::config::StorageConfig::Redis { url, key_prefix } => Arc::new(
-                crate::storage::RedisStorage::new(url, key_prefix).map_err(|e| {
-                    AuthError::configuration(format!("Failed to create Redis storage: {}", e))
-                })?,
-            ),
+            crate::config::StorageConfig::Redis { url, key_prefix } => {
+                let redis: Arc<dyn AuthStorage> = Arc::new(
+                    crate::storage::RedisStorage::new(url, key_prefix).map_err(|e| {
+                        AuthError::configuration(format!("Failed to create Redis storage: {}", e))
+                    })?,
+                );
+                crate::storage::factory::wrap_with_encryption_if_enabled(
+                    redis,
+                    &config.storage_encryption,
+                )?
+            }
             _ => Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>,
         };
 
@@ -580,8 +593,12 @@ impl AuthFramework {
 
         // Set up storage backend if not already configured
         if !self.storage_overridden {
-            let storage =
-                crate::storage::factory::build_storage_backend(&self.config.storage, None).await?;
+            let storage = crate::storage::factory::build_storage_backend_with_encryption(
+                &self.config.storage,
+                None,
+                &self.config.storage_encryption,
+            )
+            .await?;
             self.replace_storage(storage);
             self.storage_overridden = false;
         }
@@ -2680,5 +2697,38 @@ mod tests {
 
         // This test would need expired data to be meaningful
         assert!(framework.cleanup_expired_data().await.is_ok());
+    }
+
+    /// Regression test: `new_validated`'s own Redis construction path used
+    /// to build `RedisStorage` directly with no encryption wrapping at
+    /// all (a separate gap from `auth_modular`'s, fixed the same way). If
+    /// the `wrap_with_encryption_if_enabled` call this fix added is ever
+    /// removed again, construction would SUCCEED here instead of failing
+    /// closed. `RedisStorage::new` only parses the URL -- it doesn't
+    /// connect -- so this doesn't need a live server.
+    #[cfg(feature = "redis-storage")]
+    #[test]
+    fn new_validated_redis_fails_closed_without_an_encryption_key() {
+        let _lock = crate::storage::encryption::TEST_ENCRYPTION_ENV_LOCK.blocking_lock();
+        // SAFETY: sound against every other test that ALSO takes
+        // `_lock`; this test does.
+        unsafe {
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
+        }
+
+        let mut config = AuthConfig::new().secret("test_secret_key_32_bytes_long!!!!");
+        config.storage = crate::config::StorageConfig::Redis {
+            url: "redis://127.0.0.1:1/".to_string(),
+            key_prefix: "test:".to_string(),
+        };
+        // storage_encryption defaults to enabled: true.
+
+        let result = AuthFramework::new_validated(config);
+        assert!(
+            result.is_err(),
+            "constructing with Redis storage and no encryption key configured must fail \
+             closed, not silently build unwrapped (unencrypted) storage"
+        );
     }
 }

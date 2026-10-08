@@ -179,16 +179,29 @@ impl AuthFramework {
             ));
         };
 
-        // Create storage backend
+        // Create storage backend. NOTE: unlike the main `AuthFramework`
+        // (src/auth.rs), this modular framework only supports Redis and
+        // Memory here -- any other `StorageConfig` (Postgres, SQLite,
+        // Custom) silently falls back to Memory. That gap predates this
+        // encryption work and is out of its scope, but the encryption
+        // wrapping itself must not be skipped just because this path
+        // builds storage differently from `storage::factory` --
+        // `wrap_with_encryption_if_enabled` is reused here for parity.
         let storage: Arc<dyn AuthStorage> = match &config.storage {
             #[cfg(feature = "redis-storage")]
-            crate::config::StorageConfig::Redis { url, key_prefix } => Arc::new(
-                crate::storage::RedisStorage::new(url, key_prefix).map_err(|e| {
-                    crate::errors::AuthError::configuration(format!(
-                        "Failed to create Redis storage: {e}"
-                    ))
-                })?,
-            ),
+            crate::config::StorageConfig::Redis { url, key_prefix } => {
+                let redis: Arc<dyn AuthStorage> = Arc::new(
+                    crate::storage::RedisStorage::new(url, key_prefix).map_err(|e| {
+                        crate::errors::AuthError::configuration(format!(
+                            "Failed to create Redis storage: {e}"
+                        ))
+                    })?,
+                );
+                crate::storage::factory::wrap_with_encryption_if_enabled(
+                    redis,
+                    &config.storage_encryption,
+                )?
+            }
             _ => Arc::new(MemoryStorage::new()),
         };
 
@@ -1262,5 +1275,38 @@ mod tests {
             .await
             .expect("missing stored token should return false, not error");
         assert!(!valid);
+    }
+
+    /// Regression test for a past review finding: this module's Redis
+    /// construction path used to build `RedisStorage` directly with no
+    /// encryption wrapping at all. If the `wrap_with_encryption_if_enabled`
+    /// call this fix added is ever removed again, construction would
+    /// SUCCEED here instead of failing closed (no key is configured),
+    /// silently reintroducing the gap. `RedisStorage::new` only parses the
+    /// URL -- it doesn't connect -- so this doesn't need a live server.
+    #[cfg(feature = "redis-storage")]
+    #[test]
+    fn redis_construction_fails_closed_without_an_encryption_key() {
+        let _lock = crate::storage::encryption::TEST_ENCRYPTION_ENV_LOCK.blocking_lock();
+        // SAFETY: sound against every other test that ALSO takes
+        // `_lock`; this test does.
+        unsafe {
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
+        }
+
+        let mut config = test_config();
+        config.storage = crate::config::StorageConfig::Redis {
+            url: "redis://127.0.0.1:1/".to_string(),
+            key_prefix: "test:".to_string(),
+        };
+        // storage_encryption defaults to enabled: true.
+
+        let result = AuthFramework::new(config);
+        assert!(
+            result.is_err(),
+            "constructing this modular framework with Redis storage and no encryption key \
+             configured must fail closed, not silently build unwrapped (unencrypted) storage"
+        );
     }
 }

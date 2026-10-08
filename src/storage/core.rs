@@ -163,6 +163,105 @@ pub trait AuthStorage: Send + Sync {
     async fn cleanup_expired(&self) -> Result<()>;
 }
 
+/// Lets a boxed `Arc<dyn AuthStorage>` coming out of the storage factory be
+/// wrapped in [`crate::storage::encryption::EncryptedStorage`] without
+/// downcasting to a concrete backend type first.
+///
+/// Deliberately scoped to the trait-object case only (`Arc<dyn
+/// AuthStorage>`), not a generic `impl<T: AuthStorage + ?Sized> AuthStorage
+/// for Arc<T>`: a generic impl would apply to every `Arc<ConcreteBackend>`
+/// too, and Rust's method resolution prefers an exact-type impl over
+/// autoderef -- so `some_arc.get_session(..)` would resolve to this impl's
+/// `(**self).get_session(..)` indirection instead of calling
+/// `ConcreteBackend::get_session` directly, adding an extra `async_trait`
+/// boxed-future hop to every storage call made through an `Arc<Concrete>`
+/// anywhere in the crate (including benchmarks and tests), not just the
+/// one factory path that actually needs this. Measured: this cost a real
+/// ~20-30% regression on the `session_operations/get_session` benchmark
+/// before being scoped down to `dyn AuthStorage` here.
+#[async_trait]
+impl AuthStorage for Arc<dyn AuthStorage> {
+    async fn store_tokens_bulk(&self, tokens: &[AuthToken]) -> Result<()> {
+        (**self).store_tokens_bulk(tokens).await
+    }
+
+    async fn delete_tokens_bulk(&self, token_ids: &[String]) -> Result<()> {
+        (**self).delete_tokens_bulk(token_ids).await
+    }
+
+    async fn store_sessions_bulk(&self, sessions: &[(String, SessionData)]) -> Result<()> {
+        (**self).store_sessions_bulk(sessions).await
+    }
+
+    async fn delete_sessions_bulk(&self, session_ids: &[String]) -> Result<()> {
+        (**self).delete_sessions_bulk(session_ids).await
+    }
+
+    async fn store_token(&self, token: &AuthToken) -> Result<()> {
+        (**self).store_token(token).await
+    }
+
+    async fn get_token(&self, token_id: &str) -> Result<Option<AuthToken>> {
+        (**self).get_token(token_id).await
+    }
+
+    async fn get_token_by_access_token(&self, access_token: &str) -> Result<Option<AuthToken>> {
+        (**self).get_token_by_access_token(access_token).await
+    }
+
+    async fn update_token(&self, token: &AuthToken) -> Result<()> {
+        (**self).update_token(token).await
+    }
+
+    async fn delete_token(&self, token_id: &str) -> Result<()> {
+        (**self).delete_token(token_id).await
+    }
+
+    async fn list_user_tokens(&self, user_id: &str) -> Result<Vec<AuthToken>> {
+        (**self).list_user_tokens(user_id).await
+    }
+
+    async fn store_session(&self, session_id: &str, data: &SessionData) -> Result<()> {
+        (**self).store_session(session_id, data).await
+    }
+
+    async fn get_session(&self, session_id: &str) -> Result<Option<SessionData>> {
+        (**self).get_session(session_id).await
+    }
+
+    async fn delete_session(&self, session_id: &str) -> Result<()> {
+        (**self).delete_session(session_id).await
+    }
+
+    async fn list_user_sessions(&self, user_id: &str) -> Result<Vec<SessionData>> {
+        (**self).list_user_sessions(user_id).await
+    }
+
+    async fn count_active_sessions(&self) -> Result<u64> {
+        (**self).count_active_sessions().await
+    }
+
+    async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
+        (**self).store_kv(key, value, ttl).await
+    }
+
+    async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        (**self).get_kv(key).await
+    }
+
+    async fn delete_kv(&self, key: &str) -> Result<()> {
+        (**self).delete_kv(key).await
+    }
+
+    async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        (**self).list_kv_keys(prefix).await
+    }
+
+    async fn cleanup_expired(&self) -> Result<()> {
+        (**self).cleanup_expired().await
+    }
+}
+
 /// Session data stored in the backend.
 ///
 /// All fields are public for serialization flexibility. When constructing
