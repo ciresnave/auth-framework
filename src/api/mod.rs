@@ -129,6 +129,10 @@ pub async fn validate_api_token(
     // so we load them from the user record in KV storage to allow role-based
     // access checks (e.g. admin endpoints) to work correctly.
     let user_id_str = token_obj.sub.clone();
+    //
+    // The signature only proves who minted the token, not that its
+    // subject is a real account, so a missing or unreadable record is a
+    // rejection, never an empty-roles fallback.
     let roles = {
         let user_key = format!("user:{}", user_id_str);
         match auth_framework.storage().get_kv(&user_key).await {
@@ -136,8 +140,10 @@ pub async fn validate_api_token(
                 let json: serde_json::Value = match serde_json::from_slice(&bytes) {
                     Ok(v) => v,
                     Err(e) => {
-                        tracing::warn!(user_id = %user_id_str, "Failed to parse user record JSON for role extraction: {}", e);
-                        serde_json::Value::default()
+                        tracing::warn!(user_id = %user_id_str, "Failed to parse user record JSON: {}", e);
+                        return Err(AuthError::Unauthorized(
+                            "Unable to verify account".to_string(),
+                        ));
                     }
                 };
                 // Check if account is active
@@ -154,7 +160,15 @@ pub async fn validate_api_token(
                     })
                     .unwrap_or_else(|| token_obj.roles.clone().unwrap_or_default())
             }
-            _ => token_obj.roles.clone().unwrap_or_default(),
+            Ok(None) => {
+                return Err(AuthError::Unauthorized("Unknown account".to_string()));
+            }
+            Err(e) => {
+                tracing::error!("Could not load user record for token validation: {}", e);
+                return Err(AuthError::Unauthorized(
+                    "Unable to verify account".to_string(),
+                ));
+            }
         }
     };
 
@@ -264,6 +278,7 @@ mod tests {
         let mut fw = AuthFramework::new(config);
         fw.initialize().await.unwrap();
 
+        store_test_user(&fw, "user_abc", true).await;
         let token = fw
             .token_manager()
             .create_jwt_token("user_abc", vec!["user".into()], None)
@@ -273,6 +288,49 @@ mod tests {
         assert_eq!(auth_token.user_id, "user_abc");
         assert_eq!(auth_token.auth_method, "jwt");
         assert_eq!(auth_token.token_type.as_deref(), Some("Bearer"));
+    }
+
+    async fn store_test_user(fw: &AuthFramework, user_id: &str, active: bool) {
+        let record = serde_json::json!({"user_id": user_id, "active": active});
+        fw.storage()
+            .store_kv(
+                &format!("user:{user_id}"),
+                serde_json::to_vec(&record).unwrap().as_slice(),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    /// A validly signed token whose `sub` has no user record must not be
+    /// accepted: the signature proves who minted it, not that the subject
+    /// is a real account.
+    #[tokio::test]
+    async fn test_validate_api_token_rejects_subject_without_user_record() {
+        let config = crate::AuthConfig::new().secret("a]Bc!d@e#f$g%h^i&j*k(l)m_n-o+p=q");
+        let mut fw = AuthFramework::new(config);
+        fw.initialize().await.unwrap();
+
+        let token = fw
+            .token_manager()
+            .create_jwt_token("user_does_not_exist", vec!["user".into()], None)
+            .unwrap();
+
+        let result = validate_api_token(&fw, &token).await;
+        assert!(result.is_err(), "unknown subject must be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_validate_api_token_rejects_inactive_user() {
+        let config = crate::AuthConfig::new().secret("a]Bc!d@e#f$g%h^i&j*k(l)m_n-o+p=q");
+        let mut fw = AuthFramework::new(config);
+        fw.initialize().await.unwrap();
+        store_test_user(&fw, "user_off", false).await;
+        let token = fw
+            .token_manager()
+            .create_jwt_token("user_off", vec!["user".into()], None)
+            .unwrap();
+        assert!(validate_api_token(&fw, &token).await.is_err());
     }
 
     #[tokio::test]

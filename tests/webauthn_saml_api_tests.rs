@@ -71,9 +71,12 @@ async fn test_webauthn_registration_init() {
         .unwrap();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
 
+    // Registration is an account-security operation: it requires an
+    // authenticated session (the authenticated flow is covered in
+    // `webauthn_ceremony_tests`).
     let response_json: serde_json::Value = serde_json::from_str(&body_str).unwrap();
-    assert_eq!(response_json["success"], true);
-    assert!(response_json["data"].is_object());
+    assert_eq!(response_json["success"], false);
+    assert_eq!(response_json["error"]["code"], "UNAUTHORIZED");
 }
 
 #[cfg(feature = "saml")]
