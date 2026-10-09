@@ -172,6 +172,14 @@ pub struct StorageEncryptionConfig {
     /// something needs to read v0 data through this wrapper before, or
     /// without ever, running migration; leave it `false` otherwise.
     pub allow_legacy_v0: bool,
+    /// Refuse to start (`true`) instead of only warning (`false`, default)
+    /// when `enabled` is `true` but the storage handed to
+    /// `AuthFramework::new_with_storage` / `replace_storage` / the builder's
+    /// `custom_storage` is not an `EncryptedStorage`. Storage supplied that
+    /// way bypasses the factory's automatic wrapping, so without this a
+    /// deployment can believe KV values are encrypted at rest when they are
+    /// not.
+    pub require_wrapped_storage: bool,
 }
 
 impl Default for StorageEncryptionConfig {
@@ -180,6 +188,7 @@ impl Default for StorageEncryptionConfig {
             enabled: true,
             allow_plaintext_reads: false,
             allow_legacy_v0: false,
+            require_wrapped_storage: false,
         }
     }
 }

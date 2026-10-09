@@ -31,7 +31,71 @@ pub(crate) async fn build_storage_backend_with_encryption(
         return Ok(backend);
     }
 
+    // A single env-var key cannot rotate: warn when it protects data that
+    // is already encrypted (a changed key would orphan every envelope).
+    if encryption_config.enabled
+        && probe_is_cheap(config)
+        && crate::storage::encryption::env_key_source_in_use()
+    {
+        match crate::storage::encryption::stored_envelopes_exist(backend.as_ref(), 100).await {
+            Ok(true) => tracing::warn!(
+                "Storage encryption uses the single AUTH_STORAGE_ENCRYPTION_KEY environment \
+                 variable and encrypted values already exist: this key cannot rotate, and \
+                 replacing it makes them undecryptable. Move to \
+                 AUTH_STORAGE_ENCRYPTION_KEYS_FILE (current + old keys) before the first rotation."
+            ),
+            Ok(false) => {}
+            Err(e) => tracing::debug!("could not probe storage for existing envelopes: {e}"),
+        }
+    }
+
     wrap_with_encryption_if_enabled(backend, encryption_config)
+}
+
+/// Listing every KV key is a single query on SQL backends but `KEYS` on Redis,
+/// which is O(N) and blocks the server, so the startup probe skips Redis.
+fn probe_is_cheap(config: &StorageConfig) -> bool {
+    #[cfg(feature = "redis-storage")]
+    if matches!(config, StorageConfig::Redis { .. }) {
+        return false;
+    }
+    let _ = config;
+    true
+}
+
+/// Checks storage supplied by the caller (`new_with_storage`,
+/// `replace_storage`, the builder's `custom_storage`) against the encryption
+/// config: such storage bypasses [`wrap_with_encryption_if_enabled`].
+///
+/// With encryption enabled and storage that is not an
+/// [`EncryptedStorage`], KV values are NOT encrypted at rest even though the
+/// config says they are. That is a warning by default and a startup error
+/// when `require_wrapped_storage` is set. (In-memory storage supplied this
+/// way is flagged too: the framework cannot tell it from a persistent one.)
+pub(crate) fn check_overridden_storage(
+    storage: &Arc<dyn AuthStorage>,
+    encryption_config: &StorageEncryptionConfig,
+) -> Result<()> {
+    if !encryption_config.enabled || storage.encrypts_kv_at_rest() {
+        return Ok(());
+    }
+    if encryption_config.require_wrapped_storage {
+        return Err(AuthError::configuration(
+            "storage_encryption.enabled is true and storage_encryption.require_wrapped_storage \
+             is set, but the storage supplied via new_with_storage / replace_storage / \
+             custom_storage is not an EncryptedStorage, so KV values would NOT be encrypted \
+             at rest. Wrap it with EncryptedStorage::new, or set \
+             storage_encryption.enabled = false to opt out explicitly.",
+        ));
+    }
+    tracing::warn!(
+        "storage_encryption.enabled is true, but the storage supplied via new_with_storage / \
+         replace_storage / custom_storage is not an EncryptedStorage: KV values are NOT \
+         encrypted at rest. Wrap it with EncryptedStorage::new, set \
+         storage_encryption.enabled = false to opt out explicitly, or set \
+         storage_encryption.require_wrapped_storage = true to make this an error."
+    );
+    Ok(())
 }
 
 /// Builds the configured storage backend WITHOUT wrapping it in
@@ -170,6 +234,7 @@ mod tests {
             enabled: true,
             allow_plaintext_reads,
             allow_legacy_v0,
+            ..Default::default()
         }
     }
 
@@ -262,5 +327,40 @@ mod tests {
             Some(b"legacy value".to_vec()),
             "allow_legacy_v0: true must decrypt a format-version-0 envelope"
         );
+    }
+
+    // ---- storage supplied by the caller bypasses the wrapping (M3) --------------
+
+    fn cfg_with(enabled: bool, require_wrapped_storage: bool) -> StorageEncryptionConfig {
+        StorageEncryptionConfig {
+            enabled,
+            require_wrapped_storage,
+            ..Default::default()
+        }
+    }
+
+    fn wrapped() -> Arc<dyn AuthStorage> {
+        Arc::new(EncryptedStorage::new(
+            MemoryStorage::new(),
+            StorageEncryption::new_random(),
+            false,
+            false,
+        ))
+    }
+
+    fn unwrapped() -> Arc<dyn AuthStorage> {
+        Arc::new(MemoryStorage::new())
+    }
+
+    #[test]
+    fn overridden_storage_check_matrix() {
+        // Wrapped storage always passes.
+        assert!(check_overridden_storage(&wrapped(), &cfg_with(true, true)).is_ok());
+        // Unwrapped + encryption on + not required: warns, passes.
+        assert!(check_overridden_storage(&unwrapped(), &cfg_with(true, false)).is_ok());
+        // Unwrapped + encryption on + required: refused.
+        assert!(check_overridden_storage(&unwrapped(), &cfg_with(true, true)).is_err());
+        // Encryption explicitly off: nothing to check, even when "required".
+        assert!(check_overridden_storage(&unwrapped(), &cfg_with(false, true)).is_ok());
     }
 }

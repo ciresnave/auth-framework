@@ -264,6 +264,7 @@ impl AuthFramework {
         config: AuthConfig,
         storage: Arc<dyn AuthStorage>,
     ) -> crate::errors::Result<Self> {
+        crate::storage::factory::check_overridden_storage(&storage, &config.storage_encryption)?;
         let mut framework = Self::new(config)?;
         framework.replace_storage(storage);
         Ok(framework)

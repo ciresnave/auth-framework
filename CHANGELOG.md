@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc35 -- startup checks for storage encryption. (1) Storage supplied
+  through `new_with_storage` / `replace_storage` / the builder's
+  `custom_storage` bypasses the factory's automatic wrapping, so with
+  `storage_encryption.enabled` (the default) and a storage that is not an
+  `EncryptedStorage` KV values were silently NOT encrypted at rest;
+  `initialize()` now logs a warning, and fails when the new
+  `storage_encryption.require_wrapped_storage` is `true` (new
+  `AuthStorage::encrypts_kv_at_rest`, default `false`, `true` for
+  `EncryptedStorage`). (2) New opt-in
+  `AUTH_STORAGE_ENCRYPTION_STRICT_KEY_FILE_PERMISSIONS=1` turns the
+  group/other-readable keys-file warning into a startup error (Unix).
+  (3) The single `AUTH_STORAGE_ENCRYPTION_KEY` env var cannot rotate; this is
+  now documented and the storage factory warns when it protects data that is
+  already encrypted. **Breaking:** `StorageEncryptionConfig` gains
+  `require_wrapped_storage` (struct literals need `..Default::default()`).
 - 0.6.0-rc33 -- storage-encryption migration keeps KV TTLs. `security encrypt-kv` /
   `migrate_kv_to_encrypted` used to re-store every value with no TTL, which
   silently made expiring entries (one-time codes, rate-limit windows,

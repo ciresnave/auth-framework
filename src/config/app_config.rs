@@ -254,7 +254,7 @@ impl AppConfig {
             &auth_config.storage_encryption,
         )
         .await?;
-        framework.replace_storage(storage);
+        framework.replace_storage_from_factory(storage);
         framework.initialize().await?;
         Ok(framework)
     }

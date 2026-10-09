@@ -369,6 +369,27 @@ let config = AuthConfig::new().storage_encryption(StorageEncryptionConfig {
 });
 ```
 
+**Key sources and rotation.** `AUTH_STORAGE_ENCRYPTION_KEY` holds a single
+key and **cannot rotate**: replacing it orphans every stored envelope. Use
+`AUTH_STORAGE_ENCRYPTION_KEYS_FILE` (`{"current": "<id>", "keys": {...}}`,
+old keys stay listed so existing envelopes still decrypt) for anything that
+will outlive one key. At startup the storage factory warns when the single
+env-var key is in use and encrypted values already exist (it reads up to
+100 KV values, but lists the keys first: one query on SQL backends; the probe
+is skipped on Redis, where listing keys is `KEYS`, which blocks the server). A keys file readable by group or other always logs a
+warning; set `AUTH_STORAGE_ENCRYPTION_STRICT_KEY_FILE_PERMISSIONS=1` to make
+that a startup error (Unix only; on other platforms the variable is logged as
+unenforceable).
+
+**Storage you supply yourself is not wrapped.** Storage handed to
+`AuthFramework::new_with_storage`, `replace_storage` or the builder's
+`custom_storage` bypasses the factory's automatic wrapping. With
+`storage_encryption.enabled = true` (the default) and storage that is not an
+`EncryptedStorage`, KV values are **not** encrypted at rest; `initialize()`
+logs a warning, and returns an error instead when
+`storage_encryption.require_wrapped_storage = true`. Wrap it yourself with
+`EncryptedStorage::new`, or set `enabled = false` to opt out explicitly.
+
 **Known limitation:** the key itself currently comes from an environment
 variable or a local file (`EnvKeyProvider`) — not a KMS. Anyone with read
 access to the process environment or the key file can decrypt everything
