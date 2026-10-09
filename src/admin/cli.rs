@@ -886,7 +886,7 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
             );
             if report.legacy_v0_found > 0 {
                 println!(
-                    "  Legacy (v0) envelopes found: {}",
+                    "  Legacy (v0/v1) envelopes found: {}",
                     report.legacy_v0_found.to_string().yellow()
                 );
                 if dry_run {
@@ -910,7 +910,8 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                         format!(
                             "NOT upgraded ({}): --accept-legacy-v0 was not passed. A v0 \
                              envelope has no AAD, so upgrading it cannot verify its \
-                             plaintext actually belongs to this record -- re-run with \
+                             plaintext actually belongs to this record (a v1 envelope \
+                             does bind the record key) -- re-run with \
                              --accept-legacy-v0 once you've understood that.",
                             report.legacy_v0_found
                         )

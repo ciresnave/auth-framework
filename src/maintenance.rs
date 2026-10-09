@@ -534,6 +534,11 @@ async fn restore_from_file_with(
                 "Snapshot is encrypted but no storage encryption key is available to open it",
             )
         })?;
+        // Snapshots were never written in format v0, so refuse it. A v1
+        // snapshot (sealed by the release that introduced snapshot sealing,
+        // before envelope v2) is deliberately still readable regardless of
+        // `allow_legacy_v0`: it is authenticated under SNAPSHOT_AAD and the
+        // storage key, and there is no migration tool for snapshot files.
         if envelope.v == 0 {
             return Err(AuthError::validation(
                 "Snapshot uses an unsupported legacy encryption format",

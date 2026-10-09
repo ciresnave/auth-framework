@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc24 -- storage encryption envelope format v2 (storage-format-affecting):
+  the AAD now binds the envelope's own
+  `v`, `algorithm` and `key_id` as well as the record's storage key, so
+  relabelling a key id or rewriting `v` to downgrade an envelope fails
+  authentication. Formats v0 and v1 are *legacy*: readable only behind
+  `storage_encryption.allow_legacy_v0` (the name is historical; it now covers
+  both) and upgraded to v2 by `security encrypt-kv --accept-legacy-v0`.
+  A stored value only counts as an envelope if it names the right algorithm
+  and, from v1 on, carries a non-empty `key_id`, so plaintext JSON that
+  resembles an envelope is no longer misread. Every decryption failure now
+  returns the same error text (`Decryption failed`; the cause is logged),
+  legacy trial decryption runs in a stable key order, and `safe_log_id`
+  keeps 8 hash bytes instead of 4. No release has shipped encrypted storage,
+  so there is no deployed v1 data to migrate; **Breaking** only for
+  pre-release testers, who must run the migration tool or set
+  `allow_legacy_v0`. Maintenance snapshots sealed by 0.6.0-rc21 (format v1)
+  stay restorable regardless of `allow_legacy_v0`.
 - 0.6.0-rc21 -- maintenance backup/restore (#121), storage-format-affecting (backups are now sealed): a snapshot file no longer holds
   recoverable plaintext. When the framework encrypts at rest (the default
   for every persistent backend), the whole snapshot file -- KV secrets,

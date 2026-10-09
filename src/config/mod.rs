@@ -152,8 +152,11 @@ pub struct StorageEncryptionConfig {
     /// at rest. Set it back to `false` once migration is complete.
     pub allow_plaintext_reads: bool,
     /// Whether a format-version-0 envelope (the original, pre-redesign
-    /// `EncryptedStorage`'s shape: no `key_id`, no AAD at encryption time)
-    /// is decrypted (`true`) or rejected as an error (`false`, default).
+    /// `EncryptedStorage`'s shape: no `key_id`, no AAD at encryption time),
+    /// or a format-version-1 envelope (AAD is the bare storage key, so the
+    /// envelope's own metadata is not authenticated), is decrypted
+    /// (`true`) or rejected as an error (`false`, default). The name is
+    /// historical: it covers every format older than the current (v2) one.
     ///
     /// Format-version-0 envelopes have no AAD binding a ciphertext to its
     /// own storage key, which is exactly the protection the current

@@ -699,8 +699,8 @@ pub enum SecurityAction {
         /// --dry-run, which makes no changes.
         #[arg(long)]
         confirm: bool,
-        /// Required to actually rewrite a format-version-0 envelope to
-        /// the current format. Without it, such envelopes are detected
+        /// Required to actually rewrite a legacy (format-version-0 or -1)
+        /// envelope to the current format. Without it, such envelopes are detected
         /// and reported but left untouched. See the WARNING above about
         /// what this upgrade can and cannot verify.
         #[arg(long)]
