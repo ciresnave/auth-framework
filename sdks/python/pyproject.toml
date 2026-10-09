@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "authframework"
-version = "0.6.0rc24"
+version = "0.6.0rc26"
 description = "Official Python SDK for AuthFramework REST API"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
