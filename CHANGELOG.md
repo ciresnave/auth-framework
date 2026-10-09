@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc40 -- OAuth2 refresh grant (#118): a refresh token that carries a `client_id` is now
+  redeemable ONLY by that client (RFC 6749 section 6). A confidential client (its
+  registered record holds a `client_secret`) must authenticate with `client_id` +
+  `client_secret`, and the authenticated client must be the one the token was
+  issued to: missing or wrong credentials are `invalid_client`; a different,
+  validly authenticated client is `invalid_grant`. A public client must send a
+  matching `client_id`; missing or different is `invalid_grant`. There is no
+  "check only if present" path, a token bound to a client that is no longer
+  registered fails closed, and a refused attempt does not consume the token.
+  Tokens issued without any client (older versions) are unchanged. "Confidential"
+  means the registered record holds a non-empty `client_secret` (the same test
+  `/oauth/authorize` uses); dynamically registered clients always receive a
+  secret, so they are confidential. Credentials are read from the JSON request
+  body (this endpoint has no HTTP Basic parsing). **Behaviour change:**
+  integrators that refreshed without client credentials must now send them.
 - 0.6.0-rc38 -- startup checks for storage encryption. (1) Storage supplied
   through `new_with_storage` / `replace_storage` / the builder's
   `custom_storage` bypasses the factory's automatic wrapping, so with
