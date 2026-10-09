@@ -151,7 +151,9 @@ pub trait AuthStorage: Send + Sync {
     /// an entry's lifetime across a copy (backup/restore, migration) use
     /// this together with [`get_kv`](Self::get_kv); a backend that honours
     /// the TTL passed to [`store_kv`](Self::store_kv) should override it so
-    /// those entries do not silently become non-expiring.
+    /// those entries do not silently become non-expiring. An entry that
+    /// `get_kv` would still return but that expires within the backend's
+    /// time resolution reports `Some(Duration::ZERO)`, never `None`.
     async fn get_kv_ttl(&self, _key: &str) -> Result<Option<Duration>> {
         Ok(None)
     }

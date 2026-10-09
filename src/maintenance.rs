@@ -302,17 +302,18 @@ async fn collect_snapshot(framework: &AuthFramework) -> Result<MaintenanceSnapsh
 
     let mut kv_entries = Vec::with_capacity(kv_keys.len());
     for key in kv_keys {
+        // The TTL is read BEFORE the value: an entry that expires in
+        // between then yields a TTL and no value (skipped), never a value
+        // whose expiry was lost and which restore would make permanent.
+        let expires_at = match storage.get_kv_ttl(&key).await? {
+            Some(remaining) => Some(
+                Utc::now()
+                    + chrono::Duration::from_std(remaining)
+                        .map_err(|e| AuthError::internal(format!("Invalid KV TTL: {e}")))?,
+            ),
+            None => None,
+        };
         if let Some(value) = storage.get_kv(&key).await? {
-            // `get_kv_ttl` is read after `get_kv`; an entry that expires
-            // between the two simply records a tiny remaining lifetime.
-            let expires_at = match storage.get_kv_ttl(&key).await? {
-                Some(remaining) => Some(
-                    Utc::now()
-                        + chrono::Duration::from_std(remaining)
-                            .map_err(|e| AuthError::internal(format!("Invalid KV TTL: {e}")))?,
-                ),
-                None => None,
-            };
             kv_entries.push(SnapshotKvEntry {
                 key,
                 value_base64: BASE64_STANDARD.encode(value),
@@ -396,17 +397,26 @@ pub async fn backup_to_file(
 /// exempt, as it is for `EncryptedStorage`, and so is an explicit
 /// `storage_encryption.enabled = false`. Fails closed if encryption is
 /// expected but no key can be loaded.
+///
+/// The decision follows `config.storage`, like the storage factory does.
+/// Storage handed in through `new_with_storage` / `replace_storage` /
+/// `custom_storage` bypasses the factory, so a framework whose config still
+/// says `Memory` but whose storage is persistent gets an UNSEALED snapshot.
 fn snapshot_encryption(framework: &AuthFramework) -> Result<Option<StorageEncryption>> {
     let config = framework.config();
     if !config.storage_encryption.enabled || matches!(config.storage, StorageConfig::Memory) {
         tracing::warn!(
-            "Maintenance snapshot will be written WITHOUT encryption (in-memory storage or              storage_encryption.enabled = false): it contains tokens, sessions and KV secrets in plaintext."
+            "Maintenance snapshot is NOT encrypted (config.storage is Memory, or \
+             storage_encryption.enabled = false): it holds tokens, sessions and KV \
+             secrets in plaintext."
         );
         return Ok(None);
     }
     StorageEncryption::from_env().map(Some).map_err(|e| {
         AuthError::configuration(format!(
-            "Snapshots are encrypted with the storage encryption key, but none could be              loaded: {e}. Configure AUTH_STORAGE_ENCRYPTION_KEY /              AUTH_STORAGE_ENCRYPTION_KEYS_FILE."
+            "Snapshots are encrypted with the storage encryption key, but none could be \
+             loaded: {e}. Configure AUTH_STORAGE_ENCRYPTION_KEY / \
+             AUTH_STORAGE_ENCRYPTION_KEYS_FILE."
         ))
     })
 }
@@ -535,32 +545,44 @@ async fn restore_from_file_with(
             ))
         })?;
     } else if encryption.is_some() {
-        tracing::warn!(
-            "Restoring an UNENCRYPTED snapshot although storage encryption is enabled;              it was written without encryption."
-        );
+        // Sealing is the only thing that authenticates a snapshot (the
+        // checksum is unkeyed and lives inside the file), so accepting an
+        // unsealed one here would let anyone who can write the file inject
+        // users, roles, tokens and secrets.
+        return Err(AuthError::validation(
+            "Snapshot is not encrypted but storage encryption is enabled; refusing to restore it",
+        ));
     }
     let snapshot: MaintenanceSnapshot = serde_json::from_slice(&data)
         .map_err(|e| AuthError::validation(format!("Failed to parse maintenance snapshot: {e}")))?;
     validate_snapshot(&snapshot)?;
+
+    // Decode every KV entry BEFORE anything is reset, so a bad entry
+    // cannot leave the store wiped and half-restored.
+    let now = Utc::now();
+    let mut kv_to_restore = Vec::with_capacity(snapshot.kv_entries.len());
+    for entry in &snapshot.kv_entries {
+        let value = BASE64_STANDARD.decode(&entry.value_base64).map_err(|e| {
+            AuthError::validation(format!(
+                "Snapshot KV entry '{}' is not valid base64: {e}",
+                entry.key
+            ))
+        })?;
+        let ttl = match restore_ttl(entry.expires_at, now) {
+            RestoreTtl::Forever => None,
+            RestoreTtl::Remaining(remaining) => Some(remaining),
+            RestoreTtl::Expired => continue,
+        };
+        kv_to_restore.push((entry.key.as_str(), value, ttl));
+    }
 
     let reset_report = reset_runtime_data(framework, dry_run).await?;
 
     if !dry_run {
         let storage = framework.storage();
 
-        for entry in &snapshot.kv_entries {
-            let value = BASE64_STANDARD.decode(&entry.value_base64).map_err(|e| {
-                AuthError::validation(format!(
-                    "Snapshot KV entry '{}' is not valid base64: {e}",
-                    entry.key
-                ))
-            })?;
-            let ttl = match restore_ttl(entry.expires_at, Utc::now()) {
-                RestoreTtl::Forever => None,
-                RestoreTtl::Remaining(remaining) => Some(remaining),
-                RestoreTtl::Expired => continue,
-            };
-            storage.store_kv(&entry.key, &value, ttl).await?;
+        for (key, value, ttl) in &kv_to_restore {
+            storage.store_kv(key, value, *ttl).await?;
         }
 
         for token in &snapshot.tokens {
@@ -935,6 +957,76 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some(CANARY)
+        );
+    }
+
+    /// With sealing expected, an unsealed snapshot is refused (it would
+    /// otherwise let anyone who can write the file inject state), and the
+    /// refusal happens before anything is reset.
+    #[tokio::test]
+    async fn restore_refuses_an_unsealed_snapshot_when_sealing_is_expected() {
+        let (framework, _) = framework_with_secrets().await;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("plain.json");
+        backup_to_file_with(&framework, &path, false, None)
+            .await
+            .unwrap();
+
+        let encryption = StorageEncryption::new_random();
+        assert!(
+            restore_from_file_with(&framework, &path, false, Some(&encryption))
+                .await
+                .is_err()
+        );
+        assert!(
+            framework
+                .storage()
+                .get_kv("totp:alice")
+                .await
+                .unwrap()
+                .is_some(),
+            "a refused restore must not have reset the live data"
+        );
+        // Plaintext snapshots still restore where no sealing is in force.
+        restore_from_file_with(&framework, &path, false, None)
+            .await
+            .unwrap();
+    }
+
+    /// A corrupt KV entry must be caught before the reset wipes anything.
+    #[tokio::test]
+    async fn restore_with_a_corrupt_kv_entry_leaves_live_data_untouched() {
+        let (framework, _) = framework_with_secrets().await;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snapshot.json");
+        let mut snapshot = collect_snapshot(&framework).await.unwrap();
+        snapshot.kv_entries[0].value_base64 = "!!not base64!!".to_string();
+        snapshot.manifest.checksum_sha256 = checksum_snapshot(
+            &snapshot.users,
+            &snapshot.roles,
+            &snapshot.tokens,
+            &snapshot.sessions,
+            &snapshot.kv_entries,
+        )
+        .unwrap();
+        tokio::fs::write(&path, serde_json::to_vec(&snapshot).unwrap())
+            .await
+            .unwrap();
+
+        assert!(
+            restore_from_file_with(&framework, &path, false, None)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            framework
+                .users()
+                .list_with_query(UserListQuery::new())
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "a refused restore must not have reset the live data"
         );
     }
 

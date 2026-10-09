@@ -20,8 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Restore also preserves KV TTLs now (it used to make every entry
   permanent) via a new `AuthStorage::get_kv_ttl` method (default: `None`,
   i.e. TTL unknown); the bundled memory, Redis, SQLite and PostgreSQL
-  backends override it. Custom backends should too. Snapshots written
-  before this change restore as before.
+  backends override it. Custom backends should too. Plaintext snapshots
+  written before this change still restore where no sealing applies, but a
+  framework that seals refuses to restore an unsealed snapshot (the
+  checksum inside the file is unkeyed, so sealing is what authenticates
+  it). Sealing follows `config.storage` like the storage factory: storage
+  supplied through `new_with_storage` / `replace_storage` /
+  `custom_storage` while the config still says `Memory` gets an unsealed
+  snapshot.
 - Fixed GHSA-jfmh-j245-wpjg: MFA verification no longer derives a
   fallback secret.
 - Fixed GHSA-rf2h-7m78-hhjm: revoking a refresh token now invalidates

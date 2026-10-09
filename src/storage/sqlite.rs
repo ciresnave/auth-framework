@@ -285,8 +285,9 @@ impl AuthStorage for SqliteStorage {
             .map_err(storage_err)?;
         Ok(row
             .and_then(|row| row.get::<Option<i64>, _>("expires_at"))
+            // `get_kv` treats `expires_at == now` as still alive, so report
+            // it (as zero seconds left) rather than as "no expiry".
             .and_then(|expires_at| u64::try_from(expires_at - now).ok())
-            .filter(|seconds| *seconds > 0)
             .map(Duration::from_secs))
     }
 
