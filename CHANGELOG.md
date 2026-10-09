@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Fixed GHSA-cw9x-gg6m-9cqr (critical): the WebAuthn/passkey registration and
+  sign-in endpoints did not require authentication. An unauthenticated caller
+  could register a credential of their own for any username and then sign in
+  with it, receiving a token whose subject was a caller-chosen string; because
+  token validation accepted any validly signed subject, that token worked
+  against every bearer-protected endpoint, and against an existing account
+  whenever the attacker knew its account id. All users of 0.5.0-rc18 through
+  0.5.0-rc26 and of every 0.6.0 pre-release before 0.6.0-rc41 should upgrade;
+  0.4.x is not affected (it has no WebAuthn HTTP endpoints). Registration now
+  requires a bearer token for the target account (or an admin) and the same
+  token must complete it; sign-in resolves the username to the real account
+  and requires it to exist and be active before issuing a token; bearer
+  validation rejects a subject that has no user record; and a client-data
+  `origin` is mandatory. Passkeys registered before this release are
+  ignored: **re-register them** (they could have been planted).
+  **Breaking, by necessity:**
+  - passkeys are stored per account id instead of per username, so all existing
+    passkeys stop working until re-registered;
+  - sign-in without a username (the discoverable-credential flow) is no longer
+    supported;
+  - the sign-in response `user_id` and the token `sub` are the account id, not
+    the username;
+  - `POST /webauthn/registration/init` and `/complete` require
+    `Authorization: Bearer ...`;
+  - the default `WEBAUTHN_ATTESTATION` is `none`, and any other value makes
+    registration refuse (the server cannot verify attestation statements);
+  - tokens whose `sub` has no user record are rejected by every bearer-protected
+    endpoint.
+
 - 0.6.0-rc40 -- OAuth2 refresh grant (#118): a refresh token that carries a `client_id` is now
   redeemable ONLY by that client (RFC 6749 section 6). A confidential client (its
   registered record holds a `client_secret`) must authenticate with `client_id` +
