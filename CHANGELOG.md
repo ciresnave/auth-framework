@@ -954,6 +954,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reaches this crate is `Networks::refresh_list()`, now `refresh(true)` (same behaviour: add new
   interfaces, drop unlisted ones, update counters); used by the deployment health monitor. The
   health-monitor metric collectors are pinned by new tests that pass on both versions.
+- **Breaking:** mutual-TLS client-certificate validation (`MutualTlsManager`) now uses one validator built on
+  `rustls-webpki` (ring backend; no new C dependency) for `authenticate_client` and `validate_client_certificate`:
+  the certification path is verified (signatures, validity, basicConstraints / pathLen, name constraints,
+  `clientAuth` extended key usage) and the certificate is matched to the registered client. A PKI client must be
+  registered with an exact `client_certificate` pin or an `expected_subject_dn` (an RFC 4514 string, compared as
+  structure, values case-sensitive); `register_client` rejects a PKI client without one, an empty or unparsable DN,
+  and a CA list that holds anything but usable CA certificates. New `authenticate_client_with_chain` /
+  `validate_client_certificate_with_chain` accept the client's intermediate certificates. FAPI: certificates
+  passed as text are decoded as PEM or base64 DER, the `x5t#S256` thumbprint is computed over the DER, and the
+  client id is read from the parsed subject CN or SAN.
 - **Deprecated / Breaking:** the five optional OpenTelemetry dependencies (`opentelemetry`,
   `opentelemetry-otlp`, `opentelemetry-prometheus`, `opentelemetry_sdk`, `tracing-opentelemetry`) are
   removed. No code in this crate ever called them: there is no OpenTelemetry or OTLP exporter, and

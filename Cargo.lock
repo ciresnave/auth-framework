@@ -651,6 +651,7 @@ dependencies = [
  "ring",
  "role-system",
  "rpassword",
+ "rustls-pki-types",
  "rustls-webpki",
  "secrecy 0.10.3",
  "serde",
