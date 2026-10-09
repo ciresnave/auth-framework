@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Storage-encryption migration keeps KV TTLs. `security encrypt-kv` /
+- 0.6.0-rc33 -- storage-encryption migration keeps KV TTLs. `security encrypt-kv` /
   `migrate_kv_to_encrypted` used to re-store every value with no TTL, which
   silently made expiring entries (one-time codes, rate-limit windows,
   expiring API keys) permanent. They now keep the remaining TTL on every
