@@ -158,11 +158,10 @@
   # in through the `openidconnect` crate (a hard, non-optional dependency in
   # openidconnect's own Cargo.toml, #113); nothing in this crate called that
   # crate, so the dependency was removed and the feature is now a no-op alias.
-  # `rsa` is still LISTED in Cargo.lock via the `sqlx-mysql` 0.8.6 stub entry
-  # (it is in no resolved dependency graph: `cargo tree -i rsa --all-features
-  # --target all` prints nothing) until sqlx 0.9 is taken; see deny.toml's
-  # RUSTSEC-2023-0071 entry. The "Security Audit (rsa absence)" CI job
-  # enforces absence for every shipped feature combination.
+  # `rsa` used to stay LISTED in Cargo.lock through the `sqlx-mysql` 0.8.6
+  # stub entry; sqlx 0.9 no longer does, so it is gone from Cargo.lock too.
+  # The "Security Audit (rsa absence)" CI job enforces absence from the
+  # dependency graph for every shipped feature combination.
 
   # Time handling
   time = { version = "0.3.47", features = ["formatting", "parsing", "serde"] }
@@ -402,9 +401,13 @@
   # entirely -- sqlx-mysql's own `rsa` dependency (RUSTSEC-2023-0071) for
   # its caching_sha2_password auth-plugin was the last remaining path to
   # that crate in this codebase; see CHANGELOG.md for the migration note.
-  sqlx = { version = "0.8.6", features = [
+  # sqlx 0.9 replaced the `runtime-tokio-rustls` feature with `runtime-tokio` +
+  # `tls-rustls` (the same combination: tokio runtime, rustls with ring and the
+  # webpki roots).
+  sqlx = { version = "0.9", features = [
     "chrono",
-    "runtime-tokio-rustls",
+    "runtime-tokio",
+    "tls-rustls",
     "uuid",
   ], optional = true }
   tokio-postgres = { version = "0.7.14", optional = true }
