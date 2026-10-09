@@ -582,8 +582,10 @@ impl StorageEncryption {
         // Every failure below returns the SAME error text (`DECRYPT_FAILED`);
         // the cause is logged only.
         let fail = |why: &str| -> AuthError {
+            // `key_id` comes from the (possibly attacker-writable) store:
+            // log it Debug-escaped and bounded.
             tracing::warn!(
-                key_id = %encrypted.key_id,
+                key_id = ?encrypted.key_id.chars().take(64).collect::<String>(),
                 v = encrypted.v,
                 "storage envelope decryption failed: {why}"
             );
@@ -667,10 +669,14 @@ impl StorageEncryption {
     /// Decrypt a storage envelope produced by [`Self::encrypt_for_storage`].
     /// `aad` must be the same storage key passed to that call.
     pub fn decrypt_from_storage(&self, data: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
-        let serialized = std::str::from_utf8(data)
-            .map_err(|_| AuthError::internal("Stored envelope is not valid UTF-8 JSON"))?;
-        let encrypted: EncryptedData = serde_json::from_str(serialized).map_err(|e| {
-            AuthError::internal(format!("Failed to deserialize encrypted data: {}", e))
+        // A stored value that is not even an envelope fails with the same
+        // text as every other decryption failure; the cause is logged.
+        let parsed = std::str::from_utf8(data)
+            .map_err(|e| e.to_string())
+            .and_then(|s| serde_json::from_str::<EncryptedData>(s).map_err(|e| e.to_string()));
+        let encrypted = parsed.map_err(|why| {
+            tracing::warn!("stored value is not a readable envelope: {why}");
+            AuthError::internal(DECRYPT_FAILED)
         })?;
         self.decrypt(&encrypted, aad)
     }
@@ -956,15 +962,17 @@ pub struct KvEncryptionMigrationReport {
     /// Keys that were already a current-format envelope -- left
     /// untouched.
     pub already_encrypted: u64,
-    /// Keys that were a format-version-0 envelope (no AAD, no key id)
-    /// that decrypted successfully -- counted here whether or not they
-    /// were actually rewritten (see `upgraded_from_legacy`). A v0
-    /// envelope has no AAD binding its plaintext to this specific
+    /// Keys that were a LEGACY envelope (format version 0 or 1; the name
+    /// is historical) that decrypted successfully -- counted here whether
+    /// or not they were actually rewritten (see `upgraded_from_legacy`).
+    /// A v0 envelope has no AAD binding its plaintext to this specific
     /// record, so this plaintext's association with this key could not
     /// be cryptographically verified -- it is exactly as trustworthy as
-    /// it was before migration, no more, no less.
+    /// it was before migration, no more, no less. A v1 envelope's AAD
+    /// does bind the record key (its decryption just verified that), but
+    /// not its own metadata.
     pub legacy_v0_found: u64,
-    /// Keys whose format-version-0 envelope was actually rewritten under
+    /// Keys whose legacy (v0 or v1) envelope was actually rewritten under
     /// the current format. Zero unless this was a real (non-dry) run
     /// AND `accept_legacy_v0` was `true` -- see
     /// [`migrate_kv_to_encrypted`]'s docs for why that flag exists and
@@ -1148,13 +1156,22 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
                 Ok(mut plaintext) => {
                     report.legacy_v0_found += 1;
                     if !dry_run && accept_legacy_v0 {
-                        tracing::warn!(
-                            record = %safe_log_id(&key),
-                            "migrate_kv_to_encrypted: upgrading format-version-0 envelope \
-                             to the current format -- v0 has no AAD, so this plaintext's \
-                             association with this specific key was not cryptographically \
-                             verified by this upgrade"
-                        );
+                        if envelope.v == 0 {
+                            tracing::warn!(
+                                record = %safe_log_id(&key),
+                                "migrate_kv_to_encrypted: upgrading format-version-0 \
+                                 envelope to the current format -- v0 has no AAD, so this \
+                                 plaintext's association with this specific key was not \
+                                 cryptographically verified by this upgrade"
+                            );
+                        } else {
+                            tracing::info!(
+                                record = %safe_log_id(&key),
+                                v = envelope.v,
+                                "migrate_kv_to_encrypted: upgrading legacy envelope to the \
+                                 current format (its AAD bound the record key)"
+                            );
+                        }
                         let encrypt_result =
                             encryption.encrypt_for_storage(&plaintext, key.as_bytes());
                         plaintext.zeroize();
