@@ -41,14 +41,14 @@
 //! match auth_framework.authenticate("password", credential).await {
 //!     Ok(result) => handle_success(result),
 //!     Err(AuthError::InvalidCredential { credential_type, message, .. }) => {
-//!         log::warn!("Invalid {} credential: {}", credential_type, message);
+//!         tracing::warn!("Invalid {} credential: {}", credential_type, message);
 //!         respond_with_auth_failure()
 //!     },
 //!     Err(AuthError::RateLimit { message, .. }) => {
 //!         respond_with_rate_limit(None)
 //!     },
 //!     Err(e) => {
-//!         log::error!("Authentication system error: {}", e);
+//!         tracing::error!("Authentication system error: {}", e);
 //!         respond_with_system_error()
 //!     }
 //! }

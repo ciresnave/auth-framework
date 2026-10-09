@@ -1085,7 +1085,7 @@ impl SecurityAuditStats {
     /// # fn notify_administrators(_: &str) {}
     /// # let security_stats: SecurityAuditStats = unimplemented!();
     /// if let Some(alert) = security_stats.security_alert_message() {
-    ///     log::error!("Security Alert: {}", alert);
+    ///     tracing::error!("Security Alert: {}", alert);
     ///     notify_administrators(&alert);
     /// }
     /// ```

@@ -10,7 +10,6 @@
     async-trait    = "0.1.86"
     auth-framework = { path = "../" }
     chrono         = { version = "0.4.38", features = ["serde"] }
-    serde          = { version = "1", features = ["derive"] }
     serde_json     = "1"
     sqlx           = { version = "0.9", features = ["runtime-tokio", "tls-rustls", "sqlite"] }
     tokio          = { version = "1", features = ["full"] }

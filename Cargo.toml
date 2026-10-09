@@ -120,9 +120,6 @@
   # UUID generation
   uuid = { version = "1.18.1", features = ["serde", "v4"] }
 
-  # Email validation
-  email_address = "0.2"
-
   # Additional format support for migration
   # Note: serde_yaml 0.9.x uses unsafe-libyaml (safe) rather than libyml (RUSTSEC-2025-0067/0068)
   serde_yaml = "0.9"
@@ -167,7 +164,6 @@
   time = { version = "0.3.47", features = ["formatting", "parsing", "serde"] }
 
   # Logging and tracing
-  log                = "0.4.28"
   tracing            = "0.1.41"
   tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
@@ -228,7 +224,6 @@
 
   # Rate limiting
   governor    = "0.10.1"
-  nonzero_ext = "0.3.0"
 
   # TOTP authentication
   totp-lite = "2.0.1"
@@ -268,9 +263,6 @@
 
   # High-performance concurrent data structures
   dashmap = "6.1"
-
-  # Secret management
-  secrecy = { version = "0.10.3", features = ["serde"] }
 
   # System information (disk, memory, CPU) for health metrics
   sysinfo = "0.39"
@@ -430,8 +422,6 @@ pasetors = "0.7.7"
   fastrand   = "2.0"
   mockito    = "1.2"
   tempfile   = "3.23.0"
-  test-log   = "0.2"
-  tokio-test = "0.4.4"
 
 [features]
   default = [

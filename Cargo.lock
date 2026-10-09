@@ -607,7 +607,6 @@ dependencies = [
  "dialoguer",
  "dirs",
  "ed25519-dalek",
- "email_address",
  "fastrand",
  "flate2",
  "futures",
@@ -624,13 +623,11 @@ dependencies = [
  "lazy_static",
  "ldap3",
  "lettre",
- "log",
  "maxminddb",
  "md-5 0.10.6",
  "metrics",
  "metrics-prometheus",
  "mockito",
- "nonzero_ext",
  "notify",
  "oauth-device-flows",
  "object-pool",
@@ -653,7 +650,6 @@ dependencies = [
  "rpassword",
  "rustls-pki-types",
  "rustls-webpki",
- "secrecy 0.10.3",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -670,7 +666,6 @@ dependencies = [
  "sysinfo",
  "tar",
  "tempfile",
- "test-log",
  "testcontainers",
  "thiserror 2.0.21",
  "time",
@@ -678,7 +673,6 @@ dependencies = [
  "tokio-cron-scheduler",
  "tokio-postgres",
  "tokio-stream",
- "tokio-test",
  "toml",
  "totp-lite",
  "tower",
@@ -704,7 +698,6 @@ dependencies = [
  "async-trait",
  "auth-framework",
  "chrono",
- "serde",
  "serde_json",
  "sqlx",
  "tokio",
@@ -6222,7 +6215,6 @@ version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
 dependencies = [
- "serde",
  "zeroize",
 ]
 
@@ -7147,38 +7139,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-log"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b9c218384242b5c89b68303ab6f6fc53a312d923f0c14dc6bb860c6aeee40f1"
-dependencies = [
- "env_logger",
- "test-log-macros",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "test-log-core"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c26ef8b00e4d382e59f6a8ddb3cd790b3a5bb29f21a358a9a69ea2f29f13f27b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "test-log-macros"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "944ad38adcbb71eaa682c56bceeb079e4ca82b4b3edc2a0fde5cb297b77dac8d"
-dependencies = [
- "syn 2.0.117",
- "test-log-core",
-]
-
-[[package]]
 name = "testcontainers"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7454,17 +7414,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12bc5db7778a8e08ee255090861e0e7aac55e784300077e7ed293c7be36168b2"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
