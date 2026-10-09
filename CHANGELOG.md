@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- 0.6.0-rc35 -- startup checks for storage encryption. (1) Storage supplied
+- 0.6.0-rc38 -- startup checks for storage encryption. (1) Storage supplied
   through `new_with_storage` / `replace_storage` / the builder's
   `custom_storage` bypasses the factory's automatic wrapping, so with
   `storage_encryption.enabled` (the default) and a storage that is not an
