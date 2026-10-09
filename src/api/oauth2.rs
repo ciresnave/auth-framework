@@ -643,24 +643,26 @@ async fn handle_authorization_code_grant(
     ApiResponse::success(response)
 }
 
+/// A boxed error response (keeps the `Err` variant of the client-check helpers small).
+fn refusal(code: &str, message: &str) -> Box<ApiResponse<TokenResponse>> {
+    Box::new(ApiResponse::error_typed(code, message))
+}
+
 /// Load a registered client's record from `oauth2_client:{client_id}`.
 async fn load_client_record(
     state: &ApiState,
     client_id: &str,
-) -> std::result::Result<Option<serde_json::Value>, ApiResponse<TokenResponse>> {
+) -> std::result::Result<Option<serde_json::Value>, Box<ApiResponse<TokenResponse>>> {
     let key = format!("oauth2_client:{client_id}");
     match state.auth_framework.storage().get_kv(&key).await {
         Ok(Some(data)) => serde_json::from_slice(&data).map(Some).map_err(|e| {
             tracing::error!("Unreadable client record for {client_id}: {e}");
-            ApiResponse::error_typed("server_error", "Failed to validate client")
+            refusal("server_error", "Failed to validate client")
         }),
         Ok(None) => Ok(None),
         Err(e) => {
             tracing::error!("Failed to load client {client_id}: {e:?}");
-            Err(ApiResponse::error_typed(
-                "server_error",
-                "Failed to validate client",
-            ))
+            Err(refusal("server_error", "Failed to validate client"))
         }
     }
 }
@@ -687,16 +689,16 @@ async fn authorize_refresh_client(
     stored_client: &str,
     presented_id: Option<&str>,
     presented_secret: Option<&str>,
-) -> std::result::Result<(), ApiResponse<TokenResponse>> {
+) -> std::result::Result<(), Box<ApiResponse<TokenResponse>>> {
     let not_issued_to_you = || {
-        ApiResponse::error_typed(
+        refusal(
             "invalid_grant",
             "Refresh token was not issued to this client",
         )
     };
 
     let Some(stored_record) = load_client_record(state, stored_client).await? else {
-        return Err(ApiResponse::error_typed(
+        return Err(refusal(
             "invalid_grant",
             "Refresh token was issued to a client that is no longer registered",
         ));
@@ -712,7 +714,7 @@ async fn authorize_refresh_client(
 
     // Confidential client: authenticate whoever is asking against THEIR record.
     let (Some(presented_id), Some(presented_secret)) = (presented_id, presented_secret) else {
-        return Err(ApiResponse::error_typed(
+        return Err(refusal(
             "invalid_client",
             "Client authentication is required",
         ));
@@ -732,10 +734,7 @@ async fn authorize_refresh_client(
             )
         });
     if !authenticated {
-        return Err(ApiResponse::error_typed(
-            "invalid_client",
-            "Client authentication failed",
-        ));
+        return Err(refusal("invalid_client", "Client authentication failed"));
     }
     if presented_id != stored_client {
         return Err(not_issued_to_you());
@@ -836,7 +835,7 @@ async fn handle_refresh_token_grant(
         {
             tracing::warn!("Failed to release refresh consumed marker: {:?}", e);
         }
-        return refusal;
+        return *refusal;
     }
 
     let scope = stored["scopes"]
