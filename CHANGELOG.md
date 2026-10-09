@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc33 -- storage-encryption migration keeps KV TTLs. `security encrypt-kv` /
+  `migrate_kv_to_encrypted` used to re-store every value with no TTL, which
+  silently made expiring entries (one-time codes, rate-limit windows,
+  expiring API keys) permanent. They now keep the remaining TTL on every
+  backend that reports it (new `AuthStorage::tracks_kv_ttl`; all built-in
+  backends do). A real run on a backend that cannot report TTLs is refused
+  unless `MigrationOptions::accept_ttl_loss` / `--accept-ttl-loss` is given,
+  and a backup on such a backend logs a warning. **Breaking:**
+  `MigrationOptions` gains the `accept_ttl_loss` field.
 - 0.6.0-rc24 -- storage encryption envelope format v2 (storage-format-affecting):
   the AAD now binds the envelope's own
   `v`, `algorithm` and `key_id` as well as the record's storage key, so

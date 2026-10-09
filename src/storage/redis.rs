@@ -187,8 +187,16 @@ impl AuthStorage for RedisStorage {
         // SEC-L5: When no TTL is specified, store without expiration so that
         // configuration data and permanent records don't silently vanish.
         if let Some(duration) = ttl {
-            let _: () = conn
-                .set_ex(&kv_key, value, duration.as_secs())
+            // PSETEX, not SETEX: a remaining TTL under one second must not
+            // become `SETEX key 0 ...`, which Redis rejects.
+            let millis = u64::try_from(duration.as_millis())
+                .unwrap_or(u64::MAX)
+                .max(1);
+            let _: () = redis::cmd("PSETEX")
+                .arg(&kv_key)
+                .arg(millis)
+                .arg(value)
+                .query_async(&mut conn)
                 .await
                 .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
         } else {
@@ -222,6 +230,10 @@ impl AuthStorage for RedisStorage {
             .ok()
             .filter(|millis| *millis > 0)
             .map(Duration::from_millis))
+    }
+
+    fn tracks_kv_ttl(&self) -> bool {
+        true
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {

@@ -754,6 +754,10 @@ impl AuthStorage for DashMapMemoryStorage {
         }))
     }
 
+    fn tracks_kv_ttl(&self) -> bool {
+        true
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         // SAFE: Extract creation timestamp before removal
         let created_at = if let Some(timestamped) = self.kv_store.get(key) {
@@ -1059,6 +1063,7 @@ mod tests {
     #[tokio::test]
     async fn get_kv_ttl_reports_remaining_lifetime() {
         let storage = DashMapMemoryStorage::new();
+        assert!(storage.tracks_kv_ttl());
         storage
             .store_kv("k:ttl", b"v", Some(Duration::from_secs(600)))
             .await

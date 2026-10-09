@@ -925,6 +925,11 @@ where
         )))
     }
 
+    fn tracks_kv_ttl(&self) -> bool {
+        // A TTL is storage metadata, not part of the encrypted value.
+        self.inner.tracks_kv_ttl()
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         self.inner.delete_kv(key).await
     }
@@ -1014,9 +1019,19 @@ pub struct MigrationOptions {
     /// [`migrate_kv_to_encrypted`]'s own docs for why this is a separate,
     /// explicit opt-in.
     pub accept_legacy_v0: bool,
+    /// A backend that cannot report KV TTLs ([`AuthStorage::tracks_kv_ttl`]
+    /// is `false`) makes a real migration turn every expiring entry into a
+    /// permanent one. Such a run is refused unless this is `true`.
+    pub accept_ttl_loss: bool,
 }
 
 impl MigrationOptions {
+    /// Builder-style setter; see [`Self::with_dry_run`].
+    pub fn with_accept_ttl_loss(mut self, accept_ttl_loss: bool) -> Self {
+        self.accept_ttl_loss = accept_ttl_loss;
+        self
+    }
+
     /// Builder-style setter. `#[non_exhaustive]` means `MigrationOptions {
     /// dry_run: true, ..Default::default() }` only compiles *inside*
     /// this crate -- a downstream caller needs `let mut o =
@@ -1097,18 +1112,16 @@ impl MigrationOptions {
 /// already transparently decrypt (and thus hide which rows still need
 /// migrating).
 ///
-/// **Known limitation (TTL loss):** [`AuthStorage::get_kv`] doesn't return
-/// a value's remaining TTL, so a migrated value is re-stored with no TTL
-/// (it becomes non-expiring) even if the original had one. This is a real
-/// risk for TTL'd data such as OAuth authorization codes, email-verification
-/// tokens, MFA/SMS one-time codes, WebAuthn challenges, rate-limit windows,
-/// or expiring API keys: migrating those under a prefix that includes them
-/// makes them (and any lockout window keyed the same way) stop expiring.
-/// Callers should scope `prefix` to durable-secret namespaces only (API
-/// keys, TOTP secrets, client registries) and avoid migrating over the
-/// entire KV keyspace in one call; the CLI (`security encrypt-kv`)
-/// requires an explicit `--confirm` to use an empty prefix for a real
-/// (non-dry-run) application for exactly this reason.
+/// **TTLs are preserved** on backends that report them
+/// ([`AuthStorage::tracks_kv_ttl`]): each rewritten entry is stored with
+/// the remaining TTL it had (read via [`AuthStorage::get_kv_ttl`] before the
+/// value, so an entry that expires mid-run is skipped, never made
+/// permanent). A backend that cannot report TTLs would turn every expiring
+/// entry (OAuth codes, MFA/SMS codes, WebAuthn challenges, rate-limit
+/// windows, expiring API keys) permanent, so a real (non-dry) run on one is
+/// **refused** unless [`MigrationOptions::accept_ttl_loss`] is set; if it
+/// is, scope `prefix` to durable-secret namespaces only. The CLI
+/// (`security encrypt-kv`) exposes this as `--accept-ttl-loss`.
 pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     storage: &S,
     encryption: &StorageEncryption,
@@ -1118,7 +1131,20 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     let MigrationOptions {
         dry_run,
         accept_legacy_v0,
+        accept_ttl_loss,
     } = options;
+
+    // A backend that cannot report TTLs would have every expiring entry
+    // re-stored as permanent. Refuse before touching anything unless the
+    // caller accepts that; a dry run writes nothing, so it is always fine.
+    if !dry_run && !accept_ttl_loss && !storage.tracks_kv_ttl() {
+        return Err(AuthError::validation(
+            "This storage backend does not report KV TTLs, so migrating would make every \
+             expiring entry (OAuth codes, MFA/SMS codes, rate-limit windows, expiring API \
+             keys, ...) permanent. Scope the prefix to durable secrets and pass \
+             accept_ttl_loss (CLI: --accept-ttl-loss) to proceed anyway.",
+        ));
+    }
     let mut report = KvEncryptionMigrationReport {
         dry_run,
         ..Default::default()
@@ -1128,6 +1154,10 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     report.scanned = keys.len() as u64;
 
     for key in keys {
+        // The TTL is read BEFORE the value (see the maintenance snapshot
+        // code): an entry that expires in between yields a TTL and no value
+        // (counted as vanished), never a value whose expiry was lost.
+        let ttl = storage.get_kv_ttl(&key).await?;
         let Some(mut raw) = storage.get_kv(&key).await? else {
             // Deleted concurrently between list_kv_keys and get_kv.
             report.vanished += 1;
@@ -1176,7 +1206,7 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
                             encryption.encrypt_for_storage(&plaintext, key.as_bytes());
                         plaintext.zeroize();
                         let new_envelope = encrypt_result?;
-                        storage.store_kv(&key, &new_envelope, None).await?;
+                        storage.store_kv(&key, &new_envelope, ttl).await?;
                         report.upgraded_from_legacy += 1;
                     } else {
                         plaintext.zeroize();
@@ -1191,7 +1221,7 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
             let encrypt_result = encryption.encrypt_for_storage(&raw, key.as_bytes());
             raw.zeroize();
             let envelope = encrypt_result?;
-            storage.store_kv(&key, &envelope, None).await?;
+            storage.store_kv(&key, &envelope, ttl).await?;
         } else {
             raw.zeroize();
         }
@@ -1706,6 +1736,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: true,
+                ..Default::default()
             },
         )
         .await
@@ -1747,6 +1778,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -1796,6 +1828,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -1869,6 +1902,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: true,
+                ..Default::default()
             },
         )
         .await
@@ -1938,6 +1972,7 @@ mod tests {
             MigrationOptions {
                 dry_run: true,
                 accept_legacy_v0: true,
+                ..Default::default()
             },
         )
         .await
@@ -2038,6 +2073,7 @@ mod tests {
             MigrationOptions {
                 dry_run: true,
                 accept_legacy_v0: true,
+                ..Default::default()
             },
         )
         .await
@@ -2081,6 +2117,7 @@ mod tests {
             MigrationOptions {
                 dry_run: true,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2112,6 +2149,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2160,6 +2198,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2184,6 +2223,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2212,6 +2252,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2590,5 +2631,135 @@ mod tests {
             unsafe { std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE") };
             assert!(result.is_err(), "{name} must fail closed");
         }
+    }
+
+    // ---- migration preserves KV TTLs ---------------------------------------------
+
+    fn ttl_provider() -> FixedKeys {
+        FixedKeys {
+            current: "1",
+            keys: vec![("1", KEY_A)],
+        }
+    }
+
+    #[tokio::test]
+    async fn migration_preserves_ttl_when_encrypting_plaintext() {
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv("otp:1", b"123456", Some(Duration::from_secs(600)))
+            .await
+            .unwrap();
+        storage.store_kv("durable:1", b"keep", None).await.unwrap();
+
+        migrate_kv_to_encrypted(
+            &storage,
+            &StorageEncryption::new(&ttl_provider()).unwrap(),
+            "",
+            MigrationOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let ttl = storage.get_kv_ttl("otp:1").await.unwrap().unwrap();
+        assert!(
+            ttl > Duration::from_secs(590) && ttl <= Duration::from_secs(600),
+            "TTL must survive migration, got {ttl:?}"
+        );
+        assert_eq!(storage.get_kv_ttl("durable:1").await.unwrap(), None);
+        let raw = storage.get_kv("otp:1").await.unwrap().unwrap();
+        assert!(
+            StorageEncryption::looks_like_envelope(&raw),
+            "must be encrypted"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_upgrade_preserves_ttl() {
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv(
+                "rec:1",
+                &manual_envelope(&KEY_A, "", 0, b"secret", b""),
+                Some(Duration::from_secs(600)),
+            )
+            .await
+            .unwrap();
+
+        migrate_kv_to_encrypted(
+            &storage,
+            &StorageEncryption::new(&ttl_provider()).unwrap(),
+            "",
+            MigrationOptions::default().with_accept_legacy_v0(true),
+        )
+        .await
+        .unwrap();
+
+        let ttl = storage.get_kv_ttl("rec:1").await.unwrap().unwrap();
+        assert!(ttl > Duration::from_secs(590) && ttl <= Duration::from_secs(600));
+        let raw = storage.get_kv("rec:1").await.unwrap().unwrap();
+        assert_eq!(
+            StorageEncryption::parse_envelope(&raw).unwrap().v,
+            CURRENT_FORMAT_VERSION
+        );
+    }
+
+    /// A backend that cannot report TTLs must not be migrated silently: a
+    /// real run would make every expiring entry permanent. It needs an
+    /// explicit opt-in, and a dry run (which writes nothing) is always fine.
+    #[tokio::test]
+    async fn migration_refuses_backend_that_cannot_report_ttl_without_opt_in() {
+        let storage = crate::testing::utilities::MockStorage::new();
+        let encryption = StorageEncryption::new(&ttl_provider()).unwrap();
+
+        assert!(
+            migrate_kv_to_encrypted(&storage, &encryption, "", MigrationOptions::default())
+                .await
+                .is_err(),
+            "a real run on a TTL-blind backend must be refused"
+        );
+        assert!(
+            migrate_kv_to_encrypted(
+                &storage,
+                &encryption,
+                "",
+                MigrationOptions::default().with_dry_run(true)
+            )
+            .await
+            .is_ok(),
+            "a dry run writes nothing, so it is allowed"
+        );
+        assert!(
+            migrate_kv_to_encrypted(
+                &storage,
+                &encryption,
+                "",
+                MigrationOptions::default().with_accept_ttl_loss(true)
+            )
+            .await
+            .is_ok(),
+            "explicit opt-in proceeds"
+        );
+    }
+
+    #[tokio::test]
+    async fn backends_that_honour_ttl_say_so() {
+        let memory = MemoryStorage::new();
+        assert!(memory.tracks_kv_ttl());
+        let wrapped = EncryptedStorage::new(
+            MemoryStorage::new(),
+            StorageEncryption::new_random(),
+            false,
+            false,
+        );
+        assert!(
+            wrapped.tracks_kv_ttl(),
+            "the wrapper forwards the inner answer"
+        );
+        let shared: std::sync::Arc<dyn AuthStorage> = std::sync::Arc::new(MemoryStorage::new());
+        assert!(shared.tracks_kv_ttl(), "the Arc impl forwards too");
+        assert!(
+            !crate::testing::utilities::MockStorage::new().tracks_kv_ttl(),
+            "a backend that ignores TTLs must say so"
+        );
     }
 }

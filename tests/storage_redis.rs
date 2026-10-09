@@ -106,6 +106,22 @@ async fn redis_kv_no_ttl() {
 
 #[tokio::test]
 #[ignore]
+async fn redis_kv_sub_second_ttl_is_accepted() {
+    let storage = setup().await;
+    assert!(storage.tracks_kv_ttl());
+    // Migration/restore can hand over the remaining TTL of an entry that is
+    // about to expire; it must not turn into `SETEX key 0` (a Redis error).
+    storage
+        .store_kv("rd_subsecond", b"v", Some(Duration::from_millis(400)))
+        .await
+        .unwrap();
+    let ttl = storage.get_kv_ttl("rd_subsecond").await.unwrap();
+    assert!(ttl.is_some_and(|ttl| ttl <= Duration::from_millis(400)));
+    storage.delete_kv("rd_subsecond").await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
 async fn redis_health_check() {
     let storage = setup().await;
     storage.health_check().await.unwrap();

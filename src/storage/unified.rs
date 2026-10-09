@@ -548,6 +548,10 @@ impl AuthStorage for UnifiedStorage {
             .filter(|remaining| !remaining.is_zero()))
     }
 
+    fn tracks_kv_ttl(&self) -> bool {
+        true
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         self.storage.remove(&StorageKey::KeyValue(key.to_string()));
         Ok(())
