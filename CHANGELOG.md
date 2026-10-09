@@ -882,6 +882,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (same combination: tokio runtime, rustls with ring and the webpki roots). No source change. With
   `sqlx-mysql` 0.9 the `rsa` crate (RUSTSEC-2023-0071) is no longer listed in `Cargo.lock` at all;
   the matching ignore entry is removed from `deny.toml`. Requires Rust 1.94 (the MSRV is 1.95).
+- **Dependencies:** `sysinfo` 0.32 -> 0.39.6 (requires Rust 1.95, the MSRV). The only API change that
+  reaches this crate is `Networks::refresh_list()`, now `refresh(true)` (same behaviour: add new
+  interfaces, drop unlisted ones, update counters); used by the deployment health monitor. The
+  health-monitor metric collectors are pinned by new tests that pass on both versions.
 - **Dependencies:** `toml` 0.9 -> 1, `dirs` 6 -> 7, `base64` 0.22 -> 0.23, `askama` 0.15 -> 0.16,
   `tower-http` 0.6 -> 0.7, and dev/test-only `axum-test` 19 -> 21 and `testcontainers` 0.27 -> 0.28.
   No source change was needed. `base64` is declared with `default-features = false,

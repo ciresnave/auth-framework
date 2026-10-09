@@ -271,7 +271,7 @@
   secrecy = { version = "0.10.3", features = ["serde"] }
 
   # System information (disk, memory, CPU) for health metrics
-  sysinfo = "0.32"
+  sysinfo = "0.39"
 
   # Performance and Observability enhancements
   metrics = { version = "0.24.2", optional = true }

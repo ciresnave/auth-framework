@@ -514,7 +514,7 @@ impl HealthMonitor {
         let mut networks = sysinfo::Networks::new_with_refreshed_list();
         // Give a tiny wait so network diffs can be populated
         tokio::time::sleep(Duration::from_millis(10)).await;
-        networks.refresh_list();
+        networks.refresh(true);
 
         let mut bytes_recv = 0u64;
         let mut pkts_recv = 0u64;
