@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- The axum integration's login route (`AuthRouter`, `POST /auth/login`) now
+  authenticates the posted username and password against the user store (the `password`
+  method, as the API server's login does) and answers 401 for unknown users, wrong passwords
+  and accounts that require a second factor (this route cannot complete one). It used to issue
+  a token for whatever username was posted when an authentication method named `jwt` was
+  registered, and failed with a 400 otherwise. It does not apply the API server's per-account
+  lockout.
 - 0.6.0-rcXX -- Token exchange refuses refresh tokens presented as subject/actor tokens under
   either `typ` spelling the crate mints (`refresh` and `refresh_token`; one shared helper,
   `security::secure_jwt::is_refresh_typ`, and constants used by the FAPI and CIBA minters).

@@ -286,17 +286,32 @@ async fn login_handler(
     State(auth): State<Arc<AuthFramework>>,
     Json(request): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, AuthError> {
-    // This is a simplified login implementation
-    // In a real implementation, you'd validate credentials against your user store
-
-    let token = auth
-        .create_auth_token(
-            &request.username,
-            vec!["read".to_string(), "write".to_string()],
-            "jwt",
-            None,
+    // Authenticate against the user store exactly as the API server's login does; the
+    // reason for a failure is not revealed.
+    let denied = || {
+        AuthError::Token(crate::errors::TokenError::Invalid {
+            message: "Invalid credentials".to_string(),
+        })
+    };
+    let token = match auth
+        .authenticate(
+            "password",
+            crate::authentication::credentials::Credential::password(
+                &request.username,
+                &request.password,
+            ),
         )
-        .await?;
+        .await
+    {
+        Ok(crate::auth::AuthResult::Success(token)) => *token,
+        // This route cannot complete a second factor: no token without it.
+        Ok(crate::auth::AuthResult::MfaRequired(_)) => {
+            return Err(AuthError::Token(crate::errors::TokenError::Invalid {
+                message: "Multi-factor authentication is required".to_string(),
+            }));
+        }
+        Ok(crate::auth::AuthResult::Failure(_)) | Err(_) => return Err(denied()),
+    };
 
     let response = LoginResponse {
         access_token: token.access_token.clone(),
