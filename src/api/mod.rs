@@ -123,6 +123,13 @@ pub async fn validate_api_token(
     // Validate the JWT signature and expiry
     let token_obj = auth_framework.token_manager().validate_jwt_token(token)?;
 
+    // A refresh token is only good at /auth/refresh, never as an access token.
+    if token_obj.is_refresh_token() {
+        return Err(AuthError::Unauthorized(
+            "A refresh token cannot be used as an access token".to_string(),
+        ));
+    }
+
     // Check whether this token has been explicitly revoked (e.g. via logout)
     let revocation_key = format!("revoked_token:{}", token_obj.jti);
     match auth_framework.storage().get_kv(&revocation_key).await {

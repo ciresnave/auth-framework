@@ -407,11 +407,7 @@ mod users_api_tests {
         let refresh_token = state
             .auth_framework
             .token_manager()
-            .create_jwt_token(
-                &user_id,
-                vec!["refresh".to_string()],
-                Some(std::time::Duration::from_secs(86400 * 7)),
-            )
+            .create_refresh_jwt_token(&user_id, Some(std::time::Duration::from_secs(86400 * 7)))
             .expect("refresh token creation should succeed");
 
         // Logout — this should revoke the refresh token.

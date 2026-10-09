@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- OAuth2 scopes and refresh tokens: a client can be granted only the scopes
+  it is registered for. `/oauth/authorize` refuses a request for any other scope with
+  `invalid_scope`; with no scope requested the client receives its registered scopes (a
+  client registered without scope information keeps the previous defaults: `openid profile
+  email`). The token endpoint clamps the scope of a code to the client's registration and
+  refuses codes for unregistered clients (`invalid_client`). Refresh tokens now carry a
+  `token_use: "refresh"` claim: `/auth/refresh` accepts only such tokens (the scope string
+  is no longer consulted), and a refresh token is not accepted as an access token by
+  `validate_api_token`. **Breaking:** refresh tokens issued before this change are not
+  accepted; users sign in again. Clients that relied on receiving scopes beyond their
+  registration must have those scopes registered; a registration that names an empty scope
+  grants nothing. The refresh grant enforces the current registration too. The axum, actix
+  and warp integration extractors are covered separately.
 - 0.6.0-rcXX -- Email verification: the verification token is delivered only through the
   new `EmailVerificationSender` trait (install one with
   `ApiState::with_email_verification_sender`) and is no longer part of any HTTP response.
