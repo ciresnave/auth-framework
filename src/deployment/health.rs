@@ -902,4 +902,54 @@ mod tests {
         // Bare endpoint with no scheme.
         assert_eq!(extract_host_port("192.168.1.1:9200"), "192.168.1.1:9200");
     }
+
+    // Pins the behaviour of the sysinfo-backed metric collectors, so a sysinfo upgrade
+    // (0.32 -> 0.39 changed `Networks::refresh_list` into `refresh(bool)`) cannot silently
+    // change what they report.
+    #[tokio::test]
+    async fn test_update_system_metrics_reports_sane_values() {
+        let mut monitor = HealthMonitor::new(HealthMonitorConfig::default());
+        monitor.update_system_metrics().await.unwrap();
+        let m = &monitor.system_metrics;
+
+        assert!(
+            (0.0..=1.0).contains(&m.memory_usage),
+            "memory_usage {} out of [0, 1]",
+            m.memory_usage
+        );
+        assert!(
+            m.memory_usage > 0.0,
+            "a running machine has used memory, got {}",
+            m.memory_usage
+        );
+        assert!(
+            (0.0..=1.0).contains(&m.cpu_usage),
+            "cpu_usage {} out of [0, 1]",
+            m.cpu_usage
+        );
+        assert!(m.process_count >= 1, "this test process must be counted");
+        assert!(
+            m.load_average.one_minute >= 0.0
+                && m.load_average.five_minutes >= 0.0
+                && m.load_average.fifteen_minutes >= 0.0
+        );
+        assert!(m.timestamp > 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_network_io_counts_are_consistent() {
+        let monitor = HealthMonitor::new(HealthMonitorConfig::default());
+        let io = monitor.get_network_io().await.unwrap();
+        // Counters are per-interval deltas, so only invariants are checkable: a packet
+        // count cannot be nonzero while the byte count of the same direction is zero.
+        if io.packets_sent > 0 {
+            assert!(io.bytes_sent > 0, "packets sent without bytes sent: {io:?}");
+        }
+        if io.packets_received > 0 {
+            assert!(
+                io.bytes_received > 0,
+                "packets received without bytes received: {io:?}"
+            );
+        }
+    }
 }
