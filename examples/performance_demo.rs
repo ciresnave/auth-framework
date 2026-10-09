@@ -135,7 +135,7 @@ async fn demo_observability() -> Result<()> {
 
     let observability_config = ObservabilityConfig {
         enable_prometheus: true,
-        enable_opentelemetry: true,
+        enable_opentelemetry: false,
         enable_security_monitoring: true,
         trace_sampling_ratio: 1.0, // 100% for demo
         ..Default::default()

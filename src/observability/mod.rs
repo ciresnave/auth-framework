@@ -179,6 +179,9 @@ pub enum ThreatLevel {
 #[derive(Debug, Clone)]
 pub struct ObservabilityConfig {
     pub enable_prometheus: bool,
+    /// Has no effect: this crate contains no OpenTelemetry exporter. Kept so existing
+    /// struct literals keep compiling; setting it to `true` logs a warning from
+    /// [`ObservabilityManager::with_config`]. The default is `false`.
     pub enable_opentelemetry: bool,
     pub enable_security_monitoring: bool,
     pub metrics_retention_hours: u64,
@@ -191,7 +194,7 @@ impl Default for ObservabilityConfig {
     fn default() -> Self {
         Self {
             enable_prometheus: true,
-            enable_opentelemetry: true,
+            enable_opentelemetry: false,
             enable_security_monitoring: true,
             metrics_retention_hours: 24,
             trace_sampling_ratio: 0.1,
@@ -219,6 +222,11 @@ impl ObservabilityManager {
     /// let mgr = ObservabilityManager::with_config(ObservabilityConfig::default())?;
     /// ```
     pub fn with_config(config: ObservabilityConfig) -> Result<Self> {
+        if config.enable_opentelemetry {
+            tracing::warn!(
+                "ObservabilityConfig::enable_opentelemetry is set, but this crate has no                  OpenTelemetry exporter; the setting has no effect"
+            );
+        }
         #[cfg(feature = "prometheus")]
         let registry = Registry::new();
 
@@ -1127,5 +1135,32 @@ mod tests {
         let retrieved = monitor.get_suspicious_activity("user-1").await.unwrap();
         assert_eq!(retrieved.activity_type, "token_abuse");
         assert_eq!(retrieved.count, 10);
+    }
+
+    // This crate has no OpenTelemetry exporter, so the default must not claim one.
+    #[test]
+    fn default_config_does_not_enable_opentelemetry() {
+        assert!(!ObservabilityConfig::default().enable_opentelemetry);
+    }
+
+    // The deprecated flag is still accepted (existing struct literals keep working);
+    // setting it only logs a warning and does not change what the manager does.
+    #[test]
+    fn enable_opentelemetry_is_accepted_but_changes_nothing() {
+        let with = ObservabilityManager::with_config(ObservabilityConfig {
+            enable_opentelemetry: true,
+            ..ObservabilityConfig::default()
+        })
+        .expect("a config that sets the deprecated flag must still build a manager");
+        let without = ObservabilityManager::with_config(ObservabilityConfig::default()).unwrap();
+        assert!(with.get_config().enable_opentelemetry);
+        assert_eq!(
+            with.get_config().enable_prometheus,
+            without.get_config().enable_prometheus
+        );
+        assert_eq!(
+            with.get_config().metrics_retention_hours,
+            without.get_config().metrics_retention_hours
+        );
     }
 }
