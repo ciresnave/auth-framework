@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- OAuth2 refresh grant (#118): a refresh token that carries a `client_id` is now
+- 0.6.0-rc40 -- OAuth2 refresh grant (#118): a refresh token that carries a `client_id` is now
   redeemable ONLY by that client (RFC 6749 section 6). A confidential client (its
   registered record holds a `client_secret`) must authenticate with `client_id` +
   `client_secret`, and the authenticated client must be the one the token was
