@@ -150,6 +150,7 @@ impl ApiServerConfigBuilder {
 pub struct ApiServer {
     config: ApiServerConfig,
     auth_framework: Arc<AuthFramework>,
+    email_verification_sender: Option<Arc<dyn super::email_verification::EmailVerificationSender>>,
 }
 
 impl ApiServer {
@@ -158,6 +159,7 @@ impl ApiServer {
         Self {
             config: ApiServerConfig::default(),
             auth_framework,
+            email_verification_sender: None,
         }
     }
 
@@ -166,12 +168,24 @@ impl ApiServer {
         Self {
             config,
             auth_framework,
+            email_verification_sender: None,
         }
+    }
+
+    /// Install the channel that delivers email-verification tokens. Without one, the
+    /// verification endpoints cannot deliver anything and email verification cannot complete.
+    pub fn with_email_verification_sender(
+        mut self,
+        sender: Arc<dyn super::email_verification::EmailVerificationSender>,
+    ) -> Self {
+        self.email_verification_sender = Some(sender);
+        self
     }
 
     /// Assemble the Axum [`Router`] with all route groups and middleware.
     pub async fn build_router(&self) -> crate::errors::Result<Router> {
-        let state = ApiState::new(self.auth_framework.clone()).await?;
+        let mut state = ApiState::new(self.auth_framework.clone()).await?;
+        state.email_verification_sender = self.email_verification_sender.clone();
 
         // Create nested router for API v1
         let api_v1 = Router::new()

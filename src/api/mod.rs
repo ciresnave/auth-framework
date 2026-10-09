@@ -45,6 +45,10 @@ pub struct ApiState {
     pub rate_limiter: Arc<DistributedRateLimiter>,
     #[cfg(feature = "enhanced-rbac")]
     pub authorization_service: Arc<crate::authorization_enhanced::AuthorizationService>,
+    /// Delivers email-verification tokens to the address being verified. When `None`,
+    /// verification tokens are generated but nobody can receive them, so email
+    /// verification cannot complete (see [`email_verification`]).
+    pub email_verification_sender: Option<Arc<dyn email_verification::EmailVerificationSender>>,
 }
 
 impl ApiState {
@@ -66,7 +70,18 @@ impl ApiState {
             authorization_service: Arc::new(
                 crate::authorization_enhanced::AuthorizationService::new().await?,
             ),
+            email_verification_sender: None,
         })
+    }
+
+    /// Install the channel that delivers email-verification tokens to the address
+    /// being verified (typically an SMTP or transactional-email integration).
+    pub fn with_email_verification_sender(
+        mut self,
+        sender: Arc<dyn email_verification::EmailVerificationSender>,
+    ) -> Self {
+        self.email_verification_sender = Some(sender);
+        self
     }
 
     /// Build an [`ApiState`] with a pre-constructed authorization service.
@@ -85,6 +100,7 @@ impl ApiState {
             auth_framework,
             rate_limiter,
             authorization_service,
+            email_verification_sender: None,
         }
     }
 }

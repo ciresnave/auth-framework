@@ -240,7 +240,9 @@ Success response:
 
 ### POST /auth/verify-email/send
 
-Generate a verification token for the authenticated user's email address.
+Send a verification message to the authenticated user's email address. The token is delivered
+only through the `EmailVerificationSender` installed with `ApiState::with_email_verification_sender`;
+it is never part of the response. Without a sender configured nothing is delivered.
 
 Success response:
 
@@ -249,8 +251,7 @@ Success response:
   "success": true,
   "data": {
     "sent": true,
-    "verification_token": "url_safe_token",
-    "message": "Verification token generated. Use POST /auth/verify-email to confirm."
+    "message": "If an account with that email exists and is not yet verified, a verification message has been sent."
   }
 }
 ```
@@ -282,7 +283,9 @@ Success response:
 
 ### POST /auth/resend-verification
 
-Generate a fresh verification token for an email address. Unknown emails deliberately return a generic success payload.
+Send a fresh verification message to an email address. Unknown, already-verified and pending addresses all
+receive the same generic success payload, and the token is delivered only through the configured
+`EmailVerificationSender`, never in the response.
 
 ## User Management
 

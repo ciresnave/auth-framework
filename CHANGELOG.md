@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- Email verification: the verification token is delivered only through the
+  new `EmailVerificationSender` trait (install one with
+  `ApiState::with_email_verification_sender`) and is no longer part of any HTTP response.
+  `POST /auth/resend-verification` now returns one identical response for every address
+  (unknown, pending, already verified, delivery failed). **Breaking:** the
+  `verification_token` field is removed from `VerificationSentResponse`; `ApiState` gains
+  an `email_verification_sender` field (use `ApiState::new` + the builder). Without a
+  sender installed, no message can be delivered and email verification cannot complete
+  (`ApiServer::with_email_verification_sender` installs one for the built-in router).
+  A token is now bound to the address it was mailed to and verifies only that address;
+  changing the address on the profile clears `email_verified`. Tokens issued before this
+  change are not accepted (request a new one).
 - Fixed GHSA-cw9x-gg6m-9cqr (critical): the WebAuthn/passkey registration and
   sign-in endpoints did not require authentication. An unauthenticated caller
   could register a credential of their own for any username and then sign in

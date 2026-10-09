@@ -207,6 +207,10 @@ pub async fn update_profile(
                                 .store_kv(&new_email_key, auth_token.user_id.as_bytes(), None)
                                 .await;
                         }
+                        if user_json["email"].as_str() != Some(new_email.as_str()) {
+                            // A new address has not been proven yet.
+                            user_json["email_verified"] = serde_json::json!(false);
+                        }
                         user_json["email"] = serde_json::json!(new_email);
                     }
                     let name = match (&req.first_name, &req.last_name) {

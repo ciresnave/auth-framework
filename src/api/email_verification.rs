@@ -8,10 +8,14 @@
 //!
 //! ## Flow
 //! 1. User registers → `email_verified` set to `false` in user record
-//! 2. `POST /auth/verify-email/send` → generates verification token, returns it
-//!    (and sends email if SMTP is configured)
+//! 2. `POST /auth/verify-email/send` → generates a verification token and hands it to the
+//!    configured [`EmailVerificationSender`]
 //! 3. `POST /auth/verify-email` → verifies token, sets `email_verified: true`
-//! 4. `POST /auth/resend-verification` → regenerates token for the user
+//! 4. `POST /auth/resend-verification` → same as 2 for a not-yet-logged-in user
+//!
+//! The token proves control of the mailbox, so it is delivered ONLY through the sender
+//! (see [`ApiState::with_email_verification_sender`]) and is never part of a response.
+//! Without a sender nothing can be delivered and verification cannot complete.
 
 use crate::api::{ApiResponse, ApiState, extract_bearer_token, validate_api_token};
 use axum::{Json, extract::State, http::HeaderMap};
@@ -19,21 +23,92 @@ use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Delivers a verification token to the mailbox it proves ownership of.
+///
+/// The token is a proof of inbox control, so it must travel ONLY through this channel and
+/// never appear in an HTTP response. Implementations send `token` to `email`; failures are
+/// logged by the caller (without the error text) and never reported to the requester. Errors
+/// returned here must not contain the token.
+#[async_trait::async_trait]
+pub trait EmailVerificationSender: Send + Sync {
+    /// Send `token` to `email`, the address registered for `user_id`.
+    async fn send_verification_token(
+        &self,
+        email: &str,
+        user_id: &str,
+        token: &str,
+    ) -> crate::errors::Result<()>;
+}
+
 /// 24-hour TTL for verification tokens.
 const VERIFICATION_TOKEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// KV key prefix for email verification tokens.
 const VERIFY_KEY_PREFIX: &str = "email_verify:";
 
-/// Response returned when a verification token is generated.
+/// Response to a request to send a verification message. It never contains the token.
 #[derive(Debug, Serialize)]
 pub struct VerificationSentResponse {
-    /// Whether the operation succeeded.
+    /// Whether a request was accepted (identical for every address on the public path).
     pub sent: bool,
-    /// The verification token (returned directly for API-driven flows).
-    pub verification_token: String,
     /// Human-readable message.
     pub message: String,
+}
+
+const GENERIC_SENT_MESSAGE: &str = "If an account with that email exists and is not yet verified, a verification message has been sent.";
+
+fn generic_sent() -> ApiResponse<VerificationSentResponse> {
+    ApiResponse::success(VerificationSentResponse {
+        sent: true,
+        message: GENERIC_SENT_MESSAGE.to_string(),
+    })
+}
+
+/// Mint a token for `user_id`, store it, and deliver it to `email` through the sender.
+/// Delivery problems are logged and never reported to the requester.
+async fn issue_and_deliver(
+    state: &ApiState,
+    user_id: &str,
+    email: &str,
+) -> Result<(), &'static str> {
+    let token = generate_verification_token().map_err(|_| "token generation failed")?;
+    let verify_key = format!("{VERIFY_KEY_PREFIX}{token}");
+    // The token is bound to the address it is mailed to, so a later change of the
+    // account's address cannot be verified with a message sent to the old one.
+    let binding = serde_json::json!({ "user_id": user_id, "email": email });
+    state
+        .auth_framework
+        .storage()
+        .store_kv(
+            &verify_key,
+            binding.to_string().as_bytes(),
+            Some(VERIFICATION_TOKEN_TTL),
+        )
+        .await
+        .map_err(|_| "token storage failed")?;
+    match &state.email_verification_sender {
+        Some(sender) => {
+            // Delivery runs off the request path so that a slow mail gateway cannot be
+            // used to tell a pending address from an unknown or verified one by timing.
+            let sender = sender.clone();
+            let (email, user_id) = (email.to_string(), user_id.to_string());
+            tokio::spawn(async move {
+                if sender
+                    .send_verification_token(&email, &user_id, &token)
+                    .await
+                    .is_err()
+                {
+                    // The sender's error text is deliberately not logged: it could echo the token.
+                    tracing::error!(user_id, "Verification message could not be delivered");
+                }
+            });
+        }
+        None => tracing::warn!(
+            user_id,
+            "No EmailVerificationSender configured; verification token cannot be delivered"
+        ),
+    }
+    Ok(())
 }
 
 /// Request body for `POST /auth/verify-email`.
@@ -64,8 +139,8 @@ fn generate_verification_token() -> Result<String, crate::errors::AuthError> {
 
 /// `POST /auth/verify-email/send`
 ///
-/// Generates a verification token for the authenticated user's email.
-/// Requires a valid bearer token.
+/// Sends a verification message to the authenticated user's email address through the
+/// configured [`EmailVerificationSender`]. Requires a valid bearer token.
 pub async fn send_verification(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -108,44 +183,18 @@ pub async fn send_verification(
     {
         return ApiResponse::success(VerificationSentResponse {
             sent: false,
-            verification_token: String::new(),
             message: "Email is already verified".to_string(),
         });
     }
 
-    // Generate verification token
-    let verify_token = match generate_verification_token() {
-        Ok(t) => t,
-        Err(_) => {
-            return ApiResponse::error_typed(
-                "INTERNAL_ERROR",
-                "Failed to generate verification token",
-            );
-        }
+    let email = match user_json.get("email").and_then(|v| v.as_str()) {
+        Some(e) if !e.is_empty() => e.to_string(),
+        _ => return ApiResponse::error_typed("INTERNAL_ERROR", "User has no email address"),
     };
-
-    // Store: email_verify:{token} → user_id
-    let verify_key = format!("{VERIFY_KEY_PREFIX}{verify_token}");
-    if state
-        .auth_framework
-        .storage()
-        .store_kv(
-            &verify_key,
-            user_id.as_bytes(),
-            Some(VERIFICATION_TOKEN_TTL),
-        )
-        .await
-        .is_err()
-    {
-        return ApiResponse::error_typed("INTERNAL_ERROR", "Failed to store verification token");
+    if issue_and_deliver(&state, user_id, &email).await.is_err() {
+        return ApiResponse::error_typed("INTERNAL_ERROR", "Failed to create verification token");
     }
-
-    ApiResponse::success(VerificationSentResponse {
-        sent: true,
-        verification_token: verify_token,
-        message: "Verification token generated. Use POST /auth/verify-email to confirm."
-            .to_string(),
-    })
+    generic_sent()
 }
 
 /// `POST /auth/verify-email`
@@ -163,7 +212,7 @@ pub async fn verify_email(
 
     // Look up verification token
     let verify_key = format!("{VERIFY_KEY_PREFIX}{}", body.token);
-    let user_id_bytes = match state.auth_framework.storage().get_kv(&verify_key).await {
+    let binding_bytes = match state.auth_framework.storage().get_kv(&verify_key).await {
         Ok(Some(b)) => b,
         Ok(None) => {
             return ApiResponse::error_typed(
@@ -176,11 +225,25 @@ pub async fn verify_email(
         }
     };
 
-    let user_id = match String::from_utf8(user_id_bytes) {
-        Ok(id) => id,
+    // A token names the account AND the address it was mailed to. Anything else (including
+    // tokens stored in an older format) is not accepted.
+    let binding: serde_json::Value = match serde_json::from_slice(&binding_bytes) {
+        Ok(v) => v,
         Err(_) => {
-            return ApiResponse::error_typed("INTERNAL_ERROR", "Corrupted verification token");
+            return ApiResponse::error_typed(
+                "INVALID_TOKEN",
+                "Verification token is invalid or expired",
+            );
         }
+    };
+    let (Some(user_id), Some(bound_email)) = (
+        binding["user_id"].as_str().map(String::from),
+        binding["email"].as_str().map(String::from),
+    ) else {
+        return ApiResponse::error_typed(
+            "INVALID_TOKEN",
+            "Verification token is invalid or expired",
+        );
     };
 
     // Update user record: set email_verified = true
@@ -198,6 +261,15 @@ pub async fn verify_email(
             return ApiResponse::error_typed("INTERNAL_ERROR", "Failed to read user record");
         }
     };
+
+    // The token only proves control of the address it was mailed to.
+    if user_json["email"].as_str() != Some(bound_email.as_str()) {
+        let _ = state.auth_framework.storage().delete_kv(&verify_key).await;
+        return ApiResponse::error_typed(
+            "INVALID_TOKEN",
+            "Verification token is invalid or expired",
+        );
+    }
 
     user_json["email_verified"] = serde_json::Value::Bool(true);
 
@@ -223,9 +295,9 @@ pub async fn verify_email(
 
 /// `POST /auth/resend-verification`
 ///
-/// Generates a new verification token for the given email address.
-/// This endpoint is public so users who haven't logged in yet can request
-/// a new verification. Rate limiting should be applied at the middleware level.
+/// Sends a new verification message to the given email address. This endpoint is public
+/// so users who haven't logged in yet can request a new verification; it returns the same
+/// response for every address. Rate limiting should be applied at the middleware level.
 pub async fn resend_verification(
     State(state): State<ApiState>,
     Json(body): Json<ResendVerificationRequest>,
@@ -234,106 +306,46 @@ pub async fn resend_verification(
         return ApiResponse::error_typed("VALIDATION_ERROR", "Email address is required");
     }
 
-    // Look up user by email
+    // Every outcome below (unknown address, already verified, mail sent, mail failed)
+    // returns the same response, so the endpoint reveals nothing about the account.
     let email_key = format!("user:email:{}", body.email);
-    let user_id_bytes = match state.auth_framework.storage().get_kv(&email_key).await {
-        Ok(Some(b)) => b,
-        // Return a generic success to prevent email enumeration
-        Ok(None) | Err(_) => {
-            return ApiResponse::success(VerificationSentResponse {
-                sent: true,
-                verification_token: String::new(),
-                message:
-                    "If an account with that email exists, a verification token has been generated."
-                        .to_string(),
-            });
-        }
+    let Ok(Some(id_bytes)) = state.auth_framework.storage().get_kv(&email_key).await else {
+        return generic_sent();
     };
-
-    let user_id = match String::from_utf8(user_id_bytes) {
-        Ok(id) => id,
-        Err(_) => {
-            return ApiResponse::success(VerificationSentResponse {
-                sent: true,
-                verification_token: String::new(),
-                message:
-                    "If an account with that email exists, a verification token has been generated."
-                        .to_string(),
-            });
-        }
+    let Ok(user_id) = String::from_utf8(id_bytes) else {
+        return generic_sent();
     };
-
-    // Check if already verified
-    let user_key = format!("user:{user_id}");
-    let user_bytes = match state.auth_framework.storage().get_kv(&user_key).await {
-        Ok(Some(b)) => b,
-        _ => {
-            return ApiResponse::success(VerificationSentResponse {
-                sent: true,
-                verification_token: String::new(),
-                message:
-                    "If an account with that email exists, a verification token has been generated."
-                        .to_string(),
-            });
-        }
+    let Ok(Some(user_bytes)) = state
+        .auth_framework
+        .storage()
+        .get_kv(&format!("user:{user_id}"))
+        .await
+    else {
+        return generic_sent();
     };
-    let user_json: serde_json::Value = match serde_json::from_slice(&user_bytes) {
-        Ok(v) => v,
-        Err(_) => {
-            return ApiResponse::success(VerificationSentResponse {
-                sent: true,
-                verification_token: String::new(),
-                message:
-                    "If an account with that email exists, a verification token has been generated."
-                        .to_string(),
-            });
-        }
+    let Ok(user_json) = serde_json::from_slice::<serde_json::Value>(&user_bytes) else {
+        return generic_sent();
     };
-
     if user_json
         .get("email_verified")
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
     {
-        return ApiResponse::success(VerificationSentResponse {
-            sent: false,
-            verification_token: String::new(),
-            message: "Email is already verified".to_string(),
-        });
+        return generic_sent();
     }
 
-    // Generate new verification token
-    let verify_token = match generate_verification_token() {
-        Ok(t) => t,
-        Err(_) => {
-            return ApiResponse::error_typed(
-                "INTERNAL_ERROR",
-                "Failed to generate verification token",
-            );
-        }
-    };
-
-    let verify_key = format!("{VERIFY_KEY_PREFIX}{verify_token}");
-    if state
-        .auth_framework
-        .storage()
-        .store_kv(
-            &verify_key,
-            user_id.as_bytes(),
-            Some(VERIFICATION_TOKEN_TTL),
-        )
+    // Only the address on the account record receives a token; a stale index entry
+    // pointing at a changed address is ignored.
+    if user_json.get("email").and_then(|v| v.as_str()) != Some(body.email.as_str()) {
+        return generic_sent();
+    }
+    if issue_and_deliver(&state, &user_id, &body.email)
         .await
         .is_err()
     {
-        return ApiResponse::error_typed("INTERNAL_ERROR", "Failed to store verification token");
+        tracing::error!(user_id, "Could not create a verification token");
     }
-
-    ApiResponse::success(VerificationSentResponse {
-        sent: true,
-        verification_token: verify_token,
-        message: "Verification token generated. Use POST /auth/verify-email to confirm."
-            .to_string(),
-    })
+    generic_sent()
 }
 
 #[cfg(test)]
