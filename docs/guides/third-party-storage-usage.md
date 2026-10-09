@@ -577,7 +577,7 @@ mod integration_tests {
 ### Docker Configuration
 
 ```dockerfile
-FROM rust:1.70 as builder
+FROM rust:1.95 as builder
 
 WORKDIR /app
 COPY . .

@@ -7,7 +7,7 @@ If you are looking to deploy the standalone server binary, see [DEPLOYMENT_GUIDE
 
 ## Prerequisites
 
-- Rust 1.89+ with Cargo
+- Rust 1.95+ with Cargo
 - An async runtime — the examples use [Tokio](https://tokio.rs)
 - A database — PostgreSQL is the recommended default storage backend
 

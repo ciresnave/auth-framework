@@ -10,7 +10,7 @@ policies.
 
 | Property                              | Value    |
 | ------------------------------------- | -------- |
-| Minimum Supported Rust Version (MSRV) | **1.89** |
+| Minimum Supported Rust Version (MSRV) | **1.95** |
 | Rust Edition                          | 2024     |
 | Recommended toolchain                 | `stable` |
 

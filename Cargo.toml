@@ -57,7 +57,7 @@
   name          = "auth-framework"
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
-  rust-version  = "1.89"
+  rust-version  = "1.95"
   version       = "0.6.0-rc21"
 
 [workspace]

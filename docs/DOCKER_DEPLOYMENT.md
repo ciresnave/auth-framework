@@ -127,7 +127,7 @@ docker-compose down -v
 ```dockerfile
 # Dockerfile
 # Build stage
-FROM rust:1.83-alpine AS builder
+FROM rust:1.95-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache \

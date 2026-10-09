@@ -153,7 +153,7 @@ AUTH_THREAT_INTEL_FEEDS_0_API_KEY=key1
 
 ```dockerfile
 # Dockerfile
-FROM rust:1.75-alpine
+FROM rust:1.95-alpine
 COPY . /app
 WORKDIR /app
 
