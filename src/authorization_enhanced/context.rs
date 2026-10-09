@@ -96,6 +96,8 @@ pub struct ContextBuilder {
     business_end: u8,
     /// IP ranges for corporate networks
     corporate_networks: Vec<ipnetwork::IpNetwork>,
+    /// Reverse proxies whose `X-Forwarded-For` is believed (see [`Self::with_trusted_proxies`])
+    trusted_proxies: Vec<IpAddr>,
 }
 
 impl Default for ContextBuilder {
@@ -112,7 +114,17 @@ impl ContextBuilder {
             business_start: 9,
             business_end: 17,
             corporate_networks: Vec::new(),
+            trusted_proxies: Vec::new(),
         }
+    }
+
+    /// Declare the reverse proxies in front of the server (by the address they connect
+    /// from). The client address in the context is the connection's peer address; only when
+    /// the peer is one of these is `X-Forwarded-For` consulted (rightmost entry that is not
+    /// itself a trusted proxy). Without this, forwarding headers are ignored.
+    pub fn with_trusted_proxies(mut self, proxies: Vec<IpAddr>) -> Self {
+        self.trusted_proxies = proxies;
+        self
     }
 
     /// Configure business hours
@@ -228,35 +240,20 @@ impl ContextBuilder {
         map
     }
 
-    /// Extract IP address from request headers
+    /// The client address: the connection's peer address, or, when the peer is a configured
+    /// trusted proxy, the client it forwarded for (see [`Self::with_trusted_proxies`]).
+    /// Forwarding headers from anyone else are ignored, and without a peer address there is
+    /// no client address.
     fn extract_ip_address(&self, request: &Request) -> Option<IpAddr> {
-        // Try X-Forwarded-For first
-        if let Some(forwarded) = request.headers().get("x-forwarded-for")
-            && let Ok(forwarded_str) = forwarded.to_str()
-        {
-            if let Some(ip_str) = forwarded_str.split(',').next()
-                && let Ok(ip) = ip_str.trim().parse()
-            {
-                return Some(ip);
-            }
-
-            // Try X-Real-IP
-            if let Some(real_ip) = request.headers().get("x-real-ip")
-                && let Ok(ip_str) = real_ip.to_str()
-                && let Ok(ip) = ip_str.parse()
-            {
-                return Some(ip);
-            }
-
-            // Could also get from connection info if available
-            None
-        } else {
-            // Fallback to remote address if no headers found
-            request
-                .extensions()
-                .get::<axum::extract::ConnectInfo<IpAddr>>()
-                .map(|info| info.0)
-        }
+        let peer = request
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|info| info.0.ip())?;
+        Some(crate::api::middleware::forwarded_client_ip(
+            peer,
+            request.headers(),
+            &self.trusted_proxies,
+        ))
     }
 
     /// Extract user agent from request headers

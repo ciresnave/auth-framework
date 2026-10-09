@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- Authorization context client address: the address that `authorization_enhanced`
+  policies see (`AuthorizationContext::ip_address` and the `ip_address` entry of the request
+  context) is now the connection's peer address, or, when the peer is listed in
+  `ContextBuilder::with_trusted_proxies` / `ApiState::trusted_proxies`, the client that proxy
+  forwarded for (rightmost `X-Forwarded-For` entry that is not itself a trusted proxy). A raw
+  `X-Forwarded-For` / `X-Real-IP` is never copied into the context any more, and a request
+  with no peer address has no client address. Serve the router with
+  `into_make_service_with_connect_info::<SocketAddr>()`. Behind a reverse proxy, list the proxy
+  in BOTH places (`ApiServer::with_trusted_proxies` and `ContextBuilder::with_trusted_proxies`),
+  and do not put the proxy's own address in `corporate_networks` or an `IpWhitelist`: an
+  unlisted proxy makes every client look like the proxy. `ip_address` is now always a single
+  canonical IP (it used to be the raw header, e.g. `a, b, c`) and is absent without a peer
+  address; a `ConnectInfo<IpAddr>` inserted by the integrator is no longer read.
 - 0.6.0-rcXX -- Refresh tokens are single-use and tokens of deactivated accounts stop
   working. `POST /auth/refresh` (and the axum integration's refresh route) returns the next
   refresh token with the new access token; the redeemed token is spent, and presenting an

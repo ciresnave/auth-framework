@@ -32,7 +32,7 @@ fn sanitize_header_for_log(value: &str) -> String {
 /// else the proxy's own address (`X-Real-IP` is not consulted: many proxies pass a
 /// client-supplied copy through). Every trusted proxy must APPEND to `X-Forwarded-For`
 /// rather than pass it through. Anything unparsable falls back to the peer.
-fn forwarded_client_ip(
+pub(crate) fn forwarded_client_ip(
     peer: IpAddr,
     headers: &axum::http::HeaderMap,
     trusted_proxies: &[IpAddr],

@@ -39,7 +39,7 @@ pub async fn rbac_middleware(
     };
 
     // Build request context for conditional permissions
-    let context = build_request_context(&request, &auth_token);
+    let context = build_request_context(&request, &auth_token, &state.trusted_proxies);
 
     // Check authorization using role-system
     let authorized = match check_authorization(&state, &auth_token, &request, &context).await {
@@ -174,7 +174,11 @@ async fn check_authorization(
 }
 
 /// Build request context for conditional permissions
-fn build_request_context(request: &Request, auth_token: &AuthToken) -> HashMap<String, String> {
+fn build_request_context(
+    request: &Request,
+    auth_token: &AuthToken,
+    trusted_proxies: &[std::net::IpAddr],
+) -> HashMap<String, String> {
     let mut context = HashMap::new();
 
     // Add user context
@@ -188,11 +192,18 @@ fn build_request_context(request: &Request, auth_token: &AuthToken) -> HashMap<S
         context.insert("user_agent".to_string(), ua_str.to_string());
     }
 
-    // Add IP address
-    if let Some(forwarded_for) = request.headers().get("x-forwarded-for")
-        && let Ok(ip_str) = forwarded_for.to_str()
+    // Add IP address: the connection's peer, or the client a trusted proxy forwarded for.
+    // A raw X-Forwarded-For is never copied into the context.
+    if let Some(connect_info) = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
     {
-        context.insert("ip_address".to_string(), ip_str.to_string());
+        let client = crate::api::middleware::forwarded_client_ip(
+            connect_info.0.ip(),
+            request.headers(),
+            trusted_proxies,
+        );
+        context.insert("ip_address".to_string(), client.to_string());
     }
 
     // Add time-based context
@@ -344,6 +355,38 @@ fn check_token_permission(auth_token: &AuthToken, action: &str, resource: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn request_from(peer: Option<&str>, xff: Option<&str>) -> Request {
+        let mut b = axum::http::Request::builder().uri("/api/things");
+        if let Some(xff) = xff {
+            b = b.header("x-forwarded-for", xff);
+        }
+        let mut req = b.body(axum::body::Body::empty()).unwrap();
+        if let Some(peer) = peer {
+            let peer: std::net::SocketAddr = format!("{peer}:40000").parse().unwrap();
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo(peer));
+        }
+        req
+    }
+
+    #[test]
+    fn the_context_ip_is_the_peer_not_a_forwarded_header() {
+        let token = AuthToken::new("u", "t", std::time::Duration::from_secs(60), "test");
+
+        let spoofed = request_from(Some("198.51.100.9"), Some("10.0.0.5"));
+        let ctx = build_request_context(&spoofed, &token, &[]);
+        assert_eq!(ctx["ip_address"], "198.51.100.9");
+
+        let proxy: std::net::IpAddr = "10.0.0.1".parse().unwrap();
+        let behind = request_from(Some("10.0.0.1"), Some("6.6.6.6, 203.0.113.7"));
+        let ctx = build_request_context(&behind, &token, &[proxy]);
+        assert_eq!(ctx["ip_address"], "203.0.113.7");
+
+        // no peer address: no ip at all, whatever the header says
+        let none = request_from(None, Some("10.0.0.5"));
+        assert!(!build_request_context(&none, &token, &[]).contains_key("ip_address"));
+    }
 
     #[test]
     fn test_public_endpoint_detection() {
