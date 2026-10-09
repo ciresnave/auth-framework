@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc41"
+  version       = "0.6.0-rc42"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -250,7 +250,9 @@
   x509-parser = "0.18.0"
 
   # X.509 certificate chain validation (production-grade)
-  rustls-webpki = "0.103.11"
+  # `ring` backend (already a dependency of this crate), not aws-lc-rs: no new C code.
+  rustls-webpki = { version = "0.103.11", default-features = false, features = ["std", "ring"] }
+  rustls-pki-types = "1.12"
 
   # Fast CRC32 calculation
   crc32fast = "1.3"

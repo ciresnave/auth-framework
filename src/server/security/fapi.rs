@@ -580,9 +580,9 @@ impl FapiManager {
             let cert = client_cert.ok_or_else(|| {
                 AuthError::auth_method("mtls", "mTLS certificate required for FAPI 2.0")
             })?;
-            let cert_bytes = cert.as_bytes(); // Convert to bytes for validation
+            let cert_bytes = decode_client_certificate(cert)?;
             self.mtls_manager
-                .validate_client_certificate(cert_bytes, &claims.client_id)
+                .validate_client_certificate(&cert_bytes, &claims.client_id)
                 .await?;
         }
 
@@ -795,13 +795,14 @@ impl FapiManager {
             self.authenticate_client_jwt(assertion).await?
         } else if self.config.require_mtls {
             if let Some(cert) = client_cert {
-                let cert_bytes = cert.as_bytes();
+                let cert_bytes = decode_client_certificate(cert)?;
 
-                // Extract client ID from certificate subject or validate against registration
-                let client_id = self.extract_client_id_from_certificate(cert_bytes).await?;
+                // Look the client up by the identity the certificate carries; the manager then
+                // verifies the chain AND that this certificate is bound to that client.
+                let client_id = self.extract_client_id_from_certificate(&cert_bytes).await?;
 
                 self.mtls_manager
-                    .validate_client_certificate(cert_bytes, &client_id)
+                    .validate_client_certificate(&cert_bytes, &client_id)
                     .await?;
 
                 client_id.to_string()
@@ -1082,45 +1083,7 @@ impl FapiManager {
 
     /// Extract client ID from certificate
     async fn extract_client_id_from_certificate(&self, cert_bytes: &[u8]) -> Result<String> {
-        // Parse the certificate and extract client ID from subject CN or SAN
-        // For now, implement a basic extraction that works with common certificate formats
-
-        // Convert certificate to string for parsing (in production, use proper X.509 parsing)
-        let cert_str = String::from_utf8_lossy(cert_bytes);
-
-        // Look for Common Name (CN) in the certificate subject
-        if let Some(cn_start) = cert_str.find("CN=") {
-            let cn_section = &cert_str[cn_start + 3..];
-            if let Some(cn_end) = cn_section.find(',').or_else(|| cn_section.find('\n')) {
-                let client_id = cn_section[..cn_end].trim().to_string();
-                if !client_id.is_empty() {
-                    tracing::info!("Extracted client ID from certificate CN: {}", client_id);
-                    return Ok(client_id);
-                }
-            }
-        }
-
-        // Fallback: Look for Subject Alternative Name (SAN) with client ID
-        if let Some(san_start) = cert_str.find("DNS:") {
-            let san_section = &cert_str[san_start + 4..];
-            if let Some(san_end) = san_section.find(',').or_else(|| san_section.find('\n')) {
-                let client_id = san_section[..san_end].trim().to_string();
-                if !client_id.is_empty() && client_id.contains("client") {
-                    tracing::info!("Extracted client ID from certificate SAN: {}", client_id);
-                    return Ok(client_id);
-                }
-            }
-        }
-
-        // If no client ID found, use SHA-256 of the certificate bytes for a stable identifier
-        use sha2::{Digest, Sha256};
-        let cert_hash = format!("cert_client_{}", hex::encode(Sha256::digest(cert_bytes)));
-
-        tracing::info!(
-            "Generated hash-based client ID from certificate: {}",
-            cert_hash
-        );
-        Ok(cert_hash)
+        client_id_from_certificate(cert_bytes)
     }
 
     /// Validate FAPI 2.0 compliance of the current configuration.
@@ -1275,11 +1238,12 @@ impl FapiManager {
                     "Token is certificate-bound but no client certificate provided".to_string(),
                 )
             })?;
-            // Compute SHA-256 thumbprint of presented certificate
+            // RFC 8705 x5t#S256: SHA-256 over the DER encoding of the presented certificate
             use base64::Engine;
             use sha2::{Digest, Sha256};
-            let presented_thumbprint = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .encode(Sha256::digest(cert.as_bytes()));
+            let cert_der = decode_client_certificate(cert)?;
+            let presented_thumbprint =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(&cert_der));
             if !bool::from(subtle::ConstantTimeEq::ct_eq(
                 presented_thumbprint.as_bytes(),
                 expected_thumbprint.as_bytes(),
@@ -1488,6 +1452,92 @@ impl Default for FapiConfig {
     }
 }
 
+/// Decode a client certificate passed as text: PEM (`-----BEGIN CERTIFICATE-----`) or bare
+/// base64 of the DER encoding. The text must come from the TLS handshake (or a proxy that
+/// strips client-supplied copies), never from a header or body the client chooses. DER is binary, so the `&str` entry points of this module can
+/// only ever receive an encoded form; hashing or parsing the text bytes themselves is wrong.
+fn decode_client_certificate(input: &str) -> Result<Vec<u8>> {
+    use base64::Engine;
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    let bad = || {
+        AuthError::auth_method(
+            "mtls",
+            "Client certificate must be PEM or base64-encoded DER",
+        )
+    };
+
+    let trimmed = input.trim();
+    let body = if let Some(rest) = trimmed.strip_prefix(BEGIN) {
+        let end = rest.find(END).ok_or_else(bad)?;
+        // Exactly one certificate: nothing but whitespace may follow the END line.
+        if !rest[end + END.len()..].trim().is_empty() {
+            return Err(bad());
+        }
+        &rest[..end]
+    } else {
+        trimmed
+    };
+    let compact: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.is_empty() {
+        return Err(bad());
+    }
+    STANDARD
+        .decode(&compact)
+        .or_else(|_| STANDARD_NO_PAD.decode(&compact))
+        .or_else(|_| URL_SAFE.decode(&compact))
+        .or_else(|_| URL_SAFE_NO_PAD.decode(&compact))
+        .map_err(|_| bad())
+}
+
+/// The client identity a certificate carries: its single subject CN, otherwise its single
+/// DNS/URI subjectAltName. Parsed from the DER, never searched for as text in the raw bytes.
+fn client_id_from_certificate(cert_der: &[u8]) -> Result<String> {
+    use x509_parser::extensions::GeneralName;
+
+    let cert = match x509_parser::parse_x509_certificate(cert_der) {
+        Ok(([], cert)) => cert,
+        _ => {
+            return Err(AuthError::auth_method(
+                "mtls",
+                "Invalid client certificate format",
+            ));
+        }
+    };
+
+    let common_names: Vec<String> = cert
+        .subject()
+        .iter_common_name()
+        .filter_map(|cn| cn.as_str().ok().map(str::to_string))
+        .collect();
+    if common_names.len() == 1 && !common_names[0].is_empty() {
+        return Ok(common_names[0].clone());
+    }
+
+    if let Ok(Some(san)) = cert.subject_alternative_name() {
+        let names: Vec<String> = san
+            .value
+            .general_names
+            .iter()
+            .filter_map(|name| match name {
+                GeneralName::DNSName(dns) => Some(dns.to_string()),
+                GeneralName::URI(uri) => Some(uri.to_string()),
+                _ => None,
+            })
+            .collect();
+        if names.len() == 1 {
+            return Ok(names[0].clone());
+        }
+    }
+
+    Err(AuthError::auth_method(
+        "mtls",
+        "Cannot derive a unique client id from the certificate (need one subject CN or one SAN)",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1659,5 +1709,71 @@ mod tests {
         assert!(session_data["mtls_cert"].is_string());
         assert!(session_data["dpop_key"].is_string());
         assert!(config.enhanced_audit);
+    }
+
+    // ---- certificate input decoding and client-id derivation ----
+
+    fn test_cert(cn: &str, org: Option<&str>) -> rcgen::Certificate {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        let mut dn = rcgen::DistinguishedName::new();
+        dn.push(rcgen::DnType::CommonName, cn);
+        if let Some(org) = org {
+            dn.push(rcgen::DnType::OrganizationName, org);
+        }
+        params.distinguished_name = dn;
+        let key = rcgen::KeyPair::generate().unwrap();
+        params.self_signed(&key).unwrap()
+    }
+
+    #[test]
+    fn decode_client_certificate_accepts_pem_and_base64_der() {
+        use base64::Engine;
+        let cert = test_cert("client-a", None);
+        let der = cert.der().to_vec();
+
+        assert_eq!(decode_client_certificate(&cert.pem()).unwrap(), der);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&der);
+        assert_eq!(decode_client_certificate(&b64).unwrap(), der);
+        let wrapped = format!("  {}\n{}  \n", &b64[..20], &b64[20..]);
+        assert_eq!(decode_client_certificate(&wrapped).unwrap(), der);
+    }
+
+    #[test]
+    fn decode_client_certificate_rejects_garbage_and_extra_certificates() {
+        let a = test_cert("client-a", None).pem();
+        let b = test_cert("client-b", None).pem();
+        assert!(decode_client_certificate("").is_err());
+        assert!(decode_client_certificate("!!! not base64 !!!").is_err());
+        assert!(decode_client_certificate("-----BEGIN CERTIFICATE-----\nAAAA").is_err());
+        // Two certificates in one value: refuse rather than silently using the first.
+        assert!(decode_client_certificate(&format!("{a}{b}")).is_err());
+    }
+
+    #[test]
+    fn client_id_comes_from_the_parsed_subject_cn() {
+        let cert = test_cert("client-a", None);
+        assert_eq!(client_id_from_certificate(cert.der()).unwrap(), "client-a");
+    }
+
+    #[test]
+    fn client_id_is_not_found_by_searching_the_raw_bytes() {
+        // Text that merely looks like "CN=..." inside another attribute (here Organization) is
+        // not an identity: the id comes from the parsed subject.
+        let cert = test_cert("real-client", Some("CN=victim-client,"));
+        assert_eq!(
+            client_id_from_certificate(cert.der()).unwrap(),
+            "real-client"
+        );
+    }
+
+    #[test]
+    fn client_id_needs_a_unique_identity() {
+        // No CN and no SAN: there is nothing to derive, so no id is invented.
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new(); // rcgen defaults to a CN
+        let key = rcgen::KeyPair::generate().unwrap();
+        let nameless = params.self_signed(&key).unwrap();
+        assert!(client_id_from_certificate(nameless.der()).is_err());
+        assert!(client_id_from_certificate(b"not a certificate").is_err());
     }
 }
