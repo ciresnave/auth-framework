@@ -299,7 +299,12 @@ pub async fn introspect_token(
             // Tokens revoked via POST /oauth/revoke or POST /auth/logout are stored
             // under revoked_token:{jti}; return active=false without revealing why.
             let revocation_key = format!("revoked_token:{}", claims.jti);
-            if let Ok(Some(_)) = state.auth_framework.storage().get_kv(&revocation_key).await {
+            // A revocation list that cannot be read is treated as "revoked" (fail closed).
+            let revoked = !matches!(
+                state.auth_framework.storage().get_kv(&revocation_key).await,
+                Ok(None)
+            );
+            if revoked {
                 debug!(
                     "Token introspection: token has been revoked (jti: {})",
                     claims.jti

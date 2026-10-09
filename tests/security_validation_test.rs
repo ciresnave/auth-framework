@@ -160,7 +160,7 @@ async fn test_no_insecure_payload_extraction() {
     }
 
     // Verify JWT validation is used instead
-    if source_code.contains("validate_jwt_token") {
+    if source_code.contains("validate_access_jwt") {
         println!("✅ SECURITY PASS: Secure JWT validation function is being used");
     } else {
         panic!("❌ Missing secure JWT validation in ActixWeb integration");

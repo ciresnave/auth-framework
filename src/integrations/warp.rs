@@ -56,8 +56,8 @@ pub fn with_auth(
 
             // Validate using the framework's TokenManager (full HMAC/RSA signature verification)
             let claims = auth_framework
-                .token_manager()
-                .validate_jwt_token(&token_str)
+                .validate_access_jwt(&token_str)
+                .await
                 .map_err(|e| warp::reject::custom(AuthRejection { error: e }))?;
 
             // Convert the validated JwtClaims into an AuthToken
@@ -320,7 +320,7 @@ fn extract_token_from_header(auth_header: &str) -> Result<String> {
 /// - Token expiration
 ///
 /// For full signature verification, use [`with_auth`] which delegates to the
-/// framework's [`TokenManager::validate_jwt_token`].
+/// framework's [`AuthFramework::validate_access_jwt`].
 fn validate_token_secure(token_str: &str) -> Result<AuthToken> {
     // Basic format validation
     if token_str.len() < 10 {

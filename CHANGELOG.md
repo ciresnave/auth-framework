@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- Bearer JWT validation: `AuthFramework::validate_access_jwt` is now the one
+  check for a JWT presented as an access token (signature and claims, not a refresh token,
+  not revoked; a revocation list that cannot be read rejects the token). It backs
+  `validate_api_token`, the axum `auth_middleware` / `AuthenticatedUser` / refresh handler,
+  the actix middleware and permission checks, the warp filter, the unified validator,
+  OAuth `userinfo`, and JWT credentials passed to `authenticate`. Tokens revoked by logout or
+  revocation, and refresh JWTs, are therefore refused on those paths (previously only
+  `validate_api_token` refused revoked tokens). `AuthFramework::revoke_token` now also writes
+  the revocation marker. Introspection answers `active: false` when the revocation list
+  cannot be read. Rejections are `AuthError::Token(Invalid)` (HTTP 401 in the axum
+  integration) instead of `AuthError::Unauthorized`. Cost: one extra storage read per
+  authenticated request; custom `AuthStorage` implementations must return `Ok(None)` for a
+  missing key. Not covered here: `AuthFramework::validate_token` (checks the stored token
+  record), token exchange subject/actor tokens, and OIDC `get_userinfo` (rejects refresh
+  JWTs but does not read the revocation list).
 - 0.6.0-rcXX -- MFA: an MFA challenge now allows a limited number of attempts
   (`max_attempts`, 5 for login challenges); each attempt is counted before the code is
   checked and an exhausted challenge is removed. Wrong codes submitted at `/auth/login` are

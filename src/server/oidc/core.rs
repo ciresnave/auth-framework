@@ -704,6 +704,12 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
             .token_manager
             .validate_jwt_token(access_token)
             .map_err(|e| AuthError::auth_method("oidc", format!("Invalid access token: {}", e)))?;
+        if token_claims.is_refresh_token() {
+            return Err(AuthError::auth_method(
+                "oidc",
+                "Invalid access token: a refresh token cannot be used here",
+            ));
+        }
 
         // Extract subject from token
         let subject = &token_claims.sub;

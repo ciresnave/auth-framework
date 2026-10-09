@@ -537,7 +537,13 @@ impl AuthFramework {
             return Ok(AuthResult::Failure("JWT token cannot be empty".to_string()));
         }
 
-        match self.token_manager.validate_jwt_token(token) {
+        match crate::auth::validate_access_jwt_with(
+            &self.token_manager,
+            self.storage.as_ref(),
+            token,
+        )
+        .await
+        {
             Ok(claims) => {
                 let token =
                     Self::build_validated_jwt_auth_token(token, claims, metadata, auth_method);

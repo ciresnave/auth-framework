@@ -75,7 +75,7 @@ impl AuthMiddleware {
 
 /// Extract validated user context from JWT token and request
 /// SECURITY NOTE: This function was removed due to critical JWT signature bypass vulnerability.
-/// All JWT validation must use proper signature verification through TokenManager::validate_jwt_token()
+/// All JWT validation must use proper signature verification through AuthFramework::validate_access_jwt()
 /// instead of directly decoding the payload without verification.
 impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
 where
@@ -161,13 +161,10 @@ where
             match extract_token_from_request(req.request()) {
                 Ok(token_str) => {
                     // Parse and validate JWT token using AuthFramework
-                    match auth_framework
-                        .token_manager()
-                        .validate_jwt_token(&token_str)
-                    {
+                    match auth_framework.validate_access_jwt(&token_str).await {
                         Ok(claims) => {
                             // Convert claims to AuthToken and insert into extensions
-                            // `validate_jwt_token` already verified exp/iat are in range for the
+                            // `validate_access_jwt` already verified exp/iat are in range for the
                             // jsonwebtoken crate, but timestamp_opt can still return None for
                             // values outside chrono's range (before ~1678 or after ~2262).
                             // Fall back to UNIX_EPOCH: issued_at looks ancient, expires_at
@@ -352,8 +349,8 @@ impl<S: AuthorizationStorage + 'static> RequirePermission<S> {
         // SECURITY FIX: Use proper JWT validation instead of insecure extraction
         // Validate the JWT token signature before trusting any claims
         let claims = match auth_framework
-            .token_manager()
-            .validate_jwt_token(&token.access_token)
+            .validate_access_jwt(&token.access_token)
+            .await
         {
             Ok(validated_claims) => validated_claims,
             Err(e) => {
@@ -419,8 +416,8 @@ impl<S: AuthorizationStorage + 'static> FromRequest for RequirePermission<S> {
                 // Validate the JWT token signature before trusting any claims
                 let claims = match app_data
                     .auth_framework
-                    .token_manager()
-                    .validate_jwt_token(&token.access_token)
+                    .validate_access_jwt(&token.access_token)
+                    .await
                 {
                     Ok(validated_claims) => validated_claims,
                     Err(e) => {

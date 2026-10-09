@@ -235,6 +235,38 @@ fn resolve_jwt_secret_bytes(config: &AuthConfig) -> Result<Vec<u8>> {
     ))
 }
 
+/// Shared implementation of [`AuthFramework::validate_access_jwt`] (also used by the
+/// modular framework): signature and claims, not a refresh token, not revoked.
+pub(crate) async fn validate_access_jwt_with(
+    token_manager: &TokenManager,
+    storage: &dyn AuthStorage,
+    token: &str,
+) -> Result<crate::tokens::JwtClaims> {
+    let claims = token_manager.validate_jwt_token(token)?;
+    if claims.is_refresh_token() {
+        return Err(rejected(
+            "A refresh token cannot be used as an access token",
+        ));
+    }
+    match storage
+        .get_kv(&format!("revoked_token:{}", claims.jti))
+        .await
+    {
+        Ok(None) => Ok(claims),
+        Ok(Some(_)) => Err(rejected("Token has been revoked")),
+        Err(e) => {
+            tracing::error!("Could not check token revocation list: {}", e);
+            Err(rejected("Unable to verify token status"))
+        }
+    }
+}
+
+fn rejected(message: &str) -> AuthError {
+    AuthError::Token(crate::errors::TokenError::Invalid {
+        message: message.to_string(),
+    })
+}
+
 impl AuthFramework {
     /// Access focused user-management operations.
     pub fn users(&self) -> UserOperations<'_> {
@@ -884,7 +916,7 @@ impl AuthFramework {
             return Ok(AuthResult::Failure("JWT token cannot be empty".to_string()));
         }
 
-        match self.token_manager.validate_jwt_token(token) {
+        match self.validate_access_jwt(token).await {
             Ok(claims) => {
                 let token =
                     Self::build_validated_jwt_auth_token(token, claims, metadata, auth_method);
@@ -1335,6 +1367,21 @@ impl AuthFramework {
         // Update in storage
         self.storage.update_token(&revoked_token).await?;
 
+        // Bearer-JWT validation consults the revocation list by jti, so record it there too
+        // for as long as the token could still be presented.
+        let jti = self
+            .token_manager
+            .validate_jwt_token(&token.access_token)
+            .map(|claims| claims.jti)
+            .unwrap_or_else(|_| token.token_id.clone());
+        let remaining = (token.expires_at - chrono::Utc::now())
+            .to_std()
+            .unwrap_or_default()
+            .max(Duration::from_secs(60));
+        self.storage
+            .store_kv(&format!("revoked_token:{jti}"), b"revoked", Some(remaining))
+            .await?;
+
         info!("Token revoked for user '{}'", token.user_id);
 
         Ok(())
@@ -1522,6 +1569,16 @@ impl AuthFramework {
     /// [`TokenOperations`] facade.
     pub fn token_manager(&self) -> &TokenManager {
         &self.token_manager
+    }
+
+    /// Validate a JWT presented as an ACCESS token and return its claims.
+    ///
+    /// This is the one check every place that accepts a bearer JWT should use: it verifies
+    /// the signature and claims, refuses refresh tokens (they are only good at the refresh
+    /// endpoint), and refuses tokens that were revoked (`revoked_token:{jti}`, written by
+    /// logout and revocation). If the revocation list cannot be read the token is refused.
+    pub async fn validate_access_jwt(&self, token: &str) -> Result<crate::tokens::JwtClaims> {
+        validate_access_jwt_with(&self.token_manager, self.storage.as_ref(), token).await
     }
 
     /// Validates a username against the configured format rules.

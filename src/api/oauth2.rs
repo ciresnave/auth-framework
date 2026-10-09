@@ -1152,11 +1152,7 @@ pub async fn userinfo(
     }
 
     // Validate the access token
-    let claims = match state
-        .auth_framework
-        .token_manager()
-        .validate_jwt_token(&token)
-    {
+    let claims = match state.auth_framework.validate_access_jwt(&token).await {
         Ok(c) => c,
         Err(_) => {
             return ApiResponse::error_typed("invalid_token", "Access token is invalid");

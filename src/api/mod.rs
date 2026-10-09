@@ -126,31 +126,8 @@ pub async fn validate_api_token(
     token: &str,
 ) -> Result<crate::tokens::AuthToken, AuthError> {
     // Validate the JWT signature and expiry
-    let token_obj = auth_framework.token_manager().validate_jwt_token(token)?;
-
-    // A refresh token is only good at /auth/refresh, never as an access token.
-    if token_obj.is_refresh_token() {
-        return Err(AuthError::Unauthorized(
-            "A refresh token cannot be used as an access token".to_string(),
-        ));
-    }
-
-    // Check whether this token has been explicitly revoked (e.g. via logout)
-    let revocation_key = format!("revoked_token:{}", token_obj.jti);
-    match auth_framework.storage().get_kv(&revocation_key).await {
-        Ok(Some(_)) => {
-            return Err(AuthError::Unauthorized(
-                "Token has been revoked".to_string(),
-            ));
-        }
-        Ok(None) => {} // Not revoked — proceed
-        Err(e) => {
-            tracing::error!("Could not check token revocation list: {}", e);
-            return Err(AuthError::Unauthorized(
-                "Unable to verify token status".to_string(),
-            ));
-        }
-    }
+    // Signature and expiry, not a refresh token, not revoked (e.g. via logout)
+    let token_obj = auth_framework.validate_access_jwt(token).await?;
 
     // Convert the validated token claims to AuthToken.
     // Roles are not embedded in JWT claims (create_jwt_token sets roles: None),
