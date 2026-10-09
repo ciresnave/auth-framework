@@ -1441,6 +1441,7 @@ mod tests {
             state,
             CliCommand::Security {
                 action: SecurityAction::EncryptKv {
+                    accept_ttl_loss: false,
                     prefix: String::new(),
                     dry_run: true,
                     confirm: false,
@@ -1468,6 +1469,7 @@ mod tests {
             state,
             CliCommand::Security {
                 action: SecurityAction::EncryptKv {
+                    accept_ttl_loss: false,
                     prefix: String::new(),
                     dry_run: false,
                     confirm: false,
@@ -1504,6 +1506,7 @@ mod tests {
             state,
             CliCommand::Security {
                 action: SecurityAction::EncryptKv {
+                    accept_ttl_loss: false,
                     prefix: String::new(),
                     dry_run: true,
                     confirm: false,
@@ -1577,6 +1580,7 @@ mod tests {
             state,
             CliCommand::Security {
                 action: SecurityAction::EncryptKv {
+                    accept_ttl_loss: false,
                     prefix: "secret:".to_string(),
                     dry_run: false,
                     confirm: false,
@@ -1658,6 +1662,7 @@ mod tests {
             state,
             CliCommand::Security {
                 action: SecurityAction::EncryptKv {
+                    accept_ttl_loss: false,
                     prefix: "secret:".to_string(),
                     dry_run: false,
                     confirm: false,
