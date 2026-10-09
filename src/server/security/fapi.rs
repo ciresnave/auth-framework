@@ -750,35 +750,37 @@ impl FapiManager {
     }
 
     /// Authenticate client using private key JWT (RFC 7523)
+    ///
+    /// The caller learns only that authentication failed: the detailed reasons (unknown client,
+    /// bad signature, wrong audience, replay, ...) are logged, never returned.
     pub async fn authenticate_client_jwt(&self, client_assertion: &str) -> Result<String> {
+        const REFUSED: &str = "Client authentication failed";
+
         // Use the private key JWT manager for authentication
-        let auth_result = self
+        let auth_result = match self
             .private_key_jwt_manager
             .authenticate_client(client_assertion)
             .await
-            .map_err(|e| {
-                AuthError::auth_method(
-                    "private_key_jwt",
-                    format!("Private key JWT authentication failed: {}", e),
-                )
-            })?;
+        {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::warn!("FAPI private key JWT assertion rejected: {}", e);
+                return Err(AuthError::auth_method("private_key_jwt", REFUSED));
+            }
+        };
 
-        match auth_result.authenticated {
-            true => {
-                tracing::info!(
-                    "FAPI client authenticated successfully using private key JWT: {}",
-                    auth_result.client_id
-                );
-                Ok(auth_result.client_id)
-            }
-            false => {
-                let error_msg = auth_result.errors.join("; ");
-                tracing::error!("FAPI private key JWT authentication failed: {}", error_msg);
-                Err(AuthError::auth_method(
-                    "private_key_jwt",
-                    format!("Authentication failed: {}", error_msg),
-                ))
-            }
+        if auth_result.authenticated {
+            tracing::info!(
+                "FAPI client authenticated successfully using private key JWT: {}",
+                auth_result.client_id
+            );
+            Ok(auth_result.client_id)
+        } else {
+            tracing::warn!(
+                "FAPI private key JWT authentication failed: {}",
+                auth_result.errors.join("; ")
+            );
+            Err(AuthError::auth_method("private_key_jwt", REFUSED))
         }
     }
 
@@ -1586,6 +1588,109 @@ mod tests {
         assert_eq!(session.dpop_proof.as_deref(), Some("proof_abc"));
         assert_eq!(session.scopes, vec!["openid", "profile", "email"]);
         assert_eq!(session.metadata["custom_flag"], true);
+    }
+
+    #[tokio::test]
+    async fn private_key_jwt_failures_do_not_tell_the_caller_why() {
+        use crate::security::secure_jwt::SecureJwtConfig;
+        use crate::server::jwt::private_key_jwt::ClientJwtConfig;
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let validator = || SecureJwtValidator::new(SecureJwtConfig::default()).unwrap();
+        let assertions = Arc::new(PrivateKeyJwtManager::new(validator()));
+        let manager = FapiManager::new(
+            FapiConfig::default(),
+            Arc::new(DpopManager::new(validator())),
+            Arc::new(MutualTlsManager::new()),
+            Arc::new(PARManager::new(Arc::new(
+                crate::storage::MemoryStorage::new(),
+            ))),
+            assertions.clone(),
+            Arc::new(validator()),
+        );
+
+        // A registered client with a real key.
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let raw = key.public_key_raw();
+        let point = &raw[raw.len() - 65..];
+        let jwk = json!({
+            "kty": "EC", "crv": "P-256",
+            "x": URL_SAFE_NO_PAD.encode(&point[1..33]),
+            "y": URL_SAFE_NO_PAD.encode(&point[33..65]),
+        });
+        assertions
+            .register_client(
+                ClientJwtConfig::builder("fapi-client", jwk)
+                    .algorithms(vec![Algorithm::ES256])
+                    .audience("https://auth.example.com/token")
+                    .build(),
+            )
+            .await
+            .unwrap();
+        let encoding_key = EncodingKey::from_ec_pem(key.serialize_pem().as_bytes()).unwrap();
+
+        // Genuine assertion: authenticated.
+        let good = assertions
+            .create_client_assertion(
+                "fapi-client",
+                "https://auth.example.com/token",
+                &encoding_key,
+                Algorithm::ES256,
+            )
+            .unwrap();
+        assert_eq!(
+            manager.authenticate_client_jwt(&good).await.unwrap(),
+            "fapi-client"
+        );
+
+        // Each way to fail gives the same bare message: unknown client, wrong audience from the
+        // real client (a reason that is only known after the signature verified), replay, junk.
+        let wrong_audience = assertions
+            .create_client_assertion(
+                "fapi-client",
+                "https://elsewhere.example/token",
+                &encoding_key,
+                Algorithm::ES256,
+            )
+            .unwrap();
+        let unknown = assertions
+            .create_client_assertion(
+                "ghost",
+                "https://auth.example.com/token",
+                &encoding_key,
+                Algorithm::ES256,
+            )
+            .unwrap();
+        for (why, assertion) in [
+            ("wrong audience", wrong_audience.as_str()),
+            ("unknown client", unknown.as_str()),
+            ("replay", good.as_str()),
+            ("junk", "not-a-jwt"),
+        ] {
+            let message = manager
+                .authenticate_client_jwt(assertion)
+                .await
+                .expect_err(why)
+                .to_string();
+            assert!(
+                message.contains("Client authentication failed"),
+                "{why}: {message}"
+            );
+            for leak in [
+                "udience",
+                "registered",
+                "ignature",
+                "replay",
+                "JTI",
+                "Algorithm",
+                "expired",
+            ] {
+                assert!(
+                    !message.contains(leak),
+                    "{why}: {message:?} mentions {leak:?}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
