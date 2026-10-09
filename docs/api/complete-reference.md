@@ -516,7 +516,7 @@ Success response:
       "require_resident_key": false,
       "user_verification": "preferred"
     },
-    "attestation": "direct",
+    "attestation": "none",
     "session_id": "webauthn_550e8400-e29b-41d4-a716-446655440000"
   }
 }
