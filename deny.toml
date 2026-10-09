@@ -19,34 +19,13 @@
     # Security-first approach: Only allow explicitly documented exceptions
     # This forces explicit review and justification of ALL security issues
     ignore = [
-        # RSA Marvin Attack (timing sidechannel), no fix available (patched = []
-        # in the advisory; open since 2023-11-22, still unfixed 3 years later).
-        #
-        # Per CireSnave: "I want broken RSA out of our codebase and its
-        # dependencies." Closed so far: jsonwebtoken's RS*/PS* support and
-        # the JARM RSA-OAEP decrypt path (rewritten against aws-lc-rs, not
-        # subject to this advisory), the `saml` feature's bergshamra-based
-        # IdP-key path (bumped bergshamra to 0.9.2's `aws-lc` backend), and
-        # `mysql-storage` (removed from this crate entirely -- CireSnave:
-        # "Drop MySQL. I'm not a huge fan of Oracle products anyway.").
-        #
-        # Also closed: the `openid-connect` feature's `openidconnect` crate
-        # (v4.0.1 had `rsa` as a hard, non-feature-gated dependency; #113).
-        # Nothing in this crate called it, so the dependency was removed and
-        # the feature is now a no-op alias.
-        #
-        # `rsa` is in NO resolved dependency graph any more (`cargo tree -i
-        # rsa --all-features --target all` prints nothing, enforced by the
-        # "Security Audit (rsa absence)" CI job below for every shipped
-        # feature combination). It is still LISTED in Cargo.lock, only as a
-        # dependency of the `sqlx-mysql` 0.8.6 stub entry that sqlx 0.8
-        # leaves in the lockfile; that is what keeps this advisory firing
-        # on lockfile scanners. Taking sqlx 0.9 removes it from the lockfile.
-        #
-        # Acceptance: CireSnave's, by name, 2026-09-24 (original ruling).
-        # Remove this ignore when sqlx 0.9 lands and `rsa` leaves
-        # Cargo.lock, or if RustSec publishes a patched `rsa` release.
-        "RUSTSEC-2023-0071",
+        # RUSTSEC-2023-0071 (rsa, Marvin Attack, no patched release): the
+        # ignore that used to be here was removed because `rsa` is no longer in
+        # Cargo.lock at all (jsonwebtoken and JARM moved to aws-lc-rs, saml to
+        # bergshamra's aws-lc backend, mysql-storage was dropped, the unused
+        # `openidconnect` dependency was removed in #113, and sqlx 0.9 no longer
+        # lists sqlx-mysql's rsa). The "Security Audit (rsa absence)" CI job
+        # keeps it out of the dependency graph for every shipped feature set.
         # h2 0.3.27 unbounded empty DATA frames - transitive dependency via
         # actix-http (actix-integration feature). actix-web's latest release is
         # still pinned to this h2 0.3.x / hyper 0.14 line; there is no version of

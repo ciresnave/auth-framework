@@ -877,6 +877,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declared on crates.io by the newest release of any direct dependency of this workspace (124 queried)
   is `sysinfo` 0.39.6 = 1.95, followed by `sqlx` 0.9.0 = 1.94; both are taken in the following
   dependency PRs.
+- **Dependencies:** `sqlx` 0.8.6 -> 0.9.0 (root crate and `auth-storage-sqlite`). The
+  `runtime-tokio-rustls` feature no longer exists; it is replaced by `runtime-tokio` + `tls-rustls`
+  (same combination: tokio runtime, rustls with ring and the webpki roots). No source change. With
+  `sqlx-mysql` 0.9 the `rsa` crate (RUSTSEC-2023-0071) is no longer listed in `Cargo.lock` at all;
+  the matching ignore entry is removed from `deny.toml`. Requires Rust 1.94 (the MSRV is 1.95).
 - **Dependencies:** `toml` 0.9 -> 1, `dirs` 6 -> 7, `base64` 0.22 -> 0.23, `askama` 0.15 -> 0.16,
   `tower-http` 0.6 -> 0.7, and dev/test-only `axum-test` 19 -> 21 and `testcontainers` 0.27 -> 0.28.
   No source change was needed. `base64` is declared with `default-features = false,
