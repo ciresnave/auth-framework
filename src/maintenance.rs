@@ -296,6 +296,12 @@ async fn collect_snapshot(framework: &AuthFramework) -> Result<MaintenanceSnapsh
     tokens.sort_by(|left, right| left.token_id.cmp(&right.token_id));
     sessions.sort_by(|left, right| left.session_id.cmp(&right.session_id));
 
+    if !storage.tracks_kv_ttl() {
+        tracing::warn!(
+            "This storage backend does not report KV TTLs: the snapshot cannot record them,              so every KV entry restored from it becomes permanent, including ones that were              meant to expire (one-time codes, rate-limit windows, expiring API keys)."
+        );
+    }
+
     let mut kv_keys = storage.list_kv_keys("").await?;
     kv_keys.sort();
     kv_keys.dedup();

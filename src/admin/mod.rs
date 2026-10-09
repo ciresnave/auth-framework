@@ -674,12 +674,13 @@ pub enum SecurityAction {
     /// command as a whole then exits with a non-zero status so a
     /// failure is never silently missed.
     ///
-    /// WARNING: this re-stores every migrated value with no TTL, even if
-    /// the original had one (OAuth codes, email-verification tokens,
-    /// MFA/SMS codes, WebAuthn challenges, rate-limit windows, and
-    /// expiring API keys all lose their expiry). Scope `--prefix` to a
-    /// durable-secret namespace; an empty prefix touches everything and
-    /// requires `--confirm`.
+    /// Each migrated value keeps its remaining TTL on storage backends
+    /// that report TTLs (all built-in ones). On a backend that cannot,
+    /// a real run is refused unless `--accept-ttl-loss` is given, because
+    /// it would make every expiring entry (OAuth codes, MFA/SMS codes,
+    /// rate-limit windows, expiring API keys) permanent; scope `--prefix`
+    /// to a durable-secret namespace then. An empty prefix touches
+    /// everything and requires `--confirm`.
     ///
     /// A value in the original (pre-redesign) format-version-0 shape has
     /// no AAD, so decrypting it cannot verify that its plaintext actually
@@ -694,11 +695,14 @@ pub enum SecurityAction {
         /// Preview what would change without writing anything.
         #[arg(long)]
         dry_run: bool,
-        /// Required when --prefix is empty and this is NOT a dry run,
-        /// acknowledging the TTL-loss warning above. Not needed for
-        /// --dry-run, which makes no changes.
+        /// Required when --prefix is empty and this is NOT a dry run.
+        /// Not needed for --dry-run, which makes no changes.
         #[arg(long)]
         confirm: bool,
+        /// Proceed on a storage backend that cannot report KV TTLs even
+        /// though that makes every migrated expiring entry permanent.
+        #[arg(long)]
+        accept_ttl_loss: bool,
         /// Required to actually rewrite a legacy (format-version-0 or -1)
         /// envelope to the current format. Without it, such envelopes are detected
         /// and reported but left untouched. See the WARNING above about

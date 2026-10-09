@@ -441,6 +441,10 @@ impl AuthStorage for PostgresStorage {
             .map(std::time::Duration::from_secs_f64))
     }
 
+    fn tracks_kv_ttl(&self) -> bool {
+        true
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         sqlx::query(r#"DELETE FROM kv_store WHERE key = $1"#)
             .bind(key)

@@ -420,19 +420,21 @@ auth-framework-admin security encrypt-kv --prefix "user:"     # apply, scoped
 auth-framework-admin security encrypt-kv --confirm            # apply to ALL keys (needs --confirm)
 ```
 
-**Scope `--prefix`, don't migrate everything at once if you can avoid it.**
-The migration tool re-stores every value it touches with no TTL, even if
-the original had one — `AuthStorage::get_kv` doesn't expose a value's
-remaining TTL, so there's nothing to preserve it with. OAuth authorization
-codes, email-verification tokens, MFA/SMS one-time codes, WebAuthn
-challenges, rate-limit windows, and expiring API keys all lose their expiry
-if migrated this way, becoming non-expiring. Scope `--prefix` to a
-durable-secret namespace (API keys, TOTP secrets, client registries); an
-empty `--prefix` (which touches everything) requires `--confirm` for
-exactly this reason. The migration also does a plain read-then-write with
-no compare-and-swap, so running it against a *live* deployment can
-overwrite a value someone else wrote in between — prefer running it
-offline, or pause writers to the scoped prefix first.
+**TTLs are preserved on backends that report them.** The migration tool
+re-stores each value with the remaining TTL it had
+(`AuthStorage::get_kv_ttl`), so OAuth authorization codes, MFA/SMS
+one-time codes, WebAuthn challenges, rate-limit windows and expiring API
+keys keep expiring. Every built-in backend reports TTLs
+(`AuthStorage::tracks_kv_ttl`). A custom backend that cannot would make
+all of those permanent, so a real run on one is **refused** unless you pass
+`--accept-ttl-loss` (and then scope `--prefix` to a durable-secret
+namespace: API keys, TOTP secrets, client registries). A dry run is always
+allowed. Backups on such a backend log a warning for the same reason.
+An empty `--prefix` (which rewrites everything) requires `--confirm`. The
+migration also does a plain read-then-write with no compare-and-swap, so
+running it against a *live* deployment can overwrite a value someone else
+wrote in between — prefer running it offline, or pause writers to the
+scoped prefix first.
 
 **Envelope formats.** The current envelope is format version 2: its AAD
 binds the record's storage key *and* the envelope's own `v`, `algorithm`

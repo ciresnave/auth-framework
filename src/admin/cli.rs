@@ -801,6 +801,7 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
             prefix,
             dry_run,
             confirm,
+            accept_ttl_loss,
             accept_legacy_v0,
         } => {
             let config = state.config.read().await;
@@ -825,11 +826,9 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
             // "preview everything first" workflow itself fail).
             if prefix.is_empty() && !confirm && !dry_run {
                 return Err(AuthError::Cli(
-                    "An empty --prefix touches every KV key, including any with a TTL \
-                     (OAuth codes, email-verification tokens, MFA/SMS codes, WebAuthn \
-                     challenges, rate-limit windows, expiring API keys) -- migrating those \
-                     strips their TTL, making them non-expiring. Pass --confirm to proceed \
-                     anyway, or scope --prefix to a durable-secret namespace."
+                    "An empty --prefix rewrites every KV key (a TTL is preserved on backends \
+                     that report it). Pass --confirm to proceed, or scope --prefix to a \
+                     durable-secret namespace."
                         .to_string(),
                 ));
             }
@@ -865,7 +864,8 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                 &prefix,
                 crate::storage::encryption::MigrationOptions::default()
                     .with_dry_run(dry_run)
-                    .with_accept_legacy_v0(accept_legacy_v0),
+                    .with_accept_legacy_v0(accept_legacy_v0)
+                    .with_accept_ttl_loss(accept_ttl_loss),
             )
             .await?;
 

@@ -275,6 +275,10 @@ impl AuthStorage for Arc<dyn AuthStorage> {
         (**self).get_kv_ttl(key).await
     }
 
+    fn tracks_kv_ttl(&self) -> bool {
+        (**self).tracks_kv_ttl()
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         (**self).delete_kv(key).await
     }
@@ -569,6 +573,10 @@ impl AuthStorage for MemoryStorage {
 
     async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
         self.inner.get_kv_ttl(key).await
+    }
+
+    fn tracks_kv_ttl(&self) -> bool {
+        self.inner.tracks_kv_ttl()
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
@@ -917,6 +925,10 @@ impl AuthStorage for RedisStorage {
             .ok()
             .filter(|millis| *millis > 0)
             .map(Duration::from_millis))
+    }
+
+    fn tracks_kv_ttl(&self) -> bool {
+        true
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {

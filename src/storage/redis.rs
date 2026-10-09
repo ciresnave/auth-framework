@@ -224,6 +224,10 @@ impl AuthStorage for RedisStorage {
             .map(Duration::from_millis))
     }
 
+    fn tracks_kv_ttl(&self) -> bool {
+        true
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
         let kv_key = self.kv_key(key);

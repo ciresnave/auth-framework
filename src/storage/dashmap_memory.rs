@@ -754,6 +754,10 @@ impl AuthStorage for DashMapMemoryStorage {
         }))
     }
 
+    fn tracks_kv_ttl(&self) -> bool {
+        true
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         // SAFE: Extract creation timestamp before removal
         let created_at = if let Some(timestamped) = self.kv_store.get(key) {

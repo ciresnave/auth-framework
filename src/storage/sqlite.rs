@@ -291,6 +291,10 @@ impl AuthStorage for SqliteStorage {
             .map(Duration::from_secs))
     }
 
+    fn tracks_kv_ttl(&self) -> bool {
+        true
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         sqlx::query("DELETE FROM kv_store WHERE key = ?")
             .bind(key)
