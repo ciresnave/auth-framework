@@ -2520,6 +2520,7 @@ mod tests {
             }
         }
         let result = EnvKeyProvider.load_keys();
+        // SAFETY: serialized by TEST_ENCRYPTION_ENV_LOCK (held above).
         unsafe { std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY") };
         result
     }
@@ -2568,6 +2569,7 @@ mod tests {
                 std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE", &path);
             }
             let result = EnvKeyProvider.load_keys();
+            // SAFETY: serialized by TEST_ENCRYPTION_ENV_LOCK (held above).
             unsafe { std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE") };
             assert!(result.is_err(), "{name} must fail closed");
         }
