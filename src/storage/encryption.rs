@@ -219,8 +219,13 @@ pub struct LoadedKeys {
 ///   for rotation -- old keys stay loadable (decrypt-only in practice,
 ///   since `current` picks what new writes use) as long as they're listed
 ///   here. If set, this takes priority over the two env vars above. On
-///   Unix, a keys file readable by group or other triggers a `tracing::warn!`
-///   (best-effort; not enforced, and not checked at all on Windows).
+///   Unix, a keys file readable by group or other triggers a `tracing::warn!`;
+///   set `AUTH_STORAGE_ENCRYPTION_STRICT_KEY_FILE_PERMISSIONS=1` to make that
+///   a startup error instead. Not checked at all on Windows.
+/// - **The single env var cannot rotate**: it holds one key, so changing it
+///   makes every stored envelope undecryptable. Use the keys file for
+///   anything that will outlive one key; the storage factory warns when the
+///   env-var key protects data that is already encrypted.
 pub struct EnvKeyProvider;
 
 impl KeyProvider for EnvKeyProvider {
@@ -258,7 +263,7 @@ impl EnvKeyProvider {
             keys: HashMap<String, String>,
         }
 
-        Self::warn_if_file_too_permissive(path);
+        check_keys_file_permissions(path, strict_permissions_requested())?;
 
         let mut contents = fs::read_to_string(path).map_err(|e| {
             AuthError::config(format!(
@@ -321,29 +326,101 @@ impl EnvKeyProvider {
             keys,
         })
     }
+}
 
-    /// Best-effort, Unix-only warning: a keys file readable by group or
-    /// other defeats the point of a file-based key. Not enforced (never
-    /// blocks startup) because permission semantics vary too much across
-    /// deployment environments (containers, CI, Windows) to safely hard-fail.
+/// Environment variable that turns the keys-file permission warning into a
+/// startup error. Accepts `1`, `true` or `yes` (any case).
+const STRICT_KEY_FILE_PERMISSIONS_ENV: &str = "AUTH_STORAGE_ENCRYPTION_STRICT_KEY_FILE_PERMISSIONS";
+
+/// `true` when a file mode lets group or other read (or write) the file.
+/// (Only the Unix permission check calls it outside tests.)
+#[cfg_attr(not(unix), allow(dead_code))]
+fn keys_file_mode_too_open(mode: u32) -> bool {
+    mode & 0o077 != 0
+}
+
+fn strict_permissions_requested() -> bool {
+    env::var(STRICT_KEY_FILE_PERMISSIONS_ENV)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Checks the keys file's permissions: always warns when it is readable by
+/// group or other (a file-based key readable by others defeats its point),
+/// and fails startup when `strict` is set
+/// (`AUTH_STORAGE_ENCRYPTION_STRICT_KEY_FILE_PERMISSIONS=1`). The default
+/// stays warn-only because permission semantics vary across containers, CI
+/// and Windows; strict mode is the opt-in for deployments that control them.
+/// Unix only: elsewhere there are no group/other mode bits to inspect, so
+/// strict mode logs that it cannot be enforced.
+fn check_keys_file_permissions(path: &str, strict: bool) -> Result<()> {
     #[cfg(unix)]
-    fn warn_if_file_too_permissive(path: &str) {
+    {
         use std::os::unix::fs::PermissionsExt;
         if let Ok(metadata) = fs::metadata(path) {
             let mode = metadata.permissions().mode();
-            if mode & 0o077 != 0 {
+            if keys_file_mode_too_open(mode) {
+                if strict {
+                    return Err(AuthError::config(format!(
+                        "AUTH_STORAGE_ENCRYPTION_KEYS_FILE '{path}' has mode {:o}: it is \
+                         accessible to group or other. Restrict it to the owner (chmod 600) \
+                         or unset {STRICT_KEY_FILE_PERMISSIONS_ENV}.",
+                        mode & 0o777
+                    )));
+                }
                 tracing::warn!(
                     path = path,
                     mode = format!("{mode:o}"),
                     "AUTH_STORAGE_ENCRYPTION_KEYS_FILE is readable by group or other -- \
-                     restrict it to the owner only (chmod 600)."
+                     restrict it to the owner only (chmod 600), or set \
+                     {STRICT_KEY_FILE_PERMISSIONS_ENV}=1 to make this fatal."
                 );
             }
         }
     }
-
     #[cfg(not(unix))]
-    fn warn_if_file_too_permissive(_path: &str) {}
+    {
+        let _ = path;
+        if strict {
+            tracing::warn!(
+                "{STRICT_KEY_FILE_PERMISSIONS_ENV} is set but key-file permissions cannot be \
+                 inspected on this platform; it is not enforced."
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `true` when the key comes from the `AUTH_STORAGE_ENCRYPTION_KEY`
+/// environment variable (no keys file). That source holds exactly one key
+/// and so cannot rotate: replacing it makes every stored envelope
+/// undecryptable. Use a keys file (`AUTH_STORAGE_ENCRYPTION_KEYS_FILE`) for
+/// anything that will outlive one key.
+pub(crate) fn env_key_source_in_use() -> bool {
+    env::var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE").is_err()
+        && env::var("AUTH_STORAGE_ENCRYPTION_KEY").is_ok()
+}
+
+/// Looks at up to `limit` KV entries of `storage` and reports whether any is
+/// already an encryption envelope. Bounded in the number of values read; the
+/// key listing itself is whatever the backend returns for the empty prefix.
+pub(crate) async fn stored_envelopes_exist<S: AuthStorage + ?Sized>(
+    storage: &S,
+    limit: usize,
+) -> Result<bool> {
+    for key in storage.list_kv_keys("").await?.into_iter().take(limit) {
+        if let Some(raw) = storage.get_kv(&key).await?
+            && StorageEncryption::looks_like_envelope(&raw)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Produces a safe-to-log identifier for a storage key, for error
@@ -928,6 +1005,10 @@ where
     fn tracks_kv_ttl(&self) -> bool {
         // A TTL is storage metadata, not part of the encrypted value.
         self.inner.tracks_kv_ttl()
+    }
+
+    fn encrypts_kv_at_rest(&self) -> bool {
+        true
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
@@ -2761,5 +2842,132 @@ mod tests {
             !crate::testing::utilities::MockStorage::new().tracks_kv_ttl(),
             "a backend that ignores TTLs must say so"
         );
+    }
+
+    // ---- keys-file permissions (L4) and env-key rotation warning (L3) ------------
+
+    #[test]
+    fn keys_file_mode_check_flags_group_and_other_access() {
+        for open in [0o644, 0o640, 0o604, 0o660, 0o666, 0o777, 0o601, 0o610] {
+            assert!(keys_file_mode_too_open(open), "{open:o} must be flagged");
+        }
+        for closed in [0o600, 0o400, 0o700, 0o500, 0o200] {
+            assert!(!keys_file_mode_too_open(closed), "{closed:o} must pass");
+        }
+    }
+
+    #[test]
+    fn strict_permissions_env_parsing() {
+        let _lock = TEST_ENCRYPTION_ENV_LOCK.blocking_lock();
+        let read = |value: Option<&str>| {
+            // SAFETY: serialized by TEST_ENCRYPTION_ENV_LOCK (held above).
+            unsafe {
+                match value {
+                    Some(v) => std::env::set_var(STRICT_KEY_FILE_PERMISSIONS_ENV, v),
+                    None => std::env::remove_var(STRICT_KEY_FILE_PERMISSIONS_ENV),
+                }
+            }
+            strict_permissions_requested()
+        };
+        assert!(!read(None));
+        assert!(!read(Some("")));
+        assert!(!read(Some("0")));
+        assert!(!read(Some("no")));
+        assert!(read(Some("1")));
+        assert!(read(Some("true")));
+        assert!(read(Some("TRUE")));
+        assert!(read(Some("Yes")));
+        // SAFETY: serialized by TEST_ENCRYPTION_ENV_LOCK (held above).
+        unsafe { std::env::remove_var(STRICT_KEY_FILE_PERMISSIONS_ENV) };
+    }
+
+    /// Runs on Unix CI only (Windows has no group/other mode bits).
+    #[cfg(unix)]
+    #[test]
+    fn keys_file_permissions_strict_mode_fails_startup() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keys.json");
+        std::fs::write(&path, "{}").unwrap();
+        let path_str = path.to_str().unwrap();
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            check_keys_file_permissions(path_str, true).is_err(),
+            "strict + 0644"
+        );
+        assert!(
+            check_keys_file_permissions(path_str, false).is_ok(),
+            "warn-only + 0644"
+        );
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            check_keys_file_permissions(path_str, true).is_ok(),
+            "strict + 0600"
+        );
+    }
+
+    #[test]
+    fn env_key_source_detection() {
+        let _lock = TEST_ENCRYPTION_ENV_LOCK.blocking_lock();
+        // SAFETY: serialized by TEST_ENCRYPTION_ENV_LOCK (held above).
+        unsafe {
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
+        }
+        assert!(!env_key_source_in_use(), "no key configured at all");
+        // SAFETY: as above.
+        unsafe { std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEY", "irrelevant") };
+        assert!(
+            env_key_source_in_use(),
+            "no keys file => the env var is the source"
+        );
+        // SAFETY: as above.
+        unsafe { std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE", "/some/keys.json") };
+        assert!(!env_key_source_in_use(), "a keys file supports rotation");
+        // SAFETY: as above.
+        unsafe {
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
+            std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
+        }
+    }
+
+    #[tokio::test]
+    async fn envelope_probe_finds_stored_envelopes_within_its_limit() {
+        let enc = StorageEncryption::new_random();
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv("plain:1", b"just text", None)
+            .await
+            .unwrap();
+        assert!(
+            !stored_envelopes_exist(&storage, 10).await.unwrap(),
+            "plaintext only"
+        );
+
+        let sealed = enc.encrypt_for_storage(b"secret", b"sealed:1").unwrap();
+        storage.store_kv("sealed:1", &sealed, None).await.unwrap();
+        assert!(
+            stored_envelopes_exist(&storage, 10).await.unwrap(),
+            "envelope present"
+        );
+
+        // The probe is bounded: with a limit of 0 it looks at nothing.
+        assert!(!stored_envelopes_exist(&storage, 0).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn encrypted_storage_says_it_encrypts() {
+        let wrapped = EncryptedStorage::new(
+            MemoryStorage::new(),
+            StorageEncryption::new_random(),
+            false,
+            false,
+        );
+        assert!(wrapped.encrypts_kv_at_rest());
+        assert!(!MemoryStorage::new().encrypts_kv_at_rest());
+        let shared: std::sync::Arc<dyn AuthStorage> = std::sync::Arc::new(wrapped);
+        assert!(shared.encrypts_kv_at_rest(), "the Arc impl forwards");
     }
 }

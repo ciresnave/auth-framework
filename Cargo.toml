@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc36"
+  version       = "0.6.0-rc38"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it

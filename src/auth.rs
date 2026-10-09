@@ -186,6 +186,11 @@ pub struct AuthFramework {
 
     /// Whether the caller explicitly replaced the storage backend.
     storage_overridden: bool,
+    /// `true` while the storage came from the caller (`new_with_storage`,
+    /// `replace_storage`) rather than from the storage factory, so
+    /// [`initialize`](Self::initialize) can check it against the
+    /// storage-encryption config.
+    storage_from_caller: bool,
 }
 
 pub use crate::auth_operations::{
@@ -377,6 +382,7 @@ impl AuthFramework {
             mfa_manager,
             initialized: false,
             storage_overridden: false,
+            storage_from_caller: false,
         }
     }
 
@@ -476,6 +482,7 @@ impl AuthFramework {
             mfa_manager,
             initialized: false,
             storage_overridden: false,
+            storage_from_caller: false,
         })
     }
 
@@ -500,6 +507,18 @@ impl AuthFramework {
                 storage,
             );
         self.storage_overridden = true;
+        self.storage_from_caller = true;
+    }
+
+    /// Like [`replace_storage`](Self::replace_storage), for storage built by
+    /// the crate's own storage factory (already wrapped as configured): it is
+    /// not "supplied by the caller", so `initialize()` does not second-guess it.
+    pub(crate) fn replace_storage_from_factory(
+        &mut self,
+        storage: std::sync::Arc<dyn AuthStorage>,
+    ) {
+        self.replace_storage(storage);
+        self.storage_from_caller = false;
     }
 
     /// Replace the distributed session store.
@@ -591,6 +610,16 @@ impl AuthFramework {
         // Replace token manager with properly configured one
         self.token_manager = token_manager;
 
+        // Storage supplied by the caller bypasses the factory's automatic
+        // wrapping: warn (or refuse, with require_wrapped_storage) if it
+        // would leave KV values unencrypted despite the config.
+        if self.storage_from_caller {
+            crate::storage::factory::check_overridden_storage(
+                &self.storage,
+                &self.config.storage_encryption,
+            )?;
+        }
+
         // Set up storage backend if not already configured
         if !self.storage_overridden {
             let storage = crate::storage::factory::build_storage_backend_with_encryption(
@@ -601,6 +630,7 @@ impl AuthFramework {
             .await?;
             self.replace_storage(storage);
             self.storage_overridden = false;
+            self.storage_from_caller = false;
         }
 
         // Set up rate limiter if enabled
@@ -2730,5 +2760,46 @@ mod tests {
             "constructing with Redis storage and no encryption key configured must fail \
              closed, not silently build unwrapped (unencrypted) storage"
         );
+    }
+
+    #[tokio::test]
+    async fn initialize_refuses_unwrapped_custom_storage_when_wrapping_is_required() {
+        let mut config = AuthConfig::new().secret("test_secret_key_32_bytes_long!!!!");
+        config.storage_encryption.require_wrapped_storage = true;
+        let mut framework = AuthFramework::new_with_storage(config, Arc::new(MemoryStorage::new()));
+        assert!(
+            framework.initialize().await.is_err(),
+            "caller-supplied unwrapped storage must be refused when wrapping is required"
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_accepts_wrapped_or_unrequired_custom_storage() {
+        let mut required = AuthConfig::new().secret("test_secret_key_32_bytes_long!!!!");
+        required.storage_encryption.require_wrapped_storage = true;
+        let wrapped: Arc<dyn AuthStorage> =
+            Arc::new(crate::storage::encryption::EncryptedStorage::new(
+                MemoryStorage::new(),
+                crate::storage::encryption::StorageEncryption::new_random(),
+                false,
+                false,
+            ));
+        let mut framework = AuthFramework::new_with_storage(required, wrapped);
+        framework.initialize().await.unwrap();
+
+        // Default config only warns.
+        let config = AuthConfig::new().secret("test_secret_key_32_bytes_long!!!!");
+        let mut framework = AuthFramework::new_with_storage(config, Arc::new(MemoryStorage::new()));
+        framework.initialize().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn factory_built_storage_is_not_treated_as_caller_supplied() {
+        let mut config = AuthConfig::new().secret("test_secret_key_32_bytes_long!!!!");
+        config.storage_encryption.require_wrapped_storage = true;
+        let mut framework = AuthFramework::new(config);
+        // The factory deliberately leaves in-memory storage unwrapped.
+        framework.replace_storage_from_factory(Arc::new(MemoryStorage::new()));
+        framework.initialize().await.unwrap();
     }
 }

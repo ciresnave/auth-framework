@@ -168,6 +168,15 @@ pub trait AuthStorage: Send + Sync {
         false
     }
 
+    /// Whether this storage encrypts KV values at rest itself (i.e. it is,
+    /// or wraps, an [`EncryptedStorage`](crate::storage::encryption::EncryptedStorage)).
+    /// `false` (the default) means values reach the backend as given. A
+    /// wrapper around an `EncryptedStorage` must forward this, or startup
+    /// will wrongly report its values as unencrypted.
+    fn encrypts_kv_at_rest(&self) -> bool {
+        false
+    }
+
     /// Delete arbitrary key-value data.
     async fn delete_kv(&self, key: &str) -> Result<()>;
 
@@ -283,6 +292,10 @@ impl AuthStorage for Arc<dyn AuthStorage> {
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
         (**self).delete_kv(key).await
+    }
+
+    fn encrypts_kv_at_rest(&self) -> bool {
+        (**self).encrypts_kv_at_rest()
     }
 
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
