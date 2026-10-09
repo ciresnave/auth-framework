@@ -21,6 +21,18 @@ pub struct SecureJwtClaims {
     pub auth_ctx_hash: Option<String>,
 }
 
+/// `typ` value used by the token-exchange / CIBA refresh tokens.
+pub const TYP_REFRESH: &str = "refresh";
+/// `typ` value used by the FAPI refresh tokens.
+pub const TYP_REFRESH_TOKEN: &str = "refresh_token";
+
+/// Does this `typ` claim mark a refresh token? Every spelling the crate mints
+/// ([`TYP_REFRESH`], [`TYP_REFRESH_TOKEN`]) counts, so a rule that must not treat a refresh
+/// token as an access token cannot be dodged by the spelling.
+pub fn is_refresh_typ(typ: &str) -> bool {
+    typ == TYP_REFRESH || typ == TYP_REFRESH_TOKEN
+}
+
 #[derive(Debug, Clone)]
 pub struct SecureJwtConfig {
     pub allowed_algorithms: Vec<Algorithm>,

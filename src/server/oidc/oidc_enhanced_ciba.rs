@@ -1093,7 +1093,7 @@ impl EnhancedCibaManager {
                 iat: now.timestamp(),
                 jti: jti_refresh.clone(),
                 scope: request.scopes.join(" "),
-                typ: "refresh".to_string(),
+                typ: crate::security::secure_jwt::TYP_REFRESH.to_string(),
                 sid: request.session_id.clone(),
                 client_id: Some(request.client_id.clone()),
                 auth_ctx_hash: self.compute_auth_context_hash(&request.auth_context),

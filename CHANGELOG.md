@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- Token exchange refuses refresh tokens presented as subject/actor tokens under
+  either `typ` spelling the crate mints (`refresh` and `refresh_token`; one shared helper,
+  `security::secure_jwt::is_refresh_typ`, and constants used by the FAPI and CIBA minters).
+  Access tokens issued from a refresh chain stay valid until they expire even after the
+  chain is revoked (reuse detection ends the chain, not access tokens already issued).
 - 0.6.0-rcXX -- Authorization context client address: the address that `authorization_enhanced`
   policies see (`AuthorizationContext::ip_address` and the `ip_address` entry of the request
   context) is now the connection's peer address, or, when the peer is listed in

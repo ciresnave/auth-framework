@@ -520,7 +520,7 @@ impl TokenExchangeManager {
         })?;
 
         // A refresh token is only acceptable where a refresh token was declared.
-        if !allow_refresh && claims.typ == "refresh" {
+        if !allow_refresh && crate::security::secure_jwt::is_refresh_typ(&claims.typ) {
             return Err(AuthError::auth_method(
                 "token_exchange",
                 "A refresh token cannot be used here",
@@ -1276,6 +1276,60 @@ mod tests {
         let refresh = sign("jti-r", "refresh");
         assert!(manager.validate_jwt_token(&refresh, false).await.is_err());
         assert!(manager.validate_jwt_token(&refresh, true).await.is_ok());
+    }
+
+    /// Both spellings the crate mints ("refresh" for exchange/CIBA, "refresh_token" for FAPI)
+    /// are refresh tokens. The validator is configured to ADMIT the second spelling so the
+    /// rule itself, not an allow-list rejection, is what is being tested.
+    #[tokio::test]
+    async fn every_refresh_spelling_is_a_refresh_token() {
+        let mut config = SecureJwtConfig::default();
+        config
+            .allowed_token_types
+            .insert("refresh_token".to_string());
+        let secret = config.jwt_secret.to_string();
+        let manager = TokenExchangeManager::new(SecureJwtValidator::new(config).unwrap());
+        let sign = |typ: &str| {
+            let now = chrono::Utc::now().timestamp();
+            let claims = SecureJwtClaims {
+                sub: "user123".to_string(),
+                iss: "auth-framework".to_string(),
+                aud: "api.example.com".to_string(),
+                exp: now + 600,
+                nbf: now - 5,
+                iat: now,
+                jti: format!("jti-{typ}"),
+                scope: "read".to_string(),
+                typ: typ.to_string(),
+                sid: None,
+                client_id: None,
+                auth_ctx_hash: None,
+            };
+            encode(
+                &Header::new(Algorithm::HS256),
+                &claims,
+                &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+            )
+            .unwrap()
+        };
+        for typ in ["refresh", "refresh_token"] {
+            let token = sign(typ);
+            assert!(
+                manager.validate_jwt_token(&token, false).await.is_err(),
+                "{typ} must be refused where a refresh token was not declared"
+            );
+            assert!(
+                manager.validate_jwt_token(&token, true).await.is_ok(),
+                "{typ} is acceptable where a refresh token was declared"
+            );
+        }
+        // an access token is unaffected
+        assert!(
+            manager
+                .validate_jwt_token(&sign("access"), false)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
