@@ -4,6 +4,11 @@
 
 Accepted
 
+> **Implementation note (2026-10):** the OpenTelemetry export described below is not
+> implemented. The `enhanced-observability` feature enables a built-in metrics and
+> security-monitoring module only; the OpenTelemetry crates it once listed were never
+> called and have been removed.
+
 ## Context
 
 Authentication systems require comprehensive monitoring and observability for security and operational excellence:

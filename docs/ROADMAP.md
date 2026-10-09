@@ -218,12 +218,11 @@ bumps within this ecosystem -- not yet confirmed for this specific set):
 - [ ] `sha2` 0.10.9 -> 0.11.0
 - [ ] `x25519-dalek` 2.0.1 -> 3.0.0
 
-**OpenTelemetry family, versioned in lockstep upstream:**
-- [ ] `opentelemetry` 0.31.0 -> 0.33.0
-- [ ] `opentelemetry-otlp` 0.31.1 -> 0.33.0
-- [ ] `opentelemetry-prometheus` 0.31.0 -> 0.33.0
-- [ ] `opentelemetry_sdk` 0.32.1 -> 0.33.0
-- [ ] `tracing-opentelemetry` 0.32.1 -> 0.34.0
+**OpenTelemetry family:** resolved by removal. No code in this crate called
+`opentelemetry`, `opentelemetry-otlp`, `opentelemetry-prometheus`,
+`opentelemetry_sdk` or `tracing-opentelemetry`, so the five unused optional
+dependencies were removed instead of bumped; `enhanced-observability` now only
+enables the built-in `observability` module.
 
 **Independent, each needs its own evaluation:**
 - [ ] `askama` 0.15.6 -> 0.16.1

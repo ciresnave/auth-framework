@@ -779,7 +779,7 @@ let _env = TestEnvironment::new()
 | `hsm` | Hardware Security Module support | No |
 | `performance-optimization` | UnifiedStorage, object pools | No |
 | `tiered-storage` | Redis + PostgreSQL tiered storage | No |
-| `enhanced-observability` | OpenTelemetry integration | No |
+| `enhanced-observability` | Built-in metrics/security monitoring (no OpenTelemetry export) | No |
 | `config-hot-reload` | File-system config watching | No |
 
 ```toml

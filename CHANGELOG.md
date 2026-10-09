@@ -895,6 +895,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reaches this crate is `Networks::refresh_list()`, now `refresh(true)` (same behaviour: add new
   interfaces, drop unlisted ones, update counters); used by the deployment health monitor. The
   health-monitor metric collectors are pinned by new tests that pass on both versions.
+- **Deprecated / Breaking:** the five optional OpenTelemetry dependencies (`opentelemetry`,
+  `opentelemetry-otlp`, `opentelemetry-prometheus`, `opentelemetry_sdk`, `tracing-opentelemetry`) are
+  removed. No code in this crate ever called them: there is no OpenTelemetry or OTLP exporter, and
+  documentation that said otherwise (`FEATURE_FLAGS.md`, `COMPATIBILITY.md`, `docs/api-reference.md`) is
+  corrected. The `enhanced-observability` feature still resolves and still enables the built-in
+  `observability` module (metrics, security monitoring; Prometheus text export together with
+  `performance-optimization`), but it no longer pulls in `futures`, `tokio-stream` or any
+  OpenTelemetry crate. `ObservabilityConfig::enable_opentelemetry` is kept so struct literals keep
+  compiling, but it now defaults to `false` (was `true`) and setting it to `true` logs a warning from
+  `ObservabilityManager::with_config`; it never had any effect. `Cargo.lock` loses nine packages: the
+  five crates plus `opentelemetry-http`, `opentelemetry-proto` and older duplicate versions of
+  `opentelemetry` and `opentelemetry_sdk`.
 - **Dependencies:** `toml` 0.9 -> 1, `dirs` 6 -> 7, `base64` 0.22 -> 0.23, `askama` 0.15 -> 0.16,
   `tower-http` 0.6 -> 0.7, and dev/test-only `axum-test` 19 -> 21 and `testcontainers` 0.27 -> 0.28.
   No source change was needed. `base64` is declared with `default-features = false,

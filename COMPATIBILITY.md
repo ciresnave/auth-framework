@@ -81,7 +81,7 @@ before building stable integrations on top of them.
 | WebAuthn / Passkeys                      | `passkeys`                            |
 | LDAP authentication                      | `ldap-auth`                           |
 | SMS / OTP delivery (SMSKit)              | `smskit` / `smskit-web-axum`          |
-| OpenTelemetry and Prometheus integration | `enhanced-observability`              |
+| Built-in metrics and security monitoring | `enhanced-observability`              |
 | Performance memory pools                 | `performance-optimization`            |
 | ChaCha20-Poly1305 / Ed25519 crypto       | `enhanced-crypto`                     |
 | FIPS 140-3 algorithms via AWS-LC         | `fips-compliance`                     |
