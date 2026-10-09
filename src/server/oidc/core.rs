@@ -710,6 +710,27 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
                 "Invalid access token: a refresh token cannot be used here",
             ));
         }
+        // Revoked tokens (logout / revocation) are refused; an unreadable list fails closed.
+        match self
+            .storage
+            .get_kv(&format!("revoked_token:{}", token_claims.jti))
+            .await
+        {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                return Err(AuthError::auth_method(
+                    "oidc",
+                    "Invalid access token: it has been revoked",
+                ));
+            }
+            Err(e) => {
+                tracing::error!("Could not check token revocation list: {}", e);
+                return Err(AuthError::auth_method(
+                    "oidc",
+                    "Unable to verify access token status",
+                ));
+            }
+        }
 
         // Extract subject from token
         let subject = &token_claims.sub;
@@ -1342,6 +1363,39 @@ fn algorithm_to_string(alg: &Algorithm) -> String {
 mod tests {
     use super::*;
     use crate::storage::MemoryStorage;
+
+    #[tokio::test]
+    async fn userinfo_refuses_revoked_and_refresh_tokens() {
+        let provider = create_test_oidc_provider().await;
+        let tm = provider.token_manager.clone();
+        let access = tm
+            .create_jwt_token(
+                "user_x",
+                vec!["openid".into()],
+                Some(std::time::Duration::from_secs(600)),
+            )
+            .unwrap();
+        let refresh = tm
+            .create_refresh_jwt_token("user_x", Some(std::time::Duration::from_secs(600)))
+            .unwrap();
+        assert!(
+            provider.get_userinfo(&refresh).await.is_err(),
+            "refresh JWT"
+        );
+
+        let jti = tm.validate_jwt_token(&access).unwrap().jti;
+        provider
+            .storage
+            .store_kv(&format!("revoked_token:{jti}"), b"revoked", None)
+            .await
+            .unwrap();
+        let err = provider
+            .get_userinfo(&access)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("revoked"), "{err}");
+    }
 
     async fn create_test_oidc_provider() -> OidcProvider<MemoryStorage> {
         let config = OidcConfig::default();

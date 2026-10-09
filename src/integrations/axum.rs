@@ -300,7 +300,10 @@ async fn login_handler(
 
     let response = LoginResponse {
         access_token: token.access_token.clone(),
-        refresh_token: token.refresh_token.clone(),
+        refresh_token: Some(auth.token_manager().create_refresh_jwt_token(
+            &token.user_id,
+            Some(auth.config().refresh_token_lifetime),
+        )?),
         expires_in: (token.expires_at - token.issued_at).num_seconds().max(0) as u64,
         user: UserInfo {
             id: token.user_id.clone(),
@@ -352,30 +355,33 @@ async fn refresh_handler(
             .expect("valid request builder"),
     )?;
 
-    // Validate current token to extract claims
-    let claims = auth.validate_access_jwt(&token_str).await.map_err(|_| {
+    // Only a refresh token can mint a new access token, and it is single-use: redeeming it
+    // returns the next refresh token and spends this one.
+    let redemption = auth.redeem_refresh_jwt(&token_str).await.map_err(|_| {
         AuthError::Token(crate::errors::TokenError::Invalid {
-            message: "Cannot refresh: current token is invalid or expired".to_string(),
+            message: "Cannot refresh: the refresh token is invalid, expired or already used"
+                .to_string(),
         })
     })?;
+    let claims = redemption.claims;
 
-    // Issue a fresh token for the same user with the same scopes
-    let scopes: Vec<String> = if claims.scope.is_empty() {
-        vec![]
-    } else {
-        claims
-            .scope
-            .split_whitespace()
-            .map(str::to_string)
-            .collect()
+    // Permissions come from the account's stored permission set, not from the old token.
+    let permissions: Vec<String> = match auth
+        .storage()
+        .get_kv(&format!("user_permissions:{}", claims.sub))
+        .await
+    {
+        Ok(Some(data)) => serde_json::from_slice(&data).unwrap_or_default(),
+        _ => vec![],
     };
     let new_token_str = auth
         .token_manager()
-        .create_jwt_token(&claims.sub, scopes, None)?;
+        .create_jwt_token(&claims.sub, permissions, None)?;
 
     let expires_in = auth.config().token_lifetime.as_secs();
     Ok(Json(serde_json::json!({
         "access_token": new_token_str,
+        "refresh_token": redemption.new_refresh_token,
         "token_type": "Bearer",
         "expires_in": expires_in
     })))

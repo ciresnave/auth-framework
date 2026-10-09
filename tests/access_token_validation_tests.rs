@@ -50,10 +50,21 @@ mod access_token_validation_tests {
             .status()
     }
 
-    fn access(f: &AuthFramework) -> String {
+    async fn account(f: &AuthFramework) -> String {
+        let name = format!("atv_{}", uuid::Uuid::new_v4().simple());
+        f.register_user(
+            &name,
+            &format!("{name}@test.example.com"),
+            "SecurePass123!x",
+        )
+        .await
+        .unwrap()
+    }
+
+    fn access(f: &AuthFramework, user: &str) -> String {
         f.token_manager()
             .create_jwt_token(
-                "user_1",
+                user,
                 vec!["read".to_string()],
                 Some(Duration::from_secs(600)),
             )
@@ -76,7 +87,7 @@ mod access_token_validation_tests {
     async fn a_valid_access_token_is_accepted_everywhere() {
         let f = framework().await;
         let app = app(f.clone());
-        let jwt = access(&f);
+        let jwt = access(&f, &account(&f).await);
         assert_eq!(status(&app, "/extractor", &jwt).await, StatusCode::OK);
         assert_eq!(status(&app, "/middleware", &jwt).await, StatusCode::OK);
         assert!(f.validate_access_jwt(&jwt).await.is_ok());
@@ -86,7 +97,7 @@ mod access_token_validation_tests {
     async fn a_revoked_token_is_refused_everywhere() {
         let f = framework().await;
         let app = app(f.clone());
-        let jwt = access(&f);
+        let jwt = access(&f, &account(&f).await);
         revoke(&f, &jwt).await;
         assert_eq!(
             status(&app, "/extractor", &jwt).await,
@@ -105,7 +116,7 @@ mod access_token_validation_tests {
         let app = app(f.clone());
         let refresh = f
             .token_manager()
-            .create_refresh_jwt_token("user_1", Some(Duration::from_secs(600)))
+            .create_refresh_jwt_token(&account(&f).await, Some(Duration::from_secs(600)))
             .unwrap();
         assert_eq!(
             status(&app, "/extractor", &refresh).await,
@@ -123,12 +134,13 @@ mod access_token_validation_tests {
         use auth_framework::auth::AuthResult;
         use auth_framework::authentication::credentials::Credential;
         let f = framework().await;
-        let ok = access(&f);
-        let revoked = access(&f);
+        let uid = account(&f).await;
+        let ok = access(&f, &uid);
+        let revoked = access(&f, &uid);
         revoke(&f, &revoked).await;
         let refresh = f
             .token_manager()
-            .create_refresh_jwt_token("user_1", Some(Duration::from_secs(600)))
+            .create_refresh_jwt_token(&account(&f).await, Some(Duration::from_secs(600)))
             .unwrap();
 
         for (label, jwt, want_success) in [

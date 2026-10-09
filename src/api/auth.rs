@@ -145,6 +145,8 @@ pub struct RefreshResponse {
     pub token_type: String,
     /// Seconds until the new access token expires.
     pub expires_in: u64,
+    /// The next refresh token. The one just redeemed no longer works.
+    pub refresh_token: String,
 }
 
 /// Logout request.
@@ -477,102 +479,54 @@ pub async fn refresh_token(
         return ApiResponse::validation_error_typed("Invalid request");
     }
 
-    // Validate the refresh token
-    match state
+    // Redeem the refresh token: it must be a genuine, unrevoked, unspent refresh token of an
+    // active account; the next token of the chain is issued below.
+    let redemption = match state
         .auth_framework
-        .token_manager()
-        .validate_jwt_token(&req.refresh_token)
+        .redeem_refresh_jwt(&req.refresh_token)
+        .await
     {
-        Ok(claims) => {
-            // Only a token minted as a refresh token qualifies. The scope string is
-            // not consulted: scopes can be requested by OAuth clients.
-            if !claims.is_refresh_token() {
-                return ApiResponse::error_typed(
-                    "INVALID_TOKEN",
-                    "Expected a refresh token, but received an access token",
-                );
-            }
-
-            // SECURITY: Reject revoked refresh tokens (e.g. those already passed to /auth/logout).
-            let revocation_key = format!("revoked_token:{}", claims.jti);
-            match state.auth_framework.storage().get_kv(&revocation_key).await {
-                Ok(Some(_)) => {
-                    return ApiResponse::error_typed(
-                        "INVALID_TOKEN",
-                        "Refresh token has been revoked",
-                    );
-                }
-                Ok(None) => {} // Not revoked — proceed
-                Err(e) => {
-                    tracing::error!("Refresh token revocation check failed: {}", e);
-                    return ApiResponse::error_typed(
-                        "INTERNAL_ERROR",
-                        "Unable to verify token status",
-                    );
-                }
-            }
-
-            // Create new access token, preserving the user's actual permissions from storage.
-            // H-1 fix: do NOT hard-code ["read","write"] — load the real permission set.
-
-            // SECURITY: Reject refresh if the user's account has been deactivated
-            // since the refresh token was issued.  Without this check a deactivated
-            // user can indefinitely obtain new access tokens.
-            {
-                let user_key = format!("user:{}", claims.sub);
-                if let Ok(Some(user_bytes)) = state.auth_framework.storage().get_kv(&user_key).await
-                {
-                    let user_json: serde_json::Value =
-                        serde_json::from_slice(&user_bytes).unwrap_or_default();
-                    let active = user_json["active"].as_bool().unwrap_or(true);
-                    if !active {
-                        return ApiResponse::error_typed(
-                            "ACCOUNT_DEACTIVATED",
-                            "Account has been deactivated",
-                        );
-                    }
-                }
-            }
-
-            let permissions: Vec<String> = match state
-                .auth_framework
-                .storage()
-                .get_kv(&format!("user_permissions:{}", claims.sub))
-                .await
-            {
-                Ok(Some(data)) => serde_json::from_slice(&data).unwrap_or_default(),
-                _ => vec![],
-            };
-
-            let token_lifetime = state.auth_framework.config().token_lifetime;
-            let new_access_token = match state.auth_framework.token_manager().create_jwt_token(
-                &claims.sub,
-                permissions,
-                Some(token_lifetime),
-            ) {
-                Ok(jwt) => jwt,
-                Err(e) => {
-                    tracing::error!("Failed to create new access token: {}", e);
-                    return ApiResponse::error_typed(
-                        "TOKEN_CREATION_FAILED",
-                        "Failed to create new access token",
-                    );
-                }
-            };
-
-            let response = RefreshResponse {
-                access_token: new_access_token,
-                token_type: "Bearer".to_string(),
-                expires_in: token_lifetime.as_secs(),
-            };
-
-            ApiResponse::success(response)
-        }
+        Ok(r) => r,
         Err(e) => {
-            tracing::warn!("Invalid refresh token: {}", e);
-            ApiResponse::error_typed("INVALID_TOKEN", "Invalid or expired refresh token")
+            tracing::warn!("Refresh token refused: {}", e);
+            return ApiResponse::error_typed("INVALID_TOKEN", "Invalid or expired refresh token");
         }
-    }
+    };
+    let claims = redemption.claims;
+
+    // Create new access token, preserving the user's actual permissions from storage.
+    let permissions: Vec<String> = match state
+        .auth_framework
+        .storage()
+        .get_kv(&format!("user_permissions:{}", claims.sub))
+        .await
+    {
+        Ok(Some(data)) => serde_json::from_slice(&data).unwrap_or_default(),
+        _ => vec![],
+    };
+
+    let token_lifetime = state.auth_framework.config().token_lifetime;
+    let new_access_token = match state.auth_framework.token_manager().create_jwt_token(
+        &claims.sub,
+        permissions,
+        Some(token_lifetime),
+    ) {
+        Ok(jwt) => jwt,
+        Err(e) => {
+            tracing::error!("Failed to create new access token: {}", e);
+            return ApiResponse::error_typed(
+                "TOKEN_CREATION_FAILED",
+                "Failed to create new access token",
+            );
+        }
+    };
+
+    ApiResponse::success(RefreshResponse {
+        access_token: new_access_token,
+        token_type: "Bearer".to_string(),
+        expires_in: token_lifetime.as_secs(),
+        refresh_token: redemption.new_refresh_token,
+    })
 }
 
 /// `POST /auth/logout` — revoke access and (optionally) refresh tokens.
@@ -619,7 +573,10 @@ pub async fn logout(
         {
             Ok(claims) => {
                 let revocation_key = format!("revoked_token:{}", claims.jti);
-                let ttl = std::time::Duration::from_secs(7 * 86400);
+                // as long as the token could still be presented
+                let ttl = std::time::Duration::from_secs(
+                    (claims.exp - chrono::Utc::now().timestamp()).max(60) as u64,
+                );
                 if let Err(e) = state
                     .auth_framework
                     .storage()

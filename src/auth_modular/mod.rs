@@ -541,6 +541,7 @@ impl AuthFramework {
             &self.token_manager,
             self.storage.as_ref(),
             token,
+            false,
         )
         .await
         {
@@ -804,8 +805,17 @@ impl AuthFramework {
         // Validate with token manager
         self.token_manager.validate_auth_token(token)?;
 
+        // Refuse tokens on the revocation list (logout / revocation)
+        if crate::auth::access_token_is_revoked(&self.token_manager, self.storage.as_ref(), token)
+            .await?
+        {
+            return Ok(false);
+        }
+
         // Check if token exists in storage
-        if let Some(stored_token) = self.storage.get_token(&token.token_id).await? {
+        if let Some(stored_token) = self.storage.get_token(&token.token_id).await?
+            && !stored_token.is_revoked()
+        {
             // Update last used time
             let mut updated_token = stored_token;
             updated_token.mark_used();

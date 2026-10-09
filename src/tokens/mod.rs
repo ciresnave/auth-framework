@@ -711,6 +711,16 @@ impl JwtClaims {
     pub const TOKEN_USE_CLAIM: &'static str = "token_use";
     /// Value of [`TOKEN_USE_CLAIM`](Self::TOKEN_USE_CLAIM) on refresh tokens.
     pub const TOKEN_USE_REFRESH: &'static str = "refresh";
+    /// Name of the claim that ties the tokens of one refresh chain together.
+    pub const FAMILY_CLAIM: &'static str = "fam";
+
+    /// The refresh chain this token belongs to (its own id when it started the chain).
+    pub fn refresh_family(&self) -> &str {
+        self.custom
+            .get(Self::FAMILY_CLAIM)
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.jti)
+    }
 
     /// `true` only for tokens minted by [`TokenManager::create_refresh_jwt_token`].
     /// The `scope` string plays no part: a scope is client-influenced data, this claim is not.
@@ -1565,7 +1575,7 @@ impl TokenManager {
         scopes: Vec<String>,
         lifetime: Option<Duration>,
     ) -> Result<String> {
-        self.encode_jwt(user_id.into(), scopes, lifetime, None)
+        self.encode_jwt(user_id.into(), scopes, lifetime, None, None)
     }
 
     /// Create a JWT that is a refresh token: it carries `token_use: "refresh"`, which
@@ -1580,6 +1590,25 @@ impl TokenManager {
             vec!["refresh".to_string()],
             lifetime,
             Some(JwtClaims::TOKEN_USE_REFRESH),
+            None,
+        )
+    }
+
+    /// Like [`create_refresh_jwt_token`](Self::create_refresh_jwt_token) but continues an
+    /// existing refresh-token chain (`family`), so that reuse of any earlier token in the
+    /// chain can revoke the rest of it.
+    pub fn create_refresh_jwt_token_in_family(
+        &self,
+        user_id: impl Into<String>,
+        lifetime: Option<Duration>,
+        family: &str,
+    ) -> Result<String> {
+        self.encode_jwt(
+            user_id.into(),
+            vec!["refresh".to_string()],
+            lifetime,
+            Some(JwtClaims::TOKEN_USE_REFRESH),
+            Some(family),
         )
     }
 
@@ -1589,6 +1618,7 @@ impl TokenManager {
         scopes: Vec<String>,
         lifetime: Option<Duration>,
         token_use: Option<&str>,
+        family: Option<&str>,
     ) -> Result<String> {
         let lifetime = lifetime.unwrap_or(self.default_lifetime);
         let now = Utc::now();
@@ -1613,6 +1643,14 @@ impl TokenManager {
             claims.custom.insert(
                 JwtClaims::TOKEN_USE_CLAIM.to_string(),
                 serde_json::Value::String(token_use.to_string()),
+            );
+            // A refresh token starts a chain (family = its own id) or continues one.
+            let family = family
+                .map(String::from)
+                .unwrap_or_else(|| claims.jti.clone());
+            claims.custom.insert(
+                JwtClaims::FAMILY_CLAIM.to_string(),
+                serde_json::Value::String(family),
             );
         }
 

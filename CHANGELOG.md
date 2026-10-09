@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- Refresh tokens are single-use and tokens of deactivated accounts stop
+  working. `POST /auth/refresh` (and the axum integration's refresh route) returns the next
+  refresh token with the new access token; the redeemed token is spent, and presenting an
+  already-redeemed token is refused and revokes the rest of its chain (`refresh_token` is a
+  new field of `RefreshResponse`; clients must store the new token). The axum integration's
+  refresh route now accepts only a refresh token (it used to mint a new access token from an
+  access token) and its login route issues one. `AuthFramework::redeem_refresh_jwt` is the
+  shared implementation. `validate_access_jwt` also refuses tokens of a deactivated account
+  (so the axum, actix, warp and unified paths do, not only `validate_api_token`);
+  `AuthFramework::validate_token` (and the modular type's) refuses tokens on the revocation
+  list and stored-revoked tokens; OIDC `get_userinfo` reads the revocation list;
+  `TokenExchangeManager::with_revocation_store` makes token exchange refuse revoked tokens, and
+  subject/actor tokens that are refresh tokens unless declared as such (opt-in: the bundled
+  factories do not install a store, so install one when you build the manager yourself). A
+  token whose subject has no account record (deleted account, or a subject never registered
+  here) is now refused by `validate_access_jwt` and `redeem_refresh_jwt`, as
+  `validate_api_token` already did; JWT credentials passed to `authenticate` (federated
+  OIDC/OAuth2 subjects) may still have no local record, but a deactivated local record is
+  refused there too. `POST /auth/refresh` answers `INVALID_TOKEN` for a
+  deactivated account (it used to answer `ACCOUNT_DEACTIVATED`). Known limits: two
+  simultaneous redemptions of one refresh token can both succeed (the storage trait has no
+  set-if-absent); access tokens already issued stay valid until they expire even after their
+  chain is revoked. Logout keeps a refresh token's revocation for the token's remaining life
+  (it was 7 days).
 - 0.6.0-rcXX -- Bearer JWT validation: `AuthFramework::validate_access_jwt` is now the one
   check for a JWT presented as an access token (signature and claims, not a refresh token,
   not revoked; a revocation list that cannot be read rejects the token). It backs
