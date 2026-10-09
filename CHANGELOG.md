@@ -157,6 +157,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - tokens whose `sub` has no user record are rejected by every bearer-protected
     endpoint.
 
+- 0.6.0-rcXX -- OAuth2 authorization_code grant (#140): the token endpoint never verified
+  the client secret. A confidential client (its registered record holds a non-empty
+  `client_secret`) can now redeem a code only by presenting that secret; missing, empty
+  or wrong is `invalid_client`. The client must be registered (an unregistered
+  `client_id` is `invalid_client`). Whether a client is public is now decided by its
+  registration, not by whether the request carries a secret, so a public client can no
+  longer skip PKCE by sending an arbitrary secret. A code issued to a different client
+  is `invalid_grant`, and neither that refusal nor a failed client authentication
+  consumes the code (previously the code was deleted before the `client_id` comparison,
+  so presenting someone else's code destroyed it). Before this fix, anyone holding a
+  valid authorization code and its client_id could redeem it without the secret
+  (PKCE still applied where the code carried a challenge). **Behaviour change:**
+  integrators that redeemed codes for unregistered client ids must register them.
 - 0.6.0-rc40 -- OAuth2 refresh grant (#118): a refresh token that carries a `client_id` is now
   redeemable ONLY by that client (RFC 6749 section 6). A confidential client (its
   registered record holds a `client_secret`) must authenticate with `client_id` +
