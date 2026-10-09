@@ -1121,38 +1121,51 @@ impl AuthFramework {
     pub async fn complete_mfa(&self, challenge: MfaChallenge, mfa_code: &str) -> Result<AuthToken> {
         debug!("Completing MFA for challenge '{}'", challenge.id);
 
+        // Only the STORED challenge counts: its user decides who is signed in, and each call
+        // spends one of its limited attempts (the caller's copy is just an id).
         let stored_challenge = self
             .mfa_manager
-            .get_challenge(&challenge.id)
+            .begin_attempt(&challenge.id)
             .await?
             .ok_or(MfaError::ChallengeExpired)?;
 
-        if stored_challenge.is_expired() {
-            self.mfa_manager.remove_challenge(&challenge.id).await?;
-            return Err(MfaError::ChallengeExpired.into());
-        }
-
         if !self.verify_mfa_code(&stored_challenge, mfa_code).await? {
+            if stored_challenge.attempts >= stored_challenge.max_attempts {
+                self.mfa_manager.remove_challenge(&challenge.id).await?;
+            }
             return Err(MfaError::InvalidCode.into());
         }
 
         self.mfa_manager.remove_challenge(&challenge.id).await?;
 
+        let user_id = stored_challenge.user_id.as_str();
         let scopes = self
             .user_manager
-            .get_user_roles(&challenge.user_id)
+            .get_user_roles(user_id)
             .await
             .unwrap_or_else(|_| vec!["user".to_string()]);
 
         let token = self
-            .mint_and_store_token(&challenge.user_id, scopes, "mfa", None)
+            .mint_and_store_token(user_id, scopes, "mfa", None)
             .await?;
 
-        info!(
-            "MFA completed successfully for user '{}'",
-            challenge.user_id
-        );
+        info!("MFA completed successfully for user '{}'", user_id);
         Ok(token)
+    }
+
+    /// The user a pending MFA challenge belongs to. Reading it does not count as an attempt.
+    pub async fn mfa_challenge_owner(&self, challenge_id: &str) -> Option<String> {
+        self.mfa_manager
+            .get_challenge(challenge_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.user_id)
+    }
+
+    /// Drop a pending MFA challenge (e.g. when the account is locked).
+    pub(crate) async fn discard_mfa_challenge(&self, challenge_id: &str) {
+        let _ = self.mfa_manager.remove_challenge(challenge_id).await;
     }
 
     /// Complete MFA using a previously issued challenge ID.

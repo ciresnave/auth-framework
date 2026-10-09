@@ -129,6 +129,9 @@ pub struct MfaManager {
     storage: Arc<dyn AuthStorage>,
 }
 
+/// Pending MFA challenges kept per user (see [`MfaManager::guard_and_store`]).
+pub const MAX_PENDING_PER_USER: usize = 3;
+
 impl MfaManager {
     /// Create a new MFA manager
     pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
@@ -169,23 +172,56 @@ impl MfaManager {
 
     /// Guard the global challenge budget and store the challenge.
     ///
-    /// Returns an error if more than 10 000 challenges are pending; otherwise
-    /// delegates to [`Self::store_challenge`].
+    /// Returns an error if more than 10 000 challenges are pending. A user also keeps at
+    /// most [`MAX_PENDING_PER_USER`] pending challenges: storing a new one retires that
+    /// user's oldest, so minting challenges cannot multiply the guesses available for
+    /// one account.
     pub async fn guard_and_store(&self, challenge: MfaChallenge) -> Result<()> {
         const MAX_TOTAL_CHALLENGES: usize = 10_000;
-        if self.get_active_challenge_count().await >= MAX_TOTAL_CHALLENGES {
+        let mut challenges = self.challenges.write().await;
+        if challenges.len() >= MAX_TOTAL_CHALLENGES {
             tracing::warn!("Maximum MFA challenges ({}) exceeded", MAX_TOTAL_CHALLENGES);
             return Err(crate::errors::AuthError::rate_limit(
                 "Too many pending MFA challenges. Please try again later.",
             ));
         }
-        self.store_challenge(challenge).await
+        let mut mine: Vec<(chrono::DateTime<chrono::Utc>, String)> = challenges
+            .values()
+            .filter(|c| c.user_id == challenge.user_id)
+            .map(|c| (c.created_at, c.id.clone()))
+            .collect();
+        mine.sort();
+        while mine.len() >= MAX_PENDING_PER_USER {
+            let (_, oldest) = mine.remove(0);
+            challenges.remove(&oldest);
+        }
+        debug!("Storing MFA challenge '{}'", challenge.id);
+        challenges.insert(challenge.id.clone(), challenge);
+        Ok(())
     }
 
     /// Get an MFA challenge
     pub async fn get_challenge(&self, challenge_id: &str) -> Result<Option<MfaChallenge>> {
         let challenges = self.challenges.read().await;
         Ok(challenges.get(challenge_id).cloned())
+    }
+
+    /// Spend one verification attempt on a challenge, atomically.
+    ///
+    /// Returns the stored challenge if it exists, has not expired and still has an attempt
+    /// left (the attempt is counted BEFORE the code is checked, so concurrent guesses are
+    /// all counted). Otherwise the challenge is removed and `None` is returned.
+    pub async fn begin_attempt(&self, challenge_id: &str) -> Result<Option<MfaChallenge>> {
+        let mut challenges = self.challenges.write().await;
+        let Some(challenge) = challenges.get_mut(challenge_id) else {
+            return Ok(None);
+        };
+        if challenge.is_expired() || challenge.attempts >= challenge.max_attempts {
+            challenges.remove(challenge_id);
+            return Ok(None);
+        }
+        challenge.attempts += 1;
+        Ok(Some(challenge.clone()))
     }
 
     /// Remove an MFA challenge

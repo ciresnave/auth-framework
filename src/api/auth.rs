@@ -210,6 +210,26 @@ pub(crate) fn login_risk_level(headers: &HeaderMap) -> (&'static str, Vec<String
 }
 
 /// Increment the per-username failed login counter with a sliding TTL window.
+/// Consecutive failures (password or MFA) after which an account is locked for the window.
+const MAX_FAILED_ATTEMPTS: u64 = 5;
+/// How long failed-MFA counts are remembered.
+const MFA_LOCKOUT_WINDOW_SECS: u64 = 900;
+
+fn mfa_lockout_key(user_id: &str) -> String {
+    format!("mfa_failures:{user_id}")
+}
+
+/// Has this lockout counter reached the limit?
+async fn is_locked(state: &ApiState, key: &str) -> bool {
+    match state.auth_framework.storage().get_kv(key).await {
+        Ok(Some(bytes)) => std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .is_some_and(|count| count >= MAX_FAILED_ATTEMPTS),
+        _ => false,
+    }
+}
+
 async fn increment_login_failure(state: &ApiState, lockout_key: &str, window_secs: u64) {
     let current: u64 = match state.auth_framework.storage().get_kv(lockout_key).await {
         Ok(Some(bytes)) => std::str::from_utf8(&bytes)
@@ -254,12 +274,36 @@ pub async fn login(
     if let (Some(challenge_id), Some(mfa_code)) =
         (req.challenge_id.clone(), req.mfa_code.as_deref())
     {
+        // Wrong codes are counted against the account the challenge belongs to, whatever
+        // username the caller sends, and locked accounts get no further guesses.
+        let Some(owner_id) = state
+            .auth_framework
+            .mfa_challenge_owner(&challenge_id)
+            .await
+        else {
+            return ApiResponse::error_typed(
+                "MFA_INVALID_CODE",
+                "Invalid or expired MFA challenge or code",
+            );
+        };
+        let owner_lockout_key = mfa_lockout_key(&owner_id);
+        if is_locked(&state, &owner_lockout_key).await {
+            return ApiResponse::error_typed(
+                "ACCOUNT_LOCKED",
+                "Too many failed login attempts. Please try again later.",
+            );
+        }
         return match state
             .auth_framework
             .complete_mfa_by_id(&challenge_id, mfa_code)
             .await
         {
             Ok(token) => {
+                let _ = state
+                    .auth_framework
+                    .storage()
+                    .delete_kv(&owner_lockout_key)
+                    .await;
                 let mut response = build_login_response(
                     &state,
                     &token.user_id,
@@ -275,6 +319,7 @@ pub async fn login(
             }
             Err(e) => {
                 tracing::debug!("MFA completion failed during login: {}", e);
+                increment_login_failure(&state, &owner_lockout_key, MFA_LOCKOUT_WINDOW_SECS).await;
                 ApiResponse::error_typed(
                     "MFA_INVALID_CODE",
                     "Invalid or expired MFA challenge or code",
@@ -291,7 +336,6 @@ pub async fn login(
     // Key: "login_failures:{username}" — stores the current failure count as a
     // decimal string with a 15-minute TTL (auto-resets after 15 min of no attempts).
     let lockout_key = format!("login_failures:{}", req.username);
-    const MAX_FAILED_ATTEMPTS: u64 = 5;
     const LOCKOUT_WINDOW_SECS: u64 = 900; // 15 minutes
     if let Ok(Some(count_bytes)) = state.auth_framework.storage().get_kv(&lockout_key).await
         && let Ok(count_str) = std::str::from_utf8(&count_bytes)
@@ -367,6 +411,18 @@ pub async fn login(
                 response
             }
             crate::auth::AuthResult::MfaRequired(challenge) => {
+                // An account whose MFA codes were guessed wrongly too often gets no new
+                // challenge until the lockout window passes.
+                if is_locked(&state, &mfa_lockout_key(&challenge.user_id)).await {
+                    state
+                        .auth_framework
+                        .discard_mfa_challenge(&challenge.id)
+                        .await;
+                    return ApiResponse::error_typed(
+                        "ACCOUNT_LOCKED",
+                        "Too many failed login attempts. Please try again later.",
+                    );
+                }
                 // Return the challenge data so the client knows how to fulfill MFA.
                 // The client should prompt for the appropriate second factor and then
                 // re-submit the login request with both challenge_id and mfa_code.

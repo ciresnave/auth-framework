@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- MFA: an MFA challenge now allows a limited number of attempts
+  (`max_attempts`, 5 for login challenges); each attempt is counted before the code is
+  checked and an exhausted challenge is removed. Wrong codes submitted at `/auth/login` are
+  counted against the account the challenge belongs to (whatever username is sent) and, after
+  5 failures within 15 minutes, further codes are refused and no new challenge is issued
+  (`ACCOUNT_LOCKED`) until the window passes; a successful MFA login clears the count. A TOTP
+  code is accepted once: a code for a time step that is not newer than the last accepted one
+  is refused. `complete_mfa` now signs in the user of the STORED challenge rather than the
+  `user_id` of the challenge value the caller passes. A user keeps at most 3 pending
+  challenges (a new one retires the oldest). `/auth/login` answers `ACCOUNT_LOCKED` instead
+  of issuing an MFA challenge while the lockout is active. The one-use rule also applies to
+  `TotpManager::verify_code` callers: a code already accepted for a time step is refused the
+  second time. `AuthFramework` (not the modular type) gains `mfa_challenge_owner`. Library
+  entry points that verify a single factor outside a challenge (`verify_sms_code`,
+  `verify_totp_code`, the step-up helpers) keep their own, uncapped, behaviour: apply your
+  own limits if you expose them.
 - 0.6.0-rcXX -- Rate limiting: the request rate limiter now identifies a client by the
   connection's peer address; `X-Forwarded-For` / `X-Real-IP` are believed only when the
   peer is listed in the new `ApiServer::with_trusted_proxies` (default: none), using the

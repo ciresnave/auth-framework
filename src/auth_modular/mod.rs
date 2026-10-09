@@ -698,17 +698,12 @@ impl AuthFramework {
     pub async fn complete_mfa(&self, challenge: MfaChallenge, mfa_code: &str) -> Result<AuthToken> {
         debug!("Completing MFA for challenge '{}'", challenge.id);
 
-        // Check if challenge exists and is valid
+        // Only the STORED challenge counts, and each call spends one of its attempts.
         let stored_challenge = self
             .mfa_manager
-            .get_challenge(&challenge.id)
+            .begin_attempt(&challenge.id)
             .await?
             .ok_or(MfaError::ChallengeExpired)?;
-
-        if stored_challenge.is_expired() {
-            self.mfa_manager.remove_challenge(&challenge.id).await?;
-            return Err(MfaError::ChallengeExpired.into());
-        }
 
         // Verify MFA code based on challenge type
         let is_valid = match &stored_challenge.mfa_type {
@@ -740,6 +735,9 @@ impl AuthFramework {
         };
 
         if !is_valid {
+            if stored_challenge.attempts >= stored_challenge.max_attempts {
+                self.mfa_manager.remove_challenge(&challenge.id).await?;
+            }
             return Err(MfaError::InvalidCode.into());
         }
 
@@ -747,7 +745,7 @@ impl AuthFramework {
         self.mfa_manager.remove_challenge(&challenge.id).await?;
 
         // Look up user roles from storage
-        let user_key = format!("user:{}", challenge.user_id);
+        let user_key = format!("user:{}", stored_challenge.user_id);
         let scopes = if let Ok(Some(data)) = self.storage.get_kv(&user_key).await {
             serde_json::from_slice::<serde_json::Value>(&data)
                 .ok()
@@ -768,14 +766,14 @@ impl AuthFramework {
         // Create authentication token
         let token =
             self.token_manager
-                .create_auth_token(&challenge.user_id, scopes, "mfa", None)?;
+                .create_auth_token(&stored_challenge.user_id, scopes, "mfa", None)?;
 
         // Store the token
         self.storage.store_token(&token).await?;
 
         info!(
             "MFA completed successfully for user '{}'",
-            challenge.user_id
+            stored_challenge.user_id
         );
 
         Ok(token)
