@@ -863,10 +863,9 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                 backend.as_ref(),
                 &encryption,
                 &prefix,
-                crate::storage::encryption::MigrationOptions {
-                    dry_run,
-                    accept_legacy_v0,
-                },
+                crate::storage::encryption::MigrationOptions::default()
+                    .with_dry_run(dry_run)
+                    .with_accept_legacy_v0(accept_legacy_v0),
             )
             .await?;
 

@@ -1014,9 +1014,19 @@ pub struct MigrationOptions {
     /// [`migrate_kv_to_encrypted`]'s own docs for why this is a separate,
     /// explicit opt-in.
     pub accept_legacy_v0: bool,
+    /// A backend that cannot report KV TTLs ([`AuthStorage::tracks_kv_ttl`]
+    /// is `false`) makes a real migration turn every expiring entry into a
+    /// permanent one. Such a run is refused unless this is `true`.
+    pub accept_ttl_loss: bool,
 }
 
 impl MigrationOptions {
+    /// Builder-style setter; see [`Self::with_dry_run`].
+    pub fn with_accept_ttl_loss(mut self, accept_ttl_loss: bool) -> Self {
+        self.accept_ttl_loss = accept_ttl_loss;
+        self
+    }
+
     /// Builder-style setter. `#[non_exhaustive]` means `MigrationOptions {
     /// dry_run: true, ..Default::default() }` only compiles *inside*
     /// this crate -- a downstream caller needs `let mut o =
@@ -1118,6 +1128,7 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     let MigrationOptions {
         dry_run,
         accept_legacy_v0,
+        accept_ttl_loss: _,
     } = options;
     let mut report = KvEncryptionMigrationReport {
         dry_run,
@@ -1706,6 +1717,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: true,
+                ..Default::default()
             },
         )
         .await
@@ -1747,6 +1759,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -1796,6 +1809,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -1869,6 +1883,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: true,
+                ..Default::default()
             },
         )
         .await
@@ -1938,6 +1953,7 @@ mod tests {
             MigrationOptions {
                 dry_run: true,
                 accept_legacy_v0: true,
+                ..Default::default()
             },
         )
         .await
@@ -2038,6 +2054,7 @@ mod tests {
             MigrationOptions {
                 dry_run: true,
                 accept_legacy_v0: true,
+                ..Default::default()
             },
         )
         .await
@@ -2081,6 +2098,7 @@ mod tests {
             MigrationOptions {
                 dry_run: true,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2112,6 +2130,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2160,6 +2179,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2184,6 +2204,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2212,6 +2233,7 @@ mod tests {
             MigrationOptions {
                 dry_run: false,
                 accept_legacy_v0: false,
+                ..Default::default()
             },
         )
         .await
@@ -2590,5 +2612,132 @@ mod tests {
             unsafe { std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE") };
             assert!(result.is_err(), "{name} must fail closed");
         }
+    }
+
+    // ---- migration preserves KV TTLs ---------------------------------------------
+
+    fn ttl_provider() -> FixedKeys {
+        FixedKeys {
+            current: "1",
+            keys: vec![("1", KEY_A)],
+        }
+    }
+
+    #[tokio::test]
+    async fn migration_preserves_ttl_when_encrypting_plaintext() {
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv("otp:1", b"123456", Some(Duration::from_secs(600)))
+            .await
+            .unwrap();
+        storage.store_kv("durable:1", b"keep", None).await.unwrap();
+
+        migrate_kv_to_encrypted(
+            &storage,
+            &StorageEncryption::new(&ttl_provider()).unwrap(),
+            "",
+            MigrationOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let ttl = storage.get_kv_ttl("otp:1").await.unwrap().unwrap();
+        assert!(
+            ttl > Duration::from_secs(590) && ttl <= Duration::from_secs(600),
+            "TTL must survive migration, got {ttl:?}"
+        );
+        assert_eq!(storage.get_kv_ttl("durable:1").await.unwrap(), None);
+        let raw = storage.get_kv("otp:1").await.unwrap().unwrap();
+        assert!(
+            StorageEncryption::looks_like_envelope(&raw),
+            "must be encrypted"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_upgrade_preserves_ttl() {
+        let storage = MemoryStorage::new();
+        storage
+            .store_kv(
+                "rec:1",
+                &manual_envelope(&KEY_A, "1", 1, b"secret", b"rec:1"),
+                Some(Duration::from_secs(600)),
+            )
+            .await
+            .unwrap();
+
+        migrate_kv_to_encrypted(
+            &storage,
+            &StorageEncryption::new(&ttl_provider()).unwrap(),
+            "",
+            MigrationOptions::default().with_accept_legacy_v0(true),
+        )
+        .await
+        .unwrap();
+
+        let ttl = storage.get_kv_ttl("rec:1").await.unwrap().unwrap();
+        assert!(ttl > Duration::from_secs(590) && ttl <= Duration::from_secs(600));
+        let raw = storage.get_kv("rec:1").await.unwrap().unwrap();
+        assert_eq!(StorageEncryption::parse_envelope(&raw).unwrap().v, 2);
+    }
+
+    /// A backend that cannot report TTLs must not be migrated silently: a
+    /// real run would make every expiring entry permanent. It needs an
+    /// explicit opt-in, and a dry run (which writes nothing) is always fine.
+    #[tokio::test]
+    async fn migration_refuses_backend_that_cannot_report_ttl_without_opt_in() {
+        let storage = crate::testing::utilities::MockStorage::new();
+        let encryption = StorageEncryption::new(&ttl_provider()).unwrap();
+
+        assert!(
+            migrate_kv_to_encrypted(&storage, &encryption, "", MigrationOptions::default())
+                .await
+                .is_err(),
+            "a real run on a TTL-blind backend must be refused"
+        );
+        assert!(
+            migrate_kv_to_encrypted(
+                &storage,
+                &encryption,
+                "",
+                MigrationOptions::default().with_dry_run(true)
+            )
+            .await
+            .is_ok(),
+            "a dry run writes nothing, so it is allowed"
+        );
+        assert!(
+            migrate_kv_to_encrypted(
+                &storage,
+                &encryption,
+                "",
+                MigrationOptions::default().with_accept_ttl_loss(true)
+            )
+            .await
+            .is_ok(),
+            "explicit opt-in proceeds"
+        );
+    }
+
+    #[tokio::test]
+    async fn backends_that_honour_ttl_say_so() {
+        let memory = MemoryStorage::new();
+        assert!(memory.tracks_kv_ttl());
+        let wrapped = EncryptedStorage::new(
+            MemoryStorage::new(),
+            StorageEncryption::new_random(),
+            false,
+            false,
+        );
+        assert!(
+            wrapped.tracks_kv_ttl(),
+            "the wrapper forwards the inner answer"
+        );
+        let shared: std::sync::Arc<dyn AuthStorage> = std::sync::Arc::new(MemoryStorage::new());
+        assert!(shared.tracks_kv_ttl(), "the Arc impl forwards too");
+        assert!(
+            !crate::testing::utilities::MockStorage::new().tracks_kv_ttl(),
+            "a backend that ignores TTLs must say so"
+        );
     }
 }

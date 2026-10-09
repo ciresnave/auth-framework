@@ -158,6 +158,14 @@ pub trait AuthStorage: Send + Sync {
         Ok(None)
     }
 
+    /// Whether [`get_kv_ttl`](Self::get_kv_ttl) reports the TTLs given to
+    /// [`store_kv`](Self::store_kv). `false` (the default) means a TTL is
+    /// invisible to callers, so anything that copies entries (migration,
+    /// backup/restore) cannot preserve expiry.
+    fn tracks_kv_ttl(&self) -> bool {
+        false
+    }
+
     /// Delete arbitrary key-value data.
     async fn delete_kv(&self, key: &str) -> Result<()>;
 
