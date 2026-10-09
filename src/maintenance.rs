@@ -298,7 +298,9 @@ async fn collect_snapshot(framework: &AuthFramework) -> Result<MaintenanceSnapsh
 
     if !storage.tracks_kv_ttl() {
         tracing::warn!(
-            "This storage backend does not report KV TTLs: the snapshot cannot record them,              so every KV entry restored from it becomes permanent, including ones that were              meant to expire (one-time codes, rate-limit windows, expiring API keys)."
+            "This storage backend does not report KV TTLs: the snapshot cannot record them, \
+             so every KV entry restored from it becomes permanent, including ones that were \
+             meant to expire (one-time codes, rate-limit windows, expiring API keys)."
         );
     }
 

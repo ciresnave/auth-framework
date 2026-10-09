@@ -413,6 +413,7 @@ mod tests {
     #[tokio::test]
     async fn get_kv_ttl_reports_remaining_lifetime() {
         let storage = create_test_storage().await;
+        assert!(storage.tracks_kv_ttl());
         storage
             .store_kv("k:ttl", b"v", Some(Duration::from_secs(600)))
             .await

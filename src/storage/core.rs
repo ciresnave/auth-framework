@@ -161,7 +161,9 @@ pub trait AuthStorage: Send + Sync {
     /// Whether [`get_kv_ttl`](Self::get_kv_ttl) reports the TTLs given to
     /// [`store_kv`](Self::store_kv). `false` (the default) means a TTL is
     /// invisible to callers, so anything that copies entries (migration,
-    /// backup/restore) cannot preserve expiry.
+    /// backup/restore) cannot preserve expiry. A backend that overrides
+    /// [`get_kv_ttl`](Self::get_kv_ttl) must override this too (return
+    /// `true`), otherwise it is treated as TTL-blind.
     fn tracks_kv_ttl(&self) -> bool {
         false
     }
@@ -876,9 +878,12 @@ impl AuthStorage for RedisStorage {
         let storage_key = self.key(&format!("kv:{key}"));
 
         if let Some(ttl) = ttl {
-            let _: () = redis::cmd("SETEX")
+            // PSETEX, not SETEX: a remaining TTL under one second must not
+            // become `SETEX key 0 ...`, which Redis rejects.
+            let millis = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX).max(1);
+            let _: () = redis::cmd("PSETEX")
                 .arg(&storage_key)
-                .arg(ttl.as_secs())
+                .arg(millis)
                 .arg(value)
                 .query_async(&mut conn)
                 .await
