@@ -73,7 +73,46 @@ impl Drop for EncryptionEnvGuard {
 /// Current envelope format version. Bumped whenever the envelope's fields
 /// or decryption rules change in a way that needs disambiguating from
 /// older data still on disk.
-const CURRENT_FORMAT_VERSION: u8 = 1;
+///
+/// * `0` -- the original public `EncryptedStorage`: no `key_id`, no AAD.
+/// * `1` -- versioned `key_id`; AAD is the bare storage key, so the
+///   envelope's own metadata (`v`, `key_id`, `algorithm`) is NOT
+///   authenticated.
+/// * `2` -- AAD binds the metadata too (see [`bound_aad`]).
+///
+/// Versions below the current one are *legacy*: readable only behind the
+/// `allow_legacy_v0` policy (the name is historical; it covers every
+/// pre-current format) and upgraded by [`migrate_kv_to_encrypted`].
+const CURRENT_FORMAT_VERSION: u8 = 2;
+
+/// Format version 1, the first versioned-`key_id` format.
+const FORMAT_V1: u8 = 1;
+
+/// The only algorithm identifier this module reads or writes.
+const ALGORITHM: &str = "AES-256-GCM";
+
+/// The one error text every decryption failure returns. The specific
+/// cause (bad base64, wrong nonce length, unknown key id, failed
+/// authentication, ...) is logged, never returned, so the failure itself
+/// is not an oracle for which check tripped.
+const DECRYPT_FAILED: &str = "Decryption failed";
+
+/// Associated data for a format-v2 envelope: the caller's record AAD
+/// (the storage key) AND the envelope's own `v`, `algorithm` and `key_id`,
+/// each length-prefixed so the concatenation is unambiguous. Binding the
+/// metadata means relabelling an envelope's `key_id`, or rewriting `v` to
+/// downgrade it to a format whose AAD ignores metadata, fails
+/// authentication instead of being trusted.
+fn bound_aad(v: u8, algorithm: &str, key_id: &str, record_aad: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(48 + algorithm.len() + key_id.len() + record_aad.len());
+    out.extend_from_slice(b"auth-framework/storage-envelope");
+    out.push(v);
+    for part in [algorithm.as_bytes(), key_id.as_bytes(), record_aad] {
+        out.extend_from_slice(&(part.len() as u32).to_be_bytes());
+        out.extend_from_slice(part);
+    }
+    out
+}
 
 fn default_format_version() -> u8 {
     // Envelopes serialized before this field existed (format version 0,
@@ -117,7 +156,8 @@ pub struct EncryptedData {
     pub key_id: String,
     /// Envelope format version. `0` (including an absent field, which
     /// deserializes to `0`) is the original pre-redesign format; `1` is
-    /// the current format (versioned `key_id`, AAD-bound encryption).
+    /// the legacy versioned-`key_id` format; `2` is the current format
+    /// (metadata bound into the AAD).
     #[serde(default = "default_format_version")]
     pub v: u8,
     /// Present only for format-version-0 compatibility (the original
@@ -325,7 +365,7 @@ impl EnvKeyProvider {
 /// replaced with the literal `key`, never the raw key itself.
 fn safe_log_id(key: &str) -> String {
     use sha2::{Digest, Sha256};
-    let hash_hex = hex::encode(&Sha256::digest(key.as_bytes())[..4]);
+    let hash_hex = hex::encode(&Sha256::digest(key.as_bytes())[..8]);
     match key.split_once(':') {
         Some((namespace, _)) => format!("{namespace}:{hash_hex}"),
         None => format!("key:{hash_hex}"),
@@ -507,12 +547,13 @@ impl StorageEncryption {
         rand::rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
+        let bound = bound_aad(CURRENT_FORMAT_VERSION, ALGORITHM, &self.current_key_id, aad);
         let ciphertext = cipher
             .encrypt(
                 nonce,
                 Payload {
                     msg: plaintext,
-                    aad,
+                    aad: &bound,
                 },
             )
             .map_err(|e| AuthError::internal(format!("Encryption failed: {}", e)))?;
@@ -520,7 +561,7 @@ impl StorageEncryption {
         Ok(EncryptedData {
             data: BASE64.encode(&ciphertext),
             nonce: BASE64.encode(nonce_bytes),
-            algorithm: "AES-256-GCM".to_string(),
+            algorithm: ALGORITHM.to_string(),
             key_id: self.current_key_id.clone(),
             v: CURRENT_FORMAT_VERSION,
             key_derivation: String::new(),
@@ -538,62 +579,78 @@ impl StorageEncryption {
     /// AES-GCM's authentication tag makes trying the wrong key safe (it
     /// just fails), so this cannot silently produce the wrong plaintext.
     pub fn decrypt(&self, encrypted: &EncryptedData, aad: &[u8]) -> Result<Vec<u8>> {
-        if encrypted.algorithm != "AES-256-GCM" {
-            return Err(AuthError::internal(format!(
-                "Unsupported encryption algorithm: {}",
-                encrypted.algorithm
-            )));
+        // Every failure below returns the SAME error text (`DECRYPT_FAILED`);
+        // the cause is logged only.
+        let fail = |why: &str| -> AuthError {
+            tracing::warn!(
+                key_id = %encrypted.key_id,
+                v = encrypted.v,
+                "storage envelope decryption failed: {why}"
+            );
+            AuthError::internal(DECRYPT_FAILED)
+        };
+
+        if encrypted.algorithm != ALGORITHM {
+            return Err(fail("unsupported algorithm"));
         }
 
         let ciphertext = BASE64
             .decode(&encrypted.data)
-            .map_err(|_| AuthError::internal("Invalid base64 in encrypted data"))?;
+            .map_err(|_| fail("invalid base64 in data"))?;
         let nonce_bytes = BASE64
             .decode(&encrypted.nonce)
-            .map_err(|_| AuthError::internal("Invalid base64 in nonce"))?;
+            .map_err(|_| fail("invalid base64 in nonce"))?;
         if nonce_bytes.len() != 12 {
-            return Err(AuthError::internal("Invalid nonce length"));
+            return Err(fail("invalid nonce length"));
         }
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         if encrypted.v == 0 {
             // Format version 0 (the original EncryptedStorage): no key id,
-            // no AAD. Try every loaded key; the auth tag rejects wrong ones.
-            for cipher in self.ciphers.values() {
-                if let Ok(plaintext) = cipher.decrypt(
-                    nonce,
-                    Payload {
-                        msg: &ciphertext,
-                        aad: b"",
-                    },
-                ) {
+            // no AAD. Try every loaded key, in a stable order; the auth tag
+            // rejects wrong ones.
+            for id in self.sorted_key_ids() {
+                if let Some(cipher) = self.ciphers.get(&id)
+                    && let Ok(plaintext) = cipher.decrypt(
+                        nonce,
+                        Payload {
+                            msg: &ciphertext,
+                            aad: b"",
+                        },
+                    )
+                {
                     return Ok(plaintext);
                 }
             }
-            return Err(AuthError::internal(
-                "Failed to decrypt format-version-0 envelope with any loaded key",
-            ));
+            return Err(fail("no loaded key opens this format-version-0 envelope"));
         }
 
-        let cipher = self.ciphers.get(&encrypted.key_id).ok_or_else(|| {
-            AuthError::internal(format!(
-                "No loaded key for key_id '{}' -- it may have been rotated out \
-                 without being kept in the keys file for decrypt-only use",
-                encrypted.key_id
-            ))
-        })?;
+        let cipher = self
+            .ciphers
+            .get(&encrypted.key_id)
+            .ok_or_else(|| fail("no loaded key for this key_id (rotated out?)"))?;
 
-        let plaintext = cipher
+        // v1 authenticated only the bare record AAD; v2 also binds the
+        // envelope's own metadata. Anything else is unknown to this build.
+        let bound;
+        let effective_aad: &[u8] = match encrypted.v {
+            FORMAT_V1 => aad,
+            CURRENT_FORMAT_VERSION => {
+                bound = bound_aad(encrypted.v, &encrypted.algorithm, &encrypted.key_id, aad);
+                &bound
+            }
+            _ => return Err(fail("unsupported envelope version")),
+        };
+
+        cipher
             .decrypt(
                 nonce,
                 Payload {
                     msg: &ciphertext,
-                    aad,
+                    aad: effective_aad,
                 },
             )
-            .map_err(|e| AuthError::internal(format!("Decryption failed: {}", e)))?;
-
-        Ok(plaintext)
+            .map_err(|_| fail("authentication failed (wrong key, wrong record, or tampered)"))
     }
 
     /// Encrypt raw bytes for storage, serialized as a self-describing
@@ -621,8 +678,8 @@ impl StorageEncryption {
     /// Parses `data` as one of this module's own serialized envelopes --
     /// either the current format or the original format-version-0 shape
     /// (see [`EncryptedData`]) -- without attempting to decrypt it. `None`
-    /// if `data` isn't valid UTF-8 JSON, or doesn't name the right
-    /// algorithm.
+    /// if `data` isn't valid UTF-8 JSON, doesn't name the right algorithm,
+    /// or claims a post-v0 format without a `key_id`.
     ///
     /// This is a **shape** check only. A value that parses here but fails
     /// to decrypt (wrong key, corrupted, or tampered with) is a hard error
@@ -632,17 +689,26 @@ impl StorageEncryption {
         let encrypted = std::str::from_utf8(data)
             .ok()
             .and_then(|s| serde_json::from_str::<EncryptedData>(s).ok())?;
-        if encrypted.algorithm == "AES-256-GCM" {
-            Some(encrypted)
-        } else {
-            None
+        if encrypted.algorithm != ALGORITHM {
+            return None;
         }
+        // v0 has neither `v` nor `key_id`. Anything claiming a later
+        // format must carry an explicit non-empty `key_id`; without one it
+        // is just plaintext JSON that happens to resemble an envelope.
+        let well_formed = if encrypted.v == 0 {
+            encrypted.key_id.is_empty()
+        } else {
+            !encrypted.key_id.is_empty()
+        };
+        well_formed.then_some(encrypted)
     }
 
     /// Key ids in a stable (ascending) order, for deterministic trial
     /// decryption.
     fn sorted_key_ids(&self) -> Vec<String> {
-        self.ciphers.keys().cloned().collect()
+        let mut ids: Vec<String> = self.ciphers.keys().cloned().collect();
+        ids.sort();
+        ids
     }
 
     /// Returns `true` if `data` parses as one of this module's own
@@ -822,15 +888,17 @@ where
         };
 
         if let Some(envelope) = StorageEncryption::parse_envelope(&raw) {
-            if envelope.v == 0 && !self.allow_legacy_v0 {
+            if envelope.v < CURRENT_FORMAT_VERSION && !self.allow_legacy_v0 {
                 return Err(AuthError::internal(format!(
-                    "Value for record '{}' is a format-version-0 envelope (no AAD binding \
-                     it to its own storage key), and storage_encryption.allow_legacy_v0 is \
-                     false. Run the migration tool (`auth-framework-admin security \
-                     encrypt-kv --accept-legacy-v0`) to upgrade it to the current format, \
-                     or temporarily set storage_encryption.allow_legacy_v0 = true if \
-                     something else needs to read it first.",
-                    safe_log_id(key)
+                    "Value for record '{}' uses legacy envelope format version {} (its \
+                     metadata is not bound into the authenticated data), and \
+                     storage_encryption.allow_legacy_v0 is false. Run the migration tool \
+                     (`auth-framework-admin security encrypt-kv --accept-legacy-v0`) to \
+                     upgrade it to the current format, or temporarily set \
+                     storage_encryption.allow_legacy_v0 = true if something else needs to \
+                     read it first.",
+                    safe_log_id(key),
+                    envelope.v
                 )));
             }
             let decrypted = self.encryption.decrypt(&envelope, key.as_bytes())?;
@@ -2298,7 +2366,17 @@ mod tests {
 
         let raw = storage.get_kv("rec:1").await.unwrap().unwrap();
         assert_eq!(StorageEncryption::parse_envelope(&raw).unwrap().v, 2);
-        assert_eq!(strict.get_kv("rec:1").await.unwrap().unwrap(), b"secret");
+        // (`MemoryStorage::clone` copies, so re-wrap the migrated storage.)
+        let strict_after = EncryptedStorage::new(
+            storage,
+            StorageEncryption::new(&provider()).unwrap(),
+            false,
+            false,
+        );
+        assert_eq!(
+            strict_after.get_kv("rec:1").await.unwrap().unwrap(),
+            b"secret"
+        );
     }
 
     /// After the upgrade, a v2 ciphertext copied onto another record must

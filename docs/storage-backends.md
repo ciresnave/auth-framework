@@ -434,6 +434,18 @@ no compare-and-swap, so running it against a *live* deployment can
 overwrite a value someone else wrote in between — prefer running it
 offline, or pause writers to the scoped prefix first.
 
+**Envelope formats.** The current envelope is format version 2: its AAD
+binds the record's storage key *and* the envelope's own `v`, `algorithm`
+and `key_id`, so relabelling an envelope's key id, or rewriting `v` to
+downgrade it, fails authentication. Format version 1 (AAD = the bare
+storage key, metadata unauthenticated) and format version 0 (below) are
+*legacy*: they are readable only behind `storage_encryption.allow_legacy_v0`
+(the name is historical; it covers both) and are upgraded to v2 by the
+migration tool. Every decryption failure returns the same error text
+(`Decryption failed`); the cause is logged, not returned. A stored value
+only counts as an envelope if it names the right algorithm and, from v1
+on, carries a non-empty `key_id`.
+
 **Format-version-0 (legacy, pre-this-redesign) envelopes need a separate,
 explicit opt-in.** If a deployment already has encrypted data from the
 original `EncryptedStorage` (no AAD, no key id), that data decrypts but is
