@@ -239,7 +239,7 @@
   # https://github.com/briansmith/ring/issues/219) -- aws-lc-rs is already a
   # dependency of this crate via jsonwebtoken/kryptering, so this adds no new
   # crypto backend, just lets rcgen use the one already in the tree.
-  rcgen = { version = "0.14", features = ["aws_lc_rs"] }
+  rcgen = { version = "0.14", features = ["aws_lc_rs", "x509-parser"] }
 
   # X.509 certificate parsing for OAuth 2.0 Mutual TLS (RFC 8705)
   x509-parser = "0.18.0"
