@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Maintenance backup/restore (#121): a snapshot file no longer holds
+- 0.6.0-rc21 -- maintenance backup/restore (#121), storage-format-affecting (backups are now sealed): a snapshot file no longer holds
   recoverable plaintext. When the framework encrypts at rest (the default
   for every persistent backend), the whole snapshot file -- KV secrets,
   access/refresh tokens, sessions, user emails -- is sealed under the
