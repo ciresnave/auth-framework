@@ -540,6 +540,14 @@ impl AuthStorage for UnifiedStorage {
         }
     }
 
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        Ok(self
+            .get_internal(&StorageKey::KeyValue(key.to_string()))
+            .and_then(|value| value.expires_at)
+            .and_then(|expires_at| expires_at.duration_since(SystemTime::now()).ok())
+            .filter(|remaining| !remaining.is_zero()))
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         self.storage.remove(&StorageKey::KeyValue(key.to_string()));
         Ok(())

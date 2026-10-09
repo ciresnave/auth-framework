@@ -18,6 +18,7 @@ use crate::config::{StorageConfig, app_config::AppConfig};
 use crate::errors::{AuthError, Result};
 use crate::permissions::Role;
 use crate::storage::SessionData;
+use crate::storage::encryption::StorageEncryption;
 use crate::tokens::AuthToken;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -27,6 +28,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use zeroize::Zeroize;
 
 const SNAPSHOT_FORMAT_VERSION: u32 = 1;
 
@@ -56,7 +58,37 @@ pub struct SnapshotUserSummary {
 pub struct SnapshotKvEntry {
     pub key: String,
     pub value_base64: String,
+    /// Absolute expiry of the entry at backup time. `None` = the entry did
+    /// not expire. Omitted from the file when `None`, so snapshots (and
+    /// their checksums) written before this field existed stay valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
 }
+
+/// What restore should do with a KV entry, given its recorded expiry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RestoreTtl {
+    /// Store without an expiry.
+    Forever,
+    /// Store with this much lifetime left.
+    Remaining(std::time::Duration),
+    /// Expired between backup and restore: do not bring it back.
+    Expired,
+}
+
+fn restore_ttl(expires_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> RestoreTtl {
+    match expires_at {
+        None => RestoreTtl::Forever,
+        Some(expires_at) => match (expires_at - now).to_std() {
+            Ok(remaining) if !remaining.is_zero() => RestoreTtl::Remaining(remaining),
+            _ => RestoreTtl::Expired,
+        },
+    }
+}
+
+/// AAD binding a sealed snapshot to its purpose, so a storage-layer
+/// envelope for some other record can't be replayed as a snapshot.
+const SNAPSHOT_AAD: &[u8] = b"auth-framework:maintenance-snapshot:v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenanceSnapshot {
@@ -270,10 +302,22 @@ async fn collect_snapshot(framework: &AuthFramework) -> Result<MaintenanceSnapsh
 
     let mut kv_entries = Vec::with_capacity(kv_keys.len());
     for key in kv_keys {
+        // The TTL is read BEFORE the value: an entry that expires in
+        // between then yields a TTL and no value (skipped), never a value
+        // whose expiry was lost and which restore would make permanent.
+        let expires_at = match storage.get_kv_ttl(&key).await? {
+            Some(remaining) => Some(
+                Utc::now()
+                    + chrono::Duration::from_std(remaining)
+                        .map_err(|e| AuthError::internal(format!("Invalid KV TTL: {e}")))?,
+            ),
+            None => None,
+        };
         if let Some(value) = storage.get_kv(&key).await? {
             kv_entries.push(SnapshotKvEntry {
                 key,
                 value_base64: BASE64_STANDARD.encode(value),
+                expires_at,
             });
         }
     }
@@ -336,6 +380,53 @@ pub async fn backup_to_file(
     output_path: impl AsRef<Path>,
     dry_run: bool,
 ) -> Result<BackupReport> {
+    let encryption = snapshot_encryption(framework)?;
+    backup_to_file_with(framework, output_path, dry_run, encryption.as_ref()).await
+}
+
+/// Which encryption (if any) protects snapshot files for `framework`.
+///
+/// A snapshot holds everything the live store does -- KV secrets, access
+/// and refresh tokens, sessions, user emails -- and is usually handled
+/// under weaker access control than the database. So whenever the
+/// framework itself encrypts at rest (the default, for every backend that
+/// persists), the whole snapshot file is sealed under the same storage
+/// key. This also covers tokens and sessions, which `EncryptedStorage`
+/// does not encrypt, so backing up the *stored* (already-encrypted) KV
+/// form alone would still leave them readable. In-memory storage is
+/// exempt, as it is for `EncryptedStorage`, and so is an explicit
+/// `storage_encryption.enabled = false`. Fails closed if encryption is
+/// expected but no key can be loaded.
+///
+/// The decision follows `config.storage`, like the storage factory does.
+/// Storage handed in through `new_with_storage` / `replace_storage` /
+/// `custom_storage` bypasses the factory, so a framework whose config still
+/// says `Memory` but whose storage is persistent gets an UNSEALED snapshot.
+fn snapshot_encryption(framework: &AuthFramework) -> Result<Option<StorageEncryption>> {
+    let config = framework.config();
+    if !config.storage_encryption.enabled || matches!(config.storage, StorageConfig::Memory) {
+        tracing::warn!(
+            "Maintenance snapshot is NOT encrypted (config.storage is Memory, or \
+             storage_encryption.enabled = false): it holds tokens, sessions and KV \
+             secrets in plaintext."
+        );
+        return Ok(None);
+    }
+    StorageEncryption::from_env().map(Some).map_err(|e| {
+        AuthError::configuration(format!(
+            "Snapshots are encrypted with the storage encryption key, but none could be \
+             loaded: {e}. Configure AUTH_STORAGE_ENCRYPTION_KEY / \
+             AUTH_STORAGE_ENCRYPTION_KEYS_FILE."
+        ))
+    })
+}
+
+async fn backup_to_file_with(
+    framework: &AuthFramework,
+    output_path: impl AsRef<Path>,
+    dry_run: bool,
+    encryption: Option<&StorageEncryption>,
+) -> Result<BackupReport> {
     let output_path = output_path.as_ref().to_path_buf();
     let snapshot = collect_snapshot(framework).await?;
 
@@ -346,9 +437,14 @@ pub async fn backup_to_file(
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let data = serde_json::to_vec_pretty(&snapshot).map_err(|e| {
+        let mut data = serde_json::to_vec_pretty(&snapshot).map_err(|e| {
             AuthError::internal(format!("Failed to serialize maintenance snapshot: {e}"))
         })?;
+        if let Some(encryption) = encryption {
+            let sealed = encryption.encrypt_for_storage(&data, SNAPSHOT_AAD);
+            data.zeroize();
+            data = sealed?;
+        }
         tokio::fs::write(&output_path, data).await?;
     }
 
@@ -418,25 +514,75 @@ pub async fn restore_from_file(
     input_path: impl AsRef<Path>,
     dry_run: bool,
 ) -> Result<RestoreReport> {
+    let encryption = snapshot_encryption(framework)?;
+    restore_from_file_with(framework, input_path, dry_run, encryption.as_ref()).await
+}
+
+async fn restore_from_file_with(
+    framework: &AuthFramework,
+    input_path: impl AsRef<Path>,
+    dry_run: bool,
+    encryption: Option<&StorageEncryption>,
+) -> Result<RestoreReport> {
     let input_path = input_path.as_ref().to_path_buf();
-    let data = tokio::fs::read(&input_path).await?;
+    let mut data = tokio::fs::read(&input_path).await?;
+    if let Some(envelope) = StorageEncryption::parse_envelope(&data) {
+        // A sealed snapshot: open it before anything is reset, so a wrong
+        // or missing key leaves the live data untouched.
+        let encryption = encryption.ok_or_else(|| {
+            AuthError::validation(
+                "Snapshot is encrypted but no storage encryption key is available to open it",
+            )
+        })?;
+        if envelope.v == 0 {
+            return Err(AuthError::validation(
+                "Snapshot uses an unsupported legacy encryption format",
+            ));
+        }
+        data = encryption.decrypt(&envelope, SNAPSHOT_AAD).map_err(|e| {
+            AuthError::validation(format!(
+                "Failed to decrypt snapshot (wrong key or corrupted file): {e}"
+            ))
+        })?;
+    } else if encryption.is_some() {
+        // Sealing is the only thing that authenticates a snapshot (the
+        // checksum is unkeyed and lives inside the file), so accepting an
+        // unsealed one here would let anyone who can write the file inject
+        // users, roles, tokens and secrets.
+        return Err(AuthError::validation(
+            "Snapshot is not encrypted but storage encryption is enabled; refusing to restore it",
+        ));
+    }
     let snapshot: MaintenanceSnapshot = serde_json::from_slice(&data)
         .map_err(|e| AuthError::validation(format!("Failed to parse maintenance snapshot: {e}")))?;
     validate_snapshot(&snapshot)?;
+
+    // Decode every KV entry BEFORE anything is reset, so a bad entry
+    // cannot leave the store wiped and half-restored.
+    let now = Utc::now();
+    let mut kv_to_restore = Vec::with_capacity(snapshot.kv_entries.len());
+    for entry in &snapshot.kv_entries {
+        let value = BASE64_STANDARD.decode(&entry.value_base64).map_err(|e| {
+            AuthError::validation(format!(
+                "Snapshot KV entry '{}' is not valid base64: {e}",
+                entry.key
+            ))
+        })?;
+        let ttl = match restore_ttl(entry.expires_at, now) {
+            RestoreTtl::Forever => None,
+            RestoreTtl::Remaining(remaining) => Some(remaining),
+            RestoreTtl::Expired => continue,
+        };
+        kv_to_restore.push((entry.key.as_str(), value, ttl));
+    }
 
     let reset_report = reset_runtime_data(framework, dry_run).await?;
 
     if !dry_run {
         let storage = framework.storage();
 
-        for entry in &snapshot.kv_entries {
-            let value = BASE64_STANDARD.decode(&entry.value_base64).map_err(|e| {
-                AuthError::validation(format!(
-                    "Snapshot KV entry '{}' is not valid base64: {e}",
-                    entry.key
-                ))
-            })?;
-            storage.store_kv(&entry.key, &value, None).await?;
+        for (key, value, ttl) in &kv_to_restore {
+            storage.store_kv(key, value, *ttl).await?;
         }
 
         for token in &snapshot.tokens {
@@ -684,6 +830,253 @@ mod tests {
 
         std::env::set_current_dir(old_dir).unwrap();
         outcome
+    }
+
+    const CANARY: &[u8] = b"totp-seed-PLAINTEXT-CANARY-7f3a91";
+
+    async fn framework_with_secrets() -> (AuthFramework, String) {
+        let framework = create_framework().await;
+        let user_id = framework
+            .users()
+            .register("alice", "alice@example.com", "Password123!")
+            .await
+            .unwrap();
+        framework
+            .tokens()
+            .create(&user_id, &["read"], "jwt", None)
+            .await
+            .unwrap();
+        framework
+            .storage()
+            .store_kv("totp:alice", CANARY, None)
+            .await
+            .unwrap();
+        let access_token = framework
+            .tokens()
+            .list_for_user(&user_id)
+            .await
+            .unwrap()
+            .remove(0)
+            .access_token;
+        (framework, access_token)
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// #121: a backup written under storage encryption must not hold any
+    /// recoverable plaintext -- not the KV secret (raw or base64), not a
+    /// stored access token, not user PII.
+    #[tokio::test]
+    async fn encrypted_backup_contains_no_plaintext() {
+        let (framework, access_token) = framework_with_secrets().await;
+        let dir = tempdir().unwrap();
+
+        // Positive control: an unencrypted backup of the SAME state does
+        // expose each needle, so the scan below can see them.
+        let plain_path = dir.path().join("plain.json");
+        backup_to_file_with(&framework, &plain_path, false, None)
+            .await
+            .unwrap();
+        let plain = tokio::fs::read(&plain_path).await.unwrap();
+        let canary_b64 = BASE64_STANDARD.encode(CANARY);
+        assert!(contains(&plain, canary_b64.as_bytes()));
+        assert!(contains(&plain, access_token.as_bytes()));
+        assert!(contains(&plain, b"alice@example.com"));
+
+        let encryption = StorageEncryption::new_random();
+        let enc_path = dir.path().join("encrypted.json");
+        backup_to_file_with(&framework, &enc_path, false, Some(&encryption))
+            .await
+            .unwrap();
+        let bytes = tokio::fs::read(&enc_path).await.unwrap();
+        assert!(!contains(&bytes, CANARY), "raw KV secret in backup");
+        assert!(
+            !contains(&bytes, canary_b64.as_bytes()),
+            "base64 KV secret in backup"
+        );
+        assert!(
+            !contains(&bytes, access_token.as_bytes()),
+            "access token in backup"
+        );
+        assert!(!contains(&bytes, b"alice@example.com"), "PII in backup");
+    }
+
+    #[tokio::test]
+    async fn encrypted_backup_roundtrips_and_rejects_wrong_or_missing_key() {
+        let (framework, _) = framework_with_secrets().await;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("encrypted.json");
+        let encryption = StorageEncryption::new_random();
+        backup_to_file_with(&framework, &path, false, Some(&encryption))
+            .await
+            .unwrap();
+
+        // A different key, and no key at all, must both refuse -- and
+        // must refuse BEFORE wiping the live data.
+        let other = StorageEncryption::new_random();
+        assert!(
+            restore_from_file_with(&framework, &path, false, Some(&other))
+                .await
+                .is_err()
+        );
+        assert!(
+            restore_from_file_with(&framework, &path, false, None)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            framework
+                .storage()
+                .get_kv("totp:alice")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(CANARY),
+            "a refused restore must not have reset the live data"
+        );
+
+        reset_runtime_data(&framework, false).await.unwrap();
+        assert!(
+            framework
+                .storage()
+                .get_kv("totp:alice")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        restore_from_file_with(&framework, &path, false, Some(&encryption))
+            .await
+            .unwrap();
+        assert_eq!(
+            framework
+                .storage()
+                .get_kv("totp:alice")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(CANARY)
+        );
+    }
+
+    /// With sealing expected, an unsealed snapshot is refused (it would
+    /// otherwise let anyone who can write the file inject state), and the
+    /// refusal happens before anything is reset.
+    #[tokio::test]
+    async fn restore_refuses_an_unsealed_snapshot_when_sealing_is_expected() {
+        let (framework, _) = framework_with_secrets().await;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("plain.json");
+        backup_to_file_with(&framework, &path, false, None)
+            .await
+            .unwrap();
+
+        let encryption = StorageEncryption::new_random();
+        assert!(
+            restore_from_file_with(&framework, &path, false, Some(&encryption))
+                .await
+                .is_err()
+        );
+        assert!(
+            framework
+                .storage()
+                .get_kv("totp:alice")
+                .await
+                .unwrap()
+                .is_some(),
+            "a refused restore must not have reset the live data"
+        );
+        // Plaintext snapshots still restore where no sealing is in force.
+        restore_from_file_with(&framework, &path, false, None)
+            .await
+            .unwrap();
+    }
+
+    /// A corrupt KV entry must be caught before the reset wipes anything.
+    #[tokio::test]
+    async fn restore_with_a_corrupt_kv_entry_leaves_live_data_untouched() {
+        let (framework, _) = framework_with_secrets().await;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snapshot.json");
+        let mut snapshot = collect_snapshot(&framework).await.unwrap();
+        snapshot.kv_entries[0].value_base64 = "!!not base64!!".to_string();
+        snapshot.manifest.checksum_sha256 = checksum_snapshot(
+            &snapshot.users,
+            &snapshot.roles,
+            &snapshot.tokens,
+            &snapshot.sessions,
+            &snapshot.kv_entries,
+        )
+        .unwrap();
+        tokio::fs::write(&path, serde_json::to_vec(&snapshot).unwrap())
+            .await
+            .unwrap();
+
+        assert!(
+            restore_from_file_with(&framework, &path, false, None)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            framework
+                .users()
+                .list_with_query(UserListQuery::new())
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "a refused restore must not have reset the live data"
+        );
+    }
+
+    /// #121: restore must not turn an expiring entry into a permanent one.
+    #[tokio::test]
+    async fn backup_restore_preserves_kv_ttl() {
+        let framework = create_framework().await;
+        let storage = framework.storage();
+        storage
+            .store_kv("otp:code", b"123456", Some(Duration::from_secs(3600)))
+            .await
+            .unwrap();
+        storage.store_kv("keep:forever", b"x", None).await.unwrap();
+        assert!(
+            storage.get_kv_ttl("otp:code").await.unwrap().is_some(),
+            "precondition: the backend must report the TTL it was given"
+        );
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snapshot.json");
+        backup_to_file_with(&framework, &path, false, None)
+            .await
+            .unwrap();
+        reset_runtime_data(&framework, false).await.unwrap();
+        restore_from_file_with(&framework, &path, false, None)
+            .await
+            .unwrap();
+
+        let ttl = storage.get_kv_ttl("otp:code").await.unwrap().unwrap();
+        assert!(
+            ttl > Duration::from_secs(3500) && ttl <= Duration::from_secs(3600),
+            "restored TTL was {ttl:?}"
+        );
+        assert_eq!(storage.get_kv_ttl("keep:forever").await.unwrap(), None);
+        assert!(storage.get_kv("keep:forever").await.unwrap().is_some());
+    }
+
+    #[test]
+    fn restore_ttl_maps_expiry_to_action() {
+        let now = Utc::now();
+        assert_eq!(restore_ttl(None, now), RestoreTtl::Forever);
+        assert_eq!(
+            restore_ttl(Some(now + chrono::Duration::seconds(90)), now),
+            RestoreTtl::Remaining(Duration::from_secs(90))
+        );
+        assert_eq!(
+            restore_ttl(Some(now - chrono::Duration::seconds(1)), now),
+            RestoreTtl::Expired
+        );
+        assert_eq!(restore_ttl(Some(now), now), RestoreTtl::Expired);
     }
 
     #[tokio::test]

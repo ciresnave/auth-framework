@@ -785,6 +785,11 @@ where
 
     // Key-value methods — encrypted, with the storage key itself as AAD so
     // a ciphertext can't be swapped between records.
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        // A TTL is storage metadata, not part of the encrypted value.
+        self.inner.get_kv_ttl(key).await
+    }
+
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
         let encrypted_value = self.encryption.encrypt_for_storage(value, key.as_bytes())?;
         self.inner.store_kv(key, &encrypted_value, ttl).await
@@ -2128,5 +2133,23 @@ mod tests {
             b"plaintext-b".to_vec(),
             "a key outside the given prefix must not be touched"
         );
+    }
+
+    /// The wrapper must report the inner backend's TTL: restore (#121)
+    /// reads it through the wrapper the framework actually holds.
+    #[tokio::test]
+    async fn wrapper_passes_kv_ttl_through() {
+        let wrapped = EncryptedStorage::new(
+            MemoryStorage::new(),
+            StorageEncryption::new_random(),
+            false,
+            false,
+        );
+        wrapped
+            .store_kv("k", b"v", Some(Duration::from_secs(600)))
+            .await
+            .unwrap();
+        let ttl = wrapped.get_kv_ttl("k").await.unwrap().unwrap();
+        assert!(ttl > Duration::from_secs(590) && ttl <= Duration::from_secs(600));
     }
 }

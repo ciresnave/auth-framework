@@ -144,6 +144,20 @@ pub trait AuthStorage: Send + Sync {
     /// Retrieve arbitrary key-value data.
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>>;
 
+    /// Remaining time-to-live of a key-value entry.
+    ///
+    /// Returns `Ok(None)` when the key is absent, has no expiry, **or the
+    /// backend does not track TTLs** (the default). Callers that must carry
+    /// an entry's lifetime across a copy (backup/restore, migration) use
+    /// this together with [`get_kv`](Self::get_kv); a backend that honours
+    /// the TTL passed to [`store_kv`](Self::store_kv) should override it so
+    /// those entries do not silently become non-expiring. An entry that
+    /// `get_kv` would still return but that expires within the backend's
+    /// time resolution reports `Some(Duration::ZERO)`, never `None`.
+    async fn get_kv_ttl(&self, _key: &str) -> Result<Option<Duration>> {
+        Ok(None)
+    }
+
     /// Delete arbitrary key-value data.
     async fn delete_kv(&self, key: &str) -> Result<()>;
 
@@ -247,6 +261,10 @@ impl AuthStorage for Arc<dyn AuthStorage> {
 
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         (**self).get_kv(key).await
+    }
+
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        (**self).get_kv_ttl(key).await
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
@@ -539,6 +557,10 @@ impl AuthStorage for MemoryStorage {
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         // Delegate to DashMap implementation for deadlock-free operations
         self.inner.get_kv(key).await
+    }
+
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        self.inner.get_kv_ttl(key).await
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
@@ -870,6 +892,23 @@ impl AuthStorage for RedisStorage {
             .map_err(|e| StorageError::operation_failed(format!("Failed to get KV: {e}")))?;
 
         Ok(value)
+    }
+
+    async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
+        let mut conn = self.get_connection().await?;
+        let storage_key = self.key(&format!("kv:{key}"));
+
+        // PTTL: -2 = no such key, -1 = no expiry, otherwise milliseconds left.
+        let millis: i64 = redis::cmd("PTTL")
+            .arg(&storage_key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| StorageError::operation_failed(format!("Failed to get KV TTL: {e}")))?;
+
+        Ok(u64::try_from(millis)
+            .ok()
+            .filter(|millis| *millis > 0)
+            .map(Duration::from_millis))
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
