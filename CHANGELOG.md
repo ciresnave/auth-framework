@@ -854,6 +854,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** minimum supported Rust version raised 1.88 -> 1.89 (`rust-version`, the CI MSRV
   job, the Docker builder image, and the install docs). Needed for current releases of
   RustCrypto and test dependencies (for example `aes` 0.9.3 and `axum-test` 21.1.0).
+- **Breaking:** minimum supported Rust version raised again, 1.89 -> 1.95 (`rust-version`, the CI
+  MSRV job, the Docker builder image, `COMPATIBILITY.md` and the install docs), as permitted for
+  release candidates by the pre-release exception in `COMPATIBILITY.md`. The highest `rust-version`
+  declared on crates.io by the newest release of any direct dependency of this workspace (124 queried)
+  is `sysinfo` 0.39.6 = 1.95, followed by `sqlx` 0.9.0 = 1.94; both are taken in the following
+  dependency PRs.
 - **Dependencies:** `toml` 0.9 -> 1, `dirs` 6 -> 7, `base64` 0.22 -> 0.23, `askama` 0.15 -> 0.16,
   `tower-http` 0.6 -> 0.7, and dev/test-only `axum-test` 19 -> 21 and `testcontainers` 0.27 -> 0.28.
   No source change was needed. `base64` is declared with `default-features = false,

@@ -195,7 +195,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.89.0"
+          toolchain: "1.95.0"
 
       - name: Install system dependencies
         run: |
