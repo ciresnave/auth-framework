@@ -808,7 +808,13 @@ async fn handle_refresh_token_grant(
         Some(u) => u.to_string(),
         None => return ApiResponse::error_typed("invalid_grant", "Malformed refresh token data"),
     };
-    let client_id = stored["client_id"].as_str().map(|s| s.to_string());
+    let client_id = match &stored["client_id"] {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.clone()),
+        // A client_id of some other type cannot be checked: fail closed
+        // instead of silently skipping the binding.
+        _ => return ApiResponse::error_typed("invalid_grant", "Malformed refresh token data"),
+    };
 
     // A token issued to a client is redeemable only by that client. A refused
     // attempt releases the consumed marker set above, so merely seeing a

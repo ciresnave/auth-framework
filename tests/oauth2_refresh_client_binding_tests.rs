@@ -198,4 +198,67 @@ mod refresh_client_binding_tests {
         let resp = redeem(&state, request(&token, None, None)).await;
         assert!(resp.success, "{:?}", resp.error);
     }
+
+    #[tokio::test]
+    async fn presenting_unknown_or_secretless_clients_against_a_confidential_token() {
+        let state = state().await;
+        register_client(&state, "conf-1", Some("s3cret")).await;
+        register_client(&state, "pub-1", None).await;
+        let token = issue_refresh_token(&state, Some("conf-1")).await;
+
+        // An unregistered client cannot authenticate.
+        let unknown = redeem(&state, request(&token, Some("nobody"), Some("x"))).await;
+        assert!(!unknown.success);
+        assert_eq!(error_code(&unknown), "invalid_client");
+
+        // A registered PUBLIC client has no secret to authenticate with.
+        let public = redeem(&state, request(&token, Some("pub-1"), Some("anything"))).await;
+        assert!(!public.success);
+        assert_eq!(error_code(&public), "invalid_client");
+
+        // An empty client_id / empty secret authenticate nobody.
+        let empty_id = redeem(&state, request(&token, Some(""), Some("s3cret"))).await;
+        assert!(!empty_id.success);
+        let empty_secret = redeem(&state, request(&token, Some("conf-1"), Some(""))).await;
+        assert!(!empty_secret.success);
+        assert_eq!(error_code(&empty_secret), "invalid_client");
+
+        // None of the refusals consumed the token.
+        let ok = redeem(&state, request(&token, Some("conf-1"), Some("s3cret"))).await;
+        assert!(ok.success, "{:?}", ok.error);
+    }
+
+    #[tokio::test]
+    async fn a_secret_does_not_make_a_public_client_confidential() {
+        let state = state().await;
+        register_client(&state, "pub-1", None).await;
+        let token = issue_refresh_token(&state, Some("pub-1")).await;
+        // The secret is ignored; the matching client_id is what counts.
+        let ok = redeem(&state, request(&token, Some("pub-1"), Some("ignored"))).await;
+        assert!(ok.success, "{:?}", ok.error);
+    }
+
+    #[tokio::test]
+    async fn a_stored_client_id_of_the_wrong_type_fails_closed() {
+        let state = state().await;
+        let user_id = state
+            .auth_framework
+            .register_user(
+                &format!("rb_{}", uuid::Uuid::new_v4().simple()),
+                &format!("{}@test.example.com", uuid::Uuid::new_v4().simple()),
+                "SecurePass123!",
+            )
+            .await
+            .unwrap();
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        put(
+            &state,
+            &format!("oauth2_refresh_token:{token}"),
+            serde_json::json!({"user_id": user_id, "scopes": "openid", "client_id": 42}),
+        )
+        .await;
+        let resp = redeem(&state, request(&token, None, None)).await;
+        assert!(!resp.success, "a malformed binding must not be skipped");
+        assert_eq!(error_code(&resp), "invalid_grant");
+    }
 }

@@ -392,7 +392,9 @@ mod oauth2_integration_tests {
             .refresh_token
             .expect("authorization_code grant must issue a refresh token");
 
-        let refresh_request = TokenRequest::refresh(&refresh_token);
+        // The token was issued to the public client "test_client", so only that
+        // client may redeem it: it must identify itself (#118).
+        let refresh_request = TokenRequest::refresh(&refresh_token).client_id("test_client");
         let refresh_response = oauth2::token(State(state), Json(refresh_request)).await;
         assert!(
             refresh_response.success,
