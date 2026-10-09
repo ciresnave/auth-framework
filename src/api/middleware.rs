@@ -5,11 +5,12 @@
 use crate::api::{ApiResponse, ApiState};
 use crate::distributed::rate_limiting::RateLimitResult;
 use axum::{
-    extract::Request,
+    extract::{ConnectInfo, Request},
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 /// Sanitize a header value for safe inclusion in log output.
@@ -23,10 +24,59 @@ fn sanitize_header_for_log(value: &str) -> String {
         .collect()
 }
 
+/// The address to rate-limit a request under.
+///
+/// A peer that is not a trusted proxy IS the client: its headers are ignored. A trusted
+/// proxy is believed: the client is the rightmost `X-Forwarded-For` entry that is not itself
+/// a trusted proxy (the entries to its left were supplied by the client and are ignored),
+/// else the proxy's own address (`X-Real-IP` is not consulted: many proxies pass a
+/// client-supplied copy through). Every trusted proxy must APPEND to `X-Forwarded-For`
+/// rather than pass it through. Anything unparsable falls back to the peer.
+fn forwarded_client_ip(
+    peer: IpAddr,
+    headers: &axum::http::HeaderMap,
+    trusted_proxies: &[IpAddr],
+) -> IpAddr {
+    let peer = peer.to_canonical();
+    let is_trusted = |ip: &IpAddr| trusted_proxies.iter().any(|t| t.to_canonical() == *ip);
+    if !is_trusted(&peer) {
+        return peer;
+    }
+    let entries: Vec<&str> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .collect();
+    for entry in entries.iter().rev() {
+        match parse_forwarded_addr(entry) {
+            Some(ip) if is_trusted(&ip) => continue,
+            Some(ip) => return ip,
+            None => return peer,
+        }
+    }
+    peer
+}
+
+/// Parse one `X-Forwarded-For` entry: a bare address, `addr:port`, or `[v6]` / `[v6]:port`.
+fn parse_forwarded_addr(entry: &str) -> Option<IpAddr> {
+    if let Ok(ip) = entry.parse::<IpAddr>() {
+        return Some(ip.to_canonical());
+    }
+    if let Ok(sock) = entry.parse::<SocketAddr>() {
+        return Some(sock.ip().to_canonical());
+    }
+    entry
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .and_then(|inner| inner.parse::<IpAddr>().ok())
+        .map(|ip| ip.to_canonical())
+}
+
 /// Rate limiting middleware backed by [`crate::distributed::rate_limiting::DistributedRateLimiter`].
 ///
-/// Uses the client IP address (from `X-Forwarded-For`, then `X-Real-IP`, falling back to
-/// `"unknown"`) as the rate-limiting key.  Returns **429 Too Many Requests** when the limit
+/// Uses the connection's peer address (see [`forwarded_client_ip`]) as the rate-limiting key.  Returns **429 Too Many Requests** when the limit
 /// is exceeded and adds standard `X-RateLimit-*` response headers on every response.
 // Boxing the Err variant would require `Box<Response>` to implement Axum's
 // `IntoResponse`, which it does not by default; both arms are already the
@@ -37,34 +87,29 @@ pub async fn rate_limit_middleware_with_state(
     request: Request,
     next: Next,
 ) -> Result<Response, Response> {
-    // Derive a stable key from the client IP.
-    // SECURITY (H-4): Validate the extracted value as a real IP address before using it
-    // as a rate-limit key.  An attacker who can set arbitrary X-Forwarded-For headers
-    // could bypass per-IP limiting by injecting a fabricated first address.  Requiring a
-    // valid parse means only syntactically correct IPs are accepted; anything else falls
-    // through to the next header or the fallback string "unknown".
-    let client_key = request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(str::trim)
-        .and_then(|s| s.parse::<std::net::IpAddr>().ok().map(|ip| ip.to_string()))
-        .or_else(|| {
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(str::trim)
-                .and_then(|s| s.parse::<std::net::IpAddr>().ok().map(|ip| ip.to_string()))
-        })
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                "Rate limiter: no identifiable client IP from X-Forwarded-For or X-Real-IP; \
-                 falling back to shared 'unidentified' bucket"
-            );
+    // The client is identified by the connection's peer address. `X-Forwarded-For` is
+    // client-controlled, so it is believed only when the peer is a configured trusted proxy.
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip());
+    let client_key = match peer {
+        Some(peer) => {
+            forwarded_client_ip(peer, request.headers(), &state.trusted_proxies).to_string()
+        }
+        None => {
+            static WARNED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!(
+                    "Rate limiter: requests carry no peer address, so all of them share one \
+                     bucket. Serve the router with \
+                     `into_make_service_with_connect_info::<SocketAddr>()`."
+                );
+            }
             "unidentified".to_string()
-        });
+        }
+    };
 
     match state.rate_limiter.check_rate_limit(&client_key).await {
         Ok(RateLimitResult::Allowed {
@@ -366,5 +411,107 @@ mod tests {
     fn test_check_role_empty() {
         let token = make_token(vec![], vec![]);
         assert!(!check_role(&token, "user"));
+    }
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> axum::http::HeaderMap {
+        let mut h = axum::http::HeaderMap::new();
+        for (k, v) in pairs {
+            h.append(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                v.parse().unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn forwarded_for_is_ignored_unless_the_peer_is_trusted() {
+        let h = headers(&[("x-forwarded-for", "1.2.3.4"), ("x-real-ip", "5.6.7.8")]);
+        assert_eq!(forwarded_client_ip(ip("9.9.9.9"), &h, &[]), ip("9.9.9.9"));
+        assert_eq!(
+            forwarded_client_ip(ip("9.9.9.9"), &h, &[ip("10.0.0.1")]),
+            ip("9.9.9.9")
+        );
+    }
+
+    #[test]
+    fn a_trusted_proxy_is_believed_from_the_right() {
+        let proxies = [ip("10.0.0.1"), ip("10.0.0.2")];
+        // client-supplied "6.6.6.6", then what the proxies appended
+        let h = headers(&[("x-forwarded-for", "6.6.6.6, 203.0.113.7, 10.0.0.2")]);
+        assert_eq!(
+            forwarded_client_ip(ip("10.0.0.1"), &h, &proxies),
+            ip("203.0.113.7")
+        );
+        // several header lines are one list
+        let h = headers(&[
+            ("x-forwarded-for", "6.6.6.6"),
+            ("x-forwarded-for", "203.0.113.7"),
+        ]);
+        assert_eq!(
+            forwarded_client_ip(ip("10.0.0.1"), &h, &proxies),
+            ip("203.0.113.7")
+        );
+        // an IPv4-mapped IPv6 peer is the same proxy
+        assert_eq!(
+            forwarded_client_ip(ip("::ffff:10.0.0.1"), &h, &proxies),
+            ip("203.0.113.7")
+        );
+    }
+
+    #[test]
+    fn unusable_forwarding_headers_fall_back_to_the_proxy_or_real_ip() {
+        let proxies = [ip("10.0.0.1")];
+        let h = headers(&[("x-forwarded-for", "203.0.113.7, garbage")]);
+        assert_eq!(
+            forwarded_client_ip(ip("10.0.0.1"), &h, &proxies),
+            ip("10.0.0.1")
+        );
+        assert_eq!(
+            forwarded_client_ip(ip("10.0.0.1"), &headers(&[]), &proxies),
+            ip("10.0.0.1")
+        );
+        // X-Real-IP is never consulted, with or without X-Forwarded-For
+        let h = headers(&[("x-real-ip", "198.51.100.4")]);
+        assert_eq!(
+            forwarded_client_ip(ip("10.0.0.1"), &h, &proxies),
+            ip("10.0.0.1")
+        );
+        let h = headers(&[
+            ("x-forwarded-for", "203.0.113.7"),
+            ("x-real-ip", "198.51.100.4"),
+        ]);
+        assert_eq!(
+            forwarded_client_ip(ip("10.0.0.1"), &h, &proxies),
+            ip("203.0.113.7")
+        );
+        // a chain made only of trusted proxies identifies the last proxy
+        let h = headers(&[("x-forwarded-for", "10.0.0.2, 10.0.0.1")]);
+        assert_eq!(
+            forwarded_client_ip(ip("10.0.0.1"), &h, &[ip("10.0.0.1"), ip("10.0.0.2")]),
+            ip("10.0.0.1")
+        );
+    }
+
+    #[test]
+    fn forwarded_entries_with_ports_and_brackets_are_understood() {
+        let proxies = [ip("10.0.0.1")];
+        for (entry, want) in [
+            ("203.0.113.7:51234", "203.0.113.7"),
+            ("[2001:db8::7]", "2001:db8::7"),
+            ("[2001:db8::7]:443", "2001:db8::7"),
+            ("::ffff:203.0.113.7", "203.0.113.7"),
+        ] {
+            let h = headers(&[("x-forwarded-for", entry)]);
+            assert_eq!(
+                forwarded_client_ip(ip("10.0.0.1"), &h, &proxies),
+                ip(want),
+                "{entry}"
+            );
+        }
     }
 }

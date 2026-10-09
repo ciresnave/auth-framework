@@ -49,6 +49,9 @@ pub struct ApiState {
     /// verification tokens are generated but nobody can receive them, so email
     /// verification cannot complete (see [`email_verification`]).
     pub email_verification_sender: Option<Arc<dyn email_verification::EmailVerificationSender>>,
+    /// Peer addresses of reverse proxies whose `X-Forwarded-For` the rate limiter may
+    /// believe. Empty by default: the connection's peer address is the client.
+    pub trusted_proxies: Vec<std::net::IpAddr>,
 }
 
 impl ApiState {
@@ -71,6 +74,7 @@ impl ApiState {
                 crate::authorization_enhanced::AuthorizationService::new().await?,
             ),
             email_verification_sender: None,
+            trusted_proxies: Vec::new(),
         })
     }
 
@@ -101,6 +105,7 @@ impl ApiState {
             rate_limiter,
             authorization_service,
             email_verification_sender: None,
+            trusted_proxies: Vec::new(),
         }
     }
 }

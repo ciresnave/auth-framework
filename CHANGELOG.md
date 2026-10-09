@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- Rate limiting: the request rate limiter now identifies a client by the
+  connection's peer address; `X-Forwarded-For` / `X-Real-IP` are believed only when the
+  peer is listed in the new `ApiServer::with_trusted_proxies` (default: none), using the
+  rightmost entry that is not itself a trusted proxy. `ApiServer::start` serves with
+  connect-info. **Action required if you serve `build_router()` yourself:** use
+  `into_make_service_with_connect_info::<SocketAddr>()`; without a peer address all
+  requests share one bucket. **If a reverse proxy sits in front of this server:** list its
+  address with `with_trusted_proxies`, otherwise every client appears as the proxy.
+  `ApiState` gains a `trusted_proxies` field. Every trusted proxy must APPEND to
+  `X-Forwarded-For` (not pass the client's value through); `X-Real-IP` is not consulted;
+  proxies are listed by exact address (no CIDR).
 - 0.6.0-rcXX -- OAuth2 scopes and refresh tokens: a client can be granted only the scopes
   it is registered for. `/oauth/authorize` refuses a request for any other scope with
   `invalid_scope`; with no scope requested the client receives its registered scopes (a

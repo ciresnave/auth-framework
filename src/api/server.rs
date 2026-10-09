@@ -151,6 +151,7 @@ pub struct ApiServer {
     config: ApiServerConfig,
     auth_framework: Arc<AuthFramework>,
     email_verification_sender: Option<Arc<dyn super::email_verification::EmailVerificationSender>>,
+    trusted_proxies: Vec<std::net::IpAddr>,
 }
 
 impl ApiServer {
@@ -160,6 +161,7 @@ impl ApiServer {
             config: ApiServerConfig::default(),
             auth_framework,
             email_verification_sender: None,
+            trusted_proxies: Vec::new(),
         }
     }
 
@@ -169,7 +171,17 @@ impl ApiServer {
             config,
             auth_framework,
             email_verification_sender: None,
+            trusted_proxies: Vec::new(),
         }
+    }
+
+    /// Declare the reverse proxies in front of this server (by the peer address they
+    /// connect from). Only requests arriving from these addresses have their
+    /// `X-Forwarded-For` header believed when identifying the client for rate limiting;
+    /// from anyone else the header is ignored.
+    pub fn with_trusted_proxies(mut self, proxies: Vec<std::net::IpAddr>) -> Self {
+        self.trusted_proxies = proxies;
+        self
     }
 
     /// Install the channel that delivers email-verification tokens. Without one, the
@@ -186,6 +198,7 @@ impl ApiServer {
     pub async fn build_router(&self) -> crate::errors::Result<Router> {
         let mut state = ApiState::new(self.auth_framework.clone()).await?;
         state.email_verification_sender = self.email_verification_sender.clone();
+        state.trusted_proxies = self.trusted_proxies.clone();
 
         // Create nested router for API v1
         let api_v1 = Router::new()
@@ -432,7 +445,11 @@ impl ApiServer {
         info!("📊 Metrics available at http://{}/metrics", addr);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
 
         Ok(())
     }
