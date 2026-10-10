@@ -247,4 +247,32 @@ mod mfa_attempt_limit_tests {
         assert!(ok.success, "{:?}", ok.error);
         assert!(f.storage().get_kv(&key).await.unwrap().is_none());
     }
+
+    /// Of many simultaneous submissions of one TOTP code exactly one is accepted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn simultaneous_submissions_of_one_totp_code_succeed_once() {
+        use auth_framework::auth_modular::mfa::totp::TotpManager;
+        let (_state, f) = setup().await;
+        let a = enrolled(&f).await;
+        let totp = Arc::new(TotpManager::new(f.storage().clone()));
+        let code = totp_now();
+        let mut tasks = Vec::new();
+        for _ in 0..16 {
+            let totp = totp.clone();
+            let (uid, code) = (a.id.clone(), code.clone());
+            tasks.push(tokio::spawn(async move {
+                totp.verify_login_code(&uid, &code).await.unwrap()
+            }));
+        }
+        let mut accepted = 0;
+        for t in tasks {
+            if t.await.unwrap() {
+                accepted += 1;
+            }
+        }
+        assert_eq!(
+            accepted, 1,
+            "{accepted} concurrent submissions were accepted"
+        );
+    }
 }

@@ -727,6 +727,15 @@ impl JwtClaims {
             .unwrap_or(&self.jti)
     }
 
+    /// The declared use of this token (`token_use`), if it declares one. Access tokens minted
+    /// by this crate declare nothing (and older ones never did); refresh and ID tokens declare
+    /// theirs.
+    pub fn token_use(&self) -> Option<&str> {
+        self.custom
+            .get(Self::TOKEN_USE_CLAIM)
+            .and_then(|v| v.as_str())
+    }
+
     /// `true` only for tokens minted by [`TokenManager::create_refresh_jwt_token`].
     /// The `scope` string plays no part: a scope is client-influenced data, this claim is not.
     pub fn is_refresh_token(&self) -> bool {
@@ -1583,6 +1592,25 @@ impl TokenManager {
         self.encode_jwt(user_id.into(), scopes, lifetime, None, None, None)
     }
 
+    /// Create a JWT that is NOT an access token (for example an OpenID Connect ID token). It
+    /// carries `token_use` = `token_use`, which every access-token check refuses.
+    pub fn create_typed_jwt_token(
+        &self,
+        user_id: impl Into<String>,
+        scopes: Vec<String>,
+        lifetime: Option<Duration>,
+        token_use: &str,
+    ) -> Result<String> {
+        self.encode_jwt(
+            user_id.into(),
+            scopes,
+            lifetime,
+            Some(token_use),
+            None,
+            None,
+        )
+    }
+
     /// Create a JWT issued to an OAuth client on a user's behalf: it carries the `client_id`
     /// claim, which makes it a delegated-access token (first-party session endpoints refuse it).
     pub fn create_client_jwt_token(
@@ -1672,13 +1700,15 @@ impl TokenManager {
                 serde_json::Value::String(token_use.to_string()),
             );
             // A refresh token starts a chain (family = its own id) or continues one.
-            let family = family
-                .map(String::from)
-                .unwrap_or_else(|| claims.jti.clone());
-            claims.custom.insert(
-                JwtClaims::FAMILY_CLAIM.to_string(),
-                serde_json::Value::String(family),
-            );
+            if token_use == JwtClaims::TOKEN_USE_REFRESH {
+                let family = family
+                    .map(String::from)
+                    .unwrap_or_else(|| claims.jti.clone());
+                claims.custom.insert(
+                    JwtClaims::FAMILY_CLAIM.to_string(),
+                    serde_json::Value::String(family),
+                );
+            }
         }
 
         let header = Header::new(self.algorithm);

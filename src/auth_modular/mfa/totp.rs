@@ -268,7 +268,19 @@ impl TotpManager {
         if last.is_some_and(|last| step <= last) {
             return Ok(false);
         }
-        // A code is valid for at most three steps; remember the step a little longer.
+        // Claim THIS step atomically: of simultaneous submissions of the same code exactly one
+        // wins. A code is valid for at most three steps; remember the claim a little longer.
+        if !self
+            .storage
+            .store_kv_if_absent(
+                &format!("mfa_totp_used:{user_id}:{step}"),
+                b"1",
+                Some(std::time::Duration::from_secs(300)),
+            )
+            .await?
+        {
+            return Ok(false);
+        }
         self.storage
             .store_kv(
                 &key,

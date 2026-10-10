@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- A TOTP time step is claimed with the atomic `store_kv_if_absent`, so of
+  simultaneous submissions of the same code exactly one is accepted (before, two parallel
+  requests could both pass the read-then-write check).
+- 0.6.0-rcXX -- An OpenID Connect ID token (`OidcProvider::create_id_token`) now carries
+  `token_use: "id_token"` and is no longer accepted as an access token: every access-token check
+  (`validate_access_jwt`, `validate_delegated_jwt`, `validate_api_token`, `get_userinfo`, ...)
+  refuses any JWT that declares a `token_use` other than being an access token. Before, an ID
+  token was signed with the same key, issuer and audience as access tokens and so authenticated
+  a request. New `TokenManager::create_typed_jwt_token` and `JwtClaims::token_use`. Access tokens
+  still declare nothing (including those issued before the upgrade). Not changed: the
+  SAML and passkey flows issue session tokens (not another token kind), so they are accepted as
+  before.
 - 0.6.0-rcXX -- `/oauth/introspect` reports a token as active only if it could be used: the
   account must be live (deactivated or deleted accounts answer `active: false`), and a refresh
   JWT must be unspent and in an intact chain (it is reported with `token_type: "refresh_token"`

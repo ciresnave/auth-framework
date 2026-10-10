@@ -561,10 +561,11 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
         let _header = Header::new(Algorithm::RS256);
         let token = self
             .token_manager
-            .create_jwt_token(
+            .create_typed_jwt_token(
                 subject,
                 vec!["openid".to_string()],
                 Some(Duration::from_secs(3600)),
+                "id_token",
             )
             .map_err(|e| AuthError::auth_method("oidc", format!("JWT creation failed: {}", e)))?;
 
@@ -704,10 +705,10 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
             .token_manager
             .validate_jwt_token(access_token)
             .map_err(|e| AuthError::auth_method("oidc", format!("Invalid access token: {}", e)))?;
-        if token_claims.is_refresh_token() {
+        if token_claims.token_use().is_some() {
             return Err(AuthError::auth_method(
                 "oidc",
-                "Invalid access token: a refresh token cannot be used here",
+                "Invalid access token: only an access token can be used here",
             ));
         }
         // Revoked tokens (logout / revocation) are refused; an unreadable list fails closed.
@@ -1554,6 +1555,48 @@ mod tests {
 
         assert!(!id_token.is_empty());
         assert!(id_token.contains('.'));
+    }
+
+    #[tokio::test]
+    async fn an_id_token_is_not_an_access_token() {
+        use crate::server::oidc::core::IdTokenRequest;
+        let provider = create_test_oidc_provider().await;
+        let id_token = provider
+            .create_id_token(IdTokenRequest::new("user123", "client456"))
+            .await
+            .unwrap();
+        // it is a valid JWT of this server ...
+        assert!(provider.token_manager.validate_jwt_token(&id_token).is_ok());
+        // ... but not something that authenticates a request
+        let storage = MemoryStorage::new();
+        assert!(
+            crate::auth::validate_access_jwt_with(
+                &provider.token_manager,
+                &storage,
+                &id_token,
+                false,
+                false
+            )
+            .await
+            .is_err(),
+            "an ID token must not be accepted as an access token"
+        );
+        // control: a genuine access token for the same subject is
+        let access = provider
+            .token_manager
+            .create_jwt_token("user123", vec!["openid".into()], None)
+            .unwrap();
+        assert!(
+            crate::auth::validate_access_jwt_with(
+                &provider.token_manager,
+                &storage,
+                &access,
+                false,
+                false
+            )
+            .await
+            .is_ok()
+        );
     }
 
     #[tokio::test]

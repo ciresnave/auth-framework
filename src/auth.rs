@@ -268,10 +268,15 @@ pub(crate) async fn validate_access_jwt_with(
             "A client-bound token cannot be used here (it was issued to an OAuth client)",
         ));
     }
+    // Only a token that declares no other use is an access token (a refresh token, an ID
+    // token, ... carry a `token_use` claim).
     if claims.is_refresh_token() {
         return Err(rejected(
             "A refresh token cannot be used as an access token",
         ));
+    }
+    if claims.token_use().is_some() {
+        return Err(rejected("This token is not an access token"));
     }
     match storage
         .get_kv(&format!("revoked_token:{}", claims.jti))
