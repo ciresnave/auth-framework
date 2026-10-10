@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- `AuthFramework::validate_token` (and the modular type's) requires the
+  caller-supplied `AuthToken` value to agree with the signed JWT it carries (`user_id` must be
+  the JWT subject), and `AuthFramework::refresh_token(&AuthToken)` renews only a token that
+  `validate_token` accepts (live, stored, not revoked). Before, a forged value pairing a valid
+  JWT with another user's id was accepted and could be refreshed into a token for that user.
 - 0.6.0-rcXX -- MFA attempt budget: an account gets 5 MFA code attempts per 15 minutes in total
   (across all its challenges), reserved BEFORE a code is checked with an atomic set-if-absent
   (`mfa_attempt:{user}:{slot}`), so a burst of parallel guesses can no longer exceed it. The

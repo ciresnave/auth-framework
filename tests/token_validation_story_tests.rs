@@ -243,4 +243,39 @@ mod token_validation_story_tests {
         f.storage().store_token(&token).await.unwrap();
         assert!(!f.validate_token(&token).await.unwrap_or(false));
     }
+
+    /// `validate_token` / `refresh_token` take an `AuthToken` value from the caller: its fields must
+    /// agree with the signed JWT it carries.
+    #[tokio::test]
+    async fn a_caller_supplied_token_value_must_agree_with_its_jwt() {
+        let f = framework().await;
+        let victim = account(&f, true).await;
+        let other = account(&f, true).await;
+        let token = f
+            .token_manager()
+            .create_auth_token(&victim, vec!["read".to_string()], "jwt", None)
+            .unwrap();
+        f.storage().store_token(&token).await.unwrap();
+        assert!(f.validate_token(&token).await.unwrap());
+
+        // the same JWT presented in a value that names another user
+        let mut forged = token.clone();
+        forged.user_id = other.clone();
+        assert!(!f.validate_token(&forged).await.unwrap_or(false));
+        assert!(
+            f.refresh_token(&forged).await.is_err(),
+            "a forged value must not be refreshed into a token for another user"
+        );
+
+        // refreshing a revoked token is refused; refreshing a valid one still works
+        let second = f
+            .token_manager()
+            .create_auth_token(&victim, vec!["read".to_string()], "jwt", None)
+            .unwrap();
+        f.storage().store_token(&second).await.unwrap();
+        f.revoke_token(&second).await.unwrap();
+        assert!(f.refresh_token(&second).await.is_err());
+        let fresh = f.refresh_token(&token).await.unwrap();
+        assert_eq!(fresh.user_id, victim);
+    }
 }

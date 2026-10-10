@@ -806,6 +806,11 @@ impl AuthFramework {
         // Validate with token manager
         self.token_manager.validate_auth_token(token)?;
 
+        // The value must agree with the signed JWT it carries
+        if !crate::auth::token_value_matches_jwt(&self.token_manager, token) {
+            return Ok(false);
+        }
+
         // Refuse tokens on the revocation list (logout / revocation)
         if crate::auth::access_token_is_revoked(&self.token_manager, self.storage.as_ref(), token)
             .await?

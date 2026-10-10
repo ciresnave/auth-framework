@@ -316,6 +316,19 @@ pub(crate) async fn ensure_account_active(
     }
 }
 
+/// Does the `AuthToken` value agree with the signed JWT it carries? A caller-supplied value
+/// whose `user_id` differs from the JWT subject is a forgery. Opaque (non-JWT) tokens have
+/// nothing to compare.
+pub(crate) fn token_value_matches_jwt(token_manager: &TokenManager, token: &AuthToken) -> bool {
+    if !(token.auth_method == "jwt" || token.access_token.contains('.')) {
+        return true;
+    }
+    token_manager
+        .validate_jwt_token(&token.access_token)
+        .map(|claims| claims.sub == token.user_id)
+        .unwrap_or(false)
+}
+
 /// Has this token been revoked through the revocation list (`revoked_token:{jti}`)?
 /// Fails closed: an unreadable list is an error.
 pub(crate) async fn access_token_is_revoked(
@@ -1300,6 +1313,7 @@ impl AuthFramework {
         self.require_initialized()?;
         let valid = token.is_valid()
             && self.token_manager.validate_auth_token(token).is_ok()
+            && token_value_matches_jwt(&self.token_manager, token)
             && !access_token_is_revoked(&self.token_manager, self.storage.as_ref(), token).await?
             && self.touch_stored_token(token).await?;
         self.monitoring_manager.record_token_validation(valid).await;
@@ -1430,7 +1444,14 @@ impl AuthFramework {
             return Ok(new_token);
         }
 
-        // Fallback to creating a new token with the same properties
+        // Fallback to creating a new token with the same properties. Only a token that is
+        // valid right now (live, not revoked, stored, and whose fields agree with its JWT)
+        // can be renewed: the caller's value is not trusted on its own.
+        if !self.validate_token(token).await? {
+            return Err(AuthError::Token(crate::errors::TokenError::Invalid {
+                message: "Cannot refresh a token that is not valid".to_string(),
+            }));
+        }
         let new_token = self.token_manager.refresh_token(token)?;
         self.storage.store_token(&new_token).await?;
 
