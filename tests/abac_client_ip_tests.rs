@@ -64,4 +64,65 @@ mod abac_client_ip_tests {
         let req = request(None, &[("x-forwarded-for", "10.0.0.5")]);
         assert_eq!(ip_seen(&ContextBuilder::new(), &req), None);
     }
+
+    // ---- connection type: derived from the peer address, not from what the client says ----
+
+    fn connection(
+        builder: &ContextBuilder,
+        req: &Request,
+    ) -> auth_framework::authorization_enhanced::ConnectionType {
+        let token = AuthToken::new("user_1", "tok", Duration::from_secs(60), "test");
+        builder.build_context(req, &token).connection_type
+    }
+
+    fn corporate() -> ContextBuilder {
+        ContextBuilder::new().with_corporate_networks(vec!["10.0.0.0/8".parse().unwrap()])
+    }
+
+    #[test]
+    fn a_corporate_peer_is_corporate_with_or_without_a_via_header() {
+        use auth_framework::authorization_enhanced::ConnectionType;
+        let b = corporate();
+        assert!(matches!(
+            connection(&b, &request(Some("10.1.2.3"), &[])),
+            ConnectionType::Corporate
+        ));
+        assert!(matches!(
+            connection(&b, &request(Some("10.1.2.3"), &[("via", "1.1 whatever")])),
+            ConnectionType::Corporate
+        ));
+    }
+
+    #[test]
+    fn claiming_a_via_header_does_not_lower_the_risk_of_an_outside_peer() {
+        use auth_framework::authorization_enhanced::ConnectionType;
+        let b = corporate();
+        let outside = request(Some("198.51.100.9"), &[]);
+        let with_via = request(Some("198.51.100.9"), &[("via", "1.1 whatever")]);
+        assert!(matches!(connection(&b, &outside), ConnectionType::Direct));
+        assert!(
+            matches!(connection(&b, &with_via), ConnectionType::Direct),
+            "the header must change nothing"
+        );
+        // no peer address at all: nothing is known
+        assert!(matches!(
+            connection(&b, &request(None, &[("via", "1.1 x")])),
+            ConnectionType::Unknown
+        ));
+        assert!(matches!(
+            connection(&b, &request(None, &[])),
+            ConnectionType::Unknown
+        ));
+    }
+
+    #[test]
+    fn the_tor_check_does_not_depend_on_a_via_header() {
+        use auth_framework::authorization_enhanced::ConnectionType;
+        let b = corporate();
+        let req = request(
+            Some("198.51.100.9"),
+            &[("user-agent", "Mozilla/5.0 Tor Browser")],
+        );
+        assert!(matches!(connection(&b, &req), ConnectionType::Tor));
+    }
 }

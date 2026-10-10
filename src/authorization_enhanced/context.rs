@@ -118,6 +118,12 @@ impl ContextBuilder {
         }
     }
 
+    /// A builder that shares the API server state's trusted-proxy list, so the client address
+    /// that policies see is derived exactly as the rate limiter derives it.
+    pub fn from_api_state(state: &crate::api::ApiState) -> Self {
+        Self::new().with_trusted_proxies(state.trusted_proxies.clone())
+    }
+
     /// Declare the reverse proxies in front of the server (by the address they connect
     /// from). The client address in the context is the connection's peer address; only when
     /// the peer is one of these is `X-Forwarded-For` consulted (rightmost entry that is not
@@ -321,44 +327,47 @@ impl ContextBuilder {
         }
     }
 
-    /// Analyze connection type from headers and IP
+    /// Analyze connection type from headers and IP.
+    ///
+    /// The address (`ip_address`) comes from the connection, so network membership and
+    /// "direct" are facts about the peer. Headers are client-supplied hints: they can only
+    /// RAISE the assessed risk (a `Via` that mentions a VPN or proxy, a Tor user agent), and
+    /// the absence or presence of a `Via` header changes nothing else.
     fn analyze_connection_type(
         &self,
         request: &Request,
         ip_address: &Option<IpAddr>,
     ) -> ConnectionType {
-        // Check for VPN indicators in headers
         if let Some(via) = request.headers().get("via")
             && let Ok(via_str) = via.to_str()
         {
-            if via_str.to_lowercase().contains("vpn") {
+            let via_str = via_str.to_lowercase();
+            if via_str.contains("vpn") {
                 return ConnectionType::VPN;
             }
-            if via_str.to_lowercase().contains("proxy") {
+            if via_str.contains("proxy") {
                 return ConnectionType::Proxy;
             }
+        }
 
-            // Check for Tor indicators
-            if let Some(ua) = request.headers().get("user-agent")
-                && let Ok(ua_str) = ua.to_str()
-                && ua_str.contains("Tor")
-            {
-                return ConnectionType::Tor;
-            }
+        if let Some(ua) = request.headers().get("user-agent")
+            && let Ok(ua_str) = ua.to_str()
+            && ua_str.contains("Tor")
+        {
+            return ConnectionType::Tor;
+        }
 
-            // Check if IP is in corporate network range
-            if let Some(ip) = ip_address {
-                for network in &self.corporate_networks {
-                    if network.contains(*ip) {
-                        return ConnectionType::Corporate;
-                    }
+        match ip_address {
+            Some(ip) => {
+                if self.corporate_networks.iter().any(|n| n.contains(*ip)) {
+                    ConnectionType::Corporate
+                } else {
+                    ConnectionType::Direct
                 }
             }
-
-            return ConnectionType::Direct;
+            // No peer address: nothing is known about the connection.
+            None => ConnectionType::Unknown,
         }
-        // Fallback to unknown if no indicators found
-        ConnectionType::Unknown
     }
 
     /// Assess security level based on endpoint

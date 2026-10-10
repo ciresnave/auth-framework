@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- Authorization context connection type: the assessed connection type no
+  longer depends on whether the client sent a `Via` header. Network membership
+  (`corporate_networks`) and "direct" are decided from the peer address, the Tor user-agent
+  check always runs, and a `Via` header can only raise the assessed risk (VPN/proxy). Before,
+  a request without `Via` was always `Unknown` (+10 risk) and one with an arbitrary `Via`
+  could be assessed `Direct` or `Corporate` (-10). `ContextBuilder::from_api_state` shares the
+  server's trusted-proxy list. Known, unchanged: `login_risk_level` in the API login response
+  counts raw `X-Forwarded-For` hops (advisory output only; a client can only raise its own
+  score).
 - 0.6.0-rcXX -- WebAuthn: the ceremony origin must now equal a configured origin in scheme,
   host AND port (it used to compare only the host). Configure origins with
   `WebAuthnConfig::origins` / `WEBAUTHN_ORIGINS` (comma separated); the default is
