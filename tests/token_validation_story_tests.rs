@@ -205,7 +205,7 @@ mod token_validation_story_tests {
             )
             .await
             .unwrap();
-        assert!(!f.validate_token(&token).await.unwrap_or(false));
+        assert!(!f.validate_token(&token).await.unwrap());
 
         // revoked through the library API
         let second = f
@@ -215,7 +215,7 @@ mod token_validation_story_tests {
         f.storage().store_token(&second).await.unwrap();
         assert!(f.validate_token(&second).await.unwrap());
         f.revoke_token(&second).await.unwrap();
-        assert!(!f.validate_token(&second).await.unwrap_or(false));
+        assert!(!f.validate_token(&second).await.unwrap());
     }
 
     #[tokio::test]

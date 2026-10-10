@@ -1684,14 +1684,17 @@ impl AuthFramework {
                 "Refresh token reuse detected for user '{}'; revoking its chain",
                 claims.sub
             );
-            let _ = self
+            if let Err(e) = self
                 .storage
                 .store_kv(
                     &format!("revoked_family:{family}"),
                     b"reuse",
                     Some(family_ttl),
                 )
-                .await;
+                .await
+            {
+                tracing::error!("Could not revoke refresh chain after reuse: {}", e);
+            }
             return Err(rejected("Refresh token has already been used"));
         }
 

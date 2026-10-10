@@ -59,6 +59,21 @@ pub(crate) fn forwarded_client_ip(
     peer
 }
 
+/// The rate-limit bucket for an address. IPv6 clients are bucketed by their /64 (the size of
+/// a single end-user allocation), so one client cannot mint a bucket per address.
+fn rate_limit_key(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => {
+            let o = v6.octets();
+            let prefix = std::net::Ipv6Addr::from([
+                o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], 0, 0, 0, 0, 0, 0, 0, 0,
+            ]);
+            format!("{prefix}/64")
+        }
+    }
+}
+
 /// Parse one `X-Forwarded-For` entry: a bare address, `addr:port`, or `[v6]` / `[v6]:port`.
 fn parse_forwarded_addr(entry: &str) -> Option<IpAddr> {
     if let Ok(ip) = entry.parse::<IpAddr>() {
@@ -94,9 +109,11 @@ pub async fn rate_limit_middleware_with_state(
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip());
     let client_key = match peer {
-        Some(peer) => {
-            forwarded_client_ip(peer, request.headers(), &state.trusted_proxies).to_string()
-        }
+        Some(peer) => rate_limit_key(forwarded_client_ip(
+            peer,
+            request.headers(),
+            &state.trusted_proxies,
+        )),
         None => {
             static WARNED: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
@@ -426,6 +443,16 @@ mod tests {
             );
         }
         h
+    }
+
+    #[test]
+    fn ipv6_clients_share_a_bucket_per_slash_64() {
+        assert_eq!(rate_limit_key(ip("203.0.113.7")), "203.0.113.7");
+        let a = rate_limit_key(ip("2001:db8:1:2:aaaa:bbbb:cccc:dddd"));
+        let b = rate_limit_key(ip("2001:db8:1:2::1"));
+        let c = rate_limit_key(ip("2001:db8:1:3::1"));
+        assert_eq!(a, b, "same /64");
+        assert_ne!(a, c, "different /64");
     }
 
     #[test]

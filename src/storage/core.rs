@@ -145,8 +145,9 @@ pub trait AuthStorage: Send + Sync {
     ///
     /// This is a compare-and-set: of several simultaneous callers exactly one gets `true`.
     /// The default implementation is a `get_kv` followed by `store_kv` and is **not**
-    /// atomic; every backend this crate ships overrides it with an atomic operation (a
-    /// custom backend that does not override it gives single-use markers no atomicity).
+    /// atomic. The memory, SQLite (both crates), PostgreSQL, Redis, unified and encrypted-wrapper
+    /// backends override it with an atomic operation; a custom backend (and the test-only
+    /// `MockStorage`) that does not gives single-use markers no atomicity.
     async fn store_kv_if_absent(
         &self,
         key: &str,

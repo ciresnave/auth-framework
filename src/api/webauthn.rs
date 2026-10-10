@@ -107,10 +107,22 @@ impl WebAuthnConfig {
                         .collect()
                 })
                 .unwrap_or_default(),
-            user_verification: std::env::var("WEBAUTHN_USER_VERIFICATION")
-                .ok()
-                .filter(|v| matches!(v.as_str(), "required" | "preferred" | "discouraged"))
-                .unwrap_or_else(default_user_verification),
+            user_verification: match std::env::var("WEBAUTHN_USER_VERIFICATION") {
+                Err(_) => default_user_verification(),
+                Ok(v) => match v.trim().to_lowercase().as_str() {
+                    "required" => "required".to_string(),
+                    "preferred" => "preferred".to_string(),
+                    "discouraged" => "discouraged".to_string(),
+                    other => {
+                        // A typo must not silently weaken the policy.
+                        tracing::error!(
+                            "WEBAUTHN_USER_VERIFICATION={other:?} is not one of required / \
+                             preferred / discouraged; treating it as \"required\""
+                        );
+                        "required".to_string()
+                    }
+                },
+            },
         }
     }
 
@@ -346,6 +358,16 @@ fn credential_index_key(user_id: &str) -> String {
 fn normalize_origin(origin: &str) -> Option<String> {
     let url = url::Url::parse(origin).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    // An origin is scheme://host[:port] and nothing else: no credentials, path, query or
+    // fragment (`Url::origin()` would silently discard them).
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
         return None;
     }
     Some(url.origin().ascii_serialization())
@@ -1213,6 +1235,28 @@ mod tests {
         }
         assert!(check_origin(&serde_json::json!({}), &cfg).is_err());
         assert!(check_origin(&serde_json::json!({ "origin": 5 }), &cfg).is_err());
+    }
+
+    #[test]
+    fn an_origin_is_only_scheme_host_and_port() {
+        let cfg = WebAuthnConfig::new("auth.example.com", "x");
+        let ok =
+            |origin: &str| check_origin(&serde_json::json!({ "origin": origin }), &cfg).is_ok();
+        assert!(ok("https://auth.example.com"));
+        assert!(
+            ok("https://AUTH.example.com"),
+            "host case is not significant"
+        );
+        for sloppy in [
+            "https://user@auth.example.com",
+            "https://user:pw@auth.example.com",
+            "https://auth.example.com/path",
+            "https://auth.example.com/?q=1",
+            "https://auth.example.com/#frag",
+            "https://auth.example.com.",
+        ] {
+            assert!(!ok(sloppy), "{sloppy:?} is not an origin");
+        }
     }
 
     #[test]

@@ -452,27 +452,7 @@ async fn handle_authorization_code_grant(
             Err(refusal) => return *refusal,
         };
 
-    // Defense-in-depth: Use a consumed marker to mitigate the non-atomic get+delete
-    // race condition (TOCTOU). If a concurrent request already marked the code as
-    // consumed, reject this request immediately.
     let consumed_key = format!("oauth2_code_consumed:{}", code);
-    if let Ok(Some(_)) = state.auth_framework.storage().get_kv(&consumed_key).await {
-        return ApiResponse::error_typed("invalid_grant", "Authorization code already used");
-    }
-    // Mark code as consumed BEFORE reading it, narrowing the race window.
-    if let Err(e) = state
-        .auth_framework
-        .storage()
-        .store_kv(
-            &consumed_key,
-            b"1",
-            Some(std::time::Duration::from_secs(600)),
-        )
-        .await
-    {
-        tracing::warn!("Failed to store code consumed marker: {:?}", e);
-    }
-
     let storage_key = format!("oauth2_code:{}", code);
     let code_data = match state.auth_framework.storage().get_kv(&storage_key).await {
         Ok(Some(data)) => match serde_json::from_slice::<serde_json::Value>(&data) {
@@ -496,6 +476,32 @@ async fn handle_authorization_code_grant(
             );
         }
     };
+
+    // Claim the code: of any number of simultaneous redemptions exactly one proceeds (atomic
+    // set-if-absent). The marker is only written for a code that exists, so presenting
+    // made-up codes stores nothing.
+    match state
+        .auth_framework
+        .storage()
+        .store_kv_if_absent(
+            &consumed_key,
+            b"1",
+            Some(std::time::Duration::from_secs(600)),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return ApiResponse::error_typed("invalid_grant", "Authorization code already used");
+        }
+        Err(e) => {
+            tracing::error!("Failed to claim authorization code: {:?}", e);
+            return ApiResponse::error_typed(
+                "server_error",
+                "Failed to process authorization code",
+            );
+        }
+    }
 
     // A code issued to a different client is refused and left intact (with its
     // consumed marker released), so presenting someone else's code cannot burn it.
@@ -914,24 +920,7 @@ async fn handle_refresh_token_grant(
         }
     }
 
-    // Defense-in-depth: Use a consumed marker to mitigate the non-atomic get+delete
-    // race condition. If a concurrent request already consumed this refresh token, reject.
     let consumed_key = format!("oauth2_refresh_consumed:{}", refresh_token_str);
-    if let Ok(Some(_)) = state.auth_framework.storage().get_kv(&consumed_key).await {
-        return ApiResponse::error_typed("invalid_grant", "Refresh token already consumed");
-    }
-    if let Err(e) = state
-        .auth_framework
-        .storage()
-        .store_kv(
-            &consumed_key,
-            b"1",
-            Some(std::time::Duration::from_secs(600)),
-        )
-        .await
-    {
-        tracing::warn!("Failed to store refresh consumed marker: {:?}", e);
-    }
 
     // Validate the refresh token against persistent storage.
     let refresh_key = format!("oauth2_refresh_token:{}", refresh_token_str);
@@ -948,6 +937,28 @@ async fn handle_refresh_token_grant(
             return ApiResponse::error_typed("server_error", "Failed to validate refresh token");
         }
     };
+
+    // Claim the token: of any number of simultaneous redemptions exactly one proceeds (atomic
+    // set-if-absent). The marker is only written for a token that exists.
+    match state
+        .auth_framework
+        .storage()
+        .store_kv_if_absent(
+            &consumed_key,
+            b"1",
+            Some(std::time::Duration::from_secs(600)),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return ApiResponse::error_typed("invalid_grant", "Refresh token already consumed");
+        }
+        Err(e) => {
+            tracing::error!("Failed to claim refresh token: {:?}", e);
+            return ApiResponse::error_typed("server_error", "Failed to validate refresh token");
+        }
+    }
 
     let user_id = match stored["user_id"].as_str() {
         Some(u) => u.to_string(),
@@ -995,12 +1006,31 @@ async fn handle_refresh_token_grant(
     if let Some(client) = stored["client_id"].as_str() {
         let record = match load_client_record(&state, client).await {
             Ok(Some(record)) => record,
-            Ok(None) => return ApiResponse::error_typed("invalid_client", "Unknown client"),
-            Err(refused) => return *refused,
+            Ok(None) => {
+                let _ = state
+                    .auth_framework
+                    .storage()
+                    .delete_kv(&consumed_key)
+                    .await;
+                return ApiResponse::error_typed("invalid_client", "Unknown client");
+            }
+            Err(refused) => {
+                let _ = state
+                    .auth_framework
+                    .storage()
+                    .delete_kv(&consumed_key)
+                    .await;
+                return *refused;
+            }
         };
         let allowed = allowed_scopes(&record);
         scopes.retain(|s| allowed.iter().any(|a| a == s));
         if scopes.is_empty() {
+            let _ = state
+                .auth_framework
+                .storage()
+                .delete_kv(&consumed_key)
+                .await;
             return ApiResponse::error_typed(
                 "invalid_scope",
                 "No granted scope is allowed for this client",
@@ -1094,6 +1124,11 @@ pub async fn revoke(
     State(state): State<ApiState>,
     Json(req): Json<RevokeRequest>,
 ) -> ApiResponse<serde_json::Value> {
+    // The token becomes part of a storage key: bound its size.
+    if req.token.is_empty() || req.token.len() > 8192 {
+        return ApiResponse::error_typed("invalid_request", "Invalid token");
+    }
+
     // Store the revoked token in a blacklist for immediate invalidation.
     // Key by the raw token value so the userinfo endpoint can check it too.
     let revoked_token_key = format!("oauth2_revoked_token:{}", req.token);
@@ -1426,6 +1461,24 @@ pub async fn end_session(
             .await
         {
             tracing::warn!("Failed to revoke token during OIDC end_session: {}", e);
+        }
+        // the marker every bearer-token validation path reads
+        if let Err(e) = state
+            .auth_framework
+            .storage()
+            .store_kv(
+                &format!("revoked_token:{}", claims.jti),
+                b"revoked",
+                Some(std::time::Duration::from_secs(
+                    (claims.exp - chrono::Utc::now().timestamp()).max(60) as u64,
+                )),
+            )
+            .await
+        {
+            tracing::warn!(
+                "Failed to record jti revocation during OIDC end_session: {}",
+                e
+            );
         }
         tracing::info!("OIDC end_session: revoked token for user {}", claims.sub);
     }

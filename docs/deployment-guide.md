@@ -126,7 +126,9 @@ connection's **peer address**, not on request headers. Two things follow:
   `X-Forwarded-For` entry that is not itself a trusted proxy, so every trusted proxy must
   *append* to that header rather than pass the client's value through. `X-Real-IP` is not used.
   Proxies are listed by exact address; there is no CIDR support yet. Without the list, every
-  client appears as the proxy and shares its bucket. Set the list in both places, and do not put
+  client appears as the proxy and shares its bucket. The server's own router passes its list to the authorization middleware; a hand-built
+  `ContextBuilder` should be created with `ContextBuilder::from_api_state(&state)` (or given the
+  same list). Do not put
   the proxy's own address in `corporate_networks` or an `IpWhitelist`: an unlisted proxy makes
   every client look like the proxy, which such a rule would then treat as trusted.
 

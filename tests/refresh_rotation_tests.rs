@@ -125,6 +125,34 @@ mod refresh_rotation_tests {
     }
 
     #[tokio::test]
+    async fn logging_out_with_a_refresh_token_ends_its_whole_chain() {
+        use auth_framework::api::auth::{LogoutRequest, logout};
+        let (state, f) = setup().await;
+        let (uid, access, rt1) = logged_in(&state, &f).await;
+        // the chain moves on: rt1 is spent, rt2 is the live token
+        let rt2 = refresh(&state, &rt1).await.data.unwrap().refresh_token;
+
+        // logout presents the (older) refresh token it knows about
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {access}").parse().unwrap());
+        let out = logout(
+            State(state.clone()),
+            headers,
+            Json(LogoutRequest {
+                refresh_token: Some(rt1),
+            }),
+        )
+        .await;
+        assert!(out.success, "{:?}", out.error);
+        let _ = uid;
+
+        // a copy of the newer token does not survive the logout
+        let resp = refresh(&state, &rt2).await;
+        assert!(!resp.success, "the rest of the chain must be dead");
+        assert_eq!(resp.error.map(|e| e.code).as_deref(), Some("INVALID_TOKEN"));
+    }
+
+    #[tokio::test]
     async fn the_integration_refresh_route_takes_only_a_refresh_token() {
         let (state, f) = setup().await;
         let (uid, _, _) = logged_in(&state, &f).await;

@@ -233,13 +233,8 @@ fn build_request_context(
 fn build_conditional_context(request: &Request) -> HashMap<String, String> {
     let mut context = HashMap::new();
 
-    // Check for VPN indicators
-    if let Some(via) = request.headers().get("via")
-        && let Ok(via_str) = via.to_str()
-        && (via_str.contains("vpn") || via_str.contains("proxy"))
-    {
-        context.insert("connection_type".to_string(), "vpn".to_string());
-    }
+    // No `connection_type` here: a `Via` header is client-asserted, so it cannot establish
+    // that a request came over a VPN. Peer-derived facts belong in `ContextBuilder`.
 
     // Check for mobile device
     if let Some(user_agent) = request.headers().get("user-agent")
@@ -368,6 +363,14 @@ mod tests {
                 .insert(axum::extract::ConnectInfo(peer));
         }
         req
+    }
+
+    #[test]
+    fn a_via_header_does_not_make_a_request_a_vpn_request() {
+        let mut req = request_from(Some("198.51.100.9"), None);
+        req.headers_mut()
+            .insert("via", "1.1 vpn-gateway".parse().unwrap());
+        assert!(!build_conditional_context(&req).contains_key("connection_type"));
     }
 
     #[test]

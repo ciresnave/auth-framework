@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- OAuth endpoints: the authorization-code and OAuth refresh-token grants claim
+  their one-time marker with the atomic `store_kv_if_absent`, only for a code or token that
+  exists (so simultaneous redemptions succeed once and made-up codes store nothing);
+  `/oauth/revoke` rejects tokens over 8 KiB; `end_session` also records the `revoked_token:{jti}`
+  marker the bearer paths read; `/auth/logout` with a refresh token also revokes that token's
+  whole refresh chain. Known limits, unchanged: OAuth access tokens are ordinary user JWTs, so
+  a client's registered scope limits what the token's scope string says, not which endpoints
+  accept the token (roles come from the user record); `/oauth/introspect` reports a refresh
+  JWT as active; tokens minted by the OIDC id-token, SAML and passkey flows are not
+  distinguished from access tokens by a `token_use` claim; wrong-code accounting for MFA is a
+  read-modify-write, so a burst of parallel guesses can exceed the 5-failure lockout (each
+  challenge is still capped at 5 and a user keeps at most 3). The JavaScript SDK's
+  `TokenResponse` gains `refresh_token` (refresh tokens are single-use: store the new one).
+- 0.6.0-rcXX -- Review follow-ups: rate-limit buckets for IPv6 clients are per /64; a WebAuthn
+  origin must be exactly scheme://host[:port] (no credentials, path, query or fragment);
+  `WEBAUTHN_USER_VERIFICATION` accepts the three values in any case and an unrecognised value
+  now means `required` (with an error log) instead of silently `preferred`; the WebAuthn
+  handlers read `WebAuthnConfig::from_env()` per request, so origins and the
+  user-verification requirement are configured through the environment (the `origins()` /
+  `user_verification()` builders only affect code that calls the helpers itself);
+  `WebAuthnConfig` gains the public fields `rp_origins` and `user_verification`; the
+  conditional-permission context no longer sets `connection_type=vpn` from a client-supplied
+  `Via` header; a genuine corporate client behind a proxy that adds `Via: ... proxy` is
+  assessed `Proxy` rather than `Corporate`;
+  `TokenExchangeManagerFactory::create_basic_manager_with_revocation` installs the revocation
+  list (the plain factory does not, and `AdvancedTokenExchangeManager` has no built-in
+  revocation or token-type check).
 - 0.6.0-rcXX -- Sessions: `rotate_on_privilege_escalation` (the `SessionConfig` field and
   the builder method) is deprecated and documented as having no effect. It was `true` in every
   preset but nothing ever read it, so sessions were never rotated on privilege escalation; the
@@ -38,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticator data flags are not checked (only attestation `none` is accepted).
 - 0.6.0-rcXX -- `AuthStorage::store_kv_if_absent` (new, with a non-atomic default) is an atomic
   compare-and-set in the memory, SQLite, PostgreSQL, Redis and encrypted-wrapper backends
-  (`UnifiedStorage` keeps the default). Refresh-token redemption uses it, so of any number of
+  (`UnifiedStorage` and `auth-storage-sqlite` too; the test-only `MockStorage` keeps the default). Refresh-token redemption uses it, so of any number of
   simultaneous redemptions of one refresh token exactly one succeeds; custom `AuthStorage`
   implementations should override it.
 - 0.6.0-rcXX -- The axum integration's login route (`AuthRouter`, `POST /auth/login`) now
@@ -61,8 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `X-Forwarded-For` / `X-Real-IP` is never copied into the context any more, and a request
   with no peer address has no client address. Serve the router with
   `into_make_service_with_connect_info::<SocketAddr>()`. Behind a reverse proxy, list the proxy
-  in BOTH places (`ApiServer::with_trusted_proxies` and `ContextBuilder::with_trusted_proxies`),
-  and do not put the proxy's own address in `corporate_networks` or an `IpWhitelist`: an
+  with `ApiServer::with_trusted_proxies` (the authorization middleware then uses the same list;
+  build a stand-alone `ContextBuilder` with `ContextBuilder::from_api_state`), and do not put
+  the proxy's own address in `corporate_networks` or an `IpWhitelist`: an
   unlisted proxy makes every client look like the proxy. `ip_address` is now always a single
   canonical IP (it used to be the raw header, e.g. `a, b, c`) and is absent without a peer
   address; a `ConnectInfo<IpAddr>` inserted by the integrator is no longer read.
@@ -98,11 +126,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `validate_api_token` refused revoked tokens). `AuthFramework::revoke_token` now also writes
   the revocation marker. Introspection answers `active: false` when the revocation list
   cannot be read. Rejections are `AuthError::Token(Invalid)` (HTTP 401 in the axum
-  integration) instead of `AuthError::Unauthorized`. Cost: one extra storage read per
-  authenticated request; custom `AuthStorage` implementations must return `Ok(None)` for a
-  missing key. Not covered here: `AuthFramework::validate_token` (checks the stored token
-  record), token exchange subject/actor tokens, and OIDC `get_userinfo` (rejects refresh
-  JWTs but does not read the revocation list).
+  integration) instead of `AuthError::Unauthorized`. Cost: one or two extra storage reads
+  per authenticated request (the revocation list, and the account record on the integration
+  paths); custom `AuthStorage` implementations must return `Ok(None)` for a missing key.
+  `AuthFramework::validate_token` and the modular type's now also read the revocation list
+  (see the later entries); they still validate the caller's `AuthToken` value rather than the
+  JWT's own claims, and `AuthFramework::refresh_token(&AuthToken)` still builds its result
+  from the caller's value.
 - 0.6.0-rcXX -- MFA: an MFA challenge now allows a limited number of attempts
   (`max_attempts`, 5 for login challenges); each attempt is counted before the code is
   checked and an exhausted challenge is removed. Wrong codes submitted at `/auth/login` are

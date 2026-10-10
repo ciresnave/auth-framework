@@ -572,6 +572,26 @@ pub async fn logout(
             .validate_jwt_token(refresh_token)
         {
             Ok(claims) => {
+                // A logged-out refresh token ends its whole chain: a copy of a later token
+                // (e.g. one an attacker redeemed first) must not outlive the logout.
+                let family_ttl = state.auth_framework.config().refresh_token_lifetime
+                    + std::time::Duration::from_secs(60);
+                if let Err(e) = state
+                    .auth_framework
+                    .storage()
+                    .store_kv(
+                        &format!("revoked_family:{}", claims.refresh_family()),
+                        b"logout",
+                        Some(family_ttl),
+                    )
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to revoke refresh chain {}: {}",
+                        claims.refresh_family(),
+                        e
+                    );
+                }
                 let revocation_key = format!("revoked_token:{}", claims.jti);
                 // as long as the token could still be presented
                 let ttl = std::time::Duration::from_secs(

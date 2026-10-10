@@ -529,6 +529,56 @@ impl AuthStorage for UnifiedStorage {
         )
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        use dashmap::mapref::entry::Entry;
+        let now = SystemTime::now();
+        let expires_at = ttl.or(Some(self.default_ttl)).map(|t| now + t);
+        let fresh = StorageValue {
+            data: StorageData::KeyValue(value.to_vec()),
+            created_at: now,
+            expires_at,
+            access_count: 0,
+            last_accessed: now,
+        };
+        let memory_size = Self::estimate_value_size(&fresh);
+        if self.total_memory.load(Ordering::Relaxed) as usize + memory_size > self.max_memory {
+            return Err(AuthError::Storage(
+                crate::errors::StorageError::OperationFailed {
+                    message: "Memory limit exceeded".to_string(),
+                },
+            ));
+        }
+        // The entry guard holds the shard lock, so check-and-insert is atomic.
+        let stored = match self.storage.entry(StorageKey::KeyValue(key.to_string())) {
+            Entry::Occupied(mut occupied) => {
+                let expired = occupied
+                    .get()
+                    .expires_at
+                    .is_some_and(|expires_at| SystemTime::now() > expires_at);
+                if expired {
+                    occupied.insert(fresh);
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(fresh);
+                true
+            }
+        };
+        if stored {
+            self.total_memory
+                .fetch_add(memory_size as u64, Ordering::Relaxed);
+        }
+        Ok(stored)
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         if let Some(value) = self.get_internal(&StorageKey::KeyValue(key.to_string())) {
             match value.data {
