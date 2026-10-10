@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- `OidcProvider::get_userinfo` refuses a token whose account is deactivated,
+  deleted or unreadable (it used to answer for any validly signed subject).
 - 0.6.0-rcXX -- A TOTP time step is claimed with the atomic `store_kv_if_absent`, so of
   simultaneous submissions of the same code exactly one is accepted (before, two parallel
   requests could both pass the read-then-write check).

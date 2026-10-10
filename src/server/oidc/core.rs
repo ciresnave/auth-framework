@@ -733,6 +733,35 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
             }
         }
 
+        // The account must exist and be active (a signature proves who minted the token, not
+        // that its subject is still a live account).
+        match self
+            .storage
+            .get_kv(&format!("user:{}", token_claims.sub))
+            .await
+        {
+            Ok(Some(bytes)) => {
+                let record: serde_json::Value = serde_json::from_slice(&bytes)
+                    .map_err(|_| AuthError::auth_method("oidc", "Unable to verify the account"))?;
+                if record["active"].as_bool() == Some(false) {
+                    return Err(AuthError::auth_method(
+                        "oidc",
+                        "The account has been deactivated",
+                    ));
+                }
+            }
+            Ok(None) => {
+                return Err(AuthError::auth_method("oidc", "Unknown account"));
+            }
+            Err(e) => {
+                tracing::error!("Could not read the account record: {}", e);
+                return Err(AuthError::auth_method(
+                    "oidc",
+                    "Unable to verify the account",
+                ));
+            }
+        }
+
         // Extract subject from token
         let subject = &token_claims.sub;
 
@@ -1364,6 +1393,43 @@ fn algorithm_to_string(alg: &Algorithm) -> String {
 mod tests {
     use super::*;
     use crate::storage::MemoryStorage;
+
+    #[tokio::test]
+    async fn userinfo_refuses_a_deactivated_or_unknown_account() {
+        let provider = create_test_oidc_provider().await;
+        let tm = provider.token_manager.clone();
+        let token_for = |sub: &str| {
+            tm.create_jwt_token(
+                sub,
+                vec!["openid".into()],
+                Some(std::time::Duration::from_secs(600)),
+            )
+            .unwrap()
+        };
+        provider
+            .storage
+            .store_kv(
+                "user:gone",
+                serde_json::json!({"id": "gone", "active": false})
+                    .to_string()
+                    .as_bytes(),
+                None,
+            )
+            .await
+            .unwrap();
+        let err = provider
+            .get_userinfo(&token_for("gone"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.to_lowercase().contains("deactivated"), "{err}");
+        let err = provider
+            .get_userinfo(&token_for("never-registered"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.to_lowercase().contains("unknown account"), "{err}");
+    }
 
     #[tokio::test]
     async fn userinfo_refuses_revoked_and_refresh_tokens() {
