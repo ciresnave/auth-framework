@@ -247,6 +247,9 @@ pub struct RefreshRedemption {
 /// Shared implementation of [`AuthFramework::validate_access_jwt`] (also used by the
 /// modular framework): signature and claims, not a refresh token, not revoked.
 ///
+/// `allow_client_bound`: only the opt-in delegated-access paths pass `true`; everything that
+/// guards sessions refuses tokens issued to an OAuth client.
+///
 /// `require_account`: the bearer paths pass `true` (the subject must be a live local
 /// account); the credential-authentication paths pass `false` because federated identities
 /// (OIDC/OAuth2 subjects) legitimately have no local record, though a local record that
@@ -256,8 +259,15 @@ pub(crate) async fn validate_access_jwt_with(
     storage: &dyn AuthStorage,
     token: &str,
     require_account: bool,
+    allow_client_bound: bool,
 ) -> Result<crate::tokens::JwtClaims> {
     let claims = token_manager.validate_jwt_token(token)?;
+    // A token issued to an OAuth client on a user's behalf is delegated access, not a session.
+    if claims.is_client_bound() && !allow_client_bound {
+        return Err(rejected(
+            "A client-bound token cannot be used here (it was issued to an OAuth client)",
+        ));
+    }
     if claims.is_refresh_token() {
         return Err(rejected(
             "A refresh token cannot be used as an access token",
@@ -973,8 +983,14 @@ impl AuthFramework {
             return Ok(AuthResult::Failure("JWT token cannot be empty".to_string()));
         }
 
-        match validate_access_jwt_with(&self.token_manager, self.storage.as_ref(), token, false)
-            .await
+        match validate_access_jwt_with(
+            &self.token_manager,
+            self.storage.as_ref(),
+            token,
+            false,
+            false,
+        )
+        .await
         {
             Ok(claims) => {
                 let token =
@@ -1717,7 +1733,30 @@ impl AuthFramework {
     /// endpoint), and refuses tokens that were revoked (`revoked_token:{jti}`, written by
     /// logout and revocation). If the revocation list cannot be read the token is refused.
     pub async fn validate_access_jwt(&self, token: &str) -> Result<crate::tokens::JwtClaims> {
-        validate_access_jwt_with(&self.token_manager, self.storage.as_ref(), token, true).await
+        validate_access_jwt_with(
+            &self.token_manager,
+            self.storage.as_ref(),
+            token,
+            true,
+            false,
+        )
+        .await
+    }
+
+    /// Like [`validate_access_jwt`](Self::validate_access_jwt) but also accepts a token that was
+    /// issued to an OAuth client on a user's behalf (it carries a `client_id`). Use it ONLY on
+    /// resource routes that are meant for delegated access; scope is advisory unless the route
+    /// checks it. Everything that guards sessions (admin, account management) must keep using
+    /// `validate_access_jwt`, which refuses client-bound tokens.
+    pub async fn validate_delegated_jwt(&self, token: &str) -> Result<crate::tokens::JwtClaims> {
+        validate_access_jwt_with(
+            &self.token_manager,
+            self.storage.as_ref(),
+            token,
+            true,
+            true,
+        )
+        .await
     }
 
     /// Validates a username against the configured format rules.

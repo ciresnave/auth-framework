@@ -646,12 +646,11 @@ async fn handle_authorization_code_grant(
         }
     };
 
-    let token = match state.auth_framework.token_manager().create_auth_token(
-        &user_id,
-        scopes.clone(),
-        "oauth2",
-        None,
-    ) {
+    let token = match state
+        .auth_framework
+        .token_manager()
+        .create_client_auth_token(&user_id, scopes.clone(), "oauth2", &client_id, None)
+    {
         Ok(token) => token,
         Err(e) => {
             tracing::error!("Failed to create access token: {:?}", e);
@@ -1039,11 +1038,19 @@ async fn handle_refresh_token_grant(
     }
     let scope = scopes.join(" ");
 
-    let token = match state
-        .auth_framework
-        .token_manager()
-        .create_auth_token(&user_id, scopes, "oauth2", None)
-    {
+    let minted = match client_id.as_deref() {
+        Some(client) => state
+            .auth_framework
+            .token_manager()
+            .create_client_auth_token(&user_id, scopes, "oauth2", client, None),
+        // A stored refresh record without a client (written by an older version) still came
+        // from an OAuth grant: its access token is delegated, never a user session.
+        None => state
+            .auth_framework
+            .token_manager()
+            .create_client_auth_token(&user_id, scopes, "oauth2", "unknown-client", None),
+    };
+    let token = match minted {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to create access token on refresh: {:?}", e);
@@ -1242,7 +1249,7 @@ pub async fn userinfo(
     }
 
     // Validate the access token
-    let claims = match state.auth_framework.validate_access_jwt(&token).await {
+    let claims = match state.auth_framework.validate_delegated_jwt(&token).await {
         Ok(c) => c,
         Err(_) => {
             return ApiResponse::error_typed("invalid_token", "Access token is invalid");

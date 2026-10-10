@@ -542,6 +542,7 @@ impl AuthFramework {
             self.storage.as_ref(),
             token,
             false,
+            false,
         )
         .await
         {

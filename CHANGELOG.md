@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- **Breaking (behaviour):** a token issued to an OAuth client is no longer a user
+  session. The authorization-code and OAuth refresh grants now issue access tokens that carry
+  the `client_id` claim (`TokenManager::create_client_jwt_token` /
+  `create_client_auth_token`; `AuthToken::client_id` is set). `validate_api_token` (every
+  built-in session endpoint: `/users/*`, `/admin/*`, `/mfa/*`, `/auth/*`, `/webauthn/*`,
+  email verification, `/oauth/authorize`, dynamic client registration) and
+  `AuthFramework::validate_access_jwt` (so the axum `AuthenticatedUser` extractor and
+  `auth_middleware`, the actix, warp and unified paths, and `authenticate("jwt")`) refuse such
+  a token. Before, a client registered for a single scope held a token that the API treated as
+  the user's full session (roles come from the user record, not from the scope). `/oauth/userinfo`
+  and `/users/me` accept client-bound tokens. **Migration:** integrators who protect routes
+  meant for delegated (third-party) access should use the new opt-in: axum `DelegatedUser`
+  (instead of `AuthenticatedUser`; `user.0.token.client_id` tells the route which client) or
+  `AuthFramework::validate_delegated_jwt`; scope is advisory unless the route checks it.
+  Access tokens issued before the upgrade carry no `client_id` and keep working until they
+  expire (at most the token lifetime, 1 hour by default). Delegated routes must not
+  also sit behind `auth_middleware` (it refuses client-bound tokens). The standalone
+  `OAuth2Server` module now puts the client in the signed JWT of user-bound tokens, and
+  `TokenManager::refresh_token` keeps a client-bound token client-bound. SDK users: a token
+  from `/oauth/token` is a delegated token; it works at `/oauth/userinfo` and `/users/me`,
+  not at the session endpoints. Not done: mapping scopes to permissions (a future design
+  question).
 - 0.6.0-rcXX -- OAuth endpoints: the authorization-code and OAuth refresh-token grants claim
   their one-time marker with the atomic `store_kv_if_absent`, only for a code or token that
   exists (so simultaneous redemptions succeed once and made-up codes store nothing);

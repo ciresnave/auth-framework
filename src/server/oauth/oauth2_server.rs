@@ -808,17 +808,30 @@ impl OAuth2Server {
         scopes: &[String],
     ) -> Result<AuthToken> {
         let subject = user_id.unwrap_or(client_id);
-        let mut token = self.token_manager.create_auth_token(
-            subject,
-            crate::types::Scopes::from(
-                scopes
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>(),
-            ),
-            "oauth2",
-            Some(self.config.access_token_lifetime),
-        )?;
+        let scope_list = crate::types::Scopes::from(
+            scopes
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<String>>(),
+        );
+        // A token issued on a user's behalf carries the client in the signed JWT, so it is a
+        // delegated-access token; a client-credentials token (subject = the client) is not.
+        let mut token = if user_id.is_some() {
+            self.token_manager.create_client_auth_token(
+                subject,
+                scope_list,
+                "oauth2",
+                client_id,
+                Some(self.config.access_token_lifetime),
+            )?
+        } else {
+            self.token_manager.create_auth_token(
+                subject,
+                scope_list,
+                "oauth2",
+                Some(self.config.access_token_lifetime),
+            )?
+        };
 
         // Add client_id claim
         token.add_custom_claim(
