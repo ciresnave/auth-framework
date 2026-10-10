@@ -964,6 +964,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `validate_client_certificate_with_chain` accept the client's intermediate certificates. FAPI: certificates
   passed as text are decoded as PEM or base64 DER, the `x5t#S256` thumbprint is computed over the DER, and the
   client id is read from the parsed subject CN or SAN.
+- **Dependencies:** six unused dependencies removed (found by `cargo-machete --with-metadata` and by a per-crate
+  search of the sources, which agreed): `nonzero_ext`, `secrecy`, `log` and `email_address` (required, never used
+  by any code), the dev-dependencies `test-log` and `tokio-test`, and `serde` in `auth-storage-sqlite`. No feature
+  referenced them and no public API changes. `secrecy` was declared since the first release but never wired; this
+  crate holds secrets with `zeroize` (and plain `String` in several request types), which is unchanged.
 - **Deprecated / Breaking:** the five optional OpenTelemetry dependencies (`opentelemetry`,
   `opentelemetry-otlp`, `opentelemetry-prometheus`, `opentelemetry_sdk`, `tracing-opentelemetry`) are
   removed. No code in this crate ever called them: there is no OpenTelemetry or OTLP exporter, and
