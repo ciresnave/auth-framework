@@ -181,6 +181,30 @@ impl AuthStorage for RedisStorage {
         Ok(user_sessions)
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        let mut conn = self.get_connection().await?;
+        let kv_key = self.kv_key(key);
+        // SET ... NX [PX ms]: atomic; the reply is OK when set and nil when the key exists.
+        let mut cmd = redis::cmd("SET");
+        cmd.arg(&kv_key).arg(value).arg("NX");
+        if let Some(duration) = ttl {
+            let millis = u64::try_from(duration.as_millis())
+                .unwrap_or(u64::MAX)
+                .max(1);
+            cmd.arg("PX").arg(millis);
+        }
+        let reply: Option<String> = cmd
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        Ok(reply.is_some())
+    }
+
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
         let mut conn = self.get_connection().await?;
         let kv_key = self.kv_key(key);

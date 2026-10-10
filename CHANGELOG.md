@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- `AuthStorage::store_kv_if_absent` (new, with a non-atomic default) is an atomic
+  compare-and-set in the memory, SQLite, PostgreSQL, Redis and encrypted-wrapper backends
+  (`UnifiedStorage` keeps the default). Refresh-token redemption uses it, so of any number of
+  simultaneous redemptions of one refresh token exactly one succeeds; custom `AuthStorage`
+  implementations should override it.
 - 0.6.0-rcXX -- The axum integration's login route (`AuthRouter`, `POST /auth/login`) now
   authenticates the posted username and password against the user store (the `password`
   method, as the API server's login does) and answers 401 for unknown users, wrong passwords
@@ -53,9 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `validate_api_token` already did; JWT credentials passed to `authenticate` (federated
   OIDC/OAuth2 subjects) may still have no local record, but a deactivated local record is
   refused there too. `POST /auth/refresh` answers `INVALID_TOKEN` for a
-  deactivated account (it used to answer `ACCOUNT_DEACTIVATED`). Known limits: two
-  simultaneous redemptions of one refresh token can both succeed (the storage trait has no
-  set-if-absent); access tokens already issued stay valid until they expire even after their
+  deactivated account (it used to answer `ACCOUNT_DEACTIVATED`). Known limits: access tokens already issued stay valid until they expire even after their
   chain is revoked. Logout keeps a refresh token's revocation for the token's remaining life
   (it was 7 days).
 - 0.6.0-rcXX -- Bearer JWT validation: `AuthFramework::validate_access_jwt` is now the one

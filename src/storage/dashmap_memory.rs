@@ -702,6 +702,31 @@ impl AuthStorage for DashMapMemoryStorage {
         Ok(())
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        use dashmap::mapref::entry::Entry;
+        let fresh = TimestampedValue::new(value.to_vec(), ttl.or(self.default_ttl));
+        // The entry guard holds the shard lock, so check-and-insert is atomic.
+        Ok(match self.kv_store.entry(key.to_string()) {
+            Entry::Occupied(mut occupied) => {
+                if occupied.get().is_expired() {
+                    occupied.insert(fresh);
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(fresh);
+                true
+            }
+        })
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         // SAFE: Immediate value extraction
         if let Some(timestamped) = self.kv_store.get(key) {

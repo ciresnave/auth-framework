@@ -1666,7 +1666,20 @@ impl AuthFramework {
         // A revoked chain stays revoked for as long as its NEWEST token could live.
         let family_ttl = self.config.refresh_token_lifetime + Duration::from_secs(60);
         let consumed_key = format!("refresh_consumed:{}", claims.jti);
-        if read(consumed_key.clone()).await?.is_some() {
+        // Spend it BEFORE issuing the next one, with an atomic set-if-absent: of any number
+        // of simultaneous redemptions of the same token exactly one proceeds. Presenting it
+        // again afterwards is treated as theft and revokes its chain. (A storage backend that
+        // keeps the trait's default `store_kv_if_absent` is not atomic here.) If minting fails
+        // after this point the client has lost the token and must sign in again.
+        let first_use = self
+            .storage
+            .store_kv_if_absent(&consumed_key, b"used", Some(remaining))
+            .await
+            .map_err(|e| {
+                tracing::error!("Could not record refresh token use: {}", e);
+                rejected("Unable to record refresh token use")
+            })?;
+        if !first_use {
             warn!(
                 "Refresh token reuse detected for user '{}'; revoking its chain",
                 claims.sub
@@ -1681,15 +1694,6 @@ impl AuthFramework {
                 .await;
             return Err(rejected("Refresh token has already been used"));
         }
-        // Spend it BEFORE issuing the next one. The read above and this write are separate
-        // storage calls (`AuthStorage` has no set-if-absent), so two simultaneous redemptions
-        // of the same token can both succeed and fork the chain; the fork is closed as soon as
-        // an ancestor is presented again. If minting fails after this point the client has
-        // lost the token and must sign in again.
-        self.storage
-            .store_kv(&consumed_key, b"used", Some(remaining))
-            .await
-            .map_err(|_| rejected("Unable to record refresh token use"))?;
 
         let lifetime = self.config.refresh_token_lifetime;
         let new_refresh_token = self.token_manager.create_refresh_jwt_token_in_family(

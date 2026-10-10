@@ -254,6 +254,35 @@ impl AuthStorage for SqliteStorage {
         Ok(())
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        let now = Utc::now().timestamp();
+        let expires_at = ttl.map(|duration| now + duration.as_secs() as i64);
+
+        // One statement: insert, or take over an EXPIRED row; a live row is left alone.
+        let result = sqlx::query(
+            "INSERT INTO kv_store (key, value, expires_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET
+             value=excluded.value,
+             expires_at=excluded.expires_at
+             WHERE kv_store.expires_at IS NOT NULL AND kv_store.expires_at < ?",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(expires_at)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(storage_err)?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let now = Utc::now().timestamp();
         let row = sqlx::query("SELECT value, expires_at FROM kv_store WHERE key = ?")

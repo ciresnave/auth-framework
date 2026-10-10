@@ -141,6 +141,25 @@ pub trait AuthStorage: Send + Sync {
     /// Store arbitrary key-value data with expiration.
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()>;
 
+    /// Store `value` under `key` only if no live entry exists. Returns whether it was stored.
+    ///
+    /// This is a compare-and-set: of several simultaneous callers exactly one gets `true`.
+    /// The default implementation is a `get_kv` followed by `store_kv` and is **not**
+    /// atomic; every backend this crate ships overrides it with an atomic operation (a
+    /// custom backend that does not override it gives single-use markers no atomicity).
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        if self.get_kv(key).await?.is_some() {
+            return Ok(false);
+        }
+        self.store_kv(key, value, ttl).await?;
+        Ok(true)
+    }
+
     /// Retrieve arbitrary key-value data.
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>>;
 
@@ -276,6 +295,15 @@ impl AuthStorage for Arc<dyn AuthStorage> {
 
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
         (**self).store_kv(key, value, ttl).await
+    }
+
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        (**self).store_kv_if_absent(key, value, ttl).await
     }
 
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
@@ -581,6 +609,15 @@ impl AuthStorage for MemoryStorage {
         self.inner.store_kv(key, value, ttl).await
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        self.inner.store_kv_if_absent(key, value, ttl).await
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         // Delegate to DashMap implementation for deadlock-free operations
         self.inner.get_kv(key).await
@@ -884,6 +921,27 @@ impl AuthStorage for RedisStorage {
         }
 
         Ok(user_sessions)
+    }
+
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        let mut conn = self.get_connection().await?;
+        let storage_key = self.key(&format!("kv:{key}"));
+        // SET ... NX [PX ms]: atomic; the reply is OK when set and nil when the key exists.
+        let mut cmd = redis::cmd("SET");
+        cmd.arg(&storage_key).arg(value).arg("NX");
+        if let Some(ttl) = ttl {
+            let millis = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX).max(1);
+            cmd.arg("PX").arg(millis);
+        }
+        let reply: Option<String> = cmd.query_async(&mut conn).await.map_err(|e| {
+            StorageError::operation_failed(format!("Failed to store KV if absent: {e}"))
+        })?;
+        Ok(reply.is_some())
     }
 
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
