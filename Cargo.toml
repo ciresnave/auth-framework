@@ -125,9 +125,6 @@ urlencoding = "2.1"
 # X.509 certificate parsing for OAuth 2.0 Mutual TLS (RFC 8705)
 x509-parser = "0.17"
 
-# X.509 certificate chain validation (production-grade)
-rustls-webpki = "0.103"
-
 # Fast CRC32 calculation
 crc32fast = "1.3"
 
@@ -142,6 +139,11 @@ dashmap = "6.1"
 
 # Secret management
 secrecy = { version = "0.10", features = ["serde"] }
+
+# X.509 certificate chain validation (production-grade)
+# `ring` backend (already a dependency of this crate), not aws-lc-rs: no new C code.
+rustls-webpki = { version = "0.103.11", default-features = false, features = ["std", "ring"] }
+rustls-pki-types = "1.12"
 
 # Performance and Observability enhancements
 prometheus = { version = "0.14", optional = true }
@@ -249,6 +251,8 @@ criterion = { version = "0.7", features = ["html_reports", "async_tokio"] }
 fastrand = "2.0"
 axum-test = "18.0"
 tempfile = "3.21"
+# Real certificate chains for the mTLS validation tests (ring backend: ECDSA/Ed25519 keys)
+rcgen = "0.14"
 
 [features]
 default = [
