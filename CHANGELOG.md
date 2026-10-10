@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- Sessions: `rotate_on_privilege_escalation` (the `SessionConfig` field and
+  the builder method) is deprecated and documented as having no effect. It was `true` in every
+  preset but nothing ever read it, so sessions were never rotated on privilege escalation; the
+  crate has no escalation event to hook. Use `rotate_periodically` for rotation.
+- 0.6.0-rcXX -- Sessions: `SessionManager::revoke_all_user_sessions` now revokes every session
+  that is not already expired or revoked (it used to revoke only `Active` ones, leaving
+  sessions awaiting MFA, re-authentication or rotation, suspended and high-risk sessions
+  usable after a "log out everywhere").
 - 0.6.0-rcXX -- Authorization context connection type: the assessed connection type no
   longer depends on whether the client sent a `Via` header. Network membership
   (`corporate_networks`) and "direct" are decided from the peer address, the Tor user-agent

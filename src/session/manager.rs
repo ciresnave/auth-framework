@@ -202,7 +202,9 @@ pub struct SessionConfig {
     pub max_duration: Duration,
     /// Session idle timeout
     pub idle_timeout: Duration,
-    /// Whether to rotate session IDs on privilege escalation
+    /// **Deprecated: has no effect.** Nothing in the session manager rotates a session on
+    /// privilege escalation (there is no escalation event to hook), so setting this does not
+    /// do what its name says. Use [`Self::rotate_periodically`] for rotation.
     pub rotate_on_privilege_escalation: bool,
     /// Whether to rotate session IDs periodically
     pub rotate_periodically: bool,
@@ -275,14 +277,12 @@ impl SessionConfigBuilder {
         self
     }
 
-    /// Set whether to rotate session IDs on privilege escalation.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// let config = SessionConfigBuilder::default()
-    ///     .rotate_on_privilege_escalation(true)
-    ///     .build();
-    /// ```
+    /// **Deprecated: has no effect.** Sessions are not rotated on privilege escalation;
+    /// use [`Self::rotate_periodically`] instead.
+    #[deprecated(
+        since = "0.6.0",
+        note = "has no effect: sessions are not rotated on privilege escalation; use rotate_periodically"
+    )]
     pub fn rotate_on_privilege_escalation(mut self, rotate: bool) -> Self {
         self.config.rotate_on_privilege_escalation = rotate;
         self
@@ -821,13 +821,15 @@ impl<S: SessionStorage, A: AuditStorage> SessionManager<S, A> {
         Ok(())
     }
 
-    /// Revoke all sessions for a user
+    /// Revoke all of a user's sessions that are still usable, whatever their state
+    /// (active, suspended, awaiting MFA / re-authentication / rotation, high-risk). Sessions
+    /// that are already `Expired` or `Revoked` are left as they are and not counted.
     pub async fn revoke_all_user_sessions(&self, user_id: &str) -> Result<u32> {
         let sessions = self.storage.get_user_sessions(user_id).await?;
         let mut revoked_count = 0;
 
         for mut session in sessions {
-            if session.state == SessionState::Active {
+            if !matches!(session.state, SessionState::Expired | SessionState::Revoked) {
                 session.state = SessionState::Revoked;
                 self.storage.update_session(&session).await?;
                 revoked_count += 1;
@@ -1732,6 +1734,107 @@ mod tests {
 
         let risk = calculator.calculate_risk(&device_info, &metadata, &history, None);
         assert!(risk >= 20); // Should have at least 20 for untrusted device
+    }
+
+    /// Minimal in-memory session storage for tests.
+    #[derive(Default)]
+    struct TestSessionStorage {
+        sessions: std::sync::Mutex<std::collections::HashMap<String, Session>>,
+    }
+
+    #[async_trait::async_trait]
+    impl SessionStorage for TestSessionStorage {
+        async fn create_session(&self, session: &Session) -> Result<()> {
+            self.sessions
+                .lock()
+                .unwrap()
+                .insert(session.id.clone(), session.clone());
+            Ok(())
+        }
+        async fn get_session(&self, id: &str) -> Result<Option<Session>> {
+            Ok(self.sessions.lock().unwrap().get(id).cloned())
+        }
+        async fn update_session(&self, session: &Session) -> Result<()> {
+            self.create_session(session).await
+        }
+        async fn delete_session(&self, id: &str) -> Result<()> {
+            self.sessions.lock().unwrap().remove(id);
+            Ok(())
+        }
+        async fn get_user_sessions(&self, user_id: &str) -> Result<Vec<Session>> {
+            Ok(self
+                .sessions
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|s| s.user_id == user_id)
+                .cloned()
+                .collect())
+        }
+        async fn count_active_sessions(&self, _user_id: &str) -> Result<u32> {
+            Ok(0)
+        }
+        async fn cleanup_expired_sessions(&self) -> Result<u32> {
+            Ok(0)
+        }
+        async fn find_sessions_by_device(&self, _fp: &str) -> Result<Vec<Session>> {
+            Ok(vec![])
+        }
+        async fn find_sessions_by_ip(&self, _ip: &str) -> Result<Vec<Session>> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_all_user_sessions_ends_every_live_session_whatever_its_state() {
+        use crate::audit::{AuditLogger, TracingAuditStorage};
+        let manager = SessionManager::new(
+            TestSessionStorage::default(),
+            SessionConfigBuilder::for_web_app().build(),
+            AuditLogger::new(TracingAuditStorage),
+        );
+        let live_states = [
+            SessionState::Active,
+            SessionState::Suspended,
+            SessionState::RequiresMfa,
+            SessionState::RequiresReauth,
+            SessionState::RequiresRotation,
+            SessionState::HighRisk,
+        ];
+        let mut ids = Vec::new();
+        for state in live_states.iter().cloned() {
+            let mut s = Session::new("victim", Duration::from_secs(3600));
+            s.state = state;
+            manager.storage.create_session(&s).await.unwrap();
+            ids.push(s.id);
+        }
+        // a terminal session is left as it is and not counted; another user's session is untouched
+        let mut expired = Session::new("victim", Duration::from_secs(3600));
+        expired.state = SessionState::Expired;
+        manager.storage.create_session(&expired).await.unwrap();
+        let other = Session::new("someone-else", Duration::from_secs(3600));
+        manager.storage.create_session(&other).await.unwrap();
+
+        let revoked = manager.revoke_all_user_sessions("victim").await.unwrap();
+        assert_eq!(revoked as usize, live_states.len());
+        for (id, state) in ids.iter().zip(live_states.iter()) {
+            let after = manager.storage.get_session(id).await.unwrap().unwrap();
+            assert_eq!(after.state, SessionState::Revoked, "was {state:?}");
+        }
+        let expired_after = manager
+            .storage
+            .get_session(&expired.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expired_after.state, SessionState::Expired);
+        let other_after = manager
+            .storage
+            .get_session(&other.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(other_after.state, SessionState::Active);
     }
 
     #[test]
