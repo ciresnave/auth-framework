@@ -466,10 +466,21 @@ async fn test_introspect_reports_revoked_token_as_inactive() {
     let (auth, server) = create_test_server().await;
     register_oauth_client(&auth, "client", "secret").await;
 
-    // Create a valid JWT.
+    // Create a valid JWT for a real (active) account.
+    let uid = "test_user_revoke".to_string();
+    auth.storage()
+        .store_kv(
+            &format!("user:{uid}"),
+            serde_json::json!({"id": uid, "active": true, "roles": ["user"]})
+                .to_string()
+                .as_bytes(),
+            None,
+        )
+        .await
+        .unwrap();
     let token = auth
         .token_manager()
-        .create_jwt_token("test_user_revoke", vec!["read".to_string()], None)
+        .create_jwt_token(&uid, vec!["read".to_string()], None)
         .unwrap();
     let claims = auth.token_manager().validate_jwt_token(&token).unwrap();
 

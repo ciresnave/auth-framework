@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- `/oauth/introspect` reports a token as active only if it could be used: the
+  account must be live (deactivated or deleted accounts answer `active: false`), and a refresh
+  JWT must be unspent and in an intact chain (it is reported with `token_type: "refresh_token"`
+  instead of `"Bearer"`).
 - 0.6.0-rcXX -- **Breaking (behaviour):** a token issued to an OAuth client is no longer a user
   session. The authorization-code and OAuth refresh grants now issue access tokens that carry
   the `client_id` claim (`TokenManager::create_client_jwt_token` /

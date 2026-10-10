@@ -300,10 +300,30 @@ pub async fn introspect_token(
             // under revoked_token:{jti}; return active=false without revealing why.
             let revocation_key = format!("revoked_token:{}", claims.jti);
             // A revocation list that cannot be read is treated as "revoked" (fail closed).
-            let revoked = !matches!(
-                state.auth_framework.storage().get_kv(&revocation_key).await,
-                Ok(None)
-            );
+            let storage = state.auth_framework.storage();
+            let mut revoked = !matches!(storage.get_kv(&revocation_key).await, Ok(None));
+            // A token whose account is deactivated or gone cannot be used: not active.
+            if !revoked
+                && crate::auth::ensure_account_active(storage.as_ref(), &claims.sub, true)
+                    .await
+                    .is_err()
+            {
+                revoked = true;
+            }
+            // A refresh token is active only while it is unspent and its chain is intact.
+            if !revoked && claims.is_refresh_token() {
+                revoked = !matches!(
+                    storage
+                        .get_kv(&format!("refresh_consumed:{}", claims.jti))
+                        .await,
+                    Ok(None)
+                ) || !matches!(
+                    storage
+                        .get_kv(&format!("revoked_family:{}", claims.refresh_family()))
+                        .await,
+                    Ok(None)
+                );
+            }
             if revoked {
                 debug!(
                     "Token introspection: token has been revoked (jti: {})",
@@ -337,7 +357,11 @@ pub async fn introspect_token(
                 iss: Some(claims.iss.clone()),
                 aud: Some(JsonValue::String(claims.aud.clone())),
                 jti: Some(claims.jti.clone()),
-                token_type: Some("Bearer".to_string()),
+                token_type: Some(if claims.is_refresh_token() {
+                    "refresh_token".to_string()
+                } else {
+                    "Bearer".to_string()
+                }),
                 username: Some(claims.sub),
             }))
         }
