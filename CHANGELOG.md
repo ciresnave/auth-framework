@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- 0.6.0-rcXX -- **Breaking (behaviour) summary of the token-hardening entries in this release**:
+- 0.6.0-rc46 -- **Breaking (behaviour) summary of the token-hardening entries in this release**:
   an OpenID Connect ID token is no longer accepted as an access token; `OidcProvider::get_userinfo`
   requires a live local account (federated subjects without a local record are refused there);
   a JWT client assertion must declare `token_use: "client_assertion"`;
@@ -22,32 +22,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are ignored after the upgrade (the new `mfa_attempt:{user}:{slot}` budget starts empty);
   WebAuthn completions claim their session atomically (its own change, listed here for
   visibility); deleting a user aborts if the deletion tombstone cannot be written.
-- 0.6.0-rcXX -- The JWT client assertion accepted by the token-introspection service
+- 0.6.0-rc46 -- The JWT client assertion accepted by the token-introspection service
   (`client_secret_jwt` / `private_key_jwt`) must declare `token_use: "client_assertion"`
   (`TokenManager::create_typed_jwt_token`); before, any token signed by this server whose subject
   equalled the client id (an access, session or refresh token) authenticated the client. No
   in-repo code produced assertions, so this only affects integrators that built their own.
   WebAuthn registration and authentication completions claim their session with an atomic
   set-if-absent, so the same ceremony cannot complete twice concurrently.
-- 0.6.0-rcXX -- Deleting a user records `deleted_user:{id}`; JWT credentials passed to
+- 0.6.0-rc46 -- Deleting a user records `deleted_user:{id}`; JWT credentials passed to
   `authenticate("jwt")` (which allow federated subjects without a local record) are refused for
   an account that was deleted. Accounts deleted before the upgrade have no such record: their
   tokens expire normally.
-- 0.6.0-rcXX -- `AuthFramework::validate_token` (and the modular type's) requires the
+- 0.6.0-rc46 -- `AuthFramework::validate_token` (and the modular type's) requires the
   caller-supplied `AuthToken` value to agree with the signed JWT it carries (`user_id` must be
   the JWT subject), and `AuthFramework::refresh_token(&AuthToken)` renews only a token that
   `validate_token` accepts (live, stored, not revoked). Before, a forged value pairing a valid
   JWT with another user's id was accepted and could be refreshed into a token for that user.
-- 0.6.0-rcXX -- MFA attempt budget: an account gets 5 MFA code attempts per 15 minutes in total
+- 0.6.0-rc46 -- MFA attempt budget: an account gets 5 MFA code attempts per 15 minutes in total
   (across all its challenges), reserved BEFORE a code is checked with an atomic set-if-absent
   (`mfa_attempt:{user}:{slot}`), so a burst of parallel guesses can no longer exceed it. The
   counter `mfa_failures:{user}` is gone (a successful MFA login still clears the budget).
-- 0.6.0-rcXX -- `OidcProvider::get_userinfo` refuses a token whose account is deactivated,
+- 0.6.0-rc46 -- `OidcProvider::get_userinfo` refuses a token whose account is deactivated,
   deleted or unreadable (it used to answer for any validly signed subject).
-- 0.6.0-rcXX -- A TOTP time step is claimed with the atomic `store_kv_if_absent`, so of
+- 0.6.0-rc46 -- A TOTP time step is claimed with the atomic `store_kv_if_absent`, so of
   simultaneous submissions of the same code exactly one is accepted (before, two parallel
   requests could both pass the read-then-write check).
-- 0.6.0-rcXX -- An OpenID Connect ID token (`OidcProvider::create_id_token`) now carries
+- 0.6.0-rc46 -- An OpenID Connect ID token (`OidcProvider::create_id_token`) now carries
   `token_use: "id_token"` and is no longer accepted as an access token: every access-token check
   (`validate_access_jwt`, `validate_delegated_jwt`, `validate_api_token`, `get_userinfo`, ...)
   refuses any JWT that declares a `token_use` other than being an access token. Before, an ID
@@ -56,11 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still declare nothing (including those issued before the upgrade). Not changed: the
   SAML and passkey flows issue session tokens (not another token kind), so they are accepted as
   before.
-- 0.6.0-rcXX -- `/oauth/introspect` reports a token as active only if it could be used: the
+- 0.6.0-rc46 -- `/oauth/introspect` reports a token as active only if it could be used: the
   account must be live (deactivated or deleted accounts answer `active: false`), and a refresh
   JWT must be unspent and in an intact chain (it is reported with `token_type: "refresh_token"`
   instead of `"Bearer"`).
-- 0.6.0-rcXX -- **Breaking (behaviour):** a token issued to an OAuth client is no longer a user
+- 0.6.0-rc46 -- **Breaking (behaviour):** a token issued to an OAuth client is no longer a user
   session. The authorization-code and OAuth refresh grants now issue access tokens that carry
   the `client_id` claim (`TokenManager::create_client_jwt_token` /
   `create_client_auth_token`; `AuthToken::client_id` is set). `validate_api_token` (every
@@ -82,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from `/oauth/token` is a delegated token; it works at `/oauth/userinfo` and `/users/me`,
   not at the session endpoints. Not done: mapping scopes to permissions (a future design
   question).
-- 0.6.0-rcXX -- OAuth endpoints: the authorization-code and OAuth refresh-token grants claim
+- 0.6.0-rc46 -- OAuth endpoints: the authorization-code and OAuth refresh-token grants claim
   their one-time marker with the atomic `store_kv_if_absent`, only for a code or token that
   exists (so simultaneous redemptions succeed once and made-up codes store nothing);
   `/oauth/revoke` rejects tokens over 8 KiB; `end_session` also records the `revoked_token:{jti}`
@@ -95,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-modify-write, so a burst of parallel guesses can exceed the 5-failure lockout (each
   challenge is still capped at 5 and a user keeps at most 3). The JavaScript SDK's
   `TokenResponse` gains `refresh_token` (refresh tokens are single-use: store the new one).
-- 0.6.0-rcXX -- Review follow-ups: rate-limit buckets for IPv6 clients are per /64; a WebAuthn
+- 0.6.0-rc46 -- Review follow-ups: rate-limit buckets for IPv6 clients are per /64; a WebAuthn
   origin must be exactly scheme://host[:port] (no credentials, path, query or fragment);
   `WEBAUTHN_USER_VERIFICATION` accepts the three values in any case and an unrecognised value
   now means `required` (with an error log) instead of silently `preferred`; the WebAuthn
@@ -109,15 +109,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TokenExchangeManagerFactory::create_basic_manager_with_revocation` installs the revocation
   list (the plain factory does not, and `AdvancedTokenExchangeManager` has no built-in
   revocation or token-type check).
-- 0.6.0-rcXX -- Sessions: `rotate_on_privilege_escalation` (the `SessionConfig` field and
+- 0.6.0-rc46 -- Sessions: `rotate_on_privilege_escalation` (the `SessionConfig` field and
   the builder method) is deprecated and documented as having no effect. It was `true` in every
   preset but nothing ever read it, so sessions were never rotated on privilege escalation; the
   crate has no escalation event to hook. Use `rotate_periodically` for rotation.
-- 0.6.0-rcXX -- Sessions: `SessionManager::revoke_all_user_sessions` now revokes every session
+- 0.6.0-rc46 -- Sessions: `SessionManager::revoke_all_user_sessions` now revokes every session
   that is not already expired or revoked (it used to revoke only `Active` ones, leaving
   sessions awaiting MFA, re-authentication or rotation, suspended and high-risk sessions
   usable after a "log out everywhere").
-- 0.6.0-rcXX -- Authorization context connection type: the assessed connection type no
+- 0.6.0-rc46 -- Authorization context connection type: the assessed connection type no
   longer depends on whether the client sent a `Via` header. Network membership
   (`corporate_networks`) and "direct" are decided from the peer address, the Tor user-agent
   check always runs, and a `Via` header can only raise the assessed risk (VPN/proxy). Before,
@@ -126,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server's trusted-proxy list. Known, unchanged: `login_risk_level` in the API login response
   counts raw `X-Forwarded-For` hops (advisory output only; a client can only raise its own
   score).
-- 0.6.0-rcXX -- WebAuthn: the ceremony origin must now equal a configured origin in scheme,
+- 0.6.0-rc46 -- WebAuthn: the ceremony origin must now equal a configured origin in scheme,
   host AND port (it used to compare only the host). Configure origins with
   `WebAuthnConfig::origins` / `WEBAUTHN_ORIGINS` (comma separated); the default is
   `https://{rp_id}` (plus `http://localhost` for the `localhost` rp id), so a deployment served
@@ -136,24 +136,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The user-verification requirement now comes from server configuration (default `preferred`),
   not from the request body. Registration does not parse the attestation object, so its
   authenticator data flags are not checked (only attestation `none` is accepted).
-- 0.6.0-rcXX -- `AuthStorage::store_kv_if_absent` (new, with a non-atomic default) is an atomic
+- 0.6.0-rc46 -- `AuthStorage::store_kv_if_absent` (new, with a non-atomic default) is an atomic
   compare-and-set in the memory, SQLite, PostgreSQL, Redis and encrypted-wrapper backends
   (`UnifiedStorage` and `auth-storage-sqlite` too; the test-only `MockStorage` keeps the default). Refresh-token redemption uses it, so of any number of
   simultaneous redemptions of one refresh token exactly one succeeds; custom `AuthStorage`
   implementations should override it.
-- 0.6.0-rcXX -- The axum integration's login route (`AuthRouter`, `POST /auth/login`) now
+- 0.6.0-rc46 -- The axum integration's login route (`AuthRouter`, `POST /auth/login`) now
   authenticates the posted username and password against the user store (the `password`
   method, as the API server's login does) and answers 401 for unknown users, wrong passwords
   and accounts that require a second factor (this route cannot complete one). It used to issue
   a token for whatever username was posted when an authentication method named `jwt` was
   registered, and failed with a 400 otherwise. It does not apply the API server's per-account
   lockout.
-- 0.6.0-rcXX -- Token exchange refuses refresh tokens presented as subject/actor tokens under
+- 0.6.0-rc46 -- Token exchange refuses refresh tokens presented as subject/actor tokens under
   either `typ` spelling the crate mints (`refresh` and `refresh_token`; one shared helper,
   `security::secure_jwt::is_refresh_typ`, and constants used by the FAPI and CIBA minters).
   Access tokens issued from a refresh chain stay valid until they expire even after the
   chain is revoked (reuse detection ends the chain, not access tokens already issued).
-- 0.6.0-rcXX -- Authorization context client address: the address that `authorization_enhanced`
+- 0.6.0-rc46 -- Authorization context client address: the address that `authorization_enhanced`
   policies see (`AuthorizationContext::ip_address` and the `ip_address` entry of the request
   context) is now the connection's peer address, or, when the peer is listed in
   `ContextBuilder::with_trusted_proxies` / `ApiState::trusted_proxies`, the client that proxy
@@ -167,7 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unlisted proxy makes every client look like the proxy. `ip_address` is now always a single
   canonical IP (it used to be the raw header, e.g. `a, b, c`) and is absent without a peer
   address; a `ConnectInfo<IpAddr>` inserted by the integrator is no longer read.
-- 0.6.0-rcXX -- Refresh tokens are single-use and tokens of deactivated accounts stop
+- 0.6.0-rc46 -- Refresh tokens are single-use and tokens of deactivated accounts stop
   working. `POST /auth/refresh` (and the axum integration's refresh route) returns the next
   refresh token with the new access token; the redeemed token is spent, and presenting an
   already-redeemed token is refused and revokes the rest of its chain (`refresh_token` is a
@@ -189,7 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deactivated account (it used to answer `ACCOUNT_DEACTIVATED`). Known limits: access tokens already issued stay valid until they expire even after their
   chain is revoked. Logout keeps a refresh token's revocation for the token's remaining life
   (it was 7 days).
-- 0.6.0-rcXX -- Bearer JWT validation: `AuthFramework::validate_access_jwt` is now the one
+- 0.6.0-rc46 -- Bearer JWT validation: `AuthFramework::validate_access_jwt` is now the one
   check for a JWT presented as an access token (signature and claims, not a refresh token,
   not revoked; a revocation list that cannot be read rejects the token). It backs
   `validate_api_token`, the axum `auth_middleware` / `AuthenticatedUser` / refresh handler,
@@ -206,7 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (see the later entries); they still validate the caller's `AuthToken` value rather than the
   JWT's own claims, and `AuthFramework::refresh_token(&AuthToken)` still builds its result
   from the caller's value.
-- 0.6.0-rcXX -- MFA: an MFA challenge now allows a limited number of attempts
+- 0.6.0-rc46 -- MFA: an MFA challenge now allows a limited number of attempts
   (`max_attempts`, 5 for login challenges); each attempt is counted before the code is
   checked and an exhausted challenge is removed. Wrong codes submitted at `/auth/login` are
   counted against the account the challenge belongs to (whatever username is sent) and, after
@@ -222,7 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry points that verify a single factor outside a challenge (`verify_sms_code`,
   `verify_totp_code`, the step-up helpers) keep their own, uncapped, behaviour: apply your
   own limits if you expose them.
-- 0.6.0-rcXX -- Rate limiting: the request rate limiter now identifies a client by the
+- 0.6.0-rc46 -- Rate limiting: the request rate limiter now identifies a client by the
   connection's peer address; `X-Forwarded-For` / `X-Real-IP` are believed only when the
   peer is listed in the new `ApiServer::with_trusted_proxies` (default: none), using the
   rightmost entry that is not itself a trusted proxy. `ApiServer::start` serves with
@@ -233,7 +233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ApiState` gains a `trusted_proxies` field. Every trusted proxy must APPEND to
   `X-Forwarded-For` (not pass the client's value through); `X-Real-IP` is not consulted;
   proxies are listed by exact address (no CIDR).
-- 0.6.0-rcXX -- OAuth2 scopes and refresh tokens: a client can be granted only the scopes
+- 0.6.0-rc46 -- OAuth2 scopes and refresh tokens: a client can be granted only the scopes
   it is registered for. `/oauth/authorize` refuses a request for any other scope with
   `invalid_scope`; with no scope requested the client receives its registered scopes (a
   client registered without scope information keeps the previous defaults: `openid profile
@@ -246,7 +246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registration must have those scopes registered; a registration that names an empty scope
   grants nothing. The refresh grant enforces the current registration too. The axum, actix
   and warp integration extractors are covered separately.
-- 0.6.0-rcXX -- Email verification: the verification token is delivered only through the
+- 0.6.0-rc46 -- Email verification: the verification token is delivered only through the
   new `EmailVerificationSender` trait (install one with
   `ApiState::with_email_verification_sender`) and is no longer part of any HTTP response.
   `POST /auth/resend-verification` now returns one identical response for every address
@@ -287,7 +287,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - tokens whose `sub` has no user record are rejected by every bearer-protected
     endpoint.
 
-- 0.6.0-rcXX -- OAuth2 authorization_code grant (#140): the token endpoint never verified
+- 0.6.0-rc46 -- OAuth2 authorization_code grant (#140): the token endpoint never verified
   the client secret. A confidential client (its registered record holds a non-empty
   `client_secret`) can now redeem a code only by presenting that secret; missing, empty
   or wrong is `invalid_client`. The client must be registered (an unregistered
