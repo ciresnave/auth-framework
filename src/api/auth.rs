@@ -211,27 +211,63 @@ pub(crate) fn login_risk_level(headers: &HeaderMap) -> (&'static str, Vec<String
     (level, warnings)
 }
 
-/// Increment the per-username failed login counter with a sliding TTL window.
-/// Consecutive failures (password or MFA) after which an account is locked for the window.
+/// MFA code attempts allowed per account within the window (across all its challenges).
 const MAX_FAILED_ATTEMPTS: u64 = 5;
-/// How long failed-MFA counts are remembered.
+/// How long MFA attempts are remembered.
 const MFA_LOCKOUT_WINDOW_SECS: u64 = 900;
 
-fn mfa_lockout_key(user_id: &str) -> String {
-    format!("mfa_failures:{user_id}")
+fn mfa_attempt_key(user_id: &str, slot: u64) -> String {
+    format!("mfa_attempt:{user_id}:{slot}")
 }
 
-/// Has this lockout counter reached the limit?
-async fn is_locked(state: &ApiState, key: &str) -> bool {
-    match state.auth_framework.storage().get_kv(key).await {
-        Ok(Some(bytes)) => std::str::from_utf8(&bytes)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .is_some_and(|count| count >= MAX_FAILED_ATTEMPTS),
-        _ => false,
+/// Reserve one of the account's MFA attempts BEFORE a code is checked. Each of the
+/// `MAX_FAILED_ATTEMPTS` slots is claimed with an atomic set-if-absent, so any burst of
+/// parallel guesses gets at most that many checks in total, whatever challenge it uses.
+/// `false` means the account's budget is spent.
+async fn reserve_mfa_attempt(state: &ApiState, user_id: &str) -> bool {
+    let storage = state.auth_framework.storage();
+    for slot in 0..MAX_FAILED_ATTEMPTS {
+        match storage
+            .store_kv_if_absent(
+                &mfa_attempt_key(user_id, slot),
+                b"1",
+                Some(std::time::Duration::from_secs(MFA_LOCKOUT_WINDOW_SECS)),
+            )
+            .await
+        {
+            Ok(true) => return true,
+            Ok(false) => continue,
+            // An unreadable store gives no attempts (fail closed).
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+/// Is the account's MFA attempt budget spent?
+async fn mfa_attempts_exhausted(state: &ApiState, user_id: &str) -> bool {
+    !matches!(
+        state
+            .auth_framework
+            .storage()
+            .get_kv(&mfa_attempt_key(user_id, MAX_FAILED_ATTEMPTS - 1))
+            .await,
+        Ok(None)
+    )
+}
+
+/// A successful MFA login gives the account its attempts back.
+async fn clear_mfa_attempts(state: &ApiState, user_id: &str) {
+    for slot in 0..MAX_FAILED_ATTEMPTS {
+        let _ = state
+            .auth_framework
+            .storage()
+            .delete_kv(&mfa_attempt_key(user_id, slot))
+            .await;
     }
 }
 
+/// Increment the per-username failed login counter with a sliding TTL window.
 async fn increment_login_failure(state: &ApiState, lockout_key: &str, window_secs: u64) {
     let current: u64 = match state.auth_framework.storage().get_kv(lockout_key).await {
         Ok(Some(bytes)) => std::str::from_utf8(&bytes)
@@ -288,8 +324,7 @@ pub async fn login(
                 "Invalid or expired MFA challenge or code",
             );
         };
-        let owner_lockout_key = mfa_lockout_key(&owner_id);
-        if is_locked(&state, &owner_lockout_key).await {
+        if !reserve_mfa_attempt(&state, &owner_id).await {
             return ApiResponse::error_typed(
                 "ACCOUNT_LOCKED",
                 "Too many failed login attempts. Please try again later.",
@@ -301,11 +336,7 @@ pub async fn login(
             .await
         {
             Ok(token) => {
-                let _ = state
-                    .auth_framework
-                    .storage()
-                    .delete_kv(&owner_lockout_key)
-                    .await;
+                clear_mfa_attempts(&state, &owner_id).await;
                 let mut response = build_login_response(
                     &state,
                     &token.user_id,
@@ -321,7 +352,6 @@ pub async fn login(
             }
             Err(e) => {
                 tracing::debug!("MFA completion failed during login: {}", e);
-                increment_login_failure(&state, &owner_lockout_key, MFA_LOCKOUT_WINDOW_SECS).await;
                 ApiResponse::error_typed(
                     "MFA_INVALID_CODE",
                     "Invalid or expired MFA challenge or code",
@@ -415,7 +445,7 @@ pub async fn login(
             crate::auth::AuthResult::MfaRequired(challenge) => {
                 // An account whose MFA codes were guessed wrongly too often gets no new
                 // challenge until the lockout window passes.
-                if is_locked(&state, &mfa_lockout_key(&challenge.user_id)).await {
+                if mfa_attempts_exhausted(&state, &challenge.user_id).await {
                     state
                         .auth_framework
                         .discard_mfa_challenge(&challenge.id)

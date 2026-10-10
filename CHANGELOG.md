@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- MFA attempt budget: an account gets 5 MFA code attempts per 15 minutes in total
+  (across all its challenges), reserved BEFORE a code is checked with an atomic set-if-absent
+  (`mfa_attempt:{user}:{slot}`), so a burst of parallel guesses can no longer exceed it. The
+  counter `mfa_failures:{user}` is gone (a successful MFA login still clears the budget).
 - 0.6.0-rcXX -- `OidcProvider::get_userinfo` refuses a token whose account is deactivated,
   deleted or unreadable (it used to answer for any validly signed subject).
 - 0.6.0-rcXX -- A TOTP time step is claimed with the atomic `store_kv_if_absent`, so of

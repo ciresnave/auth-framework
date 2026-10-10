@@ -241,7 +241,7 @@ mod mfa_attempt_limit_tests {
         for _ in 0..3 {
             let _ = submit(&state, &a.username, &id, &wrong_code()).await;
         }
-        let key = format!("mfa_failures:{}", a.id);
+        let key = format!("mfa_attempt:{}:0", a.id);
         assert!(f.storage().get_kv(&key).await.unwrap().is_some());
         let ok = submit(&state, &a.username, &id, &totp_now()).await;
         assert!(ok.success, "{:?}", ok.error);
@@ -274,5 +274,39 @@ mod mfa_attempt_limit_tests {
             accepted, 1,
             "{accepted} concurrent submissions were accepted"
         );
+    }
+
+    /// A burst of parallel wrong guesses across the user's live challenges is bounded by the
+    /// account budget (5), not by 5 per challenge.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_parallel_burst_of_wrong_codes_is_bounded_by_the_account_budget() {
+        let (state, f) = setup().await;
+        let a = enrolled(&f).await;
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(challenge_for(&state, &a).await.expect("challenge"));
+        }
+        let mut tasks = Vec::new();
+        for i in 0..15 {
+            let (state, id, username) = (state.clone(), ids[i % 3].clone(), a.username.clone());
+            let code = wrong_code();
+            tasks.push(tokio::spawn(async move {
+                let r = submit(&state, &username, &id, &code).await;
+                r.error.map(|e| e.code).unwrap_or_default()
+            }));
+        }
+        let (mut checked, mut locked) = (0, 0);
+        for t in tasks {
+            match t.await.unwrap().as_str() {
+                "MFA_INVALID_CODE" => checked += 1,
+                "ACCOUNT_LOCKED" => locked += 1,
+                other => panic!("unexpected {other}"),
+            }
+        }
+        assert!(
+            checked <= 5,
+            "{checked} wrong codes were checked, budget is 5"
+        );
+        assert_eq!(checked + locked, 15);
     }
 }
