@@ -139,4 +139,15 @@ mod introspection_status_tests {
         assert!(env.fw.redeem_refresh_jwt(&rt1).await.is_err());
         assert_eq!(introspect(&env, &rt2).await["active"], false);
     }
+
+    #[tokio::test]
+    async fn an_id_token_is_not_reported_as_an_access_token() {
+        let env = env().await;
+        let id = env
+            .fw
+            .token_manager()
+            .create_typed_jwt_token(&env.user, vec!["openid".into()], None, "id_token")
+            .unwrap();
+        assert_eq!(introspect(&env, &id).await["active"], false);
+    }
 }

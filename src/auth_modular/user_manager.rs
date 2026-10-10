@@ -607,16 +607,14 @@ impl UserManager {
         // Remember that this account existed and was deleted: a missing record alone cannot be
         // told apart from a federated subject that never had one, and the deleted account's
         // tokens must stop working.
-        if let Err(e) = self
-            .storage
+        // Without the tombstone the deleted account's tokens would keep working: abort.
+        self.storage
             .store_kv(&format!("deleted_user:{}", user_id), b"1", None)
             .await
-        {
-            warn!(
-                "Failed to record the deletion of '{}' (its tokens may keep working): {}",
-                username, e
-            );
-        }
+            .map_err(|e| {
+                warn!("Failed to record the deletion of '{}': {}", username, e);
+                e
+            })?;
         if let Err(e) = self.storage.delete_kv(&user_key).await {
             warn!("Failed to delete user record for '{}': {}", username, e);
         }

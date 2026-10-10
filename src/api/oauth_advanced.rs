@@ -304,10 +304,15 @@ pub async fn introspect_token(
             let mut revoked = !matches!(storage.get_kv(&revocation_key).await, Ok(None));
             // A token whose account is deactivated or gone cannot be used: not active.
             if !revoked
-                && crate::auth::ensure_account_active(storage.as_ref(), &claims.sub, true)
+                && crate::auth::ensure_account_active(storage.as_ref(), &claims.sub, false)
                     .await
                     .is_err()
             {
+                revoked = true;
+            }
+            // An ID token, client assertion or any other token that declares a use other than
+            // refresh is not an access token: it is not reported as one.
+            if !revoked && claims.token_use().is_some() && !claims.is_refresh_token() {
                 revoked = true;
             }
             // A refresh token is active only while it is unspent and its chain is intact.

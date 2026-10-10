@@ -569,6 +569,15 @@ mod webauthn_ceremony_tests {
             }
         }
         assert_eq!(ok, 1, "{ok} simultaneous submissions minted a token");
+        // the ceremony's session was claimed atomically
+        assert!(
+            env.fw
+                .storage()
+                .get_kv(&format!("webauthn_session_claimed:{session_id}"))
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]

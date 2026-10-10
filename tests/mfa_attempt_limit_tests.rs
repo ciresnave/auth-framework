@@ -308,5 +308,16 @@ mod mfa_attempt_limit_tests {
             "{checked} wrong codes were checked, budget is 5"
         );
         assert_eq!(checked + locked, 15);
+        // the whole budget was claimed (and nothing beyond it)
+        for slot in 0..5 {
+            assert!(
+                f.storage()
+                    .get_kv(&format!("mfa_attempt:{}:{slot}", a.id))
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "slot {slot}"
+            );
+        }
     }
 }

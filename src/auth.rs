@@ -333,7 +333,13 @@ pub(crate) fn token_value_matches_jwt(token_manager: &TokenManager, token: &Auth
     }
     token_manager
         .validate_jwt_token(&token.access_token)
-        .map(|claims| claims.sub == token.user_id)
+        .map(|claims| {
+            claims.sub == token.user_id
+                // only an access token can be presented here, and the client binding the
+                // caller states must be the one the JWT carries (it cannot be stripped)
+                && claims.token_use().is_none()
+                && claims.client_id == token.client_id
+        })
         .unwrap_or(false)
 }
 
@@ -1335,6 +1341,10 @@ impl AuthFramework {
         if stored.is_revoked() {
             return Ok(false);
         }
+        // The caller's value must be the stored token, not just share its id.
+        if stored.access_token != token.access_token || stored.user_id != token.user_id {
+            return Ok(false);
+        }
         stored.mark_used();
         self.storage.update_token(&stored).await?;
         Ok(true)
@@ -1460,7 +1470,17 @@ impl AuthFramework {
                 message: "Cannot refresh a token that is not valid".to_string(),
             }));
         }
-        let new_token = self.token_manager.refresh_token(token)?;
+        // Renew from the STORED token (scopes, client binding), never from the caller's value.
+        let stored = self
+            .storage
+            .get_token(&token.token_id)
+            .await?
+            .ok_or_else(|| {
+                AuthError::Token(crate::errors::TokenError::Invalid {
+                    message: "Cannot refresh a token that is not stored".to_string(),
+                })
+            })?;
+        let new_token = self.token_manager.refresh_token(&stored)?;
         self.storage.store_token(&new_token).await?;
 
         info!("Token refreshed for user '{}'", token.user_id);

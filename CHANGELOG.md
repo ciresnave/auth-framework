@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- **Breaking (behaviour) summary of the token-hardening entries in this release**:
+  an OpenID Connect ID token is no longer accepted as an access token; `OidcProvider::get_userinfo`
+  requires a live local account (federated subjects without a local record are refused there);
+  a JWT client assertion must declare `token_use: "client_assertion"`;
+  `AuthFramework::refresh_token(&AuthToken)` renews only a token that is stored, valid, and equal
+  to its stored record (its scopes and client binding come from the stored token), and
+  `validate_token` additionally requires the value's `client_id` and `user_id` to match the JWT
+  and the stored token; `/oauth/introspect` answers `active: false` for a deactivated or deleted
+  local account and for ID tokens and other non-access JWTs (federated subjects without a local
+  record are still reported as before); existing stored MFA lockout counters (`mfa_failures:`)
+  are ignored after the upgrade (the new `mfa_attempt:{user}:{slot}` budget starts empty);
+  WebAuthn completions claim their session atomically (its own change, listed here for
+  visibility); deleting a user aborts if the deletion tombstone cannot be written.
 - 0.6.0-rcXX -- The JWT client assertion accepted by the token-introspection service
   (`client_secret_jwt` / `private_key_jwt`) must declare `token_use: "client_assertion"`
   (`TokenManager::create_typed_jwt_token`); before, any token signed by this server whose subject

@@ -246,14 +246,20 @@ async fn reserve_mfa_attempt(state: &ApiState, user_id: &str) -> bool {
 
 /// Is the account's MFA attempt budget spent?
 async fn mfa_attempts_exhausted(state: &ApiState, user_id: &str) -> bool {
-    !matches!(
-        state
+    for slot in 0..MAX_FAILED_ATTEMPTS {
+        match state
             .auth_framework
             .storage()
-            .get_kv(&mfa_attempt_key(user_id, MAX_FAILED_ATTEMPTS - 1))
-            .await,
-        Ok(None)
-    )
+            .get_kv(&mfa_attempt_key(user_id, slot))
+            .await
+        {
+            Ok(Some(_)) => continue,
+            // a free slot: not exhausted; an unreadable store counts as exhausted (fail closed)
+            Ok(None) => return false,
+            Err(_) => return true,
+        }
+    }
+    true
 }
 
 /// A successful MFA login gives the account its attempts back.

@@ -267,6 +267,37 @@ mod token_validation_story_tests {
             "a forged value must not be refreshed into a token for another user"
         );
 
+        // the victim's JWT paired with the ATTACKER's stored token id is refused
+        let attacker_token = f
+            .token_manager()
+            .create_auth_token(&other, vec!["admin".to_string()], "jwt", None)
+            .unwrap();
+        f.storage().store_token(&attacker_token).await.unwrap();
+        let mut spliced = token.clone();
+        spliced.token_id = attacker_token.token_id.clone();
+        assert!(!f.validate_token(&spliced).await.unwrap_or(false));
+        assert!(f.refresh_token(&spliced).await.is_err());
+
+        // a client-bound token cannot be turned into a session token by clearing client_id
+        let bound = f
+            .token_manager()
+            .create_client_auth_token(&victim, vec!["openid".to_string()], "jwt", "c1", None)
+            .unwrap();
+        f.storage().store_token(&bound).await.unwrap();
+        let mut stripped = bound.clone();
+        stripped.client_id = None;
+        assert!(!f.validate_token(&stripped).await.unwrap_or(false));
+        assert!(f.refresh_token(&stripped).await.is_err());
+
+        // an ID token of the victim is not an access token, whatever the value says
+        let id_jwt = f
+            .token_manager()
+            .create_typed_jwt_token(&victim, vec!["openid".to_string()], None, "id_token")
+            .unwrap();
+        let mut id_value = token.clone();
+        id_value.access_token = id_jwt;
+        assert!(!f.validate_token(&id_value).await.unwrap_or(false));
+
         // refreshing a revoked token is refused; refreshing a valid one still works
         let second = f
             .token_manager()
