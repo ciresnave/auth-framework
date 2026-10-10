@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- The JWT client assertion accepted by the token-introspection service
+  (`client_secret_jwt` / `private_key_jwt`) must declare `token_use: "client_assertion"`
+  (`TokenManager::create_typed_jwt_token`); before, any token signed by this server whose subject
+  equalled the client id (an access, session or refresh token) authenticated the client. No
+  in-repo code produced assertions, so this only affects integrators that built their own.
+  WebAuthn registration and authentication completions claim their session with an atomic
+  set-if-absent, so the same ceremony cannot complete twice concurrently.
+- 0.6.0-rcXX -- Deleting a user records `deleted_user:{id}`; JWT credentials passed to
+  `authenticate("jwt")` (which allow federated subjects without a local record) are refused for
+  an account that was deleted. Accounts deleted before the upgrade have no such record: their
+  tokens expire normally.
 - 0.6.0-rcXX -- `AuthFramework::validate_token` (and the modular type's) requires the
   caller-supplied `AuthToken` value to agree with the signed JWT it carries (`user_id` must be
   the JWT subject), and `AuthFramework::refresh_token(&AuthToken)` renews only a token that

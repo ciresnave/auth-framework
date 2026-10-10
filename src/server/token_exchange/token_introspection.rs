@@ -396,6 +396,11 @@ impl TokenIntrospectionService {
                 if let Some(client_assertion) = &credentials.client_assertion {
                     // Validate JWT assertion
                     if let Ok(claims) = self.token_manager.validate_jwt_token(client_assertion) {
+                        // An access, session or refresh token that merely names the client is
+                        // not a client assertion: the assertion must declare itself one.
+                        if claims.token_use() != Some("client_assertion") {
+                            return Err(AuthError::access_denied("Not a client assertion"));
+                        }
                         if claims.sub != credentials.client_id {
                             return Err(AuthError::access_denied(
                                 "JWT subject doesn't match client_id",
@@ -615,6 +620,54 @@ mod tests {
         ));
 
         TokenIntrospectionService::new(config, storage, token_manager, None)
+    }
+
+    /// A JWT-based client assertion is not an access/session token that happens to name the client.
+    #[tokio::test]
+    async fn a_client_assertion_must_declare_itself_one() {
+        let config = TokenIntrospectionConfig::default();
+        let issuer = config.issuer.clone();
+        let tm = Arc::new(TokenManager::new_hmac(
+            b"test-secret-key-32-bytes-minimum!",
+            "client-issuer",
+            issuer,
+        ));
+        let service =
+            TokenIntrospectionService::new(config, Arc::new(MockStorage::new()), tm.clone(), None);
+        let creds = |assertion: String| IntrospectionClientCredentials {
+            client_id: "rs-client".to_string(),
+            client_secret: None,
+            client_assertion: Some(assertion),
+            auth_method: ClientAuthMethod::PrivateKeyJwt,
+        };
+        let ttl = Some(std::time::Duration::from_secs(60));
+
+        // an ordinary access token whose subject happens to be the client id
+        let access = tm.create_jwt_token("rs-client", vec![], ttl).unwrap();
+        assert!(
+            service
+                .validate_client_credentials(&creds(access))
+                .await
+                .is_err()
+        );
+        // a refresh token likewise
+        let refresh = tm.create_refresh_jwt_token("rs-client", ttl).unwrap();
+        assert!(
+            service
+                .validate_client_credentials(&creds(refresh))
+                .await
+                .is_err()
+        );
+        // a token that declares itself a client assertion is accepted
+        let assertion = tm
+            .create_typed_jwt_token("rs-client", vec![], ttl, "client_assertion")
+            .unwrap();
+        assert!(
+            service
+                .validate_client_credentials(&creds(assertion))
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

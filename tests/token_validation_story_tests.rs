@@ -278,4 +278,55 @@ mod token_validation_story_tests {
         let fresh = f.refresh_token(&token).await.unwrap();
         assert_eq!(fresh.user_id, victim);
     }
+
+    /// A federated subject (no local account, never had one) may authenticate with a JWT
+    /// credential; the token of a local account that was DELETED may not.
+    #[tokio::test]
+    async fn a_deleted_accounts_jwt_no_longer_authenticates_but_a_federated_one_does() {
+        use auth_framework::auth::AuthResult;
+        use auth_framework::authentication::credentials::Credential;
+        let f = framework().await;
+        let name = format!("del_{}", uuid::Uuid::new_v4().simple());
+        let uid = f
+            .register_user(
+                &name,
+                &format!("{name}@test.example.com"),
+                "SecurePass123!x",
+            )
+            .await
+            .unwrap();
+        let local = jwt_for(&f, &uid);
+        let federated = jwt_for(&f, "federated|someone");
+
+        let ok = |r: &auth_framework::errors::Result<AuthResult>| {
+            matches!(r, Ok(AuthResult::Success(_)))
+        };
+        assert!(ok(&f
+            .authenticate(
+                "jwt",
+                Credential::Jwt {
+                    token: local.clone()
+                }
+            )
+            .await));
+        assert!(ok(&f
+            .authenticate(
+                "jwt",
+                Credential::Jwt {
+                    token: federated.clone()
+                }
+            )
+            .await));
+
+        f.delete_user(&name).await.unwrap();
+        assert!(
+            !ok(&f
+                .authenticate("jwt", Credential::Jwt { token: local })
+                .await),
+            "a deleted account's token must stop authenticating"
+        );
+        assert!(ok(&f
+            .authenticate("jwt", Credential::Jwt { token: federated })
+            .await));
+    }
 }

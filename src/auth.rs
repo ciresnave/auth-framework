@@ -303,7 +303,15 @@ pub(crate) async fn ensure_account_active(
 ) -> Result<()> {
     match storage.get_kv(&format!("user:{user_id}")).await {
         Ok(None) if require_record => Err(rejected("Unknown account")),
-        Ok(None) => Ok(()),
+        // No record: a federated subject, unless this account was deleted.
+        Ok(None) => match storage.get_kv(&format!("deleted_user:{user_id}")).await {
+            Ok(None) => Ok(()),
+            Ok(Some(_)) => Err(rejected("Account has been deleted")),
+            Err(e) => {
+                tracing::error!("Could not read account tombstone: {}", e);
+                Err(rejected("Unable to verify account status"))
+            }
+        },
         Ok(Some(bytes)) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
             Ok(record) if record["active"].as_bool().unwrap_or(true) => Ok(()),
             Ok(_) => Err(rejected("Account has been deactivated")),

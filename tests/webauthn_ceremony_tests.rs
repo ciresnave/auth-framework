@@ -517,6 +517,60 @@ mod webauthn_ceremony_tests {
         assert_eq!(ok["success"], true, "{ok}");
     }
 
+    /// One assertion submitted many times at once mints at most one token.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn simultaneous_submissions_of_one_assertion_succeed_once() {
+        let env = env().await;
+        let (_uid, bearer) = user(&env, "race_user").await;
+        let authn = Authenticator::new();
+        let cred = register_credential(&env, &bearer, "race_user", &authn).await;
+        let init = call(
+            &env.app,
+            "POST",
+            "/webauthn/authentication/init",
+            None,
+            json!({"username": "race_user"}),
+        )
+        .await;
+        let session_id = init["data"]["session_id"].as_str().unwrap().to_string();
+        let challenge = init["data"]["challenge"].as_str().unwrap().to_string();
+        let (auth_data, cd, sig) = authn.assertion_with(
+            &challenge,
+            1,
+            Sha256::digest(b"localhost").into(),
+            0x01,
+            "https://localhost",
+        );
+        let body = json!({
+            "session_id": session_id,
+            "credential_id": cred,
+            "authenticator_data": auth_data,
+            "client_data_json": cd,
+            "signature": sig,
+        });
+        let mut tasks = Vec::new();
+        for _ in 0..12 {
+            let (app, body) = (env.app.clone(), body.clone());
+            tasks.push(tokio::spawn(async move {
+                call(
+                    &app,
+                    "POST",
+                    "/webauthn/authentication/complete",
+                    None,
+                    body,
+                )
+                .await
+            }));
+        }
+        let mut ok = 0;
+        for t in tasks {
+            if t.await.unwrap()["success"] == true {
+                ok += 1;
+            }
+        }
+        assert_eq!(ok, 1, "{ok} simultaneous submissions minted a token");
+    }
+
     #[tokio::test]
     async fn an_assertion_without_user_presence_is_refused() {
         let env = env().await;

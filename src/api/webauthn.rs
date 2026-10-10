@@ -578,7 +578,23 @@ pub async fn webauthn_registration_complete(
         ));
     }
 
-    // Delete session immediately to prevent replay attacks
+    // Claim the session atomically, then delete it (see the authentication handler).
+    match storage
+        .store_kv_if_absent(
+            &format!("webauthn_session_claimed:{}", request.session_id),
+            b"1",
+            Some(std::time::Duration::from_secs(600)),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) | Err(_) => {
+            return Json(ApiResponse::error_typed(
+                "SESSION_EXPIRED",
+                "Registration session not found or expired",
+            ));
+        }
+    }
     if let Err(e) = storage.delete_kv(&session_key).await {
         tracing::warn!("Failed to delete WebAuthn registration session: {}", e);
     }
@@ -816,7 +832,29 @@ pub async fn webauthn_authentication_complete(
         }
     };
 
-    // Delete session immediately to prevent replay attacks
+    // Claim the session atomically, then delete it: of simultaneous completions of the same
+    // ceremony exactly one proceeds (a plain delete after a read lets several through).
+    match storage
+        .store_kv_if_absent(
+            &format!("webauthn_session_claimed:{}", request.session_id),
+            b"1",
+            Some(std::time::Duration::from_secs(600)),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return Json(ApiResponse::validation_error_typed(
+                "Authentication session not found or expired",
+            ));
+        }
+        Err(e) => {
+            tracing::error!("Failed to claim WebAuthn authentication session: {}", e);
+            return Json(ApiResponse::validation_error_typed(
+                "Authentication session not found or expired",
+            ));
+        }
+    }
     if let Err(e) = storage.delete_kv(&session_key).await {
         tracing::warn!("Failed to delete WebAuthn authentication session: {}", e);
     }
