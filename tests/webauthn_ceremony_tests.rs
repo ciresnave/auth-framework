@@ -148,12 +148,21 @@ mod webauthn_ceremony_tests {
             B64.encode(self.pair.public_key().as_ref())
         }
 
-        /// (authenticator_data, client_data_json, signature), all base64url.
-        fn assertion(&self, challenge: &str, counter: u32) -> (String, String, String) {
+        /// An assertion (authenticator_data, client_data_json, signature, all base64url)
+        /// with explicit rpIdHash, flags byte and client-data origin.
+        fn assertion_with(
+            &self,
+            challenge: &str,
+            counter: u32,
+            rp_id_hash: [u8; 32],
+            flags: u8,
+            origin: &str,
+        ) -> (String, String, String) {
             let mut auth_data = vec![0u8; 37];
-            auth_data[32] = 0x01; // user present
+            auth_data[..32].copy_from_slice(&rp_id_hash);
+            auth_data[32] = flags;
             auth_data[33..37].copy_from_slice(&counter.to_be_bytes());
-            let cd = client_data("webauthn.get", challenge, Some("https://localhost"));
+            let cd = client_data("webauthn.get", challenge, Some(origin));
             let cd_bytes = B64.decode(&cd).unwrap();
             let mut msg = auth_data.clone();
             msg.extend_from_slice(&Sha256::digest(&cd_bytes));
@@ -210,6 +219,30 @@ mod webauthn_ceremony_tests {
         authenticator: &Authenticator,
         counter: u32,
     ) -> Value {
+        authenticate_custom(
+            env,
+            username,
+            cred_id,
+            authenticator,
+            counter,
+            Sha256::digest(b"localhost").into(),
+            0x01,
+            "https://localhost",
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn authenticate_custom(
+        env: &Env,
+        username: &str,
+        cred_id: &str,
+        authenticator: &Authenticator,
+        counter: u32,
+        rp_id_hash: [u8; 32],
+        flags: u8,
+        origin: &str,
+    ) -> Value {
         let init = call(
             &env.app,
             "POST",
@@ -220,7 +253,8 @@ mod webauthn_ceremony_tests {
         .await;
         let session_id = init["data"]["session_id"].as_str().unwrap().to_string();
         let challenge = init["data"]["challenge"].as_str().unwrap().to_string();
-        let (auth_data, cd, sig) = authenticator.assertion(&challenge, counter);
+        let (auth_data, cd, sig) =
+            authenticator.assertion_with(&challenge, counter, rp_id_hash, flags, origin);
         call(
             &env.app,
             "POST",
@@ -454,6 +488,84 @@ mod webauthn_ceremony_tests {
         .await;
         assert_eq!(list["success"], true, "{list}");
         assert_eq!(list["data"].as_array().map(|a| a.len()), Some(1), "{list}");
+    }
+
+    #[tokio::test]
+    async fn an_assertion_for_another_relying_party_is_refused() {
+        let env = env().await;
+        let (_uid, bearer) = user(&env, "rp_hash_user").await;
+        let authn = Authenticator::new();
+        let cred = register_credential(&env, &bearer, "rp_hash_user", &authn).await;
+
+        // authenticatorData names a different RP id
+        let resp = authenticate_custom(
+            &env,
+            "rp_hash_user",
+            &cred,
+            &authn,
+            1,
+            Sha256::digest(b"evil.example.com").into(),
+            0x01,
+            "https://localhost",
+        )
+        .await;
+        assert_eq!(resp["success"], false, "{resp}");
+        assert!(resp["data"]["access_token"].is_null(), "{resp}");
+
+        // the legitimate assertion still works
+        let ok = authenticate(&env, "rp_hash_user", &cred, &authn, 2).await;
+        assert_eq!(ok["success"], true, "{ok}");
+    }
+
+    #[tokio::test]
+    async fn an_assertion_without_user_presence_is_refused() {
+        let env = env().await;
+        let (_uid, bearer) = user(&env, "up_user").await;
+        let authn = Authenticator::new();
+        let cred = register_credential(&env, &bearer, "up_user", &authn).await;
+        let resp = authenticate_custom(
+            &env,
+            "up_user",
+            &cred,
+            &authn,
+            1,
+            Sha256::digest(b"localhost").into(),
+            0x00, // UP not set
+            "https://localhost",
+        )
+        .await;
+        assert_eq!(resp["success"], false, "{resp}");
+    }
+
+    #[tokio::test]
+    async fn the_origin_must_match_scheme_host_and_port() {
+        let env = env().await;
+        let (_uid, bearer) = user(&env, "origin_user").await;
+        let authn = Authenticator::new();
+        let cred = register_credential(&env, &bearer, "origin_user", &authn).await;
+        let mut counter = 0;
+        for bad in [
+            "http://localhost:8080",
+            "https://localhost:8443",
+            "https://localhost.evil.com",
+            "localhost",
+        ] {
+            counter += 1;
+            let resp = authenticate_custom(
+                &env,
+                "origin_user",
+                &cred,
+                &authn,
+                counter,
+                Sha256::digest(b"localhost").into(),
+                0x01,
+                bad,
+            )
+            .await;
+            assert_eq!(resp["success"], false, "{bad}: {resp}");
+        }
+        let ok = authenticate(&env, "origin_user", &cred, &authn, counter + 1).await;
+        assert_eq!(ok["success"], true, "{ok}");
     }
 
     #[tokio::test]

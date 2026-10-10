@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rcXX -- WebAuthn: the ceremony origin must now equal a configured origin in scheme,
+  host AND port (it used to compare only the host). Configure origins with
+  `WebAuthnConfig::origins` / `WEBAUTHN_ORIGINS` (comma separated); the default is
+  `https://{rp_id}` (plus `http://localhost` for the `localhost` rp id), so a deployment served
+  on a non-default port or from other hostnames must set them. Assertions are checked per
+  WebAuthn section 7.2: `rpIdHash` must be SHA-256 of the rp id and the user-presence flag must
+  be set, and the user-verification flag when `WEBAUTHN_USER_VERIFICATION=required`.
+  The user-verification requirement now comes from server configuration (default `preferred`),
+  not from the request body. Registration does not parse the attestation object, so its
+  authenticator data flags are not checked (only attestation `none` is accepted).
 - 0.6.0-rcXX -- `AuthStorage::store_kv_if_absent` (new, with a non-atomic default) is an atomic
   compare-and-set in the memory, SQLite, PostgreSQL, Redis and encrypted-wrapper backends
   (`UnifiedStorage` keeps the default). Refresh-token redemption uses it, so of any number of

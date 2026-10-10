@@ -13,6 +13,18 @@ This guide reflects the current WebAuthn and SAML routes mounted by `ApiServer`.
 - `GET /api/v1/webauthn/credentials/{username}`
 - `DELETE /api/v1/webauthn/credentials/{username}/{credential_id}`
 
+## Relying-party configuration
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `WEBAUTHN_RP_ID` | `localhost` | Relying party id (a registrable domain) |
+| `WEBAUTHN_ORIGINS` | `https://{rp_id}` (and `http://localhost` for `localhost`) | Comma-separated origins the ceremonies may come from; scheme, host and port must all match |
+| `WEBAUTHN_USER_VERIFICATION` | `preferred` | `required` makes assertions without the user-verification flag fail; set by the server, never by the request |
+
+An assertion must also carry `rpIdHash` = SHA-256 of the rp id and the user-presence flag.
+A deployment served on a non-default port, or from a hostname other than the rp id, must list
+its origins explicitly.
+
 ## Registration Flow
 
 ### 1. Initialize registration
