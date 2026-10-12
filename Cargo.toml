@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.5.0-rc27"
+  version       = "0.5.0-rc28"
 
 [[bin]]
   name              = "auth-framework"
@@ -360,6 +360,8 @@ pasetors = "0.7.7"
   tempfile   = "3.23.0"
   test-log   = "0.2"
   tokio-test = "0.4.4"
+  # RSA test-key generation needs the aws_lc_rs backend (ring cannot generate RSA keys)
+  rcgen = { version = "0.14", features = ["aws_lc_rs"] }
 
 [features]
   default = [
