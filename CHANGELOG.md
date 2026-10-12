@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Breaking (custom storage backends):** the default of `AuthStorage::store_kv_if_absent` is now an
+  error instead of a non-atomic `get_kv` followed by `store_kv`. Single-use claims (refresh-token
+  redemption, TOTP steps, WebAuthn sessions, PKCE codes) depend on it being a compare-and-set, and a
+  backend that kept the old default silently lost that guarantee. A custom `AuthStorage` must
+  implement `store_kv_if_absent` atomically (the in-tree memory, SQLite, PostgreSQL, Redis, unified
+  and encrypted backends and `MockStorage` already do); until it does, the paths that need a claim
+  fail with an error naming the method.
 - 0.6.0-rc48 -- The `users:index` list (admin user listing) is updated through one helper that
   serialises its read-modify-write within the process and reads each write back: simultaneous
   registrations (or a registration and a deletion) no longer drop each other's entry. A lost

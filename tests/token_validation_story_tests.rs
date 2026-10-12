@@ -64,6 +64,9 @@ mod token_validation_story_tests {
         async fn store_kv(&self, k: &str, v: &[u8], ttl: Option<Duration>) -> R<()> {
             self.inner.store_kv(k, v, ttl).await
         }
+        async fn store_kv_if_absent(&self, k: &str, v: &[u8], ttl: Option<Duration>) -> R<bool> {
+            self.inner.store_kv_if_absent(k, v, ttl).await
+        }
         async fn get_kv(&self, k: &str) -> R<Option<Vec<u8>>> {
             if k.starts_with("revoked_token:") && self.fail_revocation_reads.load(Ordering::SeqCst)
             {

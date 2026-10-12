@@ -653,6 +653,13 @@ impl AuthStorage for MyCustomStorage {
         Ok(())
     }
 
+    // `store_kv_if_absent` must be a real compare-and-set (insert only if no live
+    // entry exists, atomically): single-use claims depend on it, and the default
+    // returns an error so that a backend that forgets it fails instead of silently
+    // allowing a token to be redeemed twice.
+    // async fn store_kv_if_absent(&self, key: &str, value: &[u8], ttl: Option<Duration>)
+    //     -> Result<bool> { ... }
+
     // Implement other required methods...
 }
 
