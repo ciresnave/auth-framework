@@ -499,17 +499,36 @@ impl UserManager {
             "created_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        let user_key = format!("user:{}", user_id);
-        self.storage
-            .store_kv(&user_key, user_data.to_string().as_bytes(), None)
-            .await?;
+        // Claim the username and the email atomically. The existence checks above are only a
+        // cheap early exit: two simultaneous registrations both pass them, so the claim itself
+        // has to be a compare-and-set, and exactly one caller wins each key.
+        if !self
+            .storage
+            .store_kv_if_absent(&username_key, user_id.as_bytes(), None)
+            .await?
+        {
+            return Err(AuthError::validation("Username already exists".to_string()));
+        }
+        if !self
+            .storage
+            .store_kv_if_absent(&email_key, user_id.as_bytes(), None)
+            .await?
+        {
+            let _ = self.storage.delete_kv(&username_key).await;
+            return Err(AuthError::validation("Email already exists".to_string()));
+        }
 
-        self.storage
-            .store_kv(&username_key, user_id.as_bytes(), None)
-            .await?;
-        self.storage
-            .store_kv(&email_key, user_id.as_bytes(), None)
-            .await?;
+        let user_key = format!("user:{}", user_id);
+        if let Err(e) = self
+            .storage
+            .store_kv(&user_key, user_data.to_string().as_bytes(), None)
+            .await
+        {
+            // Do not leave the name and the address claimed by an account that does not exist.
+            let _ = self.storage.delete_kv(&username_key).await;
+            let _ = self.storage.delete_kv(&email_key).await;
+            return Err(e);
+        }
 
         // Maintain global user index for admin listing.
         let index_key = "users:index";

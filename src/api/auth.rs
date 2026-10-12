@@ -842,24 +842,49 @@ pub async fn register(
     });
     let user_data_bytes = user_data.to_string().into_bytes();
 
-    // Store main user record
-    if let Err(e) = state
+    // Store main user record. This is the claim on the username: the existence checks above
+    // are only an early exit (two simultaneous registrations both pass them), so exactly one
+    // caller may create the key.
+    match state
         .auth_framework
         .storage()
-        .store_kv(&username_key, &user_data_bytes, None)
+        .store_kv_if_absent(&username_key, &user_data_bytes, None)
         .await
     {
-        tracing::error!("User registration storage failed: {:?}", e);
-        return ApiResponse::error_typed("REGISTRATION_FAILED", "Failed to create user account");
+        Ok(true) => {}
+        Ok(false) => {
+            return ApiResponse::error_typed(
+                "CONFLICT",
+                "An account with the provided details already exists",
+            );
+        }
+        Err(e) => {
+            tracing::error!("User registration storage failed: {:?}", e);
+            return ApiResponse::error_typed(
+                "REGISTRATION_FAILED",
+                "Failed to create user account",
+            );
+        }
     }
 
-    // Store email → user_id mapping for duplicate checking
-    if let Err(e) = state
+    // Store email → user_id mapping for duplicate checking (the claim on the email address)
+    let email_claim = state
         .auth_framework
         .storage()
-        .store_kv(&email_key, user_id.as_bytes(), None)
-        .await
-    {
+        .store_kv_if_absent(&email_key, user_id.as_bytes(), None)
+        .await;
+    if matches!(email_claim, Ok(false)) {
+        let _ = state
+            .auth_framework
+            .storage()
+            .delete_kv(&username_key)
+            .await;
+        return ApiResponse::error_typed(
+            "CONFLICT",
+            "An account with the provided details already exists",
+        );
+    }
+    if let Err(e) = email_claim {
         tracing::error!("Email mapping storage failed: {:?}", e);
         // Best-effort rollback
         let _ = state
