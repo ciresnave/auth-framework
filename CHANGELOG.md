@@ -5,6 +5,33 @@ All notable changes to the AuthFramework project will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- `private_key_jwt` client authentication (`PrivateKeyJwtManager`) now verifies the assertion's
+  signature against the registered public key (RSA of at least 2048 bits, EC P-256 / P-384, or
+  Ed25519), with the algorithm taken from the assertion header and required to be on the client's
+  allow-list and to fit the key. Before, the "verification key" was an HMAC secret derived from the
+  public JWK's own members (`rsa_private_key_jwt_n:{n}_e:{e}`), so anyone who could read a client's
+  public key could forge an assertion for it (when the validator accepted HS256 and the client was
+  registered with HS256). `register_client` now refuses symmetric (`HS*`) algorithms, a JWK carrying
+  private or symmetric key parameters, and a key that no allowed algorithm can verify. `iss`, `sub`,
+  `aud`, `exp`, `nbf`, lifetime and `jti` are checked on the verified claims; a `jti` is claimed
+  atomically, per client (at most 5,000 unexpired per client, 100,000 in all), and a revoked `jti` is
+  refused; `aud` may be a string or an array. An unknown client and an assertion that does not verify
+  get the same answer (`authenticated == false`, one generic message), and
+  `FapiManager::authenticate_client_jwt` no longer returns the detailed reasons to its caller (they
+  are logged). `create_client_assertion` now really signs (it used to produce a placeholder
+  signature). No public signature changed: `PrivateKeyJwtClaims::iat` stays an `i64` (an assertion
+  without `iat`, which RFC 7523 allows, reads as `0` and its lifetime is bounded through `exp`), and
+  `ClientJwtConfig` is unchanged. New: `ClientJwtConfig::builder` and `PrivateKeyJwtManager::require_audiences`.
+  **Behaviour you may notice:** a client registered without `expected_audiences` is still accepted
+  (any `aud` value; a warning is logged) so that a patch release does not refuse existing
+  registrations; call `PrivateKeyJwtManager::require_audiences(true)` to make registration refuse
+  it. Without an audience an assertion is not bound to this server, so a genuine assertion captured
+  elsewhere could be presented here. Replay and revocation records are in memory per manager.
+
 ## [0.4.7] - 2026-10-12
 
 ### Security
