@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Breaking:** `private_key_jwt` client authentication (`PrivateKeyJwtManager`) now verifies the assertion's
+  signature against the registered public key (RSA of at least 2048 bits, EC P-256 / P-384, or Ed25519), with the
+  algorithm taken from the assertion header and required to be on the client's allow-list and to fit the key.
+  Before, the "verification key" was an HMAC secret derived from the public JWK's own members
+  (`rsa_private_key_jwt_n:{n}_e:{e}`), so anyone who could read a client's public key could forge an assertion for
+  it (when the validator accepted HS256 and the client was registered with HS256).
+  `register_client` rejects symmetric (`HS*`) algorithms, a JWK carrying private or symmetric key parameters, a key
+  that no allowed algorithm can verify, and a configuration with no audience: `expected_audiences` (the token
+  endpoint URL or URLs) is now required, and an assertion's `aud` must be one of them. `iss`, `sub`, `aud`, `exp`,
+  `nbf`, lifetime and `jti` are checked on the verified claims; a `jti` is claimed atomically, per client, only
+  after the other checks pass (and remembered until the assertion could no longer be accepted, whatever the
+  cleanup interval), and a revoked `jti` is refused. `aud` may be a string or an array and one value must be a
+  configured audience. An unknown client and an assertion that does not verify now get the same answer
+  (`authenticated == false`, one generic message; reasons are given only once the signature has verified), the
+  assertion size, `jti` length, `client_id` characters, clock skew (at most 10 minutes) and lifetime (at most 24
+  hours) are bounded, and `FapiManager::authenticate_client_jwt` no longer returns the detailed reasons to its
+  caller (they are logged). Remembered `jti`s are limited per client (`ClientJwtConfig::max_outstanding_assertions`,
+  default 5,000, a new field) as well as in total, so one client cannot lock the others out. `iat` is optional
+  (RFC 7523): `PrivateKeyJwtClaims::iat` is now an `Option`, the lifetime bound uses it when present and otherwise
+  limits how far ahead `exp` may lie. `jti`s revoked with `revoke_jwt_token` live in their own namespace of the
+  validator's revocation list, so they no longer collide with access-token `jti`s (tokens revoked earlier under a
+  bare name are not affected by this). `PrivateKeyJwtManager::create_client_assertion` takes the signing key as an
+  `&EncodingKey` instead of raw bytes. The replay and revocation records are in memory per manager; there is no
+  `kid` handling or key rotation. Backport of the fix on `main` (found present at 0.5.0-rc27).
+
 ## [0.5.0-rc27] - 2026-10-09
 
 ### Security
