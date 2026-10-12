@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc29] - 2026-10-12
+
+### Security
+
+- **Breaking:** mutual-TLS client-certificate validation (`MutualTlsManager`) now uses one validator built on
+  `rustls-webpki` (ring backend; no new C dependency) for `authenticate_client` and `validate_client_certificate`:
+  the certification path is verified (signatures, validity, basicConstraints / pathLen, name constraints,
+  `clientAuth` extended key usage) and the certificate is matched to the registered client. Previously `authenticate_client` compared the certificate's issuer name with a trusted CA's subject name
+  and never verified the signature (and, with no CA configured, skipped the CA check altogether), so a
+  certificate that merely named a trusted CA as its issuer was accepted; `validate_client_certificate`
+  verified RSA signatures only. A PKI client must be registered with an
+  exact `client_certificate` pin or an `expected_subject_dn` (an RFC 4514 string, compared as structure, values
+  case-sensitive); `register_client` rejects a PKI client without one, an empty or unparsable DN, and a CA list
+  that holds anything but usable CA certificates. New `authenticate_client_with_chain` /
+  `validate_client_certificate_with_chain` accept the client's intermediate certificates. FAPI: certificates
+  passed as text are decoded as PEM or base64 DER, the `x5t#S256` thumbprint is computed over the DER, and the
+  client id is read from the parsed subject CN or SAN. Certificate revocation (CRL / OCSP) is not checked by this
+  crate. Backport of the fix merged on `main` and on `release/0.4.x`.
+
 ## [0.5.0-rc28] - 2026-10-12
 
 ### Security
