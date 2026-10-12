@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.5.0-rc30"
+  version       = "0.5.0-rc31"
 
 [[bin]]
   name              = "auth-framework"
@@ -199,8 +199,9 @@
   # URL encoding utilities
   urlencoding = "2.1.3"
 
-  # X.509 certificate generation
-  rcgen = "0.14"
+  # X.509 certificate generation and signing. The `x509-parser` feature lets rcgen read
+  # an existing CA certificate (its subject, key identifier, validity) to sign with it.
+  rcgen = { version = "0.14", features = ["x509-parser"] }
 
   # X.509 certificate parsing for OAuth 2.0 Mutual TLS (RFC 8705)
   x509-parser = "0.18.0"

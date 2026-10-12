@@ -567,6 +567,22 @@ fn verify_certificate_chain(
     intermediates_der: &[Vec<u8>],
     anchors_der: &[Vec<u8>],
 ) -> std::result::Result<(), String> {
+    verify_chain_for_usage(
+        leaf_der,
+        intermediates_der,
+        anchors_der,
+        KeyUsage::client_auth(),
+    )
+}
+
+/// [`verify_certificate_chain`] for any purpose: the path to a trust anchor is built and
+/// verified the same way, with `usage` as the extended key usage the path must permit.
+pub(crate) fn verify_chain_for_usage(
+    leaf_der: &[u8],
+    intermediates_der: &[Vec<u8>],
+    anchors_der: &[Vec<u8>],
+    usage: KeyUsage,
+) -> std::result::Result<(), String> {
     if anchors_der.is_empty() {
         return Err("No trusted CA certificates configured".to_string());
     }
@@ -619,7 +635,7 @@ fn verify_certificate_chain(
             &anchors,
             &intermediates,
             UnixTime::now(),
-            KeyUsage::client_auth(),
+            usage,
             None,
             None,
         )

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc31] - 2026-10-12
+
+### Security
+
+- **Breaking:** `X509CertificateManager` no longer reports cryptography it does not perform.
+  - *Behaviour.* CA certificates are parsed and must be usable, currently valid CAs (an unparsable one is refused,
+    not recorded with invented metadata); their subject, issuer, serial number and validity come from the
+    certificate. A CA signs only if its key was loaded from `root_ca_key_path` / `intermediate_ca_key_path` and
+    matches the certificate; otherwise `sign_certificate_request` and `generate_crl` return an error.
+    `sign_certificate_request` issues a certificate for the requester's public key signed by the CA (it was
+    self-signed with a throwaway key), with a random 126-bit serial number, basicConstraints cA=FALSE, subject and
+    authority key identifiers and the CRL distribution point when configured, backdated five minutes and never valid
+    beyond its CA; it verifies the result chains to the configured CAs, and the stored record describes the issued
+    certificate. `generate_crl` returns a signed DER CRL with an increasing number. `validate_certificate_chain`
+    builds and verifies the path to a configured root with `rustls-webpki` (it previously returned `true` for any unexpired, unrevoked certificate that was not self-signed, comparing names only for self-signed ones, and verified no signature) and
+    honours revocations. Revocation and status are per issuer; a revoked CA stops issuing and is no longer trusted.
+  - *Requests are policed.* Subject text is bounded and free of control and formatting characters; the country is a
+    two-letter code; DNS names are real multi-label host names; wildcard, IP, URI (`http`, `https`, `urn`, `spiffe`)
+    and e-mail names need the profile's new `SanPolicy`; subject keys must be well-formed RSA (2048 to 16384 bits),
+    ECDSA P-256 / P-384 or Ed25519 and at least as strong as the profile's `preferred_key_type`; `request.attributes`
+    and `profile.extensions` are refused (they were ignored); `profile.subject_alt_names`, `default_validity_days`,
+    `enable_crl` and `crl_distribution_url` are honoured (they were ignored); `enable_ocsp` /
+    `ocsp_responder_url` make `initialize` fail (OCSP was never implemented); a profile that contradicts itself
+    (an end-entity profile asking for keyCertSign / cRLSign, a TLS or code-signing type without the matching
+    extended key usage, a negative validity) is refused at `initialize`; CA profiles cannot be issued through a
+    request. The default `crl_distribution_url` is now `None` (it was a placeholder URL).
+  - *API changes (source-breaking).* `validate_certificate_chain` takes a `CertificatePurpose`. `CACertificate`
+    lost `next_serial`, and its `private_key` is now `Zeroizing<Vec<u8>>` (its `Debug` redacts it); `X509Config` lost `default_rsa_key_size` and `default_ecdsa_curve` (nothing used them) and
+    gained `state_path` and `generate_development_root_ca`; `CertificateProfile` gained `san_policy`. New public
+    items: `SanPolicy`, `CertificatePurpose`, `revoke_certificate_issued_by`, `check_certificate_status_issued_by`,
+    `revoke_certificate_pem`, `revoke_ca_certificate`, `save_state`, `load_state`. `revoke_certificate` fails when a serial number is unknown (it used to succeed silently) and both it and
+    `check_certificate_status` fail when a serial number is ambiguous,
+    and `RemoveFromCrl` is refused as a reason to revoke. The `rcgen` dependency now enables its `x509-parser`
+    feature (no new crate).
+  - *Operation.* The certificate store and revocation list are in memory unless `state_path` is set (then they are
+    saved after every change, loaded at `initialize`, and an unreadable state file stops `initialize`); a missing
+    root CA is only generated (development use) when `generate_development_root_ca` is set and `root_ca_key_path`
+    says where its key is kept (created once, owner-only on Unix, loaded back; nothing is written beside the
+    certificate). `root_ca_path` / `root_ca_cert_path` (and the intermediate equivalents) must agree when both are
+    set. Not done: OCSP, fetching external CRLs, proof of possession of the requester's key (the API takes a public
+    key, not a CSR).
+
 ## [0.5.0-rc30] - 2026-10-12
 
 ### Changed
