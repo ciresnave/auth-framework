@@ -96,6 +96,8 @@ pub struct ContextBuilder {
     business_end: u8,
     /// IP ranges for corporate networks
     corporate_networks: Vec<ipnetwork::IpNetwork>,
+    /// Reverse proxies whose `X-Forwarded-For` is believed (see [`Self::with_trusted_proxies`])
+    trusted_proxies: Vec<IpAddr>,
 }
 
 impl Default for ContextBuilder {
@@ -112,7 +114,20 @@ impl ContextBuilder {
             business_start: 9,
             business_end: 17,
             corporate_networks: Vec::new(),
+            trusted_proxies: Vec::new(),
         }
+    }
+
+    /// Declare the reverse proxies in front of the server (by the address they connect
+    /// from). The client address in the context is the connection's peer address; only when
+    /// the peer is one of these is `X-Forwarded-For` consulted (rightmost entry that is not
+    /// itself a trusted proxy). Without this, forwarding headers are ignored.
+    ///
+    /// The peer address comes from axum's `ConnectInfo<SocketAddr>`: serve the router with
+    /// `into_make_service_with_connect_info::<SocketAddr>()`, or no client address is known.
+    pub fn with_trusted_proxies(mut self, proxies: Vec<IpAddr>) -> Self {
+        self.trusted_proxies = proxies;
+        self
     }
 
     /// Configure business hours
@@ -228,35 +243,20 @@ impl ContextBuilder {
         map
     }
 
-    /// Extract IP address from request headers
+    /// The client address: the connection's peer address, or, when the peer is a configured
+    /// trusted proxy, the client it forwarded for (see [`Self::with_trusted_proxies`]).
+    /// Forwarding headers from anyone else are ignored, and without a peer address there is
+    /// no client address.
     fn extract_ip_address(&self, request: &Request) -> Option<IpAddr> {
-        // Try X-Forwarded-For first
-        if let Some(forwarded) = request.headers().get("x-forwarded-for")
-            && let Ok(forwarded_str) = forwarded.to_str()
-        {
-            if let Some(ip_str) = forwarded_str.split(',').next()
-                && let Ok(ip) = ip_str.trim().parse()
-            {
-                return Some(ip);
-            }
-
-            // Try X-Real-IP
-            if let Some(real_ip) = request.headers().get("x-real-ip")
-                && let Ok(ip_str) = real_ip.to_str()
-                && let Ok(ip) = ip_str.parse()
-            {
-                return Some(ip);
-            }
-
-            // Could also get from connection info if available
-            None
-        } else {
-            // Fallback to remote address if no headers found
-            request
-                .extensions()
-                .get::<axum::extract::ConnectInfo<IpAddr>>()
-                .map(|info| info.0)
-        }
+        let peer = request
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|info| info.0.ip())?;
+        Some(crate::api::middleware::forwarded_client_ip(
+            peer,
+            request.headers(),
+            &self.trusted_proxies,
+        ))
     }
 
     /// Extract user agent from request headers
@@ -324,44 +324,47 @@ impl ContextBuilder {
         }
     }
 
-    /// Analyze connection type from headers and IP
+    /// Analyze connection type from headers and IP.
+    ///
+    /// The address (`ip_address`) comes from the connection, so network membership and
+    /// "direct" are facts about the peer. Headers are client-supplied hints: they can only
+    /// RAISE the assessed risk (a `Via` that mentions a VPN or proxy, a Tor user agent), and
+    /// the absence or presence of a `Via` header changes nothing else.
     fn analyze_connection_type(
         &self,
         request: &Request,
         ip_address: &Option<IpAddr>,
     ) -> ConnectionType {
-        // Check for VPN indicators in headers
         if let Some(via) = request.headers().get("via")
             && let Ok(via_str) = via.to_str()
         {
-            if via_str.to_lowercase().contains("vpn") {
+            let via_str = via_str.to_lowercase();
+            if via_str.contains("vpn") {
                 return ConnectionType::VPN;
             }
-            if via_str.to_lowercase().contains("proxy") {
+            if via_str.contains("proxy") {
                 return ConnectionType::Proxy;
             }
+        }
 
-            // Check for Tor indicators
-            if let Some(ua) = request.headers().get("user-agent")
-                && let Ok(ua_str) = ua.to_str()
-                && ua_str.contains("Tor")
-            {
-                return ConnectionType::Tor;
-            }
+        if let Some(ua) = request.headers().get("user-agent")
+            && let Ok(ua_str) = ua.to_str()
+            && ua_str.contains("Tor")
+        {
+            return ConnectionType::Tor;
+        }
 
-            // Check if IP is in corporate network range
-            if let Some(ip) = ip_address {
-                for network in &self.corporate_networks {
-                    if network.contains(*ip) {
-                        return ConnectionType::Corporate;
-                    }
+        match ip_address {
+            Some(ip) => {
+                if self.corporate_networks.iter().any(|n| n.contains(*ip)) {
+                    ConnectionType::Corporate
+                } else {
+                    ConnectionType::Direct
                 }
             }
-
-            return ConnectionType::Direct;
+            // No peer address: nothing is known about the connection.
+            None => ConnectionType::Unknown,
         }
-        // Fallback to unknown if no indicators found
-        ConnectionType::Unknown
     }
 
     /// Assess security level based on endpoint

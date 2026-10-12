@@ -184,6 +184,23 @@ pub struct JwtClaims {
     pub custom: HashMap<String, serde_json::Value>,
 }
 
+impl JwtClaims {
+    /// Name of the custom claim that says what a token may be used for.
+    pub const TOKEN_USE_CLAIM: &'static str = "token_use";
+    /// Value of [`TOKEN_USE_CLAIM`](Self::TOKEN_USE_CLAIM) on refresh tokens.
+    pub const TOKEN_USE_REFRESH: &'static str = "refresh";
+
+    /// `true` only for tokens minted by [`TokenManager::create_refresh_jwt_token`].
+    /// The `scope` string plays no part: a scope is permission data a user or client can
+    /// influence, this claim is not.
+    pub fn is_refresh_token(&self) -> bool {
+        self.custom
+            .get(Self::TOKEN_USE_CLAIM)
+            .and_then(|v| v.as_str())
+            == Some(Self::TOKEN_USE_REFRESH)
+    }
+}
+
 /// Token manager for creating, validating, and managing tokens.
 pub struct TokenManager {
     /// JWT encoding key
@@ -518,11 +535,42 @@ impl TokenManager {
         scopes: Vec<String>,
         lifetime: Option<Duration>,
     ) -> Result<String> {
-        let user_id = user_id.into();
+        self.encode_jwt(user_id.into(), scopes, lifetime, None)
+    }
+
+    /// Create a JWT that is a refresh token: it carries `token_use: "refresh"`, which
+    /// `/auth/refresh` requires and which an access token never has.
+    pub fn create_refresh_jwt_token(
+        &self,
+        user_id: impl Into<String>,
+        lifetime: Option<Duration>,
+    ) -> Result<String> {
+        self.encode_jwt(
+            user_id.into(),
+            vec!["refresh".to_string()],
+            lifetime,
+            Some(JwtClaims::TOKEN_USE_REFRESH),
+        )
+    }
+
+    fn encode_jwt(
+        &self,
+        user_id: String,
+        scopes: Vec<String>,
+        lifetime: Option<Duration>,
+        token_use: Option<&str>,
+    ) -> Result<String> {
         let lifetime = lifetime.unwrap_or(self.default_lifetime);
         let now = Utc::now();
         let exp = now + chrono::Duration::from_std(lifetime).unwrap_or(chrono::Duration::hours(1));
 
+        let mut custom = HashMap::new();
+        if let Some(token_use) = token_use {
+            custom.insert(
+                JwtClaims::TOKEN_USE_CLAIM.to_string(),
+                serde_json::Value::String(token_use.to_string()),
+            );
+        }
         let claims = JwtClaims {
             sub: user_id,
             iss: self.issuer.clone(),
@@ -535,7 +583,7 @@ impl TokenManager {
             permissions: None,
             roles: None,
             client_id: None,
-            custom: HashMap::new(),
+            custom,
         };
 
         let header = Header::new(self.algorithm);
