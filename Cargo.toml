@@ -252,7 +252,7 @@ fastrand = "2.0"
 axum-test = "18.0"
 tempfile = "3.21"
 # Real certificate chains for the mTLS validation tests (ring backend: ECDSA/Ed25519 keys)
-rcgen = "0.14"
+rcgen = { version = "0.14", features = ["aws_lc_rs"] }
 
 [features]
 default = [
