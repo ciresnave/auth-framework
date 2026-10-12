@@ -950,6 +950,18 @@ where
         self.inner.store_kv(key, &encrypted_value, ttl).await
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        let encrypted_value = self.encryption.encrypt_for_storage(value, key.as_bytes())?;
+        self.inner
+            .store_kv_if_absent(key, &encrypted_value, ttl)
+            .await
+    }
+
     /// Reads back a value stored by [`Self::store_kv`], decrypting it.
     ///
     /// A value that **parses as one of this module's envelopes**

@@ -50,6 +50,8 @@ export interface TokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
+  /** The next refresh token. Refresh tokens are single-use: store this one, the one just sent no longer works. */
+  refresh_token?: string;
 }
 
 // User Types

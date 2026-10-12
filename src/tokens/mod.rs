@@ -706,6 +706,46 @@ pub struct JwtClaims {
     pub custom: HashMap<String, serde_json::Value>,
 }
 
+impl JwtClaims {
+    /// Name of the custom claim that says what a token may be used for.
+    pub const TOKEN_USE_CLAIM: &'static str = "token_use";
+    /// Value of [`TOKEN_USE_CLAIM`](Self::TOKEN_USE_CLAIM) on refresh tokens.
+    pub const TOKEN_USE_REFRESH: &'static str = "refresh";
+    /// Name of the claim that ties the tokens of one refresh chain together.
+    pub const FAMILY_CLAIM: &'static str = "fam";
+
+    /// Was this token issued to an OAuth client on a user's behalf (delegated access)?
+    pub fn is_client_bound(&self) -> bool {
+        self.client_id.is_some()
+    }
+
+    /// The refresh chain this token belongs to (its own id when it started the chain).
+    pub fn refresh_family(&self) -> &str {
+        self.custom
+            .get(Self::FAMILY_CLAIM)
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.jti)
+    }
+
+    /// The declared use of this token (`token_use`), if it declares one. Access tokens minted
+    /// by this crate declare nothing (and older ones never did); refresh and ID tokens declare
+    /// theirs.
+    pub fn token_use(&self) -> Option<&str> {
+        self.custom
+            .get(Self::TOKEN_USE_CLAIM)
+            .and_then(|v| v.as_str())
+    }
+
+    /// `true` only for tokens minted by [`TokenManager::create_refresh_jwt_token`].
+    /// The `scope` string plays no part: a scope is client-influenced data, this claim is not.
+    pub fn is_refresh_token(&self) -> bool {
+        self.custom
+            .get(Self::TOKEN_USE_CLAIM)
+            .and_then(|v| v.as_str())
+            == Some(Self::TOKEN_USE_REFRESH)
+    }
+}
+
 /// Central token lifecycle manager: creation, validation, refresh, and
 /// revocation.
 ///
@@ -1549,7 +1589,92 @@ impl TokenManager {
         scopes: Vec<String>,
         lifetime: Option<Duration>,
     ) -> Result<String> {
-        let user_id = user_id.into();
+        self.encode_jwt(user_id.into(), scopes, lifetime, None, None, None)
+    }
+
+    /// Create a JWT that is NOT an access token (for example an OpenID Connect ID token). It
+    /// carries `token_use` = `token_use`, which every access-token check refuses.
+    pub fn create_typed_jwt_token(
+        &self,
+        user_id: impl Into<String>,
+        scopes: Vec<String>,
+        lifetime: Option<Duration>,
+        token_use: &str,
+    ) -> Result<String> {
+        self.encode_jwt(
+            user_id.into(),
+            scopes,
+            lifetime,
+            Some(token_use),
+            None,
+            None,
+        )
+    }
+
+    /// Create a JWT issued to an OAuth client on a user's behalf: it carries the `client_id`
+    /// claim, which makes it a delegated-access token (first-party session endpoints refuse it).
+    pub fn create_client_jwt_token(
+        &self,
+        user_id: impl Into<String>,
+        scopes: Vec<String>,
+        client_id: &str,
+        lifetime: Option<Duration>,
+    ) -> Result<String> {
+        self.encode_jwt(
+            user_id.into(),
+            scopes,
+            lifetime,
+            None,
+            None,
+            Some(client_id),
+        )
+    }
+
+    /// Create a JWT that is a refresh token: it carries `token_use: "refresh"`, which
+    /// `/auth/refresh` requires and which marks it as unusable as an access token.
+    pub fn create_refresh_jwt_token(
+        &self,
+        user_id: impl Into<String>,
+        lifetime: Option<Duration>,
+    ) -> Result<String> {
+        self.encode_jwt(
+            user_id.into(),
+            vec!["refresh".to_string()],
+            lifetime,
+            Some(JwtClaims::TOKEN_USE_REFRESH),
+            None,
+            None,
+        )
+    }
+
+    /// Like [`create_refresh_jwt_token`](Self::create_refresh_jwt_token) but continues an
+    /// existing refresh-token chain (`family`), so that reuse of any earlier token in the
+    /// chain can revoke the rest of it.
+    pub fn create_refresh_jwt_token_in_family(
+        &self,
+        user_id: impl Into<String>,
+        lifetime: Option<Duration>,
+        family: &str,
+    ) -> Result<String> {
+        self.encode_jwt(
+            user_id.into(),
+            vec!["refresh".to_string()],
+            lifetime,
+            Some(JwtClaims::TOKEN_USE_REFRESH),
+            Some(family),
+            None,
+        )
+    }
+
+    fn encode_jwt(
+        &self,
+        user_id: String,
+        scopes: Vec<String>,
+        lifetime: Option<Duration>,
+        token_use: Option<&str>,
+        family: Option<&str>,
+        client_id: Option<&str>,
+    ) -> Result<String> {
         let lifetime = lifetime.unwrap_or(self.default_lifetime);
         let now = Utc::now();
         let exp = now + chrono::Duration::from_std(lifetime).unwrap_or(chrono::Duration::hours(1));
@@ -1565,9 +1690,26 @@ impl TokenManager {
             scope: scopes.join(" "),
             permissions: None,
             roles: None,
-            client_id: None,
+            client_id: client_id.map(String::from),
             custom: HashMap::new(),
         };
+        let mut claims = claims;
+        if let Some(token_use) = token_use {
+            claims.custom.insert(
+                JwtClaims::TOKEN_USE_CLAIM.to_string(),
+                serde_json::Value::String(token_use.to_string()),
+            );
+            // A refresh token starts a chain (family = its own id) or continues one.
+            if token_use == JwtClaims::TOKEN_USE_REFRESH {
+                let family = family
+                    .map(String::from)
+                    .unwrap_or_else(|| claims.jti.clone());
+                claims.custom.insert(
+                    JwtClaims::FAMILY_CLAIM.to_string(),
+                    serde_json::Value::String(family),
+                );
+            }
+        }
 
         let header = Header::new(self.algorithm);
 
@@ -1629,6 +1771,30 @@ impl TokenManager {
         Ok(token)
     }
 
+    /// Like [`create_auth_token`](Self::create_auth_token) for a token issued to an OAuth
+    /// client on a user's behalf: the JWT carries the `client_id` claim and so does the
+    /// returned [`AuthToken`].
+    pub fn create_client_auth_token(
+        &self,
+        user_id: impl Into<String>,
+        scopes: impl Into<crate::types::Scopes>,
+        auth_method: impl Into<String>,
+        client_id: &str,
+        lifetime: Option<std::time::Duration>,
+    ) -> Result<AuthToken> {
+        let user_id_str = user_id.into();
+        let scopes: crate::types::Scopes = scopes.into();
+        let lifetime = lifetime.unwrap_or(self.default_lifetime);
+
+        let jwt_token =
+            self.create_client_jwt_token(&user_id_str, scopes.to_vec(), client_id, Some(lifetime))?;
+
+        let mut token =
+            AuthToken::new(user_id_str, jwt_token, lifetime, auth_method).with_scopes(scopes);
+        token.client_id = Some(client_id.to_string());
+        Ok(token)
+    }
+
     /// Validate an authentication token.
     pub fn validate_auth_token(&self, token: &AuthToken) -> Result<()> {
         // Check if token is expired
@@ -1665,13 +1831,23 @@ impl TokenManager {
             .into());
         }
 
-        // Create a new token with the same properties but new expiry
-        self.create_auth_token(
-            &token.user_id,
-            token.scopes.clone(),
-            &token.auth_method,
-            Some(self.default_lifetime),
-        )
+        // Create a new token with the same properties but new expiry. A token issued to an
+        // OAuth client stays client-bound: refreshing must not turn it into a session token.
+        match token.client_id.as_deref() {
+            Some(client) => self.create_client_auth_token(
+                &token.user_id,
+                token.scopes.clone(),
+                &token.auth_method,
+                client,
+                Some(self.default_lifetime),
+            ),
+            None => self.create_auth_token(
+                &token.user_id,
+                token.scopes.clone(),
+                &token.auth_method,
+                Some(self.default_lifetime),
+            ),
+        }
     }
 
     /// Extract token information from a JWT.

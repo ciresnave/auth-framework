@@ -45,6 +45,13 @@ pub struct ApiState {
     pub rate_limiter: Arc<DistributedRateLimiter>,
     #[cfg(feature = "enhanced-rbac")]
     pub authorization_service: Arc<crate::authorization_enhanced::AuthorizationService>,
+    /// Delivers email-verification tokens to the address being verified. When `None`,
+    /// verification tokens are generated but nobody can receive them, so email
+    /// verification cannot complete (see [`email_verification`]).
+    pub email_verification_sender: Option<Arc<dyn email_verification::EmailVerificationSender>>,
+    /// Peer addresses of reverse proxies whose `X-Forwarded-For` the rate limiter may
+    /// believe. Empty by default: the connection's peer address is the client.
+    pub trusted_proxies: Vec<std::net::IpAddr>,
 }
 
 impl ApiState {
@@ -66,7 +73,19 @@ impl ApiState {
             authorization_service: Arc::new(
                 crate::authorization_enhanced::AuthorizationService::new().await?,
             ),
+            email_verification_sender: None,
+            trusted_proxies: Vec::new(),
         })
+    }
+
+    /// Install the channel that delivers email-verification tokens to the address
+    /// being verified (typically an SMTP or transactional-email integration).
+    pub fn with_email_verification_sender(
+        mut self,
+        sender: Arc<dyn email_verification::EmailVerificationSender>,
+    ) -> Self {
+        self.email_verification_sender = Some(sender);
+        self
     }
 
     /// Build an [`ApiState`] with a pre-constructed authorization service.
@@ -85,6 +104,8 @@ impl ApiState {
             auth_framework,
             rate_limiter,
             authorization_service,
+            email_verification_sender: None,
+            trusted_proxies: Vec::new(),
         }
     }
 }
@@ -105,24 +126,8 @@ pub async fn validate_api_token(
     token: &str,
 ) -> Result<crate::tokens::AuthToken, AuthError> {
     // Validate the JWT signature and expiry
-    let token_obj = auth_framework.token_manager().validate_jwt_token(token)?;
-
-    // Check whether this token has been explicitly revoked (e.g. via logout)
-    let revocation_key = format!("revoked_token:{}", token_obj.jti);
-    match auth_framework.storage().get_kv(&revocation_key).await {
-        Ok(Some(_)) => {
-            return Err(AuthError::Unauthorized(
-                "Token has been revoked".to_string(),
-            ));
-        }
-        Ok(None) => {} // Not revoked — proceed
-        Err(e) => {
-            tracing::error!("Could not check token revocation list: {}", e);
-            return Err(AuthError::Unauthorized(
-                "Unable to verify token status".to_string(),
-            ));
-        }
-    }
+    // Signature and expiry, not a refresh token, not revoked (e.g. via logout)
+    let token_obj = auth_framework.validate_access_jwt(token).await?;
 
     // Convert the validated token claims to AuthToken.
     // Roles are not embedded in JWT claims (create_jwt_token sets roles: None),

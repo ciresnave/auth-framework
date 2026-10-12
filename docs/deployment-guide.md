@@ -112,6 +112,26 @@ export TLS_CERT_PATH="/etc/certs/server.pem"
 export TLS_KEY_PATH="/etc/certs/server-key.pem"
 ```
 
+### Behind a reverse proxy
+
+Rate limiting and the client address used by authorization policies are keyed on the
+connection's **peer address**, not on request headers. Two things follow:
+
+- Serve the router with connect info, or every request shares one bucket and no request has a
+  client address: `axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())`.
+  `ApiServer::start` already does this.
+- If a reverse proxy or load balancer sits in front of the server, list its address so its
+  `X-Forwarded-For` is believed: `ApiServer::with_trusted_proxies(vec![proxy_ip])` (and
+  `ContextBuilder::with_trusted_proxies` for authorization policies). The client is the rightmost
+  `X-Forwarded-For` entry that is not itself a trusted proxy, so every trusted proxy must
+  *append* to that header rather than pass the client's value through. `X-Real-IP` is not used.
+  Proxies are listed by exact address; there is no CIDR support yet. Without the list, every
+  client appears as the proxy and shares its bucket. The server's own router passes its list to the authorization middleware; a hand-built
+  `ContextBuilder` should be created with `ContextBuilder::from_api_state(&state)` (or given the
+  same list). Do not put
+  the proxy's own address in `corporate_networks` or an `IpWhitelist`: an unlisted proxy makes
+  every client look like the proxy, which such a rule would then treat as trusted.
+
 ### CORS
 
 CORS is disabled by default. When enabling it, always specify `cors.allowed_origins` explicitly:

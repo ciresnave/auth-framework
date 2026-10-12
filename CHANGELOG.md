@@ -9,6 +9,256 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc46 -- SQLite `store_kv` / `store_kv_if_absent`: a TTL with a sub-second part no longer expires early (the expiry was truncated to whole seconds).
+- 0.6.0-rc46 -- **Breaking (behaviour) summary of the token-hardening entries in this release**:
+  an OpenID Connect ID token is no longer accepted as an access token; `OidcProvider::get_userinfo`
+  requires a live local account (federated subjects without a local record are refused there);
+  a JWT client assertion must declare `token_use: "client_assertion"`;
+  `AuthFramework::refresh_token(&AuthToken)` renews only a token that is stored, valid, and equal
+  to its stored record (its scopes and client binding come from the stored token), and
+  `validate_token` additionally requires the value's `client_id` and `user_id` to match the JWT
+  and the stored token; `/oauth/introspect` answers `active: false` for a deactivated or deleted
+  local account and for ID tokens and other non-access JWTs (federated subjects without a local
+  record are still reported as before); existing stored MFA lockout counters (`mfa_failures:`)
+  are ignored after the upgrade (the new `mfa_attempt:{user}:{slot}` budget starts empty);
+  WebAuthn completions claim their session atomically (its own change, listed here for
+  visibility); deleting a user aborts if the deletion tombstone cannot be written.
+- 0.6.0-rc46 -- The JWT client assertion accepted by the token-introspection service
+  (`client_secret_jwt` / `private_key_jwt`) must declare `token_use: "client_assertion"`
+  (`TokenManager::create_typed_jwt_token`); before, any token signed by this server whose subject
+  equalled the client id (an access, session or refresh token) authenticated the client. No
+  in-repo code produced assertions, so this only affects integrators that built their own.
+  WebAuthn registration and authentication completions claim their session with an atomic
+  set-if-absent, so the same ceremony cannot complete twice concurrently.
+- 0.6.0-rc46 -- Deleting a user records `deleted_user:{id}`; JWT credentials passed to
+  `authenticate("jwt")` (which allow federated subjects without a local record) are refused for
+  an account that was deleted. Accounts deleted before the upgrade have no such record: their
+  tokens expire normally.
+- 0.6.0-rc46 -- `AuthFramework::validate_token` (and the modular type's) requires the
+  caller-supplied `AuthToken` value to agree with the signed JWT it carries (`user_id` must be
+  the JWT subject), and `AuthFramework::refresh_token(&AuthToken)` renews only a token that
+  `validate_token` accepts (live, stored, not revoked). Before, a forged value pairing a valid
+  JWT with another user's id was accepted and could be refreshed into a token for that user.
+- 0.6.0-rc46 -- MFA attempt budget: an account gets 5 MFA code attempts per 15 minutes in total
+  (across all its challenges), reserved BEFORE a code is checked with an atomic set-if-absent
+  (`mfa_attempt:{user}:{slot}`), so a burst of parallel guesses can no longer exceed it. The
+  counter `mfa_failures:{user}` is gone (a successful MFA login still clears the budget).
+- 0.6.0-rc46 -- `OidcProvider::get_userinfo` refuses a token whose account is deactivated,
+  deleted or unreadable (it used to answer for any validly signed subject).
+- 0.6.0-rc46 -- A TOTP time step is claimed with the atomic `store_kv_if_absent`, so of
+  simultaneous submissions of the same code exactly one is accepted (before, two parallel
+  requests could both pass the read-then-write check).
+- 0.6.0-rc46 -- An OpenID Connect ID token (`OidcProvider::create_id_token`) now carries
+  `token_use: "id_token"` and is no longer accepted as an access token: every access-token check
+  (`validate_access_jwt`, `validate_delegated_jwt`, `validate_api_token`, `get_userinfo`, ...)
+  refuses any JWT that declares a `token_use` other than being an access token. Before, an ID
+  token was signed with the same key, issuer and audience as access tokens and so authenticated
+  a request. New `TokenManager::create_typed_jwt_token` and `JwtClaims::token_use`. Access tokens
+  still declare nothing (including those issued before the upgrade). Not changed: the
+  SAML and passkey flows issue session tokens (not another token kind), so they are accepted as
+  before.
+- 0.6.0-rc46 -- `/oauth/introspect` reports a token as active only if it could be used: the
+  account must be live (deactivated or deleted accounts answer `active: false`), and a refresh
+  JWT must be unspent and in an intact chain (it is reported with `token_type: "refresh_token"`
+  instead of `"Bearer"`).
+- 0.6.0-rc46 -- **Breaking (behaviour):** a token issued to an OAuth client is no longer a user
+  session. The authorization-code and OAuth refresh grants now issue access tokens that carry
+  the `client_id` claim (`TokenManager::create_client_jwt_token` /
+  `create_client_auth_token`; `AuthToken::client_id` is set). `validate_api_token` (every
+  built-in session endpoint: `/users/*`, `/admin/*`, `/mfa/*`, `/auth/*`, `/webauthn/*`,
+  email verification, `/oauth/authorize`, dynamic client registration) and
+  `AuthFramework::validate_access_jwt` (so the axum `AuthenticatedUser` extractor and
+  `auth_middleware`, the actix, warp and unified paths, and `authenticate("jwt")`) refuse such
+  a token. Before, a client registered for a single scope held a token that the API treated as
+  the user's full session (roles come from the user record, not from the scope). `/oauth/userinfo`
+  and `/users/me` accept client-bound tokens. **Migration:** integrators who protect routes
+  meant for delegated (third-party) access should use the new opt-in: axum `DelegatedUser`
+  (instead of `AuthenticatedUser`; `user.0.token.client_id` tells the route which client) or
+  `AuthFramework::validate_delegated_jwt`; scope is advisory unless the route checks it.
+  Access tokens issued before the upgrade carry no `client_id` and keep working until they
+  expire (at most the token lifetime, 1 hour by default). Delegated routes must not
+  also sit behind `auth_middleware` (it refuses client-bound tokens). The standalone
+  `OAuth2Server` module now puts the client in the signed JWT of user-bound tokens, and
+  `TokenManager::refresh_token` keeps a client-bound token client-bound. SDK users: a token
+  from `/oauth/token` is a delegated token; it works at `/oauth/userinfo` and `/users/me`,
+  not at the session endpoints. Not done: mapping scopes to permissions (a future design
+  question).
+- 0.6.0-rc46 -- OAuth endpoints: the authorization-code and OAuth refresh-token grants claim
+  their one-time marker with the atomic `store_kv_if_absent`, only for a code or token that
+  exists (so simultaneous redemptions succeed once and made-up codes store nothing);
+  `/oauth/revoke` rejects tokens over 8 KiB; `end_session` also records the `revoked_token:{jti}`
+  marker the bearer paths read; `/auth/logout` with a refresh token also revokes that token's
+  whole refresh chain. Known limits, unchanged: OAuth access tokens are ordinary user JWTs, so
+  a client's registered scope limits what the token's scope string says, not which endpoints
+  accept the token (roles come from the user record); `/oauth/introspect` reports a refresh
+  JWT as active; tokens minted by the OIDC id-token, SAML and passkey flows are not
+  distinguished from access tokens by a `token_use` claim; wrong-code accounting for MFA is a
+  read-modify-write, so a burst of parallel guesses can exceed the 5-failure lockout (each
+  challenge is still capped at 5 and a user keeps at most 3). The JavaScript SDK's
+  `TokenResponse` gains `refresh_token` (refresh tokens are single-use: store the new one).
+- 0.6.0-rc46 -- Review follow-ups: rate-limit buckets for IPv6 clients are per /64; a WebAuthn
+  origin must be exactly scheme://host[:port] (no credentials, path, query or fragment);
+  `WEBAUTHN_USER_VERIFICATION` accepts the three values in any case and an unrecognised value
+  now means `required` (with an error log) instead of silently `preferred`; the WebAuthn
+  handlers read `WebAuthnConfig::from_env()` per request, so origins and the
+  user-verification requirement are configured through the environment (the `origins()` /
+  `user_verification()` builders only affect code that calls the helpers itself);
+  `WebAuthnConfig` gains the public fields `rp_origins` and `user_verification`; the
+  conditional-permission context no longer sets `connection_type=vpn` from a client-supplied
+  `Via` header; a genuine corporate client behind a proxy that adds `Via: ... proxy` is
+  assessed `Proxy` rather than `Corporate`;
+  `TokenExchangeManagerFactory::create_basic_manager_with_revocation` installs the revocation
+  list (the plain factory does not, and `AdvancedTokenExchangeManager` has no built-in
+  revocation or token-type check).
+- 0.6.0-rc46 -- Sessions: `rotate_on_privilege_escalation` (the `SessionConfig` field and
+  the builder method) is deprecated and documented as having no effect. It was `true` in every
+  preset but nothing ever read it, so sessions were never rotated on privilege escalation; the
+  crate has no escalation event to hook. Use `rotate_periodically` for rotation.
+- 0.6.0-rc46 -- Sessions: `SessionManager::revoke_all_user_sessions` now revokes every session
+  that is not already expired or revoked (it used to revoke only `Active` ones, leaving
+  sessions awaiting MFA, re-authentication or rotation, suspended and high-risk sessions
+  usable after a "log out everywhere").
+- 0.6.0-rc46 -- Authorization context connection type: the assessed connection type no
+  longer depends on whether the client sent a `Via` header. Network membership
+  (`corporate_networks`) and "direct" are decided from the peer address, the Tor user-agent
+  check always runs, and a `Via` header can only raise the assessed risk (VPN/proxy). Before,
+  a request without `Via` was always `Unknown` (+10 risk) and one with an arbitrary `Via`
+  could be assessed `Direct` or `Corporate` (-10). `ContextBuilder::from_api_state` shares the
+  server's trusted-proxy list. Known, unchanged: `login_risk_level` in the API login response
+  counts raw `X-Forwarded-For` hops (advisory output only; a client can only raise its own
+  score).
+- 0.6.0-rc46 -- WebAuthn: the ceremony origin must now equal a configured origin in scheme,
+  host AND port (it used to compare only the host). Configure origins with
+  `WebAuthnConfig::origins` / `WEBAUTHN_ORIGINS` (comma separated); the default is
+  `https://{rp_id}` (plus `http://localhost` for the `localhost` rp id), so a deployment served
+  on a non-default port or from other hostnames must set them. Assertions are checked per
+  WebAuthn section 7.2: `rpIdHash` must be SHA-256 of the rp id and the user-presence flag must
+  be set, and the user-verification flag when `WEBAUTHN_USER_VERIFICATION=required`.
+  The user-verification requirement now comes from server configuration (default `preferred`),
+  not from the request body. Registration does not parse the attestation object, so its
+  authenticator data flags are not checked (only attestation `none` is accepted).
+- 0.6.0-rc46 -- `AuthStorage::store_kv_if_absent` (new, with a non-atomic default) is an atomic
+  compare-and-set in the memory, SQLite, PostgreSQL, Redis and encrypted-wrapper backends
+  (`UnifiedStorage` and `auth-storage-sqlite` too; the test-only `MockStorage` keeps the default). Refresh-token redemption uses it, so of any number of
+  simultaneous redemptions of one refresh token exactly one succeeds; custom `AuthStorage`
+  implementations should override it.
+- 0.6.0-rc46 -- The axum integration's login route (`AuthRouter`, `POST /auth/login`) now
+  authenticates the posted username and password against the user store (the `password`
+  method, as the API server's login does) and answers 401 for unknown users, wrong passwords
+  and accounts that require a second factor (this route cannot complete one). It used to issue
+  a token for whatever username was posted when an authentication method named `jwt` was
+  registered, and failed with a 400 otherwise. It does not apply the API server's per-account
+  lockout.
+- 0.6.0-rc46 -- Token exchange refuses refresh tokens presented as subject/actor tokens under
+  either `typ` spelling the crate mints (`refresh` and `refresh_token`; one shared helper,
+  `security::secure_jwt::is_refresh_typ`, and constants used by the FAPI and CIBA minters).
+  Access tokens issued from a refresh chain stay valid until they expire even after the
+  chain is revoked (reuse detection ends the chain, not access tokens already issued).
+- 0.6.0-rc46 -- Authorization context client address: the address that `authorization_enhanced`
+  policies see (`AuthorizationContext::ip_address` and the `ip_address` entry of the request
+  context) is now the connection's peer address, or, when the peer is listed in
+  `ContextBuilder::with_trusted_proxies` / `ApiState::trusted_proxies`, the client that proxy
+  forwarded for (rightmost `X-Forwarded-For` entry that is not itself a trusted proxy). A raw
+  `X-Forwarded-For` / `X-Real-IP` is never copied into the context any more, and a request
+  with no peer address has no client address. Serve the router with
+  `into_make_service_with_connect_info::<SocketAddr>()`. Behind a reverse proxy, list the proxy
+  with `ApiServer::with_trusted_proxies` (the authorization middleware then uses the same list;
+  build a stand-alone `ContextBuilder` with `ContextBuilder::from_api_state`), and do not put
+  the proxy's own address in `corporate_networks` or an `IpWhitelist`: an
+  unlisted proxy makes every client look like the proxy. `ip_address` is now always a single
+  canonical IP (it used to be the raw header, e.g. `a, b, c`) and is absent without a peer
+  address; a `ConnectInfo<IpAddr>` inserted by the integrator is no longer read.
+- 0.6.0-rc46 -- Refresh tokens are single-use and tokens of deactivated accounts stop
+  working. `POST /auth/refresh` (and the axum integration's refresh route) returns the next
+  refresh token with the new access token; the redeemed token is spent, and presenting an
+  already-redeemed token is refused and revokes the rest of its chain (`refresh_token` is a
+  new field of `RefreshResponse`; clients must store the new token). The axum integration's
+  refresh route now accepts only a refresh token (it used to mint a new access token from an
+  access token) and its login route issues one. `AuthFramework::redeem_refresh_jwt` is the
+  shared implementation. `validate_access_jwt` also refuses tokens of a deactivated account
+  (so the axum, actix, warp and unified paths do, not only `validate_api_token`);
+  `AuthFramework::validate_token` (and the modular type's) refuses tokens on the revocation
+  list and stored-revoked tokens; OIDC `get_userinfo` reads the revocation list;
+  `TokenExchangeManager::with_revocation_store` makes token exchange refuse revoked tokens, and
+  subject/actor tokens that are refresh tokens unless declared as such (opt-in: the bundled
+  factories do not install a store, so install one when you build the manager yourself). A
+  token whose subject has no account record (deleted account, or a subject never registered
+  here) is now refused by `validate_access_jwt` and `redeem_refresh_jwt`, as
+  `validate_api_token` already did; JWT credentials passed to `authenticate` (federated
+  OIDC/OAuth2 subjects) may still have no local record, but a deactivated local record is
+  refused there too. `POST /auth/refresh` answers `INVALID_TOKEN` for a
+  deactivated account (it used to answer `ACCOUNT_DEACTIVATED`). Known limits: access tokens already issued stay valid until they expire even after their
+  chain is revoked. Logout keeps a refresh token's revocation for the token's remaining life
+  (it was 7 days).
+- 0.6.0-rc46 -- Bearer JWT validation: `AuthFramework::validate_access_jwt` is now the one
+  check for a JWT presented as an access token (signature and claims, not a refresh token,
+  not revoked; a revocation list that cannot be read rejects the token). It backs
+  `validate_api_token`, the axum `auth_middleware` / `AuthenticatedUser` / refresh handler,
+  the actix middleware and permission checks, the warp filter, the unified validator,
+  OAuth `userinfo`, and JWT credentials passed to `authenticate`. Tokens revoked by logout or
+  revocation, and refresh JWTs, are therefore refused on those paths (previously only
+  `validate_api_token` refused revoked tokens). `AuthFramework::revoke_token` now also writes
+  the revocation marker. Introspection answers `active: false` when the revocation list
+  cannot be read. Rejections are `AuthError::Token(Invalid)` (HTTP 401 in the axum
+  integration) instead of `AuthError::Unauthorized`. Cost: one or two extra storage reads
+  per authenticated request (the revocation list, and the account record on the integration
+  paths); custom `AuthStorage` implementations must return `Ok(None)` for a missing key.
+  `AuthFramework::validate_token` and the modular type's now also read the revocation list
+  (see the later entries); they still validate the caller's `AuthToken` value rather than the
+  JWT's own claims, and `AuthFramework::refresh_token(&AuthToken)` still builds its result
+  from the caller's value.
+- 0.6.0-rc46 -- MFA: an MFA challenge now allows a limited number of attempts
+  (`max_attempts`, 5 for login challenges); each attempt is counted before the code is
+  checked and an exhausted challenge is removed. Wrong codes submitted at `/auth/login` are
+  counted against the account the challenge belongs to (whatever username is sent) and, after
+  5 failures within 15 minutes, further codes are refused and no new challenge is issued
+  (`ACCOUNT_LOCKED`) until the window passes; a successful MFA login clears the count. A TOTP
+  code is accepted once: a code for a time step that is not newer than the last accepted one
+  is refused. `complete_mfa` now signs in the user of the STORED challenge rather than the
+  `user_id` of the challenge value the caller passes. A user keeps at most 3 pending
+  challenges (a new one retires the oldest). `/auth/login` answers `ACCOUNT_LOCKED` instead
+  of issuing an MFA challenge while the lockout is active. The one-use rule also applies to
+  `TotpManager::verify_code` callers: a code already accepted for a time step is refused the
+  second time. `AuthFramework` (not the modular type) gains `mfa_challenge_owner`. Library
+  entry points that verify a single factor outside a challenge (`verify_sms_code`,
+  `verify_totp_code`, the step-up helpers) keep their own, uncapped, behaviour: apply your
+  own limits if you expose them.
+- 0.6.0-rc46 -- Rate limiting: the request rate limiter now identifies a client by the
+  connection's peer address; `X-Forwarded-For` / `X-Real-IP` are believed only when the
+  peer is listed in the new `ApiServer::with_trusted_proxies` (default: none), using the
+  rightmost entry that is not itself a trusted proxy. `ApiServer::start` serves with
+  connect-info. **Action required if you serve `build_router()` yourself:** use
+  `into_make_service_with_connect_info::<SocketAddr>()`; without a peer address all
+  requests share one bucket. **If a reverse proxy sits in front of this server:** list its
+  address with `with_trusted_proxies`, otherwise every client appears as the proxy.
+  `ApiState` gains a `trusted_proxies` field. Every trusted proxy must APPEND to
+  `X-Forwarded-For` (not pass the client's value through); `X-Real-IP` is not consulted;
+  proxies are listed by exact address (no CIDR).
+- 0.6.0-rc46 -- OAuth2 scopes and refresh tokens: a client can be granted only the scopes
+  it is registered for. `/oauth/authorize` refuses a request for any other scope with
+  `invalid_scope`; with no scope requested the client receives its registered scopes (a
+  client registered without scope information keeps the previous defaults: `openid profile
+  email`). The token endpoint clamps the scope of a code to the client's registration and
+  refuses codes for unregistered clients (`invalid_client`). Refresh tokens now carry a
+  `token_use: "refresh"` claim: `/auth/refresh` accepts only such tokens (the scope string
+  is no longer consulted), and a refresh token is not accepted as an access token by
+  `validate_api_token`. **Breaking:** refresh tokens issued before this change are not
+  accepted; users sign in again. Clients that relied on receiving scopes beyond their
+  registration must have those scopes registered; a registration that names an empty scope
+  grants nothing. The refresh grant enforces the current registration too. The axum, actix
+  and warp integration extractors are covered separately.
+- 0.6.0-rc46 -- Email verification: the verification token is delivered only through the
+  new `EmailVerificationSender` trait (install one with
+  `ApiState::with_email_verification_sender`) and is no longer part of any HTTP response.
+  `POST /auth/resend-verification` now returns one identical response for every address
+  (unknown, pending, already verified, delivery failed). **Breaking:** the
+  `verification_token` field is removed from `VerificationSentResponse`; `ApiState` gains
+  an `email_verification_sender` field (use `ApiState::new` + the builder). Without a
+  sender installed, no message can be delivered and email verification cannot complete
+  (`ApiServer::with_email_verification_sender` installs one for the built-in router).
+  A token is now bound to the address it was mailed to and verifies only that address;
+  changing the address on the profile clears `email_verified`. Tokens issued before this
+  change are not accepted (request a new one).
 - Fixed GHSA-cw9x-gg6m-9cqr (critical): the WebAuthn/passkey registration and
   sign-in endpoints did not require authentication. An unauthenticated caller
   could register a credential of their own for any username and then sign in
@@ -38,6 +288,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - tokens whose `sub` has no user record are rejected by every bearer-protected
     endpoint.
 
+- 0.6.0-rc46 -- OAuth2 authorization_code grant (#140): the token endpoint never verified
+  the client secret. A confidential client (its registered record holds a non-empty
+  `client_secret`) can now redeem a code only by presenting that secret; missing, empty
+  or wrong is `invalid_client`. The client must be registered (an unregistered
+  `client_id` is `invalid_client`). Whether a client is public is now decided by its
+  registration, not by whether the request carries a secret, so a public client can no
+  longer skip PKCE by sending an arbitrary secret. A code issued to a different client
+  is `invalid_grant`, and neither that refusal nor a failed client authentication
+  consumes the code (previously the code was deleted before the `client_id` comparison,
+  so presenting someone else's code destroyed it). Before this fix, anyone holding a
+  valid authorization code and its client_id could redeem it without the secret
+  (PKCE still applied where the code carried a challenge). **Behaviour change:**
+  integrators that redeemed codes for unregistered client ids must register them.
 - 0.6.0-rc40 -- OAuth2 refresh grant (#118): a refresh token that carries a `client_id` is now
   redeemable ONLY by that client (RFC 6749 section 6). A confidential client (its
   registered record holds a `client_secret`) must authenticate with `client_id` +

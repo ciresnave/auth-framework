@@ -331,6 +331,10 @@ pub struct TokenExchangeManager {
 
     /// Active exchanges for tracking
     active_exchanges: tokio::sync::RwLock<HashMap<String, TokenExchangeContext>>,
+
+    /// Where revoked token ids are looked up (`revoked_token:{jti}`). Without one,
+    /// revocation is not consulted.
+    revocation_store: Option<std::sync::Arc<dyn crate::storage::AuthStorage>>,
 }
 
 impl TokenExchangeManager {
@@ -356,7 +360,19 @@ impl TokenExchangeManager {
             jwt_validator,
             policies: tokio::sync::RwLock::new(HashMap::new()),
             active_exchanges: tokio::sync::RwLock::new(HashMap::new()),
+            revocation_store: None,
         }
+    }
+
+    /// Consult the framework's revocation list (written by logout and revocation) so that
+    /// revoked tokens cannot be presented as subject or actor tokens. An unreadable list
+    /// rejects the token.
+    pub fn with_revocation_store(
+        mut self,
+        store: std::sync::Arc<dyn crate::storage::AuthStorage>,
+    ) -> Self {
+        self.revocation_store = Some(store);
+        self
     }
 
     /// Register a token exchange policy for a client
@@ -452,8 +468,13 @@ impl TokenExchangeManager {
             | TokenType::IdToken
             | TokenType::Jwt => {
                 // For JWT tokens, validate using JWT validator
-                // In a real implementation, you'd need appropriate decoding keys
-                self.validate_jwt_token(&request.subject_token).await
+                // In a real implementation, you'd need appropriate decoding keys.
+                // Only a subject token declared as a refresh token may be one.
+                self.validate_jwt_token(
+                    &request.subject_token,
+                    token_type == TokenType::RefreshToken,
+                )
+                .await
             }
             TokenType::Saml2 | TokenType::Saml1 => {
                 // For SAML tokens, perform basic validation
@@ -483,16 +504,49 @@ impl TokenExchangeManager {
             ));
         }
 
-        self.validate_jwt_token(actor_token).await
+        self.validate_jwt_token(actor_token, false).await
     }
 
     /// Validate JWT token using SECURE cryptographic verification
-    async fn validate_jwt_token(&self, token: &str) -> Result<SecureJwtClaims> {
-        // Delegate entirely to SecureJwtValidator::validate which handles
-        // algorithm allow-list enforcement, key selection, and full claims validation.
-        self.jwt_validator.validate(token).map_err(|e| {
+    async fn validate_jwt_token(
+        &self,
+        token: &str,
+        allow_refresh: bool,
+    ) -> Result<SecureJwtClaims> {
+        // Delegate to SecureJwtValidator::validate which handles algorithm allow-list
+        // enforcement, key selection, and full claims validation.
+        let claims = self.jwt_validator.validate(token).map_err(|e| {
             AuthError::auth_method("token_exchange", format!("JWT validation failed: {}", e))
-        })
+        })?;
+
+        // A refresh token is only acceptable where a refresh token was declared.
+        if !allow_refresh && crate::security::secure_jwt::is_refresh_typ(&claims.typ) {
+            return Err(AuthError::auth_method(
+                "token_exchange",
+                "A refresh token cannot be used here",
+            ));
+        }
+
+        // Revoked tokens (logout / revocation) are refused; an unreadable list fails closed.
+        if let Some(store) = &self.revocation_store {
+            match store.get_kv(&format!("revoked_token:{}", claims.jti)).await {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return Err(AuthError::auth_method(
+                        "token_exchange",
+                        "The token has been revoked",
+                    ));
+                }
+                Err(e) => {
+                    tracing::error!("Could not check token revocation list: {}", e);
+                    return Err(AuthError::auth_method(
+                        "token_exchange",
+                        "Unable to verify token status",
+                    ));
+                }
+            }
+        }
+        Ok(claims)
     }
 
     fn extract_saml_xml(&self, token: &str) -> Result<String> {
@@ -1142,6 +1196,7 @@ impl TokenExchangeService for TokenExchangeManager {
 mod tests {
     use super::*;
     use crate::security::secure_jwt::SecureJwtConfig;
+    use crate::storage::AuthStorage as _;
 
     fn create_test_manager() -> TokenExchangeManager {
         let jwt_config = SecureJwtConfig::default();
@@ -1161,6 +1216,120 @@ mod tests {
             scope: Some("read write".to_string()),
             resource: None,
         }
+    }
+
+    /// A manager sharing a revocation list, plus a signer for tokens it will accept.
+    fn manager_with_store() -> (
+        TokenExchangeManager,
+        std::sync::Arc<crate::storage::MemoryStorage>,
+        impl Fn(&str, &str) -> String,
+    ) {
+        let config = SecureJwtConfig::default();
+        let secret = config.jwt_secret.to_string();
+        let validator = SecureJwtValidator::new(config).expect("test JWT config");
+        let store = std::sync::Arc::new(crate::storage::MemoryStorage::new());
+        let manager = TokenExchangeManager::new(validator).with_revocation_store(store.clone());
+        let sign = move |jti: &str, typ: &str| {
+            let now = chrono::Utc::now().timestamp();
+            let claims = SecureJwtClaims {
+                sub: "user123".to_string(),
+                iss: "auth-framework".to_string(),
+                aud: "api.example.com".to_string(),
+                exp: now + 600,
+                nbf: now - 5,
+                iat: now,
+                jti: jti.to_string(),
+                scope: "read".to_string(),
+                typ: typ.to_string(),
+                sid: None,
+                client_id: None,
+                auth_ctx_hash: None,
+            };
+            encode(
+                &Header::new(Algorithm::HS256),
+                &claims,
+                &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+            )
+            .unwrap()
+        };
+        (manager, store, sign)
+    }
+
+    #[tokio::test]
+    async fn a_revoked_token_cannot_be_exchanged() {
+        let (manager, store, sign) = manager_with_store();
+        let live = sign("jti-live", "access");
+        assert!(manager.validate_jwt_token(&live, false).await.is_ok());
+
+        let dead = sign("jti-dead", "access");
+        store
+            .store_kv("revoked_token:jti-dead", b"revoked", None)
+            .await
+            .unwrap();
+        assert!(manager.validate_jwt_token(&dead, false).await.is_err());
+        assert!(manager.validate_jwt_token(&dead, true).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_refresh_token_is_only_accepted_where_one_was_declared() {
+        let (manager, _store, sign) = manager_with_store();
+        let refresh = sign("jti-r", "refresh");
+        assert!(manager.validate_jwt_token(&refresh, false).await.is_err());
+        assert!(manager.validate_jwt_token(&refresh, true).await.is_ok());
+    }
+
+    /// Both spellings the crate mints ("refresh" for exchange/CIBA, "refresh_token" for FAPI)
+    /// are refresh tokens. The validator is configured to ADMIT the second spelling so the
+    /// rule itself, not an allow-list rejection, is what is being tested.
+    #[tokio::test]
+    async fn every_refresh_spelling_is_a_refresh_token() {
+        let mut config = SecureJwtConfig::default();
+        config
+            .allowed_token_types
+            .insert("refresh_token".to_string());
+        let secret = config.jwt_secret.to_string();
+        let manager = TokenExchangeManager::new(SecureJwtValidator::new(config).unwrap());
+        let sign = |typ: &str| {
+            let now = chrono::Utc::now().timestamp();
+            let claims = SecureJwtClaims {
+                sub: "user123".to_string(),
+                iss: "auth-framework".to_string(),
+                aud: "api.example.com".to_string(),
+                exp: now + 600,
+                nbf: now - 5,
+                iat: now,
+                jti: format!("jti-{typ}"),
+                scope: "read".to_string(),
+                typ: typ.to_string(),
+                sid: None,
+                client_id: None,
+                auth_ctx_hash: None,
+            };
+            encode(
+                &Header::new(Algorithm::HS256),
+                &claims,
+                &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+            )
+            .unwrap()
+        };
+        for typ in ["refresh", "refresh_token"] {
+            let token = sign(typ);
+            assert!(
+                manager.validate_jwt_token(&token, false).await.is_err(),
+                "{typ} must be refused where a refresh token was not declared"
+            );
+            assert!(
+                manager.validate_jwt_token(&token, true).await.is_ok(),
+                "{typ} is acceptable where a refresh token was declared"
+            );
+        }
+        // an access token is unaffected
+        assert!(
+            manager
+                .validate_jwt_token(&sign("access"), false)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

@@ -246,7 +246,7 @@ pub async fn authorize(
     // SECURITY: Validate client_id and verify the redirect_uri is pre-registered.
     // Redirecting to an unregistered URI would let an attacker steal the authorization code.
     let client_key = format!("oauth2_client:{}", params.client_id);
-    match state.auth_framework.storage().get_kv(&client_key).await {
+    let granted_scope = match state.auth_framework.storage().get_kv(&client_key).await {
         Ok(Some(data)) => {
             let client_data: serde_json::Value = serde_json::from_slice(&data).unwrap_or_default();
             let registered_uris: Vec<String> = client_data["redirect_uris"]
@@ -284,6 +284,17 @@ pub async fn authorize(
                     .maybe_state(params.state);
                 return (StatusCode::BAD_REQUEST, Json(error)).into_response();
             }
+
+            // A client can be granted only the scopes it is registered for.
+            match effective_scope(&client_data, params.scope.as_deref()) {
+                Ok(scope) => scope,
+                Err(description) => {
+                    let error = OAuthError::new("invalid_scope")
+                        .description(description)
+                        .maybe_state(params.state);
+                    return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+                }
+            }
         }
         Ok(None) => {
             tracing::warn!(client_id = %params.client_id, "OAuth authorize: unknown client_id");
@@ -303,7 +314,7 @@ pub async fn authorize(
                 .maybe_state(params.state);
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
         }
-    }
+    };
 
     let auth_code = format!("ac_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
 
@@ -321,7 +332,7 @@ pub async fn authorize(
     let code_data = serde_json::json!({
         "client_id": params.client_id,
         "redirect_uri": params.redirect_uri,
-        "scope": params.scope.clone().unwrap_or_else(|| "openid profile email".to_string()),
+        "scope": granted_scope,
         "state": params.state.clone(),
         "code_challenge": params.code_challenge,
         "code_challenge_method": params.code_challenge_method,
@@ -433,27 +444,15 @@ async fn handle_authorization_code_grant(
         None => return ApiResponse::validation_error_typed("client_id is required"),
     };
 
-    // Defense-in-depth: Use a consumed marker to mitigate the non-atomic get+delete
-    // race condition (TOCTOU). If a concurrent request already marked the code as
-    // consumed, reject this request immediately.
-    let consumed_key = format!("oauth2_code_consumed:{}", code);
-    if let Ok(Some(_)) = state.auth_framework.storage().get_kv(&consumed_key).await {
-        return ApiResponse::error_typed("invalid_grant", "Authorization code already used");
-    }
-    // Mark code as consumed BEFORE reading it, narrowing the race window.
-    if let Err(e) = state
-        .auth_framework
-        .storage()
-        .store_kv(
-            &consumed_key,
-            b"1",
-            Some(std::time::Duration::from_secs(600)),
-        )
-        .await
-    {
-        tracing::warn!("Failed to store code consumed marker: {:?}", e);
-    }
+    // Authenticate the client BEFORE the code is looked at, so a failed
+    // authentication neither reveals anything about the code nor consumes it.
+    let client_kind =
+        match authenticate_token_client(&state, &client_id, req.client_secret.as_deref()).await {
+            Ok(kind) => kind,
+            Err(refusal) => return *refusal,
+        };
 
+    let consumed_key = format!("oauth2_code_consumed:{}", code);
     let storage_key = format!("oauth2_code:{}", code);
     let code_data = match state.auth_framework.storage().get_kv(&storage_key).await {
         Ok(Some(data)) => match serde_json::from_slice::<serde_json::Value>(&data) {
@@ -478,15 +477,50 @@ async fn handle_authorization_code_grant(
         }
     };
 
+    // Claim the code: of any number of simultaneous redemptions exactly one proceeds (atomic
+    // set-if-absent). The marker is only written for a code that exists, so presenting
+    // made-up codes stores nothing.
+    match state
+        .auth_framework
+        .storage()
+        .store_kv_if_absent(
+            &consumed_key,
+            b"1",
+            Some(std::time::Duration::from_secs(600)),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return ApiResponse::error_typed("invalid_grant", "Authorization code already used");
+        }
+        Err(e) => {
+            tracing::error!("Failed to claim authorization code: {:?}", e);
+            return ApiResponse::error_typed(
+                "server_error",
+                "Failed to process authorization code",
+            );
+        }
+    }
+
+    // A code issued to a different client is refused and left intact (with its
+    // consumed marker released), so presenting someone else's code cannot burn it.
+    if code_data["client_id"].as_str() != Some(&client_id) {
+        if let Err(e) = state
+            .auth_framework
+            .storage()
+            .delete_kv(&consumed_key)
+            .await
+        {
+            tracing::warn!("Failed to release code consumed marker: {:?}", e);
+        }
+        return ApiResponse::error_typed("invalid_grant", "client_id mismatch");
+    }
+
     // Immediately delete the code to prevent reuse (single-use enforcement).
     if let Err(e) = state.auth_framework.storage().delete_kv(&storage_key).await {
         tracing::error!("Failed to delete authorization code from storage: {:?}", e);
         return ApiResponse::error_typed("server_error", "Failed to process authorization code");
-    }
-
-    // Validate client_id matches
-    if code_data["client_id"].as_str() != Some(&client_id) {
-        return ApiResponse::error_typed("invalid_grant", "client_id mismatch");
     }
 
     // Validate redirect_uri if provided
@@ -539,10 +573,10 @@ async fn handle_authorization_code_grant(
             "invalid_request",
             "code_verifier provided but no PKCE challenge was used in authorization",
         );
-    } else if req.client_secret.is_none() {
-        // S8: Public clients (no client_secret) MUST use PKCE.
-        // If no code_challenge was stored and no client_secret is provided,
-        // the request is from an unauthenticated public client without PKCE.
+    } else if client_kind == ClientKind::Public {
+        // S8: Public clients (registered without a secret) MUST use PKCE.
+        // Whether a client is public comes from its registration, not from whether
+        // the request happens to carry a secret.
         return ApiResponse::error_typed(
             "invalid_request",
             "Public clients must use PKCE: provide code_challenge in authorization and code_verifier in token request",
@@ -577,10 +611,29 @@ async fn handle_authorization_code_grant(
     }
 
     // Create access and refresh tokens
-    let scope = code_data["scope"]
+    //
+    // The granted scope never exceeds what the client is registered for, whatever the
+    // code carries (e.g. a code issued before scopes were enforced).
+    let client_record = match load_client_record(&state, &client_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return ApiResponse::error_typed("invalid_client", "Unknown client"),
+        Err(refused) => return *refused,
+    };
+    let allowed = allowed_scopes(&client_record);
+    let scopes: Vec<String> = code_data["scope"]
         .as_str()
-        .unwrap_or("openid profile email");
-    let scopes: Vec<String> = scope.split_whitespace().map(|s| s.to_string()).collect();
+        .unwrap_or("openid profile email")
+        .split_whitespace()
+        .filter(|s| allowed.iter().any(|a| a == s))
+        .map(|s| s.to_string())
+        .collect();
+    if scopes.is_empty() {
+        return ApiResponse::error_typed(
+            "invalid_scope",
+            "No granted scope is allowed for this client",
+        );
+    }
+    let scope = scopes.join(" ");
 
     // Use the user_id that was recorded in the authorization code when the resource owner
     // authenticated via the /oauth/authorize endpoint.  This ensures tokens are bound to the
@@ -593,12 +646,11 @@ async fn handle_authorization_code_grant(
         }
     };
 
-    let token = match state.auth_framework.token_manager().create_auth_token(
-        &user_id,
-        scopes.clone(),
-        "oauth2",
-        None,
-    ) {
+    let token = match state
+        .auth_framework
+        .token_manager()
+        .create_client_auth_token(&user_id, scopes.clone(), "oauth2", &client_id, None)
+    {
         Ok(token) => token,
         Err(e) => {
             tracing::error!("Failed to create access token: {:?}", e);
@@ -667,9 +719,108 @@ async fn load_client_record(
     }
 }
 
+/// Scopes granted to clients that were registered without any scope information.
+const DEFAULT_CLIENT_SCOPES: [&str; 3] = ["openid", "profile", "email"];
+
+/// The scopes a client may be granted: those it was registered for (the `scope` string
+/// and/or the `scopes` list). A record that names neither key predates scope registration
+/// and gets the OpenID defaults; a record that names a key but yields no scope (empty, or
+/// of an unexpected type) is granted nothing.
+fn allowed_scopes(record: &serde_json::Value) -> Vec<String> {
+    if record.get("scope").is_none_or(|v| v.is_null())
+        && record.get("scopes").is_none_or(|v| v.is_null())
+    {
+        return DEFAULT_CLIENT_SCOPES
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    }
+    let mut allowed: Vec<String> = Vec::new();
+    if let Some(s) = record["scope"].as_str() {
+        allowed.extend(s.split_whitespace().map(String::from));
+    }
+    if let Some(list) = record["scopes"].as_array() {
+        for item in list.iter().filter_map(|v| v.as_str()) {
+            allowed.extend(item.split_whitespace().map(String::from));
+        }
+    }
+    allowed.sort();
+    allowed.dedup();
+    allowed
+}
+
+/// The scope to grant for a request: the requested scopes if every one is allowed
+/// (RFC 6749 section 3.3), otherwise `Err(invalid_scope description)`. With no scope
+/// requested, the client gets everything it is registered for.
+fn effective_scope(
+    record: &serde_json::Value,
+    requested: Option<&str>,
+) -> std::result::Result<String, String> {
+    let allowed = allowed_scopes(record);
+    let requested: Vec<&str> = requested
+        .map(|s| s.split_whitespace().collect())
+        .unwrap_or_default();
+    if requested.is_empty() {
+        return if allowed.is_empty() {
+            Err("this client is not registered for any scope".to_string())
+        } else {
+            Ok(allowed.join(" "))
+        };
+    }
+    if let Some(bad) = requested.iter().find(|s| !allowed.iter().any(|a| a == **s)) {
+        let shown: String = bad.chars().take(64).collect();
+        return Err(format!("scope '{shown}' is not allowed for this client"));
+    }
+    let mut granted: Vec<&str> = Vec::with_capacity(requested.len());
+    for s in requested {
+        if !granted.contains(&s) {
+            granted.push(s);
+        }
+    }
+    Ok(granted.join(" "))
+}
+
 /// The client secret of a client record; `None` for a public client.
 fn client_secret_of(record: &serde_json::Value) -> Option<&str> {
     record["client_secret"].as_str().filter(|s| !s.is_empty())
+}
+
+/// How a client identified itself at the token endpoint.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClientKind {
+    /// Registered without a secret: identified by `client_id` alone (PKCE is mandatory).
+    Public,
+    /// Registered with a secret and authenticated with it.
+    Confidential,
+}
+
+/// Authenticate the client of an authorization-code exchange (RFC 6749 section 3.2.1).
+///
+/// The client must be registered (`oauth2_client:{id}`). A client whose record holds a
+/// non-empty `client_secret` is confidential and MUST present exactly that secret
+/// (constant-time compare); a missing or wrong secret is `invalid_client`. Whether a
+/// client is public is decided by its registration, never by what the request carries.
+async fn authenticate_token_client(
+    state: &ApiState,
+    client_id: &str,
+    presented_secret: Option<&str>,
+) -> std::result::Result<ClientKind, Box<ApiResponse<TokenResponse>>> {
+    let Some(record) = load_client_record(state, client_id).await? else {
+        return Err(refusal("invalid_client", "Unknown client"));
+    };
+    match client_secret_of(&record) {
+        None => Ok(ClientKind::Public),
+        Some(stored) => {
+            let authenticated = presented_secret.is_some_and(|presented| {
+                crate::security::timing_protection::constant_time_string_compare(presented, stored)
+            });
+            if authenticated {
+                Ok(ClientKind::Confidential)
+            } else {
+                Err(refusal("invalid_client", "Client authentication failed"))
+            }
+        }
+    }
 }
 
 /// RFC 6749 §6 / §10.4: a refresh token issued to `stored_client` is
@@ -768,24 +919,7 @@ async fn handle_refresh_token_grant(
         }
     }
 
-    // Defense-in-depth: Use a consumed marker to mitigate the non-atomic get+delete
-    // race condition. If a concurrent request already consumed this refresh token, reject.
     let consumed_key = format!("oauth2_refresh_consumed:{}", refresh_token_str);
-    if let Ok(Some(_)) = state.auth_framework.storage().get_kv(&consumed_key).await {
-        return ApiResponse::error_typed("invalid_grant", "Refresh token already consumed");
-    }
-    if let Err(e) = state
-        .auth_framework
-        .storage()
-        .store_kv(
-            &consumed_key,
-            b"1",
-            Some(std::time::Duration::from_secs(600)),
-        )
-        .await
-    {
-        tracing::warn!("Failed to store refresh consumed marker: {:?}", e);
-    }
 
     // Validate the refresh token against persistent storage.
     let refresh_key = format!("oauth2_refresh_token:{}", refresh_token_str);
@@ -802,6 +936,28 @@ async fn handle_refresh_token_grant(
             return ApiResponse::error_typed("server_error", "Failed to validate refresh token");
         }
     };
+
+    // Claim the token: of any number of simultaneous redemptions exactly one proceeds (atomic
+    // set-if-absent). The marker is only written for a token that exists.
+    match state
+        .auth_framework
+        .storage()
+        .store_kv_if_absent(
+            &consumed_key,
+            b"1",
+            Some(std::time::Duration::from_secs(600)),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return ApiResponse::error_typed("invalid_grant", "Refresh token already consumed");
+        }
+        Err(e) => {
+            tracing::error!("Failed to claim refresh token: {:?}", e);
+            return ApiResponse::error_typed("server_error", "Failed to validate refresh token");
+        }
+    }
 
     let user_id = match stored["user_id"].as_str() {
         Some(u) => u.to_string(),
@@ -838,17 +994,63 @@ async fn handle_refresh_token_grant(
         return *refusal;
     }
 
-    let scope = stored["scopes"]
+    let mut scopes: Vec<String> = stored["scopes"]
         .as_str()
         .unwrap_or("openid profile email")
-        .to_string();
-    let scopes: Vec<String> = scope.split_whitespace().map(|s| s.to_string()).collect();
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+    // A refreshed token never exceeds what the client is registered for NOW, whatever the
+    // stored record carries (older records, or a registration narrowed since).
+    if let Some(client) = stored["client_id"].as_str() {
+        let record = match load_client_record(&state, client).await {
+            Ok(Some(record)) => record,
+            Ok(None) => {
+                let _ = state
+                    .auth_framework
+                    .storage()
+                    .delete_kv(&consumed_key)
+                    .await;
+                return ApiResponse::error_typed("invalid_client", "Unknown client");
+            }
+            Err(refused) => {
+                let _ = state
+                    .auth_framework
+                    .storage()
+                    .delete_kv(&consumed_key)
+                    .await;
+                return *refused;
+            }
+        };
+        let allowed = allowed_scopes(&record);
+        scopes.retain(|s| allowed.iter().any(|a| a == s));
+        if scopes.is_empty() {
+            let _ = state
+                .auth_framework
+                .storage()
+                .delete_kv(&consumed_key)
+                .await;
+            return ApiResponse::error_typed(
+                "invalid_scope",
+                "No granted scope is allowed for this client",
+            );
+        }
+    }
+    let scope = scopes.join(" ");
 
-    let token = match state
-        .auth_framework
-        .token_manager()
-        .create_auth_token(&user_id, scopes, "oauth2", None)
-    {
+    let minted = match client_id.as_deref() {
+        Some(client) => state
+            .auth_framework
+            .token_manager()
+            .create_client_auth_token(&user_id, scopes, "oauth2", client, None),
+        // A stored refresh record without a client (written by an older version) still came
+        // from an OAuth grant: its access token is delegated, never a user session.
+        None => state
+            .auth_framework
+            .token_manager()
+            .create_client_auth_token(&user_id, scopes, "oauth2", "unknown-client", None),
+    };
+    let token = match minted {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to create access token on refresh: {:?}", e);
@@ -929,6 +1131,11 @@ pub async fn revoke(
     State(state): State<ApiState>,
     Json(req): Json<RevokeRequest>,
 ) -> ApiResponse<serde_json::Value> {
+    // The token becomes part of a storage key: bound its size.
+    if req.token.is_empty() || req.token.len() > 8192 {
+        return ApiResponse::error_typed("invalid_request", "Invalid token");
+    }
+
     // Store the revoked token in a blacklist for immediate invalidation.
     // Key by the raw token value so the userinfo endpoint can check it too.
     let revoked_token_key = format!("oauth2_revoked_token:{}", req.token);
@@ -1042,11 +1249,7 @@ pub async fn userinfo(
     }
 
     // Validate the access token
-    let claims = match state
-        .auth_framework
-        .token_manager()
-        .validate_jwt_token(&token)
-    {
+    let claims = match state.auth_framework.validate_delegated_jwt(&token).await {
         Ok(c) => c,
         Err(_) => {
             return ApiResponse::error_typed("invalid_token", "Access token is invalid");
@@ -1265,6 +1468,24 @@ pub async fn end_session(
             .await
         {
             tracing::warn!("Failed to revoke token during OIDC end_session: {}", e);
+        }
+        // the marker every bearer-token validation path reads
+        if let Err(e) = state
+            .auth_framework
+            .storage()
+            .store_kv(
+                &format!("revoked_token:{}", claims.jti),
+                b"revoked",
+                Some(std::time::Duration::from_secs(
+                    (claims.exp - chrono::Utc::now().timestamp()).max(60) as u64,
+                )),
+            )
+            .await
+        {
+            tracing::warn!(
+                "Failed to record jti revocation during OIDC end_session: {}",
+                e
+            );
         }
         tracing::info!("OIDC end_session: revoked token for user {}", claims.sub);
     }

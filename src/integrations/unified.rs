@@ -154,10 +154,7 @@ impl UnifiedAuthValidator {
     /// ```
     pub async fn validate_token(&self, token: &str) -> Result<ProviderProfile, AuthError> {
         // Validate JWT token string and extract claims
-        let jwt_claims = self
-            .auth_framework
-            .token_manager()
-            .validate_jwt_token(token)?;
+        let jwt_claims = self.auth_framework.validate_access_jwt(token).await?;
 
         // Get user profile using the user_id from JWT claims
         let user_profile = self

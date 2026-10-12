@@ -235,6 +235,137 @@ fn resolve_jwt_secret_bytes(config: &AuthConfig) -> Result<Vec<u8>> {
     ))
 }
 
+/// What [`AuthFramework::redeem_refresh_jwt`] hands back.
+#[derive(Debug)]
+pub struct RefreshRedemption {
+    /// Claims of the refresh token that was just spent (subject, chain, ...).
+    pub claims: crate::tokens::JwtClaims,
+    /// The next refresh token of the chain; the spent one no longer works.
+    pub new_refresh_token: String,
+}
+
+/// Shared implementation of [`AuthFramework::validate_access_jwt`] (also used by the
+/// modular framework): signature and claims, not a refresh token, not revoked.
+///
+/// `allow_client_bound`: only the opt-in delegated-access paths pass `true`; everything that
+/// guards sessions refuses tokens issued to an OAuth client.
+///
+/// `require_account`: the bearer paths pass `true` (the subject must be a live local
+/// account); the credential-authentication paths pass `false` because federated identities
+/// (OIDC/OAuth2 subjects) legitimately have no local record, though a local record that
+/// is deactivated is still refused.
+pub(crate) async fn validate_access_jwt_with(
+    token_manager: &TokenManager,
+    storage: &dyn AuthStorage,
+    token: &str,
+    require_account: bool,
+    allow_client_bound: bool,
+) -> Result<crate::tokens::JwtClaims> {
+    let claims = token_manager.validate_jwt_token(token)?;
+    // A token issued to an OAuth client on a user's behalf is delegated access, not a session.
+    if claims.is_client_bound() && !allow_client_bound {
+        return Err(rejected(
+            "A client-bound token cannot be used here (it was issued to an OAuth client)",
+        ));
+    }
+    // Only a token that declares no other use is an access token (a refresh token, an ID
+    // token, ... carry a `token_use` claim).
+    if claims.is_refresh_token() {
+        return Err(rejected(
+            "A refresh token cannot be used as an access token",
+        ));
+    }
+    if claims.token_use().is_some() {
+        return Err(rejected("This token is not an access token"));
+    }
+    match storage
+        .get_kv(&format!("revoked_token:{}", claims.jti))
+        .await
+    {
+        Ok(None) => {}
+        Ok(Some(_)) => return Err(rejected("Token has been revoked")),
+        Err(e) => {
+            tracing::error!("Could not check token revocation list: {}", e);
+            return Err(rejected("Unable to verify token status"));
+        }
+    }
+    ensure_account_active(storage, &claims.sub, require_account).await?;
+    Ok(claims)
+}
+
+/// Refuse tokens of an account that is deactivated, deleted, or whose record cannot be read
+/// (the same policy as `validate_api_token`: the signature proves who minted the token, not
+/// that its subject is a live account).
+pub(crate) async fn ensure_account_active(
+    storage: &dyn AuthStorage,
+    user_id: &str,
+    require_record: bool,
+) -> Result<()> {
+    match storage.get_kv(&format!("user:{user_id}")).await {
+        Ok(None) if require_record => Err(rejected("Unknown account")),
+        // No record: a federated subject, unless this account was deleted.
+        Ok(None) => match storage.get_kv(&format!("deleted_user:{user_id}")).await {
+            Ok(None) => Ok(()),
+            Ok(Some(_)) => Err(rejected("Account has been deleted")),
+            Err(e) => {
+                tracing::error!("Could not read account tombstone: {}", e);
+                Err(rejected("Unable to verify account status"))
+            }
+        },
+        Ok(Some(bytes)) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(record) if record["active"].as_bool().unwrap_or(true) => Ok(()),
+            Ok(_) => Err(rejected("Account has been deactivated")),
+            Err(_) => Err(rejected("Unable to verify account status")),
+        },
+        Err(e) => {
+            tracing::error!("Could not read account record: {}", e);
+            Err(rejected("Unable to verify account status"))
+        }
+    }
+}
+
+/// Does the `AuthToken` value agree with the signed JWT it carries? A caller-supplied value
+/// whose `user_id` differs from the JWT subject is a forgery. Opaque (non-JWT) tokens have
+/// nothing to compare.
+pub(crate) fn token_value_matches_jwt(token_manager: &TokenManager, token: &AuthToken) -> bool {
+    if !(token.auth_method == "jwt" || token.access_token.contains('.')) {
+        return true;
+    }
+    token_manager
+        .validate_jwt_token(&token.access_token)
+        .map(|claims| {
+            claims.sub == token.user_id
+                // only an access token can be presented here, and the client binding the
+                // caller states must be the one the JWT carries (it cannot be stripped)
+                && claims.token_use().is_none()
+                && claims.client_id == token.client_id
+        })
+        .unwrap_or(false)
+}
+
+/// Has this token been revoked through the revocation list (`revoked_token:{jti}`)?
+/// Fails closed: an unreadable list is an error.
+pub(crate) async fn access_token_is_revoked(
+    token_manager: &TokenManager,
+    storage: &dyn AuthStorage,
+    token: &AuthToken,
+) -> Result<bool> {
+    let jti = token_manager
+        .validate_jwt_token(&token.access_token)
+        .map(|claims| claims.jti)
+        .unwrap_or_else(|_| token.token_id.clone());
+    Ok(storage
+        .get_kv(&format!("revoked_token:{jti}"))
+        .await?
+        .is_some())
+}
+
+fn rejected(message: &str) -> AuthError {
+    AuthError::Token(crate::errors::TokenError::Invalid {
+        message: message.to_string(),
+    })
+}
+
 impl AuthFramework {
     /// Access focused user-management operations.
     pub fn users(&self) -> UserOperations<'_> {
@@ -884,7 +1015,15 @@ impl AuthFramework {
             return Ok(AuthResult::Failure("JWT token cannot be empty".to_string()));
         }
 
-        match self.token_manager.validate_jwt_token(token) {
+        match validate_access_jwt_with(
+            &self.token_manager,
+            self.storage.as_ref(),
+            token,
+            false,
+            false,
+        )
+        .await
+        {
             Ok(claims) => {
                 let token =
                     Self::build_validated_jwt_auth_token(token, claims, metadata, auth_method);
@@ -1121,38 +1260,51 @@ impl AuthFramework {
     pub async fn complete_mfa(&self, challenge: MfaChallenge, mfa_code: &str) -> Result<AuthToken> {
         debug!("Completing MFA for challenge '{}'", challenge.id);
 
+        // Only the STORED challenge counts: its user decides who is signed in, and each call
+        // spends one of its limited attempts (the caller's copy is just an id).
         let stored_challenge = self
             .mfa_manager
-            .get_challenge(&challenge.id)
+            .begin_attempt(&challenge.id)
             .await?
             .ok_or(MfaError::ChallengeExpired)?;
 
-        if stored_challenge.is_expired() {
-            self.mfa_manager.remove_challenge(&challenge.id).await?;
-            return Err(MfaError::ChallengeExpired.into());
-        }
-
         if !self.verify_mfa_code(&stored_challenge, mfa_code).await? {
+            if stored_challenge.attempts >= stored_challenge.max_attempts {
+                self.mfa_manager.remove_challenge(&challenge.id).await?;
+            }
             return Err(MfaError::InvalidCode.into());
         }
 
         self.mfa_manager.remove_challenge(&challenge.id).await?;
 
+        let user_id = stored_challenge.user_id.as_str();
         let scopes = self
             .user_manager
-            .get_user_roles(&challenge.user_id)
+            .get_user_roles(user_id)
             .await
             .unwrap_or_else(|_| vec!["user".to_string()]);
 
         let token = self
-            .mint_and_store_token(&challenge.user_id, scopes, "mfa", None)
+            .mint_and_store_token(user_id, scopes, "mfa", None)
             .await?;
 
-        info!(
-            "MFA completed successfully for user '{}'",
-            challenge.user_id
-        );
+        info!("MFA completed successfully for user '{}'", user_id);
         Ok(token)
+    }
+
+    /// The user a pending MFA challenge belongs to. Reading it does not count as an attempt.
+    pub async fn mfa_challenge_owner(&self, challenge_id: &str) -> Option<String> {
+        self.mfa_manager
+            .get_challenge(challenge_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.user_id)
+    }
+
+    /// Drop a pending MFA challenge (e.g. when the account is locked).
+    pub(crate) async fn discard_mfa_challenge(&self, challenge_id: &str) {
+        let _ = self.mfa_manager.remove_challenge(challenge_id).await;
     }
 
     /// Complete MFA using a previously issued challenge ID.
@@ -1175,6 +1327,8 @@ impl AuthFramework {
         self.require_initialized()?;
         let valid = token.is_valid()
             && self.token_manager.validate_auth_token(token).is_ok()
+            && token_value_matches_jwt(&self.token_manager, token)
+            && !access_token_is_revoked(&self.token_manager, self.storage.as_ref(), token).await?
             && self.touch_stored_token(token).await?;
         self.monitoring_manager.record_token_validation(valid).await;
         Ok(valid)
@@ -1184,6 +1338,13 @@ impl AuthFramework {
         let Some(mut stored) = self.storage.get_token(&token.token_id).await? else {
             return Ok(false);
         };
+        if stored.is_revoked() {
+            return Ok(false);
+        }
+        // The caller's value must be the stored token, not just share its id.
+        if stored.access_token != token.access_token || stored.user_id != token.user_id {
+            return Ok(false);
+        }
         stored.mark_used();
         self.storage.update_token(&stored).await?;
         Ok(true)
@@ -1301,8 +1462,25 @@ impl AuthFramework {
             return Ok(new_token);
         }
 
-        // Fallback to creating a new token with the same properties
-        let new_token = self.token_manager.refresh_token(token)?;
+        // Fallback to creating a new token with the same properties. Only a token that is
+        // valid right now (live, not revoked, stored, and whose fields agree with its JWT)
+        // can be renewed: the caller's value is not trusted on its own.
+        if !self.validate_token(token).await? {
+            return Err(AuthError::Token(crate::errors::TokenError::Invalid {
+                message: "Cannot refresh a token that is not valid".to_string(),
+            }));
+        }
+        // Renew from the STORED token (scopes, client binding), never from the caller's value.
+        let stored = self
+            .storage
+            .get_token(&token.token_id)
+            .await?
+            .ok_or_else(|| {
+                AuthError::Token(crate::errors::TokenError::Invalid {
+                    message: "Cannot refresh a token that is not stored".to_string(),
+                })
+            })?;
+        let new_token = self.token_manager.refresh_token(&stored)?;
         self.storage.store_token(&new_token).await?;
 
         info!("Token refreshed for user '{}'", token.user_id);
@@ -1321,6 +1499,21 @@ impl AuthFramework {
 
         // Update in storage
         self.storage.update_token(&revoked_token).await?;
+
+        // Bearer-JWT validation consults the revocation list by jti, so record it there too
+        // for as long as the token could still be presented.
+        let jti = self
+            .token_manager
+            .validate_jwt_token(&token.access_token)
+            .map(|claims| claims.jti)
+            .unwrap_or_else(|_| token.token_id.clone());
+        let remaining = (token.expires_at - chrono::Utc::now())
+            .to_std()
+            .unwrap_or_default()
+            .max(Duration::from_secs(60));
+        self.storage
+            .store_kv(&format!("revoked_token:{jti}"), b"revoked", Some(remaining))
+            .await?;
 
         info!("Token revoked for user '{}'", token.user_id);
 
@@ -1509,6 +1702,115 @@ impl AuthFramework {
     /// [`TokenOperations`] facade.
     pub fn token_manager(&self) -> &TokenManager {
         &self.token_manager
+    }
+
+    /// Redeem a refresh JWT: it is single-use. On success the presented token is spent and the
+    /// next token of its chain is returned; the caller mints the access token.
+    ///
+    /// Refused (all as `Token(Invalid)`): not a refresh token, revoked, its chain revoked,
+    /// the account deactivated, or already redeemed. Presenting an already-redeemed token is
+    /// treated as theft: the whole chain is revoked, so the legitimate holder must sign in again.
+    pub async fn redeem_refresh_jwt(&self, token: &str) -> Result<RefreshRedemption> {
+        let claims = self.token_manager.validate_jwt_token(token)?;
+        if !claims.is_refresh_token() {
+            return Err(rejected("Expected a refresh token"));
+        }
+        let read = |key: String| async move {
+            self.storage.get_kv(&key).await.map_err(|e| {
+                tracing::error!("Could not read refresh-token state: {}", e);
+                rejected("Unable to verify token status")
+            })
+        };
+        let family = claims.refresh_family().to_string();
+        if read(format!("revoked_token:{}", claims.jti))
+            .await?
+            .is_some()
+            || read(format!("revoked_family:{family}")).await?.is_some()
+        {
+            return Err(rejected("Refresh token has been revoked"));
+        }
+        ensure_account_active(self.storage.as_ref(), &claims.sub, true).await?;
+
+        let remaining =
+            Duration::from_secs((claims.exp - chrono::Utc::now().timestamp()).max(60) as u64);
+        // A revoked chain stays revoked for as long as its NEWEST token could live.
+        let family_ttl = self.config.refresh_token_lifetime + Duration::from_secs(60);
+        let consumed_key = format!("refresh_consumed:{}", claims.jti);
+        // Spend it BEFORE issuing the next one, with an atomic set-if-absent: of any number
+        // of simultaneous redemptions of the same token exactly one proceeds. Presenting it
+        // again afterwards is treated as theft and revokes its chain. (A storage backend that
+        // keeps the trait's default `store_kv_if_absent` is not atomic here.) If minting fails
+        // after this point the client has lost the token and must sign in again.
+        let first_use = self
+            .storage
+            .store_kv_if_absent(&consumed_key, b"used", Some(remaining))
+            .await
+            .map_err(|e| {
+                tracing::error!("Could not record refresh token use: {}", e);
+                rejected("Unable to record refresh token use")
+            })?;
+        if !first_use {
+            warn!(
+                "Refresh token reuse detected for user '{}'; revoking its chain",
+                claims.sub
+            );
+            if let Err(e) = self
+                .storage
+                .store_kv(
+                    &format!("revoked_family:{family}"),
+                    b"reuse",
+                    Some(family_ttl),
+                )
+                .await
+            {
+                tracing::error!("Could not revoke refresh chain after reuse: {}", e);
+            }
+            return Err(rejected("Refresh token has already been used"));
+        }
+
+        let lifetime = self.config.refresh_token_lifetime;
+        let new_refresh_token = self.token_manager.create_refresh_jwt_token_in_family(
+            &claims.sub,
+            Some(lifetime),
+            &family,
+        )?;
+        Ok(RefreshRedemption {
+            claims,
+            new_refresh_token,
+        })
+    }
+
+    /// Validate a JWT presented as an ACCESS token and return its claims.
+    ///
+    /// This is the one check every place that accepts a bearer JWT should use: it verifies
+    /// the signature and claims, refuses refresh tokens (they are only good at the refresh
+    /// endpoint), and refuses tokens that were revoked (`revoked_token:{jti}`, written by
+    /// logout and revocation). If the revocation list cannot be read the token is refused.
+    pub async fn validate_access_jwt(&self, token: &str) -> Result<crate::tokens::JwtClaims> {
+        validate_access_jwt_with(
+            &self.token_manager,
+            self.storage.as_ref(),
+            token,
+            true,
+            false,
+        )
+        .await
+    }
+
+    /// Like [`validate_access_jwt`](Self::validate_access_jwt) but also accepts a token that was
+    /// issued to an OAuth client on a user's behalf (it carries a `client_id`). Use it ONLY on
+    /// resource routes that are meant for delegated access; scope is advisory unless the route
+    /// checks it. Everything that guards sessions (admin, account management) must keep using
+    /// `validate_access_jwt`, which refuses client-bound tokens.
+    pub async fn validate_delegated_jwt(&self, token: &str) -> Result<crate::tokens::JwtClaims> {
+        validate_access_jwt_with(
+            &self.token_manager,
+            self.storage.as_ref(),
+            token,
+            true,
+            true,
+        )
+        .await
     }
 
     /// Validates a username against the configured format rules.

@@ -561,10 +561,11 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
         let _header = Header::new(Algorithm::RS256);
         let token = self
             .token_manager
-            .create_jwt_token(
+            .create_typed_jwt_token(
                 subject,
                 vec!["openid".to_string()],
                 Some(Duration::from_secs(3600)),
+                "id_token",
             )
             .map_err(|e| AuthError::auth_method("oidc", format!("JWT creation failed: {}", e)))?;
 
@@ -704,6 +705,62 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
             .token_manager
             .validate_jwt_token(access_token)
             .map_err(|e| AuthError::auth_method("oidc", format!("Invalid access token: {}", e)))?;
+        if token_claims.token_use().is_some() {
+            return Err(AuthError::auth_method(
+                "oidc",
+                "Invalid access token: only an access token can be used here",
+            ));
+        }
+        // Revoked tokens (logout / revocation) are refused; an unreadable list fails closed.
+        match self
+            .storage
+            .get_kv(&format!("revoked_token:{}", token_claims.jti))
+            .await
+        {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                return Err(AuthError::auth_method(
+                    "oidc",
+                    "Invalid access token: it has been revoked",
+                ));
+            }
+            Err(e) => {
+                tracing::error!("Could not check token revocation list: {}", e);
+                return Err(AuthError::auth_method(
+                    "oidc",
+                    "Unable to verify access token status",
+                ));
+            }
+        }
+
+        // The account must exist and be active (a signature proves who minted the token, not
+        // that its subject is still a live account).
+        match self
+            .storage
+            .get_kv(&format!("user:{}", token_claims.sub))
+            .await
+        {
+            Ok(Some(bytes)) => {
+                let record: serde_json::Value = serde_json::from_slice(&bytes)
+                    .map_err(|_| AuthError::auth_method("oidc", "Unable to verify the account"))?;
+                if record["active"].as_bool() == Some(false) {
+                    return Err(AuthError::auth_method(
+                        "oidc",
+                        "The account has been deactivated",
+                    ));
+                }
+            }
+            Ok(None) => {
+                return Err(AuthError::auth_method("oidc", "Unknown account"));
+            }
+            Err(e) => {
+                tracing::error!("Could not read the account record: {}", e);
+                return Err(AuthError::auth_method(
+                    "oidc",
+                    "Unable to verify the account",
+                ));
+            }
+        }
 
         // Extract subject from token
         let subject = &token_claims.sub;
@@ -1337,6 +1394,76 @@ mod tests {
     use super::*;
     use crate::storage::MemoryStorage;
 
+    #[tokio::test]
+    async fn userinfo_refuses_a_deactivated_or_unknown_account() {
+        let provider = create_test_oidc_provider().await;
+        let tm = provider.token_manager.clone();
+        let token_for = |sub: &str| {
+            tm.create_jwt_token(
+                sub,
+                vec!["openid".into()],
+                Some(std::time::Duration::from_secs(600)),
+            )
+            .unwrap()
+        };
+        provider
+            .storage
+            .store_kv(
+                "user:gone",
+                serde_json::json!({"id": "gone", "active": false})
+                    .to_string()
+                    .as_bytes(),
+                None,
+            )
+            .await
+            .unwrap();
+        let err = provider
+            .get_userinfo(&token_for("gone"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.to_lowercase().contains("deactivated"), "{err}");
+        let err = provider
+            .get_userinfo(&token_for("never-registered"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.to_lowercase().contains("unknown account"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn userinfo_refuses_revoked_and_refresh_tokens() {
+        let provider = create_test_oidc_provider().await;
+        let tm = provider.token_manager.clone();
+        let access = tm
+            .create_jwt_token(
+                "user_x",
+                vec!["openid".into()],
+                Some(std::time::Duration::from_secs(600)),
+            )
+            .unwrap();
+        let refresh = tm
+            .create_refresh_jwt_token("user_x", Some(std::time::Duration::from_secs(600)))
+            .unwrap();
+        assert!(
+            provider.get_userinfo(&refresh).await.is_err(),
+            "refresh JWT"
+        );
+
+        let jti = tm.validate_jwt_token(&access).unwrap().jti;
+        provider
+            .storage
+            .store_kv(&format!("revoked_token:{jti}"), b"revoked", None)
+            .await
+            .unwrap();
+        let err = provider
+            .get_userinfo(&access)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("revoked"), "{err}");
+    }
+
     async fn create_test_oidc_provider() -> OidcProvider<MemoryStorage> {
         let config = OidcConfig::default();
         let token_manager = Arc::new(TokenManager::new_hmac(
@@ -1494,6 +1621,48 @@ mod tests {
 
         assert!(!id_token.is_empty());
         assert!(id_token.contains('.'));
+    }
+
+    #[tokio::test]
+    async fn an_id_token_is_not_an_access_token() {
+        use crate::server::oidc::core::IdTokenRequest;
+        let provider = create_test_oidc_provider().await;
+        let id_token = provider
+            .create_id_token(IdTokenRequest::new("user123", "client456"))
+            .await
+            .unwrap();
+        // it is a valid JWT of this server ...
+        assert!(provider.token_manager.validate_jwt_token(&id_token).is_ok());
+        // ... but not something that authenticates a request
+        let storage = MemoryStorage::new();
+        assert!(
+            crate::auth::validate_access_jwt_with(
+                &provider.token_manager,
+                &storage,
+                &id_token,
+                false,
+                false
+            )
+            .await
+            .is_err(),
+            "an ID token must not be accepted as an access token"
+        );
+        // control: a genuine access token for the same subject is
+        let access = provider
+            .token_manager
+            .create_jwt_token("user123", vec!["openid".into()], None)
+            .unwrap();
+        assert!(
+            crate::auth::validate_access_jwt_with(
+                &provider.token_manager,
+                &storage,
+                &access,
+                false,
+                false
+            )
+            .await
+            .is_ok()
+        );
     }
 
     #[tokio::test]

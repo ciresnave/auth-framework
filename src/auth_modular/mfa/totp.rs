@@ -131,15 +131,21 @@ impl TotpManager {
         let current_window = current_time / time_step;
 
         // Check current window and ±1 window for clock drift tolerance
+        let mut matched_window: Option<u64> = None;
         for window in (current_window.saturating_sub(1))..=(current_window + 1) {
             if let Ok(expected_code) = self
                 .generate_code_for_window(&user_secret, Some(window))
                 .await
                 && bool::from(code.as_bytes().ct_eq(expected_code.as_bytes()))
             {
-                info!("TOTP code verification successful for user '{}'", user_id);
-                return Ok(true);
+                matched_window = matched_window.max(Some(window));
             }
+        }
+        if let Some(window) = matched_window
+            && self.claim_step(user_id, window).await?
+        {
+            info!("TOTP code verification successful for user '{}'", user_id);
+            return Ok(true);
         }
 
         info!("TOTP code verification failed for user '{}'", user_id);
@@ -232,17 +238,56 @@ impl TotpManager {
         let now = chrono::Utc::now().timestamp() as u64;
         const STEP: u64 = 30;
         const DIGITS: u32 = 6;
-        let mut matched = false;
+        let mut matched_step: Option<u64> = None;
 
         for offset in [0u64, STEP, STEP.wrapping_neg()] {
             let timestamp = now.wrapping_add(offset);
             let expected =
                 totp_lite::totp_custom::<totp_lite::Sha1>(STEP, DIGITS, &secret_bytes, timestamp);
             if constant_time_compare(expected.as_bytes(), code.as_bytes()) {
-                matched = true;
+                matched_step = matched_step.max(Some(timestamp / STEP));
             }
         }
 
-        Ok(matched)
+        match matched_step {
+            Some(step) => self.claim_step(user_id, step).await,
+            None => Ok(false),
+        }
+    }
+
+    /// Accept a matched TOTP time step only if it is newer than the last one accepted for
+    /// this user, so a code (e.g. one observed over a shoulder or in a log) works once.
+    async fn claim_step(&self, user_id: &str, step: u64) -> Result<bool> {
+        let key = format!("mfa_totp_last_step:{user_id}");
+        let last = match self.storage.get_kv(&key).await? {
+            Some(bytes) => std::str::from_utf8(&bytes)
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok()),
+            None => None,
+        };
+        if last.is_some_and(|last| step <= last) {
+            return Ok(false);
+        }
+        // Claim THIS step atomically: of simultaneous submissions of the same code exactly one
+        // wins. A code is valid for at most three steps; remember the claim a little longer.
+        if !self
+            .storage
+            .store_kv_if_absent(
+                &format!("mfa_totp_used:{user_id}:{step}"),
+                b"1",
+                Some(std::time::Duration::from_secs(300)),
+            )
+            .await?
+        {
+            return Ok(false);
+        }
+        self.storage
+            .store_kv(
+                &key,
+                step.to_string().as_bytes(),
+                Some(std::time::Duration::from_secs(300)),
+            )
+            .await?;
+        Ok(true)
     }
 }

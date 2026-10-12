@@ -212,7 +212,7 @@ verifyEmailSend:
             - bearerAuth: []
         responses:
             "200":
-                description: Verification token generated or already verified state returned
+                description: Verification message queued, or already-verified state returned
                 content:
                     application/json:
                         schema:
@@ -225,13 +225,10 @@ verifyEmailSend:
                                           properties:
                                               sent:
                                                   type: boolean
-                                              verification_token:
-                                                  type: string
                                               message:
                                                   type: string
                                           required:
                                               - sent
-                                              - verification_token
                                               - message
             "401":
                 $ref: "../components/responses.yaml#/Unauthorized"
@@ -283,7 +280,7 @@ resendVerification:
     post:
         tags:
             - Authentication
-        summary: Generate a new verification token for an email address
+        summary: Send a new verification message to an email address
         operationId: resendVerification
         requestBody:
             required: true
@@ -312,11 +309,8 @@ resendVerification:
                                           properties:
                                               sent:
                                                   type: boolean
-                                              verification_token:
-                                                  type: string
                                               message:
                                                   type: string
                                           required:
                                               - sent
-                                              - verification_token
                                               - message

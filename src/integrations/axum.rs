@@ -85,6 +85,14 @@ pub struct AuthenticatedUser {
     pub token: AuthToken,
 }
 
+/// Extractor for resource routes that accept delegated access: like [`AuthenticatedUser`] but
+/// it also accepts tokens issued to an OAuth client on a user's behalf
+/// (`user.token.client_id` is then `Some`). `AuthenticatedUser` refuses those. Scope is
+/// advisory: check `user.token.scopes` and the client yourself. Do not also put the route behind
+/// [`auth_middleware`], which refuses client-bound tokens.
+#[derive(Debug, Clone, Serialize)]
+pub struct DelegatedUser(pub AuthenticatedUser);
+
 /// Builder for creating authentication-related routes
 pub struct AuthRouter {
     login_path: String,
@@ -286,21 +294,39 @@ async fn login_handler(
     State(auth): State<Arc<AuthFramework>>,
     Json(request): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, AuthError> {
-    // This is a simplified login implementation
-    // In a real implementation, you'd validate credentials against your user store
-
-    let token = auth
-        .create_auth_token(
-            &request.username,
-            vec!["read".to_string(), "write".to_string()],
-            "jwt",
-            None,
+    // Authenticate against the user store exactly as the API server's login does; the
+    // reason for a failure is not revealed.
+    let denied = || {
+        AuthError::Token(crate::errors::TokenError::Invalid {
+            message: "Invalid credentials".to_string(),
+        })
+    };
+    let token = match auth
+        .authenticate(
+            "password",
+            crate::authentication::credentials::Credential::password(
+                &request.username,
+                &request.password,
+            ),
         )
-        .await?;
+        .await
+    {
+        Ok(crate::auth::AuthResult::Success(token)) => *token,
+        // This route cannot complete a second factor: no token without it.
+        Ok(crate::auth::AuthResult::MfaRequired(_)) => {
+            return Err(AuthError::Token(crate::errors::TokenError::Invalid {
+                message: "Multi-factor authentication is required".to_string(),
+            }));
+        }
+        Ok(crate::auth::AuthResult::Failure(_)) | Err(_) => return Err(denied()),
+    };
 
     let response = LoginResponse {
         access_token: token.access_token.clone(),
-        refresh_token: token.refresh_token.clone(),
+        refresh_token: Some(auth.token_manager().create_refresh_jwt_token(
+            &token.user_id,
+            Some(auth.config().refresh_token_lifetime),
+        )?),
         expires_in: (token.expires_at - token.issued_at).num_seconds().max(0) as u64,
         user: UserInfo {
             id: token.user_id.clone(),
@@ -352,33 +378,33 @@ async fn refresh_handler(
             .expect("valid request builder"),
     )?;
 
-    // Validate current token to extract claims
-    let claims = auth
-        .token_manager()
-        .validate_jwt_token(&token_str)
-        .map_err(|_| {
-            AuthError::Token(crate::errors::TokenError::Invalid {
-                message: "Cannot refresh: current token is invalid or expired".to_string(),
-            })
-        })?;
+    // Only a refresh token can mint a new access token, and it is single-use: redeeming it
+    // returns the next refresh token and spends this one.
+    let redemption = auth.redeem_refresh_jwt(&token_str).await.map_err(|_| {
+        AuthError::Token(crate::errors::TokenError::Invalid {
+            message: "Cannot refresh: the refresh token is invalid, expired or already used"
+                .to_string(),
+        })
+    })?;
+    let claims = redemption.claims;
 
-    // Issue a fresh token for the same user with the same scopes
-    let scopes: Vec<String> = if claims.scope.is_empty() {
-        vec![]
-    } else {
-        claims
-            .scope
-            .split_whitespace()
-            .map(str::to_string)
-            .collect()
+    // Permissions come from the account's stored permission set, not from the old token.
+    let permissions: Vec<String> = match auth
+        .storage()
+        .get_kv(&format!("user_permissions:{}", claims.sub))
+        .await
+    {
+        Ok(Some(data)) => serde_json::from_slice(&data).unwrap_or_default(),
+        _ => vec![],
     };
     let new_token_str = auth
         .token_manager()
-        .create_jwt_token(&claims.sub, scopes, None)?;
+        .create_jwt_token(&claims.sub, permissions, None)?;
 
     let expires_in = auth.config().token_lifetime.as_secs();
     Ok(Json(serde_json::json!({
         "access_token": new_token_str,
+        "refresh_token": redemption.new_refresh_token,
         "token_type": "Bearer",
         "expires_in": expires_in
     })))
@@ -427,7 +453,7 @@ pub async fn auth_middleware(
     let token_str = extract_bearer_token(&request)?;
 
     // Validate token using AuthFramework
-    match auth.token_manager().validate_jwt_token(&token_str) {
+    match auth.validate_access_jwt(&token_str).await {
         Ok(_claims) => {
             // Store token in request extensions for later extraction
             request.extensions_mut().insert(token_str);
@@ -463,55 +489,80 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        // Extract auth framework from state via FromRef
         let auth: Arc<AuthFramework> = Arc::from_ref(state);
-
-        // Extract token from request
-        let token_str = extract_bearer_token_from_parts(parts)?;
-
-        // Validate JWT and extract real claims
-        let claims = auth.token_manager().validate_jwt_token(&token_str)?;
-
-        let user_id = claims.sub.clone();
-        let permissions = claims.permissions.unwrap_or_default();
-        let roles = claims.roles.unwrap_or_default();
-        let scopes: Vec<String> = claims
-            .scope
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect();
-
-        let issued_at =
-            chrono::DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(chrono::Utc::now);
-        let expires_at = chrono::DateTime::from_timestamp(claims.exp, 0)
-            .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
-
-        let token = AuthToken {
-            token_id: claims.jti.clone(),
-            user_id: user_id.clone(),
-            access_token: token_str,
-            token_type: Some("Bearer".to_string()),
-            subject: Some(user_id.clone()),
-            issuer: Some(claims.iss.clone()),
-            refresh_token: None,
-            issued_at,
-            expires_at,
-            scopes: scopes.into(),
-            auth_method: "jwt".to_string(),
-            client_id: claims.client_id,
-            user_profile: None,
-            permissions: permissions.clone().into(),
-            roles: roles.clone().into(),
-            metadata: crate::tokens::TokenMetadata::default(),
-        };
-
-        Ok(AuthenticatedUser {
-            user_id,
-            permissions,
-            roles,
-            token,
-        })
+        user_from_parts(parts, &auth, false).await
     }
+}
+
+impl<S> FromRequestParts<S> for DelegatedUser
+where
+    S: Send + Sync,
+    Arc<AuthFramework>: FromRef<S>,
+{
+    type Rejection = AuthError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let auth: Arc<AuthFramework> = Arc::from_ref(state);
+        Ok(DelegatedUser(user_from_parts(parts, &auth, true).await?))
+    }
+}
+
+/// Validate the bearer token of a request and build the extractor value. `delegated` allows
+/// tokens issued to an OAuth client on a user's behalf.
+async fn user_from_parts(
+    parts: &Parts,
+    auth: &AuthFramework,
+    delegated: bool,
+) -> Result<AuthenticatedUser, AuthError> {
+    // Extract token from request
+    let token_str = extract_bearer_token_from_parts(parts)?;
+
+    // Validate JWT and extract real claims
+    let claims = if delegated {
+        auth.validate_delegated_jwt(&token_str).await?
+    } else {
+        auth.validate_access_jwt(&token_str).await?
+    };
+
+    let user_id = claims.sub.clone();
+    let permissions = claims.permissions.unwrap_or_default();
+    let roles = claims.roles.unwrap_or_default();
+    let scopes: Vec<String> = claims
+        .scope
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+
+    let issued_at =
+        chrono::DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(chrono::Utc::now);
+    let expires_at = chrono::DateTime::from_timestamp(claims.exp, 0)
+        .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
+
+    let token = AuthToken {
+        token_id: claims.jti.clone(),
+        user_id: user_id.clone(),
+        access_token: token_str,
+        token_type: Some("Bearer".to_string()),
+        subject: Some(user_id.clone()),
+        issuer: Some(claims.iss.clone()),
+        refresh_token: None,
+        issued_at,
+        expires_at,
+        scopes: scopes.into(),
+        auth_method: "jwt".to_string(),
+        client_id: claims.client_id,
+        user_profile: None,
+        permissions: permissions.clone().into(),
+        roles: roles.clone().into(),
+        metadata: crate::tokens::TokenMetadata::default(),
+    };
+
+    Ok(AuthenticatedUser {
+        user_id,
+        permissions,
+        roles,
+        token,
+    })
 }
 
 fn extract_bearer_token_from_parts(parts: &Parts) -> Result<String, AuthError> {

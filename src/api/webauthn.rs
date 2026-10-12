@@ -39,6 +39,20 @@ pub struct WebAuthnConfig {
     pub attestation: String,
     /// Timeout for ceremonies in milliseconds (default: 60 000).
     pub timeout_ms: u64,
+    /// Origins (`scheme://host[:port]`) the relying party is served from. The client-data
+    /// `origin` of a ceremony must equal one of these exactly. Empty (the default) means
+    /// `https://{rp_id}` (plus `http://localhost` when the rp id is `localhost`).
+    #[serde(default)]
+    pub rp_origins: Vec<String>,
+    /// User-verification requirement of ceremonies: `"required"`, `"preferred"` or
+    /// `"discouraged"`. Set by the server, never by the request. With `"required"` an
+    /// assertion whose authenticator data does not carry the UV flag is refused.
+    #[serde(default = "default_user_verification")]
+    pub user_verification: String,
+}
+
+fn default_user_verification() -> String {
+    "preferred".to_string()
 }
 
 impl Default for WebAuthnConfig {
@@ -48,6 +62,8 @@ impl Default for WebAuthnConfig {
             rp_name: "AuthFramework".to_string(),
             attestation: "none".to_string(),
             timeout_ms: 60_000,
+            rp_origins: Vec::new(),
+            user_verification: default_user_verification(),
         }
     }
 }
@@ -70,6 +86,8 @@ impl WebAuthnConfig {
     /// | `WEBAUTHN_RP_NAME` | `"AuthFramework"` |
     /// | `WEBAUTHN_ATTESTATION` | `"none"` |
     /// | `WEBAUTHN_TIMEOUT_MS` | `60000` |
+    /// | `WEBAUTHN_ORIGINS` | (empty: `https://{rp_id}`); comma-separated origins |
+    /// | `WEBAUTHN_USER_VERIFICATION` | `"preferred"` |
     pub fn from_env() -> Self {
         Self {
             rp_id: std::env::var("WEBAUTHN_RP_ID").unwrap_or_else(|_| "localhost".to_string()),
@@ -81,7 +99,63 @@ impl WebAuthnConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(60_000),
+            rp_origins: std::env::var("WEBAUTHN_ORIGINS")
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            user_verification: match std::env::var("WEBAUTHN_USER_VERIFICATION") {
+                Err(_) => default_user_verification(),
+                Ok(v) => match v.trim().to_lowercase().as_str() {
+                    "required" => "required".to_string(),
+                    "preferred" => "preferred".to_string(),
+                    "discouraged" => "discouraged".to_string(),
+                    other => {
+                        // A typo must not silently weaken the policy.
+                        tracing::error!(
+                            "WEBAUTHN_USER_VERIFICATION={other:?} is not one of required / \
+                             preferred / discouraged; treating it as \"required\""
+                        );
+                        "required".to_string()
+                    }
+                },
+            },
         }
+    }
+
+    /// Set the origins the relying party is served from (see [`Self::rp_origins`]).
+    pub fn origins(mut self, origins: Vec<String>) -> Self {
+        self.rp_origins = origins;
+        self
+    }
+
+    /// Set the user-verification requirement (`required` / `preferred` / `discouraged`).
+    pub fn user_verification(mut self, requirement: impl Into<String>) -> Self {
+        self.user_verification = requirement.into();
+        self
+    }
+
+    /// The origins a ceremony may come from, normalised (`scheme://host[:port]`).
+    fn expected_origins(&self) -> Vec<String> {
+        let configured: Vec<String> = self
+            .rp_origins
+            .iter()
+            .filter_map(|o| normalize_origin(o))
+            .collect();
+        if !configured.is_empty() {
+            return configured;
+        }
+        let mut origins = vec![format!("https://{}", self.rp_id)];
+        if self.rp_id == "localhost" {
+            origins.push("http://localhost".to_string());
+        }
+        origins
+            .into_iter()
+            .filter_map(|o| normalize_origin(&o))
+            .collect()
     }
 
     /// Set the attestation conveyance preference.
@@ -280,21 +354,65 @@ fn credential_index_key(user_id: &str) -> String {
     format!("webauthn_creds_index:{user_id}")
 }
 
-/// Check the client-data `origin` against the relying-party id. A missing
-/// origin is a refusal: the origin binding is what ties the ceremony to
+/// `scheme://host[:port]` of an http(s) URL, with default ports elided; `None` otherwise.
+fn normalize_origin(origin: &str) -> Option<String> {
+    let url = url::Url::parse(origin).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    // An origin is scheme://host[:port] and nothing else: no credentials, path, query or
+    // fragment (`Url::origin()` would silently discard them).
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return None;
+    }
+    Some(url.origin().ascii_serialization())
+}
+
+/// Check the client-data `origin` against the configured origins: scheme, host and port must
+/// all match. A missing origin is a refusal: the origin binding is what ties the ceremony to
 /// this site, so it cannot be optional.
-fn check_origin(client_data: &serde_json::Value, expected_rp_id: &str) -> Result<(), &'static str> {
-    const MISMATCH: &str = "Origin mismatch: does not match relying party ID";
+fn check_origin(
+    client_data: &serde_json::Value,
+    config: &WebAuthnConfig,
+) -> Result<(), &'static str> {
+    const MISMATCH: &str = "Origin mismatch: does not match the relying party's origin";
     let origin = client_data
         .get("origin")
         .and_then(|o| o.as_str())
         .ok_or("Missing origin in client data")?;
-    match url::Url::parse(origin) {
-        Ok(origin_url) if origin_url.host_str() == Some(expected_rp_id) => Ok(()),
-        Ok(_) => Err(MISMATCH),
-        Err(_) if origin == expected_rp_id => Ok(()),
-        Err(_) => Err(MISMATCH),
+    match normalize_origin(origin) {
+        Some(normalized) if config.expected_origins().contains(&normalized) => Ok(()),
+        _ => Err(MISMATCH),
     }
+}
+
+/// Check the authenticator data of an assertion (WebAuthn section 7.2): it must be for this
+/// relying party (`rpIdHash`), the user must have been present (UP), and verified (UV) when
+/// the server requires it.
+fn check_authenticator_data(
+    auth_data: &[u8],
+    rp_id: &str,
+    require_user_verification: bool,
+) -> Result<(), &'static str> {
+    if auth_data.len() < 37 {
+        return Err("Authenticator data is too short");
+    }
+    if auth_data[..32] != Sha256::digest(rp_id.as_bytes())[..] {
+        return Err("Authenticator data is for a different relying party");
+    }
+    let flags = auth_data[32];
+    if flags & 0x01 == 0 {
+        return Err("User presence flag is not set");
+    }
+    if require_user_verification && flags & 0x04 == 0 {
+        return Err("User verification is required but was not performed");
+    }
+    Ok(())
 }
 
 /// Initiate WebAuthn registration process.
@@ -367,7 +485,7 @@ pub async fn webauthn_registration_init(
         authenticator_selection: Some(AuthenticatorSelectionCriteria {
             authenticator_attachment: request.authenticator_attachment,
             require_resident_key: Some(false),
-            user_verification: request.user_verification.unwrap_or("preferred".to_string()),
+            user_verification: webauthn_cfg.user_verification.clone(),
         }),
         // The server does not verify attestation statements, so it only
         // ever asks for "none" (see `attestation_supported`).
@@ -460,7 +578,23 @@ pub async fn webauthn_registration_complete(
         ));
     }
 
-    // Delete session immediately to prevent replay attacks
+    // Claim the session atomically, then delete it (see the authentication handler).
+    match storage
+        .store_kv_if_absent(
+            &format!("webauthn_session_claimed:{}", request.session_id),
+            b"1",
+            Some(std::time::Duration::from_secs(600)),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) | Err(_) => {
+            return Json(ApiResponse::error_typed(
+                "SESSION_EXPIRED",
+                "Registration session not found or expired",
+            ));
+        }
+    }
     if let Err(e) = storage.delete_kv(&session_key).await {
         tracing::warn!("Failed to delete WebAuthn registration session: {}", e);
     }
@@ -533,7 +667,7 @@ pub async fn webauthn_registration_complete(
     }
 
     // Verify origin matches the configured RP ID (a missing origin is refused)
-    if let Err(message) = check_origin(&client_data, &WebAuthnConfig::from_env().rp_id) {
+    if let Err(message) = check_origin(&client_data, &WebAuthnConfig::from_env()) {
         return Json(ApiResponse::validation_error(message));
     }
 
@@ -655,7 +789,8 @@ pub async fn webauthn_authentication_init(
         challenge,
         allow_credentials,
         timeout: Some(60000),
-        user_verification: request.user_verification.unwrap_or("preferred".to_string()),
+        // The requirement is the server's, not the caller's.
+        user_verification: WebAuthnConfig::from_env().user_verification,
         session_id,
     };
 
@@ -697,7 +832,29 @@ pub async fn webauthn_authentication_complete(
         }
     };
 
-    // Delete session immediately to prevent replay attacks
+    // Claim the session atomically, then delete it: of simultaneous completions of the same
+    // ceremony exactly one proceeds (a plain delete after a read lets several through).
+    match storage
+        .store_kv_if_absent(
+            &format!("webauthn_session_claimed:{}", request.session_id),
+            b"1",
+            Some(std::time::Duration::from_secs(600)),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return Json(ApiResponse::validation_error_typed(
+                "Authentication session not found or expired",
+            ));
+        }
+        Err(e) => {
+            tracing::error!("Failed to claim WebAuthn authentication session: {}", e);
+            return Json(ApiResponse::validation_error_typed(
+                "Authentication session not found or expired",
+            ));
+        }
+    }
     if let Err(e) = storage.delete_kv(&session_key).await {
         tracing::warn!("Failed to delete WebAuthn authentication session: {}", e);
     }
@@ -745,7 +902,8 @@ pub async fn webauthn_authentication_complete(
     }
 
     // Verify origin matches the configured RP ID (a missing origin is refused)
-    if let Err(message) = check_origin(&client_data, &WebAuthnConfig::from_env().rp_id) {
+    let webauthn_cfg = WebAuthnConfig::from_env();
+    if let Err(message) = check_origin(&client_data, &webauthn_cfg) {
         return Json(ApiResponse::validation_error_typed(message));
     }
 
@@ -809,6 +967,16 @@ pub async fn webauthn_authentication_complete(
             ));
         }
     };
+
+    // 1b. The assertion must be for this relying party, with the user present (and verified
+    // when the server requires it): WebAuthn section 7.2.
+    if let Err(message) = check_authenticator_data(
+        &auth_data_bytes,
+        &webauthn_cfg.rp_id,
+        webauthn_cfg.user_verification == "required",
+    ) {
+        return Json(ApiResponse::validation_error_typed(message));
+    }
 
     // 2. Compute SHA-256 hash of the raw client_data_json bytes
     let client_data_hash = {
@@ -1079,14 +1247,21 @@ mod tests {
     }
 
     #[test]
-    fn check_origin_accepts_only_the_relying_party_host() {
-        let ok = |origin: &str| {
-            check_origin(&serde_json::json!({ "origin": origin }), "localhost").is_ok()
-        };
+    fn check_origin_matches_scheme_host_and_port() {
+        let cfg = WebAuthnConfig::new("localhost", "x");
+        let ok =
+            |origin: &str| check_origin(&serde_json::json!({ "origin": origin }), &cfg).is_ok();
         assert!(ok("https://localhost"));
-        assert!(ok("https://localhost:8443"));
-        assert!(ok("localhost"), "non-URL equal to the rp id");
+        assert!(
+            ok("https://localhost:443"),
+            "default port is the same origin"
+        );
+        assert!(ok("http://localhost"), "dev origin for the localhost rp id");
         for hostile in [
+            "https://localhost:8443",
+            "http://localhost:8080",
+            "ftp://localhost",
+            "localhost",
             "https://localhost.evil.com",
             "https://evil.com",
             "https://localhost@evil.com",
@@ -1096,8 +1271,83 @@ mod tests {
         ] {
             assert!(!ok(hostile), "{hostile:?} must be refused");
         }
-        assert!(check_origin(&serde_json::json!({}), "localhost").is_err());
-        assert!(check_origin(&serde_json::json!({ "origin": 5 }), "localhost").is_err());
+        assert!(check_origin(&serde_json::json!({}), &cfg).is_err());
+        assert!(check_origin(&serde_json::json!({ "origin": 5 }), &cfg).is_err());
+    }
+
+    #[test]
+    fn an_origin_is_only_scheme_host_and_port() {
+        let cfg = WebAuthnConfig::new("auth.example.com", "x");
+        let ok =
+            |origin: &str| check_origin(&serde_json::json!({ "origin": origin }), &cfg).is_ok();
+        assert!(ok("https://auth.example.com"));
+        assert!(
+            ok("https://AUTH.example.com"),
+            "host case is not significant"
+        );
+        for sloppy in [
+            "https://user@auth.example.com",
+            "https://user:pw@auth.example.com",
+            "https://auth.example.com/path",
+            "https://auth.example.com/?q=1",
+            "https://auth.example.com/#frag",
+            "https://auth.example.com.",
+        ] {
+            assert!(!ok(sloppy), "{sloppy:?} is not an origin");
+        }
+    }
+
+    #[test]
+    fn configured_origins_replace_the_default() {
+        let cfg = WebAuthnConfig::new("auth.example.com", "x").origins(vec![
+            "https://app.example.com".into(),
+            "http://localhost:3000".into(),
+        ]);
+        let ok =
+            |origin: &str| check_origin(&serde_json::json!({ "origin": origin }), &cfg).is_ok();
+        assert!(ok("https://app.example.com"));
+        assert!(ok("http://localhost:3000"));
+        assert!(
+            !ok("https://auth.example.com"),
+            "the default no longer applies"
+        );
+        assert!(!ok("http://localhost:3001"));
+        // default for a real rp id is https://{rp_id}
+        let default = WebAuthnConfig::new("auth.example.com", "x");
+        assert!(
+            check_origin(
+                &serde_json::json!({"origin": "https://auth.example.com"}),
+                &default
+            )
+            .is_ok()
+        );
+        assert!(
+            check_origin(
+                &serde_json::json!({"origin": "http://auth.example.com"}),
+                &default
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn authenticator_data_is_checked_for_rp_presence_and_verification() {
+        let data = |rp: &str, flags: u8| {
+            let mut d = vec![0u8; 37];
+            d[..32].copy_from_slice(&Sha256::digest(rp.as_bytes()));
+            d[32] = flags;
+            d
+        };
+        assert!(check_authenticator_data(&data("localhost", 0x01), "localhost", false).is_ok());
+        assert!(check_authenticator_data(&data("localhost", 0x05), "localhost", true).is_ok());
+        // wrong relying party
+        assert!(check_authenticator_data(&data("evil.com", 0x01), "localhost", false).is_err());
+        // user not present
+        assert!(check_authenticator_data(&data("localhost", 0x04), "localhost", false).is_err());
+        // verification required but not performed
+        assert!(check_authenticator_data(&data("localhost", 0x01), "localhost", true).is_err());
+        // too short
+        assert!(check_authenticator_data(&[0u8; 36], "localhost", false).is_err());
     }
 
     #[test]

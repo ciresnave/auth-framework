@@ -991,7 +991,7 @@ impl FapiManager {
             "sub": user_id,
             "iat": now.timestamp(),
             "exp": exp.timestamp(),
-            "typ": "refresh_token",
+            "typ": crate::security::secure_jwt::TYP_REFRESH_TOKEN,
             "jti": Uuid::new_v4().to_string(),
         });
 

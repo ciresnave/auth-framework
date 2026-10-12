@@ -135,22 +135,22 @@ class AuthService:
         )
 
     async def send_verification_email(self) -> dict[str, Any]:
-        """Generate an email verification token for the current user.
+        """Ask the server to send an email verification message to the current user.
 
         Returns:
-            Verification-token generation response.
+            Send-confirmation response (the token is delivered by email, never returned).
 
         """
         return await self._client.make_request("POST", "/auth/verify-email/send")
 
     async def resend_verification(self, email: str) -> dict[str, Any]:
-        """Request a fresh verification token for an email address.
+        """Request a fresh verification message for an email address.
 
         Args:
             email: Email address to resend verification for
 
         Returns:
-            Verification-token generation response.
+            Generic send-confirmation response (identical for every address).
 
         """
         data = {"email": email}

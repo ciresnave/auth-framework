@@ -700,7 +700,6 @@ let config = SessionConfig::builder()
     .default_duration(Duration::from_secs(3600))
     .max_duration(Duration::from_secs(86400))
     .idle_timeout(Duration::from_secs(900))
-    .rotate_on_privilege_escalation(true)
     .rotate_periodically(true)
     .rotation_interval(Duration::from_secs(3600))
     .max_concurrent_sessions(5)
@@ -735,7 +734,7 @@ let config = SessionConfigBuilder::for_high_security()
 | `default_duration`                | 1 hour   | Default session lifetime |
 | `max_duration`                    | 24 hours | Maximum session lifetime |
 | `idle_timeout`                    | 15 min   | Inactivity timeout       |
-| `rotate_on_privilege_escalation`  | `true`   | Rotate ID on escalation  |
+| `rotate_on_privilege_escalation`  | `true`   | Deprecated, no effect (sessions are not rotated on escalation) |
 | `rotate_periodically`             | `false`  | Enable periodic rotation |
 | `rotation_interval`               | 1 hour   | Rotation period          |
 | `max_concurrent_sessions`         | `None`   | Per-user session limit   |

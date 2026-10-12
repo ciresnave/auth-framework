@@ -105,7 +105,7 @@ async fn test_no_insecure_payload_extraction() {
     }
 
     assert!(
-        source_code.contains("validate_jwt_token"),
+        source_code.contains("validate_access_jwt"),
         "❌ Missing secure JWT validation in ActixWeb integration"
     );
     println!("✅ SECURITY PASS: Secure JWT validation function is being used");

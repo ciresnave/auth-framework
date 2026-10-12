@@ -29,6 +29,16 @@ impl TokenExchangeManagerFactory {
         Ok(TokenExchangeManager::new(jwt_validator))
     }
 
+    /// Like [`create_basic_manager`](Self::create_basic_manager) but the manager also refuses
+    /// tokens on the framework's revocation list (`storage` should be the framework's storage).
+    /// Use this one when tokens can be revoked by logout or revocation.
+    pub fn create_basic_manager_with_revocation(
+        jwt_secret: &str,
+        storage: Arc<dyn crate::storage::AuthStorage>,
+    ) -> Result<TokenExchangeManager> {
+        Ok(Self::create_basic_manager(jwt_secret)?.with_revocation_store(storage))
+    }
+
     /// Create an advanced token exchange manager for enterprise scenarios
     pub fn create_advanced_manager(
         config: Option<AdvancedTokenExchangeConfig>,

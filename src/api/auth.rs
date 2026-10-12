@@ -103,11 +103,11 @@ async fn build_login_response(
     };
 
     let refresh_token_lifetime = state.auth_framework.config().refresh_token_lifetime;
-    let refresh_token = match state.auth_framework.token_manager().create_jwt_token(
-        user_id,
-        vec!["refresh".to_string()],
-        Some(refresh_token_lifetime),
-    ) {
+    let refresh_token = match state
+        .auth_framework
+        .token_manager()
+        .create_refresh_jwt_token(user_id, Some(refresh_token_lifetime))
+    {
         Ok(jwt) => jwt,
         Err(e) => {
             tracing::error!("Failed to create refresh token: {}", e);
@@ -145,6 +145,8 @@ pub struct RefreshResponse {
     pub token_type: String,
     /// Seconds until the new access token expires.
     pub expires_in: u64,
+    /// The next refresh token. The one just redeemed no longer works.
+    pub refresh_token: String,
 }
 
 /// Logout request.
@@ -209,6 +211,68 @@ pub(crate) fn login_risk_level(headers: &HeaderMap) -> (&'static str, Vec<String
     (level, warnings)
 }
 
+/// MFA code attempts allowed per account within the window (across all its challenges).
+const MAX_FAILED_ATTEMPTS: u64 = 5;
+/// How long MFA attempts are remembered.
+const MFA_LOCKOUT_WINDOW_SECS: u64 = 900;
+
+fn mfa_attempt_key(user_id: &str, slot: u64) -> String {
+    format!("mfa_attempt:{user_id}:{slot}")
+}
+
+/// Reserve one of the account's MFA attempts BEFORE a code is checked. Each of the
+/// `MAX_FAILED_ATTEMPTS` slots is claimed with an atomic set-if-absent, so any burst of
+/// parallel guesses gets at most that many checks in total, whatever challenge it uses.
+/// `false` means the account's budget is spent.
+async fn reserve_mfa_attempt(state: &ApiState, user_id: &str) -> bool {
+    let storage = state.auth_framework.storage();
+    for slot in 0..MAX_FAILED_ATTEMPTS {
+        match storage
+            .store_kv_if_absent(
+                &mfa_attempt_key(user_id, slot),
+                b"1",
+                Some(std::time::Duration::from_secs(MFA_LOCKOUT_WINDOW_SECS)),
+            )
+            .await
+        {
+            Ok(true) => return true,
+            Ok(false) => continue,
+            // An unreadable store gives no attempts (fail closed).
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+/// Is the account's MFA attempt budget spent?
+async fn mfa_attempts_exhausted(state: &ApiState, user_id: &str) -> bool {
+    for slot in 0..MAX_FAILED_ATTEMPTS {
+        match state
+            .auth_framework
+            .storage()
+            .get_kv(&mfa_attempt_key(user_id, slot))
+            .await
+        {
+            Ok(Some(_)) => continue,
+            // a free slot: not exhausted; an unreadable store counts as exhausted (fail closed)
+            Ok(None) => return false,
+            Err(_) => return true,
+        }
+    }
+    true
+}
+
+/// A successful MFA login gives the account its attempts back.
+async fn clear_mfa_attempts(state: &ApiState, user_id: &str) {
+    for slot in 0..MAX_FAILED_ATTEMPTS {
+        let _ = state
+            .auth_framework
+            .storage()
+            .delete_kv(&mfa_attempt_key(user_id, slot))
+            .await;
+    }
+}
+
 /// Increment the per-username failed login counter with a sliding TTL window.
 async fn increment_login_failure(state: &ApiState, lockout_key: &str, window_secs: u64) {
     let current: u64 = match state.auth_framework.storage().get_kv(lockout_key).await {
@@ -254,12 +318,31 @@ pub async fn login(
     if let (Some(challenge_id), Some(mfa_code)) =
         (req.challenge_id.clone(), req.mfa_code.as_deref())
     {
+        // Wrong codes are counted against the account the challenge belongs to, whatever
+        // username the caller sends, and locked accounts get no further guesses.
+        let Some(owner_id) = state
+            .auth_framework
+            .mfa_challenge_owner(&challenge_id)
+            .await
+        else {
+            return ApiResponse::error_typed(
+                "MFA_INVALID_CODE",
+                "Invalid or expired MFA challenge or code",
+            );
+        };
+        if !reserve_mfa_attempt(&state, &owner_id).await {
+            return ApiResponse::error_typed(
+                "ACCOUNT_LOCKED",
+                "Too many failed login attempts. Please try again later.",
+            );
+        }
         return match state
             .auth_framework
             .complete_mfa_by_id(&challenge_id, mfa_code)
             .await
         {
             Ok(token) => {
+                clear_mfa_attempts(&state, &owner_id).await;
                 let mut response = build_login_response(
                     &state,
                     &token.user_id,
@@ -291,7 +374,6 @@ pub async fn login(
     // Key: "login_failures:{username}" — stores the current failure count as a
     // decimal string with a 15-minute TTL (auto-resets after 15 min of no attempts).
     let lockout_key = format!("login_failures:{}", req.username);
-    const MAX_FAILED_ATTEMPTS: u64 = 5;
     const LOCKOUT_WINDOW_SECS: u64 = 900; // 15 minutes
     if let Ok(Some(count_bytes)) = state.auth_framework.storage().get_kv(&lockout_key).await
         && let Ok(count_str) = std::str::from_utf8(&count_bytes)
@@ -367,6 +449,18 @@ pub async fn login(
                 response
             }
             crate::auth::AuthResult::MfaRequired(challenge) => {
+                // An account whose MFA codes were guessed wrongly too often gets no new
+                // challenge until the lockout window passes.
+                if mfa_attempts_exhausted(&state, &challenge.user_id).await {
+                    state
+                        .auth_framework
+                        .discard_mfa_challenge(&challenge.id)
+                        .await;
+                    return ApiResponse::error_typed(
+                        "ACCOUNT_LOCKED",
+                        "Too many failed login attempts. Please try again later.",
+                    );
+                }
                 // Return the challenge data so the client knows how to fulfill MFA.
                 // The client should prompt for the appropriate second factor and then
                 // re-submit the login request with both challenge_id and mfa_code.
@@ -421,101 +515,54 @@ pub async fn refresh_token(
         return ApiResponse::validation_error_typed("Invalid request");
     }
 
-    // Validate the refresh token
-    match state
+    // Redeem the refresh token: it must be a genuine, unrevoked, unspent refresh token of an
+    // active account; the next token of the chain is issued below.
+    let redemption = match state
         .auth_framework
-        .token_manager()
-        .validate_jwt_token(&req.refresh_token)
+        .redeem_refresh_jwt(&req.refresh_token)
+        .await
     {
-        Ok(claims) => {
-            // Check if this is actually a refresh token
-            if !claims.scope.contains("refresh") {
-                return ApiResponse::error_typed(
-                    "INVALID_TOKEN",
-                    "Expected a refresh token, but received an access token",
-                );
-            }
-
-            // SECURITY: Reject revoked refresh tokens (e.g. those already passed to /auth/logout).
-            let revocation_key = format!("revoked_token:{}", claims.jti);
-            match state.auth_framework.storage().get_kv(&revocation_key).await {
-                Ok(Some(_)) => {
-                    return ApiResponse::error_typed(
-                        "INVALID_TOKEN",
-                        "Refresh token has been revoked",
-                    );
-                }
-                Ok(None) => {} // Not revoked — proceed
-                Err(e) => {
-                    tracing::error!("Refresh token revocation check failed: {}", e);
-                    return ApiResponse::error_typed(
-                        "INTERNAL_ERROR",
-                        "Unable to verify token status",
-                    );
-                }
-            }
-
-            // Create new access token, preserving the user's actual permissions from storage.
-            // H-1 fix: do NOT hard-code ["read","write"] — load the real permission set.
-
-            // SECURITY: Reject refresh if the user's account has been deactivated
-            // since the refresh token was issued.  Without this check a deactivated
-            // user can indefinitely obtain new access tokens.
-            {
-                let user_key = format!("user:{}", claims.sub);
-                if let Ok(Some(user_bytes)) = state.auth_framework.storage().get_kv(&user_key).await
-                {
-                    let user_json: serde_json::Value =
-                        serde_json::from_slice(&user_bytes).unwrap_or_default();
-                    let active = user_json["active"].as_bool().unwrap_or(true);
-                    if !active {
-                        return ApiResponse::error_typed(
-                            "ACCOUNT_DEACTIVATED",
-                            "Account has been deactivated",
-                        );
-                    }
-                }
-            }
-
-            let permissions: Vec<String> = match state
-                .auth_framework
-                .storage()
-                .get_kv(&format!("user_permissions:{}", claims.sub))
-                .await
-            {
-                Ok(Some(data)) => serde_json::from_slice(&data).unwrap_or_default(),
-                _ => vec![],
-            };
-
-            let token_lifetime = state.auth_framework.config().token_lifetime;
-            let new_access_token = match state.auth_framework.token_manager().create_jwt_token(
-                &claims.sub,
-                permissions,
-                Some(token_lifetime),
-            ) {
-                Ok(jwt) => jwt,
-                Err(e) => {
-                    tracing::error!("Failed to create new access token: {}", e);
-                    return ApiResponse::error_typed(
-                        "TOKEN_CREATION_FAILED",
-                        "Failed to create new access token",
-                    );
-                }
-            };
-
-            let response = RefreshResponse {
-                access_token: new_access_token,
-                token_type: "Bearer".to_string(),
-                expires_in: token_lifetime.as_secs(),
-            };
-
-            ApiResponse::success(response)
-        }
+        Ok(r) => r,
         Err(e) => {
-            tracing::warn!("Invalid refresh token: {}", e);
-            ApiResponse::error_typed("INVALID_TOKEN", "Invalid or expired refresh token")
+            tracing::warn!("Refresh token refused: {}", e);
+            return ApiResponse::error_typed("INVALID_TOKEN", "Invalid or expired refresh token");
         }
-    }
+    };
+    let claims = redemption.claims;
+
+    // Create new access token, preserving the user's actual permissions from storage.
+    let permissions: Vec<String> = match state
+        .auth_framework
+        .storage()
+        .get_kv(&format!("user_permissions:{}", claims.sub))
+        .await
+    {
+        Ok(Some(data)) => serde_json::from_slice(&data).unwrap_or_default(),
+        _ => vec![],
+    };
+
+    let token_lifetime = state.auth_framework.config().token_lifetime;
+    let new_access_token = match state.auth_framework.token_manager().create_jwt_token(
+        &claims.sub,
+        permissions,
+        Some(token_lifetime),
+    ) {
+        Ok(jwt) => jwt,
+        Err(e) => {
+            tracing::error!("Failed to create new access token: {}", e);
+            return ApiResponse::error_typed(
+                "TOKEN_CREATION_FAILED",
+                "Failed to create new access token",
+            );
+        }
+    };
+
+    ApiResponse::success(RefreshResponse {
+        access_token: new_access_token,
+        token_type: "Bearer".to_string(),
+        expires_in: token_lifetime.as_secs(),
+        refresh_token: redemption.new_refresh_token,
+    })
 }
 
 /// `POST /auth/logout` — revoke access and (optionally) refresh tokens.
@@ -561,8 +608,31 @@ pub async fn logout(
             .validate_jwt_token(refresh_token)
         {
             Ok(claims) => {
+                // A logged-out refresh token ends its whole chain: a copy of a later token
+                // (e.g. one an attacker redeemed first) must not outlive the logout.
+                let family_ttl = state.auth_framework.config().refresh_token_lifetime
+                    + std::time::Duration::from_secs(60);
+                if let Err(e) = state
+                    .auth_framework
+                    .storage()
+                    .store_kv(
+                        &format!("revoked_family:{}", claims.refresh_family()),
+                        b"logout",
+                        Some(family_ttl),
+                    )
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to revoke refresh chain {}: {}",
+                        claims.refresh_family(),
+                        e
+                    );
+                }
                 let revocation_key = format!("revoked_token:{}", claims.jti);
-                let ttl = std::time::Duration::from_secs(7 * 86400);
+                // as long as the token could still be presented
+                let ttl = std::time::Duration::from_secs(
+                    (claims.exp - chrono::Utc::now().timestamp()).max(60) as u64,
+                );
                 if let Err(e) = state
                     .auth_framework
                     .storage()

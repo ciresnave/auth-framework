@@ -26,7 +26,10 @@ export class AuthModule extends BaseClient {
   }
 
   /**
-   * Refresh access token using refresh token
+   * Refresh access token using refresh token.
+   *
+   * Refresh tokens are single-use: the response carries the next one in `refresh_token`;
+   * keep it, because the token that was just sent no longer works.
    */
   async refreshToken(request: RefreshTokenRequest, options?: RequestOptions): Promise<TokenResponse> {
     const response = await this.post<TokenResponse>('/auth/refresh', request, options);

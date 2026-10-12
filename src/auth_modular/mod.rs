@@ -537,7 +537,15 @@ impl AuthFramework {
             return Ok(AuthResult::Failure("JWT token cannot be empty".to_string()));
         }
 
-        match self.token_manager.validate_jwt_token(token) {
+        match crate::auth::validate_access_jwt_with(
+            &self.token_manager,
+            self.storage.as_ref(),
+            token,
+            false,
+            false,
+        )
+        .await
+        {
             Ok(claims) => {
                 let token =
                     Self::build_validated_jwt_auth_token(token, claims, metadata, auth_method);
@@ -698,17 +706,12 @@ impl AuthFramework {
     pub async fn complete_mfa(&self, challenge: MfaChallenge, mfa_code: &str) -> Result<AuthToken> {
         debug!("Completing MFA for challenge '{}'", challenge.id);
 
-        // Check if challenge exists and is valid
+        // Only the STORED challenge counts, and each call spends one of its attempts.
         let stored_challenge = self
             .mfa_manager
-            .get_challenge(&challenge.id)
+            .begin_attempt(&challenge.id)
             .await?
             .ok_or(MfaError::ChallengeExpired)?;
-
-        if stored_challenge.is_expired() {
-            self.mfa_manager.remove_challenge(&challenge.id).await?;
-            return Err(MfaError::ChallengeExpired.into());
-        }
 
         // Verify MFA code based on challenge type
         let is_valid = match &stored_challenge.mfa_type {
@@ -740,6 +743,9 @@ impl AuthFramework {
         };
 
         if !is_valid {
+            if stored_challenge.attempts >= stored_challenge.max_attempts {
+                self.mfa_manager.remove_challenge(&challenge.id).await?;
+            }
             return Err(MfaError::InvalidCode.into());
         }
 
@@ -747,7 +753,7 @@ impl AuthFramework {
         self.mfa_manager.remove_challenge(&challenge.id).await?;
 
         // Look up user roles from storage
-        let user_key = format!("user:{}", challenge.user_id);
+        let user_key = format!("user:{}", stored_challenge.user_id);
         let scopes = if let Ok(Some(data)) = self.storage.get_kv(&user_key).await {
             serde_json::from_slice::<serde_json::Value>(&data)
                 .ok()
@@ -768,14 +774,14 @@ impl AuthFramework {
         // Create authentication token
         let token =
             self.token_manager
-                .create_auth_token(&challenge.user_id, scopes, "mfa", None)?;
+                .create_auth_token(&stored_challenge.user_id, scopes, "mfa", None)?;
 
         // Store the token
         self.storage.store_token(&token).await?;
 
         info!(
             "MFA completed successfully for user '{}'",
-            challenge.user_id
+            stored_challenge.user_id
         );
 
         Ok(token)
@@ -800,8 +806,22 @@ impl AuthFramework {
         // Validate with token manager
         self.token_manager.validate_auth_token(token)?;
 
+        // The value must agree with the signed JWT it carries
+        if !crate::auth::token_value_matches_jwt(&self.token_manager, token) {
+            return Ok(false);
+        }
+
+        // Refuse tokens on the revocation list (logout / revocation)
+        if crate::auth::access_token_is_revoked(&self.token_manager, self.storage.as_ref(), token)
+            .await?
+        {
+            return Ok(false);
+        }
+
         // Check if token exists in storage
-        if let Some(stored_token) = self.storage.get_token(&token.token_id).await? {
+        if let Some(stored_token) = self.storage.get_token(&token.token_id).await?
+            && !stored_token.is_revoked()
+        {
             // Update last used time
             let mut updated_token = stored_token;
             updated_token.mark_used();
