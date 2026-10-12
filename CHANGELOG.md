@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc29] - 2026-10-12
+
 ### Security
 
 - **Breaking:** mutual-TLS client-certificate validation (`MutualTlsManager`) now uses one validator built on
