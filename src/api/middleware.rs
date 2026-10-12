@@ -8,7 +8,64 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+#[cfg(feature = "enhanced-rbac")]
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
+
+/// The client address of a request: the connection's peer, unless the peer is one of the
+/// `trusted_proxies`, in which case the client it forwarded for.
+///
+/// A peer that is not a trusted proxy IS the client: its headers are ignored. A trusted
+/// proxy is believed: the client is the rightmost `X-Forwarded-For` entry that is not itself
+/// a trusted proxy (the entries to its left were supplied by the client and are ignored),
+/// else the proxy's own address (`X-Real-IP` is not consulted: many proxies pass a
+/// client-supplied copy through). Every trusted proxy must APPEND to `X-Forwarded-For`
+/// rather than pass it through. Anything unparsable falls back to the peer.
+#[cfg(feature = "enhanced-rbac")]
+pub(crate) fn forwarded_client_ip(
+    peer: IpAddr,
+    headers: &axum::http::HeaderMap,
+    trusted_proxies: &[IpAddr],
+) -> IpAddr {
+    let peer = peer.to_canonical();
+    let is_trusted = |ip: &IpAddr| trusted_proxies.iter().any(|t| t.to_canonical() == *ip);
+    if !is_trusted(&peer) {
+        return peer;
+    }
+    // A header line that is not text cannot be read, so which entry is rightmost is unknown:
+    // believe nothing and keep the peer.
+    let mut entries: Vec<&str> = Vec::new();
+    for value in headers.get_all("x-forwarded-for") {
+        match value.to_str() {
+            Ok(text) => entries.extend(text.split(',').map(str::trim)),
+            Err(_) => return peer,
+        }
+    }
+    for entry in entries.iter().rev() {
+        match parse_forwarded_addr(entry) {
+            Some(ip) if is_trusted(&ip) => continue,
+            Some(ip) => return ip,
+            None => return peer,
+        }
+    }
+    peer
+}
+
+/// Parse one `X-Forwarded-For` entry: a bare address, `addr:port`, or `[v6]` / `[v6]:port`.
+#[cfg(feature = "enhanced-rbac")]
+fn parse_forwarded_addr(entry: &str) -> Option<IpAddr> {
+    if let Ok(ip) = entry.parse::<IpAddr>() {
+        return Some(ip.to_canonical());
+    }
+    if let Ok(sock) = entry.parse::<SocketAddr>() {
+        return Some(sock.ip().to_canonical());
+    }
+    entry
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .and_then(|inner| inner.parse::<IpAddr>().ok())
+        .map(|ip| ip.to_canonical())
+}
 
 /// Authentication middleware
 pub async fn auth_middleware(

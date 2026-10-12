@@ -108,11 +108,11 @@ pub async fn login(
 
                 // Generate refresh token with longer lifetime
                 let refresh_token_lifetime = std::time::Duration::from_secs(86400 * 7); // 7 days
-                let refresh_token = match state.auth_framework.token_manager().create_jwt_token(
-                    &token.user_id,
-                    vec!["refresh".to_string()],
-                    Some(refresh_token_lifetime),
-                ) {
+                let refresh_token = match state
+                    .auth_framework
+                    .token_manager()
+                    .create_refresh_jwt_token(&token.user_id, Some(refresh_token_lifetime))
+                {
                     Ok(jwt) => jwt,
                     Err(e) => {
                         tracing::error!("Failed to create refresh token: {}", e);
@@ -168,8 +168,9 @@ pub async fn refresh_token(
         .validate_jwt_token(&req.refresh_token)
     {
         Ok(claims) => {
-            // Check if this is actually a refresh token
-            if !claims.scope.contains("refresh") {
+            // Only a token minted as a refresh token qualifies. The scope string is not
+            // consulted: it is permission data, and an access token's can contain the word.
+            if !claims.is_refresh_token() {
                 return ApiResponse::error_typed("INVALID_TOKEN", "Token is not a refresh token");
             }
 

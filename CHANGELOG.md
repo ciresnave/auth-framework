@@ -5,7 +5,38 @@ All notable changes to the AuthFramework project will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.6] - Unreleased
+## [0.4.7] - 2026-10-12
+
+### Security
+
+- `POST /auth/refresh` no longer decides that a token is a refresh token by looking for the text
+  `refresh` in its scope string. A token qualifies only if it was minted as a refresh token
+  (`TokenManager::create_refresh_jwt_token`, which `POST /auth/login` now uses; it carries a
+  `token_use: "refresh"` claim, read with the new `JwtClaims::is_refresh_token`). An access token
+  whose scope merely contains the word (for example a permission or role name such as
+  `token_refresh_manager`) was accepted and exchanged for a new access token; it is now refused.
+  Behaviour change: refresh tokens issued by an earlier release carry no such claim and are no
+  longer accepted, so those sessions must log in again. Affects 0.4.2 to 0.4.6.
+- The client address that authorization policies see (`ContextBuilder`, the `rbac_middleware`
+  request context) is now the connection's peer address (axum `ConnectInfo<SocketAddr>`). Before,
+  it was taken from `X-Forwarded-For` / `X-Real-IP`, which any client can set, so an ABAC policy
+  keyed on the client address (`ip_address`, corporate network membership) could be satisfied by
+  a forged header. Behind a reverse proxy, declare it with the new
+  `ContextBuilder::with_trusted_proxies`: only then is `X-Forwarded-For` believed (rightmost entry
+  that is not itself a trusted proxy; a trusted proxy that sends none, or one that cannot be
+  read, is reported as the client). `rbac_middleware` has no proxy list on this line and always
+  reports the connection's peer (behind a proxy that is the proxy's address, so key policies on
+  it accordingly, or build the context with `ContextBuilder`). Serve the router with
+  `into_make_service_with_connect_info::<SocketAddr>()`; without a peer address there is no
+  client address (`ip_address` is `None` and the connection type is `Unknown`). The connection
+  type is likewise decided from the peer address: a client-supplied `Via` header can only raise
+  the assessed risk (VPN / proxy). Behaviour change: a request without a `Via` header used to be
+  assessed `Unknown`; it is now `Direct`, or `Corporate` when the peer is inside a configured
+  corporate network, and the Tor user-agent check no longer depends on `Via`. No public
+  signature changed. Affects 0.4.2 to 0.4.6, library users of
+  `authorization_enhanced` only (the shipped API server does not mount these middlewares).
+
+## [0.4.6] - 2026-10-10
 
 ### Security
 
