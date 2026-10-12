@@ -671,6 +671,7 @@ dependencies = [
  "role-system",
  "rpassword",
  "rsa",
+ "rustls-pki-types",
  "rustls-webpki 0.103.11",
  "secrecy 0.10.3",
  "serde",

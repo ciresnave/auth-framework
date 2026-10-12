@@ -78,7 +78,9 @@ This implementation in `src/server/mtls.rs` provides certificate-based client au
 
 ### Key Features
 
-- **PKI-based Authentication**: Certificate validation against trusted CA chains
+- **PKI-based Authentication**: certification-path validation against trusted CAs (RFC 5280) by `rustls-webpki`: signatures (RSA, ECDSA, Ed25519), validity of every certificate on the path, basicConstraints / pathLen, name constraints and the `clientAuth` extended key usage
+- **Certificate source**: pass only the peer certificate that your TLS acceptor verified (or one forwarded by a terminating proxy that strips client-supplied copies); never a certificate read from a request header or body the client controls
+- **Client binding**: a PKI client must be bound to its certificate, by an exact `client_certificate` pin or an exact `expected_subject_dn` (an RFC 4514 string, e.g. `CN=Alice,O=Corp`, compared as structure; attribute values are case-sensitive, edge spaces must be escaped as `\ `, and a subject attribute that cannot be read as a string makes the certificate unmatchable); a certificate that merely chains to a trusted CA does not authenticate as an arbitrary client
 - **Self-signed Certificate Support**: Client authentication with self-signed certificates
 - **Certificate-Bound Access Tokens**: Access tokens bound to specific client certificates
 - **X.509 Certificate Processing**: Complete validation of certificate attributes
@@ -109,6 +111,9 @@ let auth_result = mtls_manager.authenticate_client(
     "client123",
     client_certificate_bytes
 ).await?;
+
+// If the client sent intermediate certificates in the TLS handshake, pass them too:
+// mtls_manager.authenticate_client_with_chain("client123", client_certificate_bytes, &intermediates)
 
 if auth_result.is_valid {
     // Create certificate-bound access token
