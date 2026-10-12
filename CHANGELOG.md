@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc30] - 2026-10-12
+
+### Changed
+
+- `clippy.toml` (`allow-unwrap-in-tests = true`, as on `main`): `src/lib.rs` denies
+  `clippy::unwrap_used`, and without this file every `unwrap` in test code counted, which made the line's
+  `cargo clippy --all-targets -D warnings` gate meaningless. No code changed.
+
 ## [0.5.0-rc29] - 2026-10-12
 
 ### Security
