@@ -79,6 +79,18 @@ impl SqliteStorage {
     }
 }
 
+/// The `expires_at` (whole seconds) for an entry stored now with `ttl`.
+///
+/// An entry is alive while `expires_at >= now` (in whole seconds), i.e. through the second named
+/// by `expires_at`. Using `floor((now + ttl) - 1ms)` makes it alive until the end of the second
+/// that contains the true expiry instant, so it never expires EARLY and is at most one second
+/// late. (`ttl.as_secs()` truncated the sub-second part, which made a TTL such as 1.5 s expire
+/// anywhere between 0.5 s and 1.5 s after being stored.)
+fn expires_at_secs(ttl: Duration) -> i64 {
+    let expires_ms = Utc::now().timestamp_millis() + ttl.as_millis() as i64;
+    (expires_ms - 1).div_euclid(1000)
+}
+
 #[async_trait]
 impl AuthStorage for SqliteStorage {
     async fn store_token(&self, token: &AuthToken) -> Result<()> {
@@ -235,7 +247,7 @@ impl AuthStorage for SqliteStorage {
     }
 
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
-        let expires_at = ttl.map(|duration| Utc::now().timestamp() + duration.as_secs() as i64);
+        let expires_at = ttl.map(expires_at_secs);
 
         sqlx::query(
             "INSERT INTO kv_store (key, value, expires_at)
@@ -261,7 +273,7 @@ impl AuthStorage for SqliteStorage {
         ttl: Option<Duration>,
     ) -> Result<bool> {
         let now = Utc::now().timestamp();
-        let expires_at = ttl.map(|duration| now + duration.as_secs() as i64);
+        let expires_at = ttl.map(expires_at_secs);
 
         // One statement: insert, or take over an EXPIRED row; a live row is left alone.
         let result = sqlx::query(

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc46 -- SQLite `store_kv` / `store_kv_if_absent`: a TTL with a sub-second part no longer expires early (the expiry was truncated to whole seconds).
 - 0.6.0-rc46 -- **Breaking (behaviour) summary of the token-hardening entries in this release**:
   an OpenID Connect ID token is no longer accepted as an access token; `OidcProvider::get_userinfo`
   requires a live local account (federated subjects without a local record are refused there);
