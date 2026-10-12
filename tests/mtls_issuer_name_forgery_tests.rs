@@ -85,7 +85,12 @@ async fn a_certificate_from_the_trusted_ca_is_accepted() {
     // fails because of the forgery and not because the setup is wrong.
     let real_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
     let params = ca_params("Trusted Root");
-    let root = params.clone().self_signed(&real_key).unwrap().der().to_vec();
+    let root = params
+        .clone()
+        .self_signed(&real_key)
+        .unwrap()
+        .der()
+        .to_vec();
     let issuer = Issuer::new(params, real_key);
     let m = manager_trusting(root).await;
 

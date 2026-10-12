@@ -12,9 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** mutual-TLS client-certificate validation (`MutualTlsManager`) now uses one validator built on
   `rustls-webpki` (ring backend; no new C dependency) for `authenticate_client` and `validate_client_certificate`:
   the certification path is verified (signatures, validity, basicConstraints / pathLen, name constraints,
-  `clientAuth` extended key usage) and the certificate is matched to the registered client. Previously the
-  certificate's issuer name was compared with a trusted CA's subject name and the signature was not verified, so a
-  certificate that merely named a trusted CA as its issuer was accepted. A PKI client must be registered with an
+  `clientAuth` extended key usage) and the certificate is matched to the registered client. Previously `authenticate_client` compared the certificate's issuer name with a trusted CA's subject name
+  and never verified the signature (and, with no CA configured, skipped the CA check altogether), so a
+  certificate that merely named a trusted CA as its issuer was accepted; `validate_client_certificate`
+  verified RSA signatures only. A PKI client must be registered with an
   exact `client_certificate` pin or an `expected_subject_dn` (an RFC 4514 string, compared as structure, values
   case-sensitive); `register_client` rejects a PKI client without one, an empty or unparsable DN, and a CA list
   that holds anything but usable CA certificates. New `authenticate_client_with_chain` /
