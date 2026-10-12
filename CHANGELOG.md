@@ -7,15 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0-rc30] - 2026-10-12
-
-### Changed
-
-- `clippy.toml` (`allow-unwrap-in-tests = true`, as on `main`): `src/lib.rs` denies
-  `clippy::unwrap_used`, and without this file every `unwrap` in test code counted, which made the line's
-  `cargo clippy --all-targets -D warnings` gate meaningless. No code changed.
-
-## [0.5.0-rc29] - 2026-10-12
+## [0.5.0-rc31] - 2026-10-12
 
 ### Security
 
@@ -29,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     authority key identifiers and the CRL distribution point when configured, backdated five minutes and never valid
     beyond its CA; it verifies the result chains to the configured CAs, and the stored record describes the issued
     certificate. `generate_crl` returns a signed DER CRL with an increasing number. `validate_certificate_chain`
-    builds and verifies the path to a configured root with `rustls-webpki` (it previously compared names) and
+    builds and verifies the path to a configured root with `rustls-webpki` (it previously returned `true` for any unexpired, unrevoked certificate that was not self-signed, comparing names only for self-signed ones, and verified no signature) and
     honours revocations. Revocation and status are per issuer; a revoked CA stops issuing and is no longer trusted.
   - *Requests are policed.* Subject text is bounded and free of control and formatting characters; the country is a
     two-letter code; DNS names are real multi-label host names; wildcard, IP, URI (`http`, `https`, `urn`, `spiffe`)
@@ -42,11 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     extended key usage, a negative validity) is refused at `initialize`; CA profiles cannot be issued through a
     request. The default `crl_distribution_url` is now `None` (it was a placeholder URL).
   - *API changes (source-breaking).* `validate_certificate_chain` takes a `CertificatePurpose`. `CACertificate`
-    lost `next_serial`; `X509Config` lost `default_rsa_key_size` and `default_ecdsa_curve` (nothing used them) and
+    lost `next_serial`, and its `private_key` is now `Zeroizing<Vec<u8>>` (its `Debug` redacts it); `X509Config` lost `default_rsa_key_size` and `default_ecdsa_curve` (nothing used them) and
     gained `state_path` and `generate_development_root_ca`; `CertificateProfile` gained `san_policy`. New public
     items: `SanPolicy`, `CertificatePurpose`, `revoke_certificate_issued_by`, `check_certificate_status_issued_by`,
-    `revoke_certificate_pem`, `revoke_ca_certificate`, `save_state`, `load_state`. `revoke_certificate` /
-    `check_certificate_status` fail when a serial number is ambiguous or unknown (they used to succeed silently),
+    `revoke_certificate_pem`, `revoke_ca_certificate`, `save_state`, `load_state`. `revoke_certificate` fails when a serial number is unknown (it used to succeed silently) and both it and
+    `check_certificate_status` fail when a serial number is ambiguous,
     and `RemoveFromCrl` is refused as a reason to revoke. The `rcgen` dependency now enables its `x509-parser`
     feature (no new crate).
   - *Operation.* The certificate store and revocation list are in memory unless `state_path` is set (then they are
@@ -56,6 +48,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     certificate). `root_ca_path` / `root_ca_cert_path` (and the intermediate equivalents) must agree when both are
     set. Not done: OCSP, fetching external CRLs, proof of possession of the requester's key (the API takes a public
     key, not a CSR).
+
+## [0.5.0-rc30] - 2026-10-12
+
+### Changed
+
+- `clippy.toml` (`allow-unwrap-in-tests = true`, as on `main`): `src/lib.rs` denies
+  `clippy::unwrap_used`, and without this file every `unwrap` in test code counted, which made the line's
+  `cargo clippy --all-targets -D warnings` gate meaningless. No code changed.
+
+## [0.5.0-rc29] - 2026-10-12
+
+### Security
 
 - **Breaking:** mutual-TLS client-certificate validation (`MutualTlsManager`) now uses one validator built on
   `rustls-webpki` (ring backend; no new C dependency) for `authenticate_client` and `validate_client_certificate`:
