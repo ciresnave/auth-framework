@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assertion size, `jti` length, `client_id` characters, clock skew (at most 10 minutes) and lifetime (at most 24
   hours) are bounded, and `FapiManager::authenticate_client_jwt` no longer returns the detailed reasons to its
   caller (they are logged). Remembered `jti`s are limited per client (`ClientJwtConfig::max_outstanding_assertions`,
-  default 5,000, a new field) as well as in total, so one client cannot lock the others out. `iat` is optional
+  default 5,000, a new field with a matching `ClientJwtConfigBuilder::max_outstanding_assertions` method) as well as in total, so one client cannot lock the others out. `iat` is optional
   (RFC 7523): `PrivateKeyJwtClaims::iat` is now an `Option`, the lifetime bound uses it when present and otherwise
   limits how far ahead `exp` may lie. `jti`s revoked with `revoke_jwt_token` live in their own namespace of the
   validator's revocation list, so they no longer collide with access-token `jti`s (tokens revoked earlier under a
