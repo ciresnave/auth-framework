@@ -390,25 +390,16 @@ impl TokenIntrospectionService {
                 }
             }
             ClientAuthMethod::ClientSecretJwt | ClientAuthMethod::PrivateKeyJwt => {
-                if let Some(client_assertion) = &credentials.client_assertion {
-                    // Validate JWT assertion
-                    if let Ok(claims) = self.token_manager.validate_jwt_token(client_assertion) {
-                        if claims.sub != credentials.client_id {
-                            return Err(AuthError::access_denied(
-                                "JWT subject doesn't match client_id",
-                            ));
-                        }
-                        if claims.aud.is_empty() || !claims.aud.contains(&self.config.issuer) {
-                            return Err(AuthError::access_denied("Invalid JWT audience"));
-                        }
-                    } else {
-                        return Err(AuthError::access_denied("Invalid JWT assertion"));
-                    }
-                } else {
-                    return Err(AuthError::access_denied(
-                        "Client assertion required for JWT auth",
-                    ));
-                }
+                // Not supported, and therefore refused. This arm used to validate the assertion
+                // with the SERVER's own token manager and compare `sub` with the client id, so any
+                // JWT the server had issued with the client id as its subject (a client_credentials
+                // access token, for one) authenticated as that client. A client assertion is signed
+                // with the client's own key or secret and has to be verified against that; until the
+                // introspection endpoint does so, JWT client authentication is not offered (the
+                // endpoint metadata lists only client_secret_basic and client_secret_post).
+                return Err(AuthError::access_denied(
+                    "JWT client authentication is not supported at the introspection endpoint",
+                ));
             }
             ClientAuthMethod::None => {
                 // Public client - no validation needed
