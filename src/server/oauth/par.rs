@@ -289,7 +289,31 @@ impl PARManager {
             return Err(AuthError::auth_method("par", "Request URI already used"));
         }
 
-        // Mark as consumed by removing from storage (single use)
+        // Single use: claim the request_uri atomically. A read followed by a delete cannot do
+        // this (simultaneous redemptions all read it before any deletes it), so exactly one
+        // caller may take the `par_spent:` marker. It outlives the request itself, so a spent
+        // URI cannot be replayed from a copy that reappears (cache, replica) until it would
+        // have expired anyway.
+        let marker_ttl = stored_request
+            .expires_at
+            .duration_since(now)
+            .unwrap_or_default()
+            + Duration::from_secs(60);
+        let claimed = self
+            .storage
+            .store_kv_if_absent(
+                &format!("par_spent:{}", request_uri),
+                b"1",
+                Some(marker_ttl),
+            )
+            .await
+            .map_err(|e| AuthError::internal(format!("Failed to consume PAR request: {}", e)))?;
+        if !claimed {
+            // The loser of a race leaves the winner's cleanup to the winner.
+            return Err(AuthError::auth_method("par", "Request URI already used"));
+        }
+
+        // Remove the request from storage
         self.storage
             .delete_kv(&storage_key)
             .await
