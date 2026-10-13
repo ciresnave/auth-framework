@@ -951,18 +951,12 @@ pub async fn register(
     }
 
     // Add user to the global users:index so admin list endpoints include self-registered users.
-    let index_key = "users:index";
-    let mut ids: Vec<String> = match state.auth_framework.storage().get_kv(index_key).await {
-        Ok(Some(bytes)) => serde_json::from_slice(&bytes).unwrap_or_default(),
-        _ => vec![],
-    };
-    ids.push(user_id.clone());
-    if let Ok(idx_json) = serde_json::to_vec(&ids)
-        && let Err(e) = state
-            .auth_framework
-            .storage()
-            .store_kv(index_key, &idx_json, None)
-            .await
+    if let Err(e) = crate::auth_modular::user_manager::update_users_index(
+        &*state.auth_framework.storage(),
+        &user_id,
+        true,
+    )
+    .await
     {
         tracing::warn!("Failed to update user index after registration: {}", e);
     }
