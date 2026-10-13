@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Unreleased -- The `users:index` list (admin user listing) is updated through one helper that
+- 0.6.0-rc48 -- The `users:index` list (admin user listing) is updated through one helper that
   serialises its read-modify-write within the process and reads each write back: simultaneous
   registrations (or a registration and a deletion) no longer drop each other's entry. A lost
   update was observed once in CI under coverage instrumentation (15 of 16 concurrent registrations
