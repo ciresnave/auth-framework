@@ -30,6 +30,7 @@ const README: &str = include_str!("../README.md");
 const CUSTOM_GUIDE: &str = include_str!("../docs/guides/custom-storage-implementation.md");
 const THIRD_PARTY_GUIDE: &str = include_str!("../docs/guides/third-party-storage-usage.md");
 const MANIFEST: &str = include_str!("../Cargo.toml");
+const DEV_INTEGRATION: &str = include_str!("../docs/guides/developer-integration.md");
 
 /// `0.6` from `0.6.0-rc50`.
 fn line_of(version: &str) -> String {
@@ -91,6 +92,9 @@ const UNFALSIFIABLE: &[&str] = &[
     "clean security record",
     "no critical vulnerabilities",
     "military-grade",
+    // A pass count nobody re-derives: the package holds more test functions than this, but
+    // not all run in one feature configuration, and CI is the only source of "passing".
+    "1,900+ passing",
 ];
 
 fn unfalsifiable_hits(text: &str) -> Vec<&'static str> {
@@ -135,9 +139,9 @@ fn readme_makes_no_unfalsifiable_security_claims() {
     let hits = unfalsifiable_hits(README);
     assert!(
         hits.is_empty(),
-        "README makes security claims nothing can falsify: {hits:?}. This repository \
-         publishes security advisories; a claim of a clean record is false the day the \
-         first one is published and stays in place after."
+        "README makes claims nothing can falsify: {hits:?}. This repository publishes \
+         security advisories, and a pass count nobody re-derives rots the same way a \
+         clean record does."
     );
 }
 
@@ -164,4 +168,20 @@ fn storage_guides_do_not_hardcode_a_newest_stable_version() {
             );
         }
     }
+}
+
+#[test]
+fn developer_integration_guide_pins_are_on_the_current_line() {
+    let line = line_of(&manifest_version());
+    let pins = install_pins(DEV_INTEGRATION);
+    assert!(
+        pins.len() >= 2,
+        "only {} install pins parsed from developer-integration.md ({pins:?}) -- the parser is broken, not the guide",
+        pins.len()
+    );
+    let stale: Vec<_> = pins.iter().filter(|p| line_of(p) != line).collect();
+    assert!(
+        stale.is_empty(),
+        "developer-integration.md tells readers to install {stale:?}, but this tree is on the {line} line"
+    );
 }

@@ -219,7 +219,7 @@ Historical release notes below include the test counts and quality metrics repor
 
 ### 🧪 Developer Excellence
 
-- **Comprehensive Testing**: **1,900+ passing tests** with extensive coverage of OAuth 2.1, security, and integration scenarios
+- **Comprehensive Testing**: extensive coverage of OAuth 2.1, security, and integration scenarios; the 0.6.0-rc50 package holds about 2,600 test functions (not all run in any one feature configuration) -- the CI badge above is the source for what passes
 - **Mock Testing Framework**: Built-in testing utilities with configurable mocks and test helpers
 - **Rich Documentation**: Complete API docs, security guides, and real-world examples
 - **Type Safety**: Leverages Rust's type system for compile-time security guarantees
@@ -278,7 +278,7 @@ Import `auth_framework::prelude::*` to bring all types into scope at once.
 ### Security & Reliability
 
 - **🔒 Security Reviewed, Not Certified**: Internal audit cycles and reviews have found and fixed real vulnerabilities, including critical ones, and this is not a certification. The published list is the [security advisories](https://github.com/ciresnave/auth-framework/security/advisories) page.
-- **🧪 Battle Tested**: 1,900+ passing tests with extensive integration and security testing
+- **🧪 Extensively Tested**: a large unit and integration suite (see Comprehensive Testing above for the count and its limits); vulnerabilities still shipped, which is why the advisories list exists
 - **⚡ Performance Validated**: Benchmarked for high-throughput production environments
 - **🛡️ Advisories**: Vulnerabilities are fixed in a new release and published as GitHub security advisories, so check yours against that list before you pin a version
 - **📋 Compliance Features**: Audit logging and data-handling features that can support GDPR work; this crate holds no SOC 2 attestation or other certification

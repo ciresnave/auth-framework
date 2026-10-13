@@ -17,18 +17,18 @@ If you are looking to deploy the standalone server binary, see [DEPLOYMENT_GUIDE
 
 ```toml
 [dependencies]
-auth-framework = "0.5.0-rc24"
+auth-framework = "0.6.0-rc51"
 tokio = { version = "1", features = ["full"] }
 ```
 
-The default feature set includes PostgreSQL storage, Axum integration, OIDC support, and
-enhanced RBAC. No feature flags are required for the common path.
+The default feature set is `enhanced-rbac` and `postgres-storage`. Axum integration and the
+other subsystems are opt-in features: enable the ones you use (for example `axum-integration`).
 
-To opt out of specific subsystems:
+To opt out of the defaults and choose features explicitly:
 
 ```toml
-# Axum-only, no OIDC
-auth-framework = { version = "0.5.0-rc24", default-features = false, features = ["enhanced-rbac", "postgres-storage", "axum-integration"] }
+# Axum integration with PostgreSQL storage and enhanced RBAC only
+auth-framework = { version = "0.6.0-rc51", default-features = false, features = ["enhanced-rbac", "postgres-storage", "axum-integration"] }
 ```
 
 See [Cargo.toml](../../Cargo.toml) for the full feature flag reference.

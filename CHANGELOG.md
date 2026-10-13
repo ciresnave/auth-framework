@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc52 -- Documentation only. `docs/guides/developer-integration.md` pins 0.6.0-rc51 (it
+  said 0.5.0-rc24) and no longer claims Axum integration and OIDC are default features (the
+  defaults are `enhanced-rbac` and `postgres-storage`); `docs/api/README.md` example version;
+  `docs/guides/administrator-setup.md` footer drops its stale version and superlative. README:
+  the two present-tense "1,900+ passing tests" claims are replaced by a count measured from the
+  0.6.0-rc50 package (2,588 `#[test]`/`#[tokio::test]` functions: 1,889 in `src/`, 699 in
+  `tests/`) and its limits. The test `readme_claims_are_true_of_the_artifact` now also guards
+  the developer-integration pins and that phrase.
 - 0.6.0-rc51 -- Documentation only, plus two small hardenings listed
   under Security. README: install pins and the Docker tag named 0.5.0-rc24, a version inside the
   affected range of published advisories, and are now on the 0.6.0 line (Docker: 0.6.0-rc41, the
