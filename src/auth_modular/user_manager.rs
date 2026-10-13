@@ -7,6 +7,60 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+/// Storage key of the list of every user id (admin listing reads it).
+const USERS_INDEX_KEY: &str = "users:index";
+
+/// Serialises the read-modify-write of the index within this process.
+static USERS_INDEX_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Add (`add == true`) or remove `user_id` in the `users:index` list.
+///
+/// The list is one stored value, so an update is a read-modify-write: two simultaneous updates
+/// could both read the old list and the later write would drop the earlier change (a registered
+/// user missing from the admin listing). Updates are serialised within this process, and each
+/// write is read back and retried if another writer (another process sharing the storage)
+/// overwrote it. Across processes there is still no atomic compare-and-set on a stored value, so
+/// the read-back narrows that window rather than closing it.
+pub(crate) async fn update_users_index(
+    storage: &dyn AuthStorage,
+    user_id: &str,
+    add: bool,
+) -> Result<()> {
+    let _guard = USERS_INDEX_LOCK.lock().await;
+    for _ in 0..5 {
+        let mut ids: Vec<String> = match storage.get_kv(USERS_INDEX_KEY).await? {
+            Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+            None => Vec::new(),
+        };
+        if ids.iter().any(|id| id == user_id) == add {
+            return Ok(());
+        }
+        if add {
+            ids.push(user_id.to_string());
+        } else {
+            ids.retain(|id| id != user_id);
+        }
+        let json = serde_json::to_vec(&ids)
+            .map_err(|e| AuthError::internal(format!("Failed to encode user index: {e}")))?;
+        storage.store_kv(USERS_INDEX_KEY, &json, None).await?;
+    }
+    // The last write was not read back above: check it once more.
+    let present = match storage.get_kv(USERS_INDEX_KEY).await? {
+        Some(bytes) => serde_json::from_slice::<Vec<String>>(&bytes)
+            .unwrap_or_default()
+            .iter()
+            .any(|id| id == user_id),
+        None => false,
+    };
+    if present == add {
+        Ok(())
+    } else {
+        Err(AuthError::internal(
+            "The user index kept being overwritten by a concurrent update",
+        ))
+    }
+}
+
 /// Canonical user information type shared with [`crate::auth::UserInfo`].
 pub type UserInfo = crate::auth::UserInfo;
 
@@ -531,15 +585,7 @@ impl UserManager {
         }
 
         // Maintain global user index for admin listing.
-        let index_key = "users:index";
-        let mut ids: Vec<String> = match self.storage.get_kv(index_key).await? {
-            Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            None => vec![],
-        };
-        ids.push(user_id.clone());
-        if let Ok(idx_json) = serde_json::to_vec(&ids)
-            && let Err(e) = self.storage.store_kv(index_key, &idx_json, None).await
-        {
+        if let Err(e) = update_users_index(&*self.storage, &user_id, true).await {
             warn!("Failed to update user index during registration: {}", e);
         }
 
@@ -609,18 +655,11 @@ impl UserManager {
         }
 
         // Remove from global index.
-        let index_key = "users:index";
-        if let Ok(Some(bytes)) = self.storage.get_kv(index_key).await {
-            let mut ids: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
-            ids.retain(|id| id != &user_id);
-            if let Ok(idx_json) = serde_json::to_vec(&ids)
-                && let Err(e) = self.storage.store_kv(index_key, &idx_json, None).await
-            {
-                warn!(
-                    "Failed to update user index during deletion of '{}': {}",
-                    username, e
-                );
-            }
+        if let Err(e) = update_users_index(&*self.storage, &user_id, false).await {
+            warn!(
+                "Failed to update user index during deletion of '{}': {}",
+                username, e
+            );
         }
 
         // Remember that this account existed and was deleted: a missing record alone cannot be
@@ -2042,5 +2081,66 @@ mod tests {
         // The inactive user should still be in the "all" list
         assert!(all.iter().any(|u| u.id == id1));
         assert!(all.iter().any(|u| u.id == id2));
+    }
+}
+
+#[cfg(test)]
+mod users_index_tests {
+    use super::*;
+    use crate::storage::MemoryStorage;
+
+    async fn ids(storage: &dyn AuthStorage) -> Vec<String> {
+        match storage.get_kv(USERS_INDEX_KEY).await.unwrap() {
+            Some(bytes) => serde_json::from_slice(&bytes).unwrap(),
+            None => Vec::new(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_index_updates_lose_nothing() {
+        let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+
+        let mut adds = Vec::new();
+        for i in 0..200 {
+            let s = storage.clone();
+            adds.push(tokio::spawn(async move {
+                update_users_index(&*s, &format!("user_{i}"), true)
+                    .await
+                    .unwrap();
+            }));
+        }
+        for t in adds {
+            t.await.unwrap();
+        }
+        assert_eq!(ids(&*storage).await.len(), 200, "adds lost entries");
+
+        let mut removes = Vec::new();
+        for i in 0..100 {
+            let s = storage.clone();
+            removes.push(tokio::spawn(async move {
+                update_users_index(&*s, &format!("user_{}", i * 2), false)
+                    .await
+                    .unwrap();
+            }));
+        }
+        for t in removes {
+            t.await.unwrap();
+        }
+        let left = ids(&*storage).await;
+        assert_eq!(left.len(), 100, "removes lost or repeated entries");
+        assert!(left.iter().all(|id| {
+            id.strip_prefix("user_")
+                .and_then(|n| n.parse::<u32>().ok())
+                .is_some_and(|n| n % 2 == 1)
+        }));
+    }
+
+    #[tokio::test]
+    async fn adding_twice_and_removing_a_missing_id_are_noops() {
+        let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+        update_users_index(&*storage, "a", true).await.unwrap();
+        update_users_index(&*storage, "a", true).await.unwrap();
+        update_users_index(&*storage, "b", false).await.unwrap();
+        assert_eq!(ids(&*storage).await, vec!["a".to_string()]);
     }
 }

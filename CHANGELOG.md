@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc48 -- The `users:index` list (admin user listing) is updated through one helper that
+  serialises its read-modify-write within the process and reads each write back: simultaneous
+  registrations (or a registration and a deletion) no longer drop each other's entry. A lost
+  update was observed once in CI under coverage instrumentation (15 of 16 concurrent registrations
+  reached the index). Across processes sharing one storage there is still no atomic
+  compare-and-set on a stored value, so the read-back narrows that window rather than closing it.
 - 0.6.0-rc47 -- Dependencies: the two advisories that kept the `Security Audit` jobs red are gone from
   `Cargo.lock` by dependency changes, with no ignore-list entry. **YAML** now uses `serde-saphyr`
   (maintained, pure Rust) instead of `serde_yaml` 0.9 (deprecated, built on the unmaintained
