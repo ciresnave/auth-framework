@@ -507,6 +507,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # `load: true` puts the image into the local Docker daemon: without it the step below
+      # ("Unable to find image 'authframework:test' locally") can never find it.
       - name: Build test image
         uses: docker/build-push-action@v5
         with:
@@ -514,13 +516,18 @@ jobs:
           file: ./Dockerfile
           target: testing
           push: false
+          load: true
           tags: authframework:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Run Docker tests
+      # The image's default command is `cargo test --all-features --release`, a second full
+      # run of the suite that the Test Suite / Coverage jobs already do (and the container has
+      # no Postgres or Redis service). Check what this image is FOR instead: that it builds
+      # and carries the toolchain and the database client tools the test target installs.
+      - name: Smoke-test the test image
         run: |
-          docker run --rm authframework:test
+          docker run --rm authframework:test sh -c 'cargo --version && rustc --version && psql --version && redis-cli --version'
 
       - name: Build production image
         uses: docker/build-push-action@v5
