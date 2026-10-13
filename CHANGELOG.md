@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- 0.6.0-rc48 -- Dependencies: the two advisories that kept the `Security Audit` jobs red are gone from
+- 0.6.0-rc47 -- Dependencies: the two advisories that kept the `Security Audit` jobs red are gone from
   `Cargo.lock` by dependency changes, with no ignore-list entry. **YAML** now uses `serde-saphyr`
   (maintained, pure Rust) instead of `serde_yaml` 0.9 (deprecated, built on the unmaintained
   `unsafe-libyaml`, RUSTSEC-2024-0449). **Breaking:** the `Yaml` variants of `AuthError` and of
