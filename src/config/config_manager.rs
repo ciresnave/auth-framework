@@ -470,7 +470,7 @@ impl ConfigManager {
         match format {
             FileFormat::Toml => toml::to_string_pretty(&settings)
                 .map_err(|e| AuthError::config(format!("Failed to serialize to TOML: {e}"))),
-            FileFormat::Yaml => serde_yaml::to_string(&settings)
+            FileFormat::Yaml => serde_saphyr::to_string(&settings)
                 .map_err(|e| AuthError::config(format!("Failed to serialize to YAML: {e}"))),
             FileFormat::Json => serde_json::to_string_pretty(&settings)
                 .map_err(|e| AuthError::config(format!("Failed to serialize to JSON: {e}"))),

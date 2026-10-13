@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc47 -- Dependencies: the two advisories that kept the `Security Audit` jobs red are gone from
+  `Cargo.lock` by dependency changes, with no ignore-list entry. **YAML** now uses `serde-saphyr`
+  (maintained, pure Rust) instead of `serde_yaml` 0.9 (deprecated, built on the unmaintained
+  `unsafe-libyaml`, RUSTSEC-2024-0449). **Breaking:** the `Yaml` variants of `AuthError` and of
+  deployment `ConfigError` now wrap `serde_saphyr::Error` instead of `serde_yaml::Error`, and YAML
+  output from `serde_saphyr::to_string` can differ cosmetically from `serde_yaml`'s (quoting,
+  indentation). Parsing defaults differ too: duplicate mapping keys are an error, `<<` merge keys
+  are expanded, scalars follow YAML 1.2 rules (so `yes`/`on` and leading-zero numbers read
+  differently from YAML 1.1), and parsing is budgeted (nesting depth, alias/anchor and node counts).
+  The `config show --format yaml` CLI path reports a serialisation failure as `AuthError::Config`
+  rather than `AuthError::Yaml`. **`actix-web`** is now depended on without its default features (only `macros`), so
+  `h2` 0.3.x (RUSTSEC-2026-0258, no patched 0.3 release; `actix-http` requires `h2 ^0.3.27`) is no
+  longer in this crate's graph for any feature combination; an application that enables
+  `actix-web`'s `http2` feature itself takes `h2` 0.3.x with it (see `SECURITY.md`). `cargo update`
+  brought the lock file to the latest semver-compatible versions (`h2` 0.4.20 among them);
+  `deny.toml` no longer lists RUSTSEC-2026-0258 and bans any `h2 < 0.4.16`.
 - 0.6.0-rc46 -- SQLite `store_kv` / `store_kv_if_absent`: a TTL with a sub-second part no longer expires early (the expiry was truncated to whole seconds).
 - 0.6.0-rc46 -- **Breaking (behaviour) summary of the token-hardening entries in this release**:
   an OpenID Connect ID token is no longer accepted as an access token; `OidcProvider::get_userinfo`

@@ -72,7 +72,8 @@ async fn handle_config_show(
     let config = state.config.read().await;
     let output = match format.as_str() {
         "json" => serde_json::to_string_pretty(&*config)?,
-        "yaml" => serde_yaml::to_string(&*config)?,
+        "yaml" => serde_saphyr::to_string(&*config)
+            .map_err(|e| AuthError::config(format!("Failed to serialize to YAML: {e}")))?,
         "toml" => toml::to_string_pretty(&*config)?,
         _ => toml::to_string_pretty(&*config)?,
     };
