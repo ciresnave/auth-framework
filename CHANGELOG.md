@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Breaking (custom storage backends):** the default of `AuthStorage::store_kv_if_absent` is now an
+- 0.6.0-rc50 -- **Breaking (custom storage backends):** the default of `AuthStorage::store_kv_if_absent` is now an
   error instead of a non-atomic `get_kv` followed by `store_kv`. Single-use claims (refresh-token
   redemption, TOTP steps, WebAuthn sessions, PKCE codes) depend on it being a compare-and-set, and a
   backend that kept the old default silently lost that guarantee. A custom `AuthStorage` must
