@@ -674,7 +674,7 @@ async fn handle_authorization_code_grant(
             serde_json::to_string(&refresh_data)
                 .unwrap_or_default()
                 .as_bytes(),
-            Some(std::time::Duration::from_secs(30 * 24 * 3600)),
+            Some(REFRESH_TOKEN_TTL),
         )
         .await
     {
@@ -835,6 +835,9 @@ async fn authenticate_token_client(
 ///
 /// There is no "check it only if it is present" path, and a token whose
 /// client is no longer registered fails closed.
+/// Lifetime of a stored refresh token, and of the marker that records it was redeemed.
+const REFRESH_TOKEN_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+
 async fn authorize_refresh_client(
     state: &ApiState,
     stored_client: &str,
@@ -938,15 +941,13 @@ async fn handle_refresh_token_grant(
     };
 
     // Claim the token: of any number of simultaneous redemptions exactly one proceeds (atomic
-    // set-if-absent). The marker is only written for a token that exists.
+    // set-if-absent). The marker is only written for a token that exists. It must outlive the
+    // token: if the old record's delete fails during rotation (below), this marker is the only
+    // thing that stops the rotated-out token being redeemed again (#117).
     match state
         .auth_framework
         .storage()
-        .store_kv_if_absent(
-            &consumed_key,
-            b"1",
-            Some(std::time::Duration::from_secs(600)),
-        )
+        .store_kv_if_absent(&consumed_key, b"1", Some(REFRESH_TOKEN_TTL))
         .await
     {
         Ok(true) => {}
@@ -1054,6 +1055,13 @@ async fn handle_refresh_token_grant(
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to create access token on refresh: {:?}", e);
+            // Nothing was issued and the old record is untouched: release the claim so the
+            // client can retry instead of losing the session for the marker's 30 days.
+            let _ = state
+                .auth_framework
+                .storage()
+                .delete_kv(&consumed_key)
+                .await;
             return ApiResponse::error_typed("server_error", "Failed to issue access token");
         }
     };
@@ -1075,11 +1083,17 @@ async fn handle_refresh_token_grant(
             serde_json::to_string(&new_refresh_data)
                 .unwrap_or_default()
                 .as_bytes(),
-            Some(std::time::Duration::from_secs(30 * 24 * 3600)),
+            Some(REFRESH_TOKEN_TTL),
         )
         .await
     {
         tracing::error!("Failed to store new refresh token: {:?}", e);
+        // Same as above: no rotation happened, so the old token must stay redeemable.
+        let _ = state
+            .auth_framework
+            .storage()
+            .delete_kv(&consumed_key)
+            .await;
         return ApiResponse::error_typed("server_error", "Failed to issue refresh token");
     }
 
@@ -1158,7 +1172,7 @@ pub async fn revoke(
             // not just the 7 days an access token's JWT markers need --
             // otherwise a revoked refresh token whose delete somehow
             // failed would become usable again once this marker expired.
-            Some(std::time::Duration::from_secs(86400 * 30)),
+            Some(REFRESH_TOKEN_TTL),
         )
         .await
     {

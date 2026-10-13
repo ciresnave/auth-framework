@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc51 -- Documentation only, plus two small hardenings listed
+  under Security. README: install pins and the Docker tag named 0.5.0-rc24, a version inside the
+  affected range of published advisories, and are now on the 0.6.0 line (Docker: 0.6.0-rc41, the
+  newest published image tag); the "CVE-Free" / "no critical vulnerabilities" / "SOC 2" /
+  "military-grade" / "ONLY Rust" claims are removed or replaced with what is true; the "What's New"
+  section says it stops at rc24 and points to this file. The two storage guides no longer name
+  0.4.3 as the newest stable release (it is 0.4.7) or call the 0.6.0 line "0.5+"; they say the
+  0.4.x line lacks `new_with_storage`. New test `readme_claims_are_true_of_the_artifact`.
+  Other docs under `docs/` still carry 0.5.0-rc24 pins and are not changed here.
 - 0.6.0-rc49 -- CI only: the `Build and Test Docker Image` job loads the test image into the
   Docker daemon (`load: true`) and smoke-tests it (toolchain and database client tools) instead
   of running a second full `cargo test --all-features --release` inside a container without
@@ -18,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- 0.6.0-rc51 -- The marker that records an OAuth2 refresh token as
+  redeemed now lives as long as the token (30 days) instead of 10 minutes (#117): if deleting the
+  rotated-out record failed, the token became redeemable again once the marker expired. Behaviour
+  change: each successful refresh now leaves that marker in storage for 30 days (it was 10
+  minutes), and a refresh that fails after the claim but before rotation (access-token minting or
+  storing the new refresh token) releases the marker so the client can retry. The buffer holding
+  the unwrapped content-encryption key in JARM's RSA-OAEP JWE decryption is zeroized when dropped
+  (#100); the AES key schedule `aes-gcm` derives from it is not.
 - 0.6.0-rc50 -- **Breaking (custom storage backends):** the default of `AuthStorage::store_kv_if_absent` is now an
   error instead of a non-atomic `get_kv` followed by `store_kv`. Single-use claims (refresh-token
   redemption, TOTP steps, WebAuthn sessions, PKCE codes) depend on it being a compare-and-set, and a
