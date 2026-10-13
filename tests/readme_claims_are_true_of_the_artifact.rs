@@ -42,8 +42,16 @@ fn line_of(version: &str) -> String {
 }
 
 fn manifest_version() -> String {
+    let mut in_package = false;
     for l in MANIFEST.lines() {
         let l = l.trim();
+        if l.starts_with('[') {
+            in_package = l == "[package]";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
         if let Some(rest) = l.strip_prefix("version")
             && let Some(q) = rest.split('"').nth(1)
         {

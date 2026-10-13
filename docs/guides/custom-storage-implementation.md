@@ -563,7 +563,7 @@ surrealdb-storage = ["surrealdb", "serde_json"]
 [dependencies]
 surrealdb = { version = "1.0", optional = true }
 serde_json = { version = "1.0", optional = true }
-auth-framework = "0.5.0-rc25"  # see the version notice at the top of this guide
+auth-framework = "0.6.0-rc50"  # see the version notice at the top of this guide
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }

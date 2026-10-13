@@ -1055,6 +1055,13 @@ async fn handle_refresh_token_grant(
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to create access token on refresh: {:?}", e);
+            // Nothing was issued and the old record is untouched: release the claim so the
+            // client can retry instead of losing the session for the marker's 30 days.
+            let _ = state
+                .auth_framework
+                .storage()
+                .delete_kv(&consumed_key)
+                .await;
             return ApiResponse::error_typed("server_error", "Failed to issue access token");
         }
     };
@@ -1081,6 +1088,12 @@ async fn handle_refresh_token_grant(
         .await
     {
         tracing::error!("Failed to store new refresh token: {:?}", e);
+        // Same as above: no rotation happened, so the old token must stay redeemable.
+        let _ = state
+            .auth_framework
+            .storage()
+            .delete_kv(&consumed_key)
+            .await;
         return ApiResponse::error_typed("server_error", "Failed to issue refresh token");
     }
 
@@ -1159,7 +1172,7 @@ pub async fn revoke(
             // not just the 7 days an access token's JWT markers need --
             // otherwise a revoked refresh token whose delete somehow
             // failed would become usable again once this marker expired.
-            Some(std::time::Duration::from_secs(86400 * 30)),
+            Some(REFRESH_TOKEN_TTL),
         )
         .await
     {
