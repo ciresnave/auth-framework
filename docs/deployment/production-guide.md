@@ -1,4 +1,4 @@
-# AuthFramework v0.5.0-rc24 - Production Deployment Guide
+# AuthFramework -- Production Deployment Guide
 
 ## Prerequisites
 

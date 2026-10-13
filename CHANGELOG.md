@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc53 -- **Served value changed:** the OpenAPI document the API serves
+  (`generate_openapi_spec()`, `info.version`) reported the literal `0.5.0-rc24` on every release
+  since rc24; it now reports the crate version (`env!("CARGO_PKG_VERSION")`), so it cannot drift.
+  Consumers that read that field will see `0.6.0-rc53`. The checked-in `docs/api/openapi.yaml`,
+  `openapi-modular.yaml`, `openapi-bundled.yaml` and the two `version` examples in
+  `docs/api/schemas/health.yaml` are static and now carry 0.6.0-rc53; a release bump must update
+  them, and the new test `openapi_version_matches_cargo` fails the bump that forgets. Footers and
+  titles that named 0.5.0-rc24 in `migration-upgrade.md`, `production-guide.md`,
+  `security-configuration.md` and `troubleshooting.md` no longer name a version (and the
+  "THE premier" line is gone). `docs/development/TESTING_RESULTS.md` is a recorded rc24
+  snapshot and is unchanged.
 - 0.6.0-rc52 -- Documentation only. `docs/guides/developer-integration.md` pins 0.6.0-rc51 (it
   said 0.5.0-rc24) and no longer claims Axum integration and OIDC are default features (the
   defaults are `enhanced-rbac` and `postgres-storage`); `docs/api/README.md` example version;
