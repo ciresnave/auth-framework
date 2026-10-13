@@ -202,7 +202,7 @@ pub enum AuthError {
 
     /// YAML parsing errors
     #[error("YAML error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_saphyr::Error),
 
     /// TOML parsing errors
     #[error("TOML error: {0}")]

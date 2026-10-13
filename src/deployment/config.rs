@@ -25,7 +25,7 @@ pub enum ConfigError {
     #[error("TOML parsing error: {0}")]
     Toml(#[from] toml::de::Error),
     #[error("YAML parsing error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_saphyr::Error),
 }
 
 /// Configuration format types
@@ -243,9 +243,8 @@ impl ConfigManager {
             ConfigFormat::Toml => {
                 toml::from_str(content).map_err(|e| ConfigError::InvalidFormat(e.to_string()))
             }
-            ConfigFormat::Yaml => {
-                serde_yaml::from_str(content).map_err(|e| ConfigError::InvalidFormat(e.to_string()))
-            }
+            ConfigFormat::Yaml => serde_saphyr::from_str(content)
+                .map_err(|e| ConfigError::InvalidFormat(e.to_string())),
             ConfigFormat::Environment => Err(ConfigError::InvalidFormat(
                 "Environment loading not supported here".to_string(),
             )),
@@ -435,7 +434,7 @@ impl ConfigManager {
             ConfigFormat::Json => serde_json::to_string_pretty(&self.config)?,
             ConfigFormat::Toml => toml::to_string(&self.config)
                 .map_err(|e| ConfigError::InvalidFormat(e.to_string()))?,
-            ConfigFormat::Yaml => serde_yaml::to_string(&self.config)
+            ConfigFormat::Yaml => serde_saphyr::to_string(&self.config)
                 .map_err(|e| ConfigError::InvalidFormat(e.to_string()))?,
             ConfigFormat::Environment => {
                 return Err(ConfigError::InvalidFormat(

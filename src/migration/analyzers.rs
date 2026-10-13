@@ -30,7 +30,7 @@ pub async fn analyze_legacy_system<P: AsRef<Path>>(
     }
 
     // Try to parse as YAML
-    if let Ok(yaml_value) = serde_yaml::from_str::<Value>(&config_content) {
+    if let Ok(yaml_value) = serde_saphyr::from_str::<Value>(&config_content) {
         return analyze_yaml_config(&yaml_value).await;
     }
 

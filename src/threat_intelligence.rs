@@ -253,7 +253,7 @@ impl ThreatIntelConfig {
 
         if std::path::Path::new(&config_path).exists() {
             let config_content = std::fs::read_to_string(&config_path)?;
-            let mut config: Self = serde_yaml::from_str(&config_content)?;
+            let mut config: Self = serde_saphyr::from_str(&config_content)?;
 
             // Override with environment variables if they exist
             if let Ok(enabled) = std::env::var("THREAT_INTEL_ENABLED") {
@@ -446,7 +446,7 @@ impl ThreatFeedManager {
     pub fn load_config() -> ThreatIntelConfig {
         // Try to load from config file first
         if let Ok(config_content) = std::fs::read_to_string("threat-intel-config.yaml")
-            && let Ok(config) = serde_yaml::from_str::<ThreatIntelConfig>(&config_content)
+            && let Ok(config) = serde_saphyr::from_str::<ThreatIntelConfig>(&config_content)
         {
             info!("Loaded threat intelligence configuration from file");
             return config;

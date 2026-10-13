@@ -733,7 +733,7 @@ impl BreakingChangeHandler {
 
     pub async fn migrate_configuration_format(&self, old_config_path: &str) -> Result<(), MigrationError> {
         // Load old configuration
-        let old_config: OldConfigFormat = serde_yaml::from_str(
+        let old_config: OldConfigFormat = serde_saphyr::from_str(
             &std::fs::read_to_string(old_config_path)?
         )?;
 
@@ -755,7 +755,7 @@ impl BreakingChangeHandler {
         };
 
         // Save new configuration
-        let new_config_yaml = serde_yaml::to_string(&new_config)?;
+        let new_config_yaml = serde_saphyr::to_string(&new_config)?;
         std::fs::write(
             old_config_path.replace(".yaml", ".v04.yaml"),
             new_config_yaml
