@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - Unreleased
 
+### Changed
+
+- 0.6.0-rc49 -- CI only: the `Build and Test Docker Image` job loads the test image into the
+  Docker daemon (`load: true`) and smoke-tests it (toolchain and database client tools) instead
+  of running a second full `cargo test --all-features --release` inside a container without
+  Postgres or Redis. The job could never pass before (it ran `docker run authframework:test`
+  on an image that was only in the build cache) and had been skipped because the audit jobs it
+  depends on were red. No library change.
+
 ### Security
 
 - 0.6.0-rc48 -- The `users:index` list (admin user listing) is updated through one helper that
