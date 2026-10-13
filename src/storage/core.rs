@@ -144,21 +144,26 @@ pub trait AuthStorage: Send + Sync {
     /// Store `value` under `key` only if no live entry exists. Returns whether it was stored.
     ///
     /// This is a compare-and-set: of several simultaneous callers exactly one gets `true`.
-    /// The default implementation is a `get_kv` followed by `store_kv` and is **not**
-    /// atomic. The memory, SQLite (both crates), PostgreSQL, Redis, unified and encrypted-wrapper
-    /// backends override it with an atomic operation; a custom backend (and the test-only
-    /// `MockStorage`) that does not gives single-use markers no atomicity.
+    /// Single-use markers (refresh-token redemption, TOTP steps, WebAuthn sessions, PKCE codes)
+    /// depend on that, so a backend **must** implement it atomically; there is no default that
+    /// could be correct for every store (a `get_kv` followed by `store_kv` is not atomic).
+    /// The default therefore fails with an error, and the paths that need a claim fail with it
+    /// rather than run without the guarantee. The memory, SQLite (both crates), PostgreSQL,
+    /// Redis, unified and encrypted-wrapper backends and the test-only `MockStorage` implement it.
     async fn store_kv_if_absent(
         &self,
-        key: &str,
-        value: &[u8],
-        ttl: Option<Duration>,
+        _key: &str,
+        _value: &[u8],
+        _ttl: Option<Duration>,
     ) -> Result<bool> {
-        if self.get_kv(key).await?.is_some() {
-            return Ok(false);
-        }
-        self.store_kv(key, value, ttl).await?;
-        Ok(true)
+        Err(crate::errors::AuthError::Storage(
+            crate::errors::StorageError::operation_failed(
+                "this storage backend does not implement store_kv_if_absent, which the \
+                 single-use claims (refresh-token redemption, TOTP steps, WebAuthn sessions, \
+                 PKCE codes) require to be atomic; implement it as a compare-and-set"
+                    .to_string(),
+            ),
+        ))
     }
 
     /// Retrieve arbitrary key-value data.
