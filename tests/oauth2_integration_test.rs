@@ -403,6 +403,89 @@ mod oauth2_integration_tests {
         assert!(!refresh_response.data.unwrap().access_token.is_empty());
     }
 
+    /// The consumed marker is the only thing that stops a rotated-out refresh token being
+    /// replayed if the old record's delete failed (#117). It must therefore outlive the
+    /// token it guards: the marker's lifetime must be at least the refresh token's own
+    /// 30 days, not the 10 minutes it was written with.
+    #[tokio::test]
+    async fn test_oauth2_refresh_consumed_marker_outlives_the_refresh_token() {
+        let state = setup_api_state().await;
+        let storage = state.auth_framework.storage();
+        // Control: a backend that does not report TTLs would make the assertion below
+        // pass or fail on `None`, not on the lifetime.
+        assert!(
+            storage.tracks_kv_ttl(),
+            "control: the test storage must report TTLs"
+        );
+
+        let auth_request = AuthorizeRequest {
+            response_type: "code".to_string(),
+            client_id: "test_client".to_string(),
+            redirect_uri: "http://localhost:3000/callback".to_string(),
+            scope: Some("openid profile".to_string()),
+            state: Some("test_state".to_string()),
+            code_challenge: Some("test_challenge".to_string()),
+            code_challenge_method: Some("plain".to_string()),
+            nonce: None,
+            resource: None,
+        };
+        let auth_headers = make_auth_headers(&state).await;
+        let auth_response =
+            oauth2::authorize(State(state.clone()), auth_headers, Query(auth_request))
+                .await
+                .into_response();
+        let auth_url = auth_response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let code = auth_url
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split("&")
+            .next()
+            .unwrap();
+        let token_request = TokenRequest::authorization_code(code)
+            .redirect_uri("http://localhost:3000/callback")
+            .client_id("test_client")
+            .code_verifier("test_challenge");
+        let token_response = oauth2::token(State(state.clone()), Json(token_request)).await;
+        assert!(token_response.success);
+        let refresh_token = token_response
+            .data
+            .unwrap()
+            .refresh_token
+            .expect("authorization_code grant must issue a refresh token");
+
+        // The issued refresh record's own lifetime is the bar the marker must meet.
+        let record_ttl = storage
+            .get_kv_ttl(&format!("oauth2_refresh_token:{}", refresh_token))
+            .await
+            .unwrap()
+            .expect("the refresh record must carry a TTL");
+
+        let refresh_request = TokenRequest::refresh(&refresh_token).client_id("test_client");
+        let refresh_response = oauth2::token(State(state.clone()), Json(refresh_request)).await;
+        assert!(refresh_response.success, "the rotation itself must succeed");
+
+        let marker_ttl = storage
+            .get_kv_ttl(&format!("oauth2_refresh_consumed:{}", refresh_token))
+            .await
+            .unwrap()
+            .expect("the consumed marker must exist and carry a TTL");
+        // Allow a minute of clock between the two reads.
+        let slack = std::time::Duration::from_secs(60);
+        assert!(
+            marker_ttl + slack >= record_ttl,
+            "the consumed marker lives {marker_ttl:?} but the refresh token it guards lived \
+             {record_ttl:?}: once the marker expires a failed delete of the old record makes \
+             the rotated-out token redeemable again"
+        );
+    }
+
     /// Revoking a refresh token must actually prevent it from minting new
     /// access tokens, end to end through the real handlers. Passes if
     /// EITHER fix mechanism (the delete in `revoke`, or the marker check

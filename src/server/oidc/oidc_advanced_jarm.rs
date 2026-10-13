@@ -1067,12 +1067,13 @@ impl AdvancedJarmManager {
         let encrypted_cek = URL_SAFE_NO_PAD
             .decode(encrypted_key_b64)
             .map_err(|e| AuthError::token(format!("Bad encrypted_key encoding: {e}")))?;
-        let mut cek_buf = vec![0u8; priv_key.key_size_bytes()];
+        // The unwrapped CEK is key material: wipe it when it goes out of scope (#100).
+        let mut cek_buf = zeroize::Zeroizing::new(vec![0u8; priv_key.key_size_bytes()]);
         let cek = priv_key
             .decrypt(
                 &aws_lc_rs::rsa::OAEP_SHA256_MGF1SHA256,
                 &encrypted_cek,
-                &mut cek_buf,
+                cek_buf.as_mut_slice(),
                 None,
             )
             .map_err(|_| AuthError::crypto("RSA-OAEP CEK unwrap failed"))?;

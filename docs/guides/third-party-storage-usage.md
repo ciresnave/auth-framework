@@ -1,10 +1,12 @@
 # Third-Party Storage Backend Usage Guide
 
-> **Describes `main` / the unreleased 0.5+ line, not the current stable release.** The APIs this
-> guide uses (including `new_with_storage`) are absent from 0.4.3, the newest stable version on
-> crates.io as of this writing -- `cargo add auth-framework` installs 0.4.3 by default, since
-> Cargo doesn't select pre-releases automatically. If `new_with_storage` doesn't resolve, that's
-> why; either depend on a `0.5.0-rc*` version explicitly, or wait for a stable 0.5.0.
+> **Describes `main` (the 0.6.0 pre-release line), not the 0.4.x stable line.** The APIs this
+> guide uses (including `new_with_storage`) are absent from every 0.4.x release --
+> `cargo add auth-framework` installs the newest 0.4.x by default, since Cargo doesn't select
+> pre-releases automatically. If `new_with_storage` doesn't resolve, that's why: depend on a
+> pre-release explicitly (`cargo add auth-framework@0.6.0-rc50` was the newest when this was
+> written; check crates.io), or stay on 0.4.x and its own storage API. Read the published
+> security advisories before pinning an older pre-release.
 
 This guide shows you how to use third-party storage backends with AuthFramework, including the integration patterns and best practices.
 

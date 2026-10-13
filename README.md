@@ -25,12 +25,13 @@ curl -sSL https://raw.githubusercontent.com/ciresnave/auth-framework/main/script
 iwr -useb https://raw.githubusercontent.com/ciresnave/auth-framework/main/scripts/install.ps1 | iex
 
 # Docker - Instant deployment
-# No `:latest` tag is published yet (every release so far has been a
-# pre-release, which the image-tagging workflow doesn't tag `latest`) --
-# pin to a real published tag; check
+# No `:latest` tag is published (every release so far has been a pre-release,
+# which the image-tagging workflow doesn't tag `latest`), and an image is not
+# published for every crate release. 0.6.0-rc41 was the newest image tag when
+# this was written; check
 # https://github.com/ciresnave/auth-framework/pkgs/container/auth-framework
-# for the current one.
-docker run -p 8080:8080 ghcr.io/ciresnave/auth-framework:0.5.0-rc24
+# for the current one, and the published advisories before you pin an older tag.
+docker run -p 8080:8080 ghcr.io/ciresnave/auth-framework:0.6.0-rc41
 ```
 
 **That's it!** Server running at `http://localhost:8080` 🎉
@@ -59,8 +60,8 @@ This split exists to support both simple app integration and advanced compositio
 
 ## 🚀 Why Auth Framework is the Best Choice
 
-- **🏢 Complete Client & Server Solution**: The ONLY Rust framework providing both client authentication AND full OAuth 2.0 authorization server capabilities
-- **🛡️ Enterprise Security**: Military-grade security with comprehensive audit trails, rate limiting, and multi-factor authentication
+- **🏢 Client & Server in One Crate**: Client authentication AND OAuth 2.0 authorization server capabilities
+- **🛡️ Security Features**: Audit trails, rate limiting, and multi-factor authentication; vulnerabilities found in this crate are published as [security advisories](https://github.com/ciresnave/auth-framework/security/advisories)
 - **🔧 Unmatched Feature Set**: OAuth 2.0 server, OIDC provider, JWT server, SAML SP, WebAuthn RP, API gateway, and more
 - **📊 Test Suite**: extensive test suite; recorded results in `docs/development/TESTING_RESULTS.md` are a **historical rc18 snapshot**, not the current CI state — read the CI badge above for that
 - **⚡ High Performance**: Optimized for speed with async-first design and efficient memory usage
@@ -74,9 +75,11 @@ This split exists to support both simple app integration and advanced compositio
 
 ## 🆕 What's New in Latest Version
 
+The current release's notes are in [`CHANGELOG.md`](CHANGELOG.md), which this section does not track; the notes below stop at 0.5.0-rc24 and are history. The 0.4.x line is the newest stable release; `main` is on 0.6.0.
+
 Historical release notes below include the test counts and quality metrics reported at the time of each release candidate. The current authoritative test status lives in `docs/development/TESTING_RESULTS.md` and the CI workflow.
 
-**v0.5.0-rc24** - Release Publication Repair:
+**Previous: v0.5.0-rc24** - Release Publication Repair:
 
 - **📝 Release notes now come from the committed changelog** - The release workflow extracts the current version section directly from `CHANGELOG.md` instead of trying to build the obsolete `orhun/git-cliff-action@v3` container
 - **🐳 Prebuilt-musl Docker publishing retained** - The rc23 split runtime-image path remains in place, so release images still package prebuilt `auth-framework` musl binaries rather than compiling Rust in Docker publish jobs
@@ -274,15 +277,15 @@ Import `auth_framework::prelude::*` to bring all types into scope at once.
 
 ### Security & Reliability
 
-- **🔒 Security Audited**: Comprehensive security review with no critical vulnerabilities
+- **🔒 Security Reviewed, Not Certified**: Internal audit cycles and reviews have found and fixed real vulnerabilities, including critical ones, and this is not a certification. The published list is the [security advisories](https://github.com/ciresnave/auth-framework/security/advisories) page.
 - **🧪 Battle Tested**: 1,900+ passing tests with extensive integration and security testing
 - **⚡ Performance Validated**: Benchmarked for high-throughput production environments
-- **🛡️ CVE-Free**: Clean security record with proactive vulnerability management
-- **📋 Compliance Ready**: GDPR, SOC 2, and enterprise compliance features built-in
+- **🛡️ Advisories**: Vulnerabilities are fixed in a new release and published as GitHub security advisories, so check yours against that list before you pin a version
+- **📋 Compliance Features**: Audit logging and data-handling features that can support GDPR work; this crate holds no SOC 2 attestation or other certification
 
 ### Industry Recognition
 
-- **🥇 Most Complete**: The ONLY Rust auth framework with full client AND server capabilities (OAuth 2.0 server, OIDC provider, SAML SP)
+- **🥇 Broad Scope**: Client AND server capabilities in one crate (OAuth 2.0 server, OIDC provider, SAML SP)
 - **🏢 Enterprise Ready**: Complete authorization server solution rivaling commercial products like Auth0, Okta, and AWS Cognito
 - **🔧 Developer Friendly**: Extensive documentation, examples, and testing utilities for both client and server implementations
 - **🌍 Production Scale**: Designed for enterprise-grade mission-critical applications requiring custom authorization servers
@@ -326,7 +329,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-auth-framework = "0.5.0-rc24"
+auth-framework = "0.6.0-rc50"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -1029,7 +1032,7 @@ The framework provides comprehensive testing utilities to make testing your auth
 
 ```toml
 [dev-dependencies]
-auth-framework = { version = "0.5.0-rc24", features = ["testing"] }
+auth-framework = { version = "0.6.0-rc50", features = ["testing"] }
 ```
 
 ```rust
@@ -1288,7 +1291,7 @@ Helper utilities for integrating with CLI frameworks:
 
 ```toml
 [dependencies]
-auth-framework = "0.5.0-rc24"
+auth-framework = "0.6.0-rc50"
 clap = "4.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
