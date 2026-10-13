@@ -176,12 +176,12 @@ fn developer_integration_guide_pins_are_on_the_current_line() {
     let pins = install_pins(DEV_INTEGRATION);
     assert!(
         pins.len() >= 2,
-        "only {} install pins parsed from developer-integration.md ({pins:?}) -- the parser          is broken, not the guide",
+        "only {} install pins parsed from developer-integration.md ({pins:?}) -- the parser is broken, not the guide",
         pins.len()
     );
     let stale: Vec<_> = pins.iter().filter(|p| line_of(p) != line).collect();
     assert!(
         stale.is_empty(),
-        "developer-integration.md tells readers to install {stale:?}, but this tree is on          the {line} line"
+        "developer-integration.md tells readers to install {stale:?}, but this tree is on the {line} line"
     );
 }
