@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- 0.6.0-rcNN (number allocated at gate) -- Documentation only, plus two small hardenings listed
+- 0.6.0-rc51 -- Documentation only, plus two small hardenings listed
   under Security. README: install pins and the Docker tag named 0.5.0-rc24, a version inside the
   affected range of published advisories, and are now on the 0.6.0 line (Docker: 0.6.0-rc41, the
   newest published image tag); the "CVE-Free" / "no critical vulnerabilities" / "SOC 2" /
@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- 0.6.0-rcNN (number allocated at gate) -- The marker that records an OAuth2 refresh token as
+- 0.6.0-rc51 -- The marker that records an OAuth2 refresh token as
   redeemed now lives as long as the token (30 days) instead of 10 minutes (#117): if deleting the
   rotated-out record failed, the token became redeemable again once the marker expired. Behaviour
   change: each successful refresh now leaves that marker in storage for 30 days (it was 10
