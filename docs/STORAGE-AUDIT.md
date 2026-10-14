@@ -35,7 +35,7 @@ filed as private GitHub security advisories; no exploit detail is included
 in this public document. One affected TOTP/MFA verification, the other
 OAuth2 refresh-token revocation. Both were confirmed present in
 previously-published releases, not just on `main`. **Corrected at
-`3239b1c3`:** both are fixed on `main` (#111, #112, 0.6.0-rc9); the
+`3239b1c3`:** both are fixed on `main` (#111; #112 with 0.6.0-rc9); the
 previously-published releases are not patched by that.
 
 **Not to be confused with** the 0.6.0 zeroization sweep (PRs #63-#77): that
@@ -63,13 +63,13 @@ was read directly against `origin/main` unless marked "Unverified."
 | 5 | API keys | `auth_modular/user_manager.rs:154-180` (`api_key:{key}` KV) | **Yes** (positive control) | Yes | Yes | None dedicated | — | Verified |
 | 6 | Passwords | `auth_modular/user_manager.rs:126-140` (argon2id/bcrypt via `hash_with_algorithm`) | Yes (via user record storage) | Yes | Yes | Yes, `test_password_hashing*` | — | Verified |
 | 7 | Sessions (canonical) | `auth_modular/session_manager.rs` → `AuthStorage::store_session`/`get_session` | Yes | Yes | Yes | Covered by broader test suite | — | Verified |
-| 8 | Session manager, generic trait — dead code | `session/manager.rs:502` `SessionManager<S: SessionStorage, A: AuditStorage>` — **zero implementations of `SessionStorage` exist anywhere in the tree** | N/A — uninstantiable with a real backend | N/A | N/A | Has its own unit tests but can't be used outside them | not filed | Verified (`impl SessionStorage for`: zero hits besides the trait decl) |
+| 8 | Session manager, generic trait — dead code | `session/manager.rs:502` `SessionManager<S: SessionStorage, A: AuditStorage>` — **no non-test implementation of `SessionStorage` exists in the tree** (a `TestSessionStorage` inside the file's own tests was added after `a254de6b`) | N/A — uninstantiable with a real backend | N/A | N/A | Has its own unit tests but can't be used outside them | not filed | Verified (`impl SessionStorage for`: zero hits besides the trait decl) |
 | 9 | Session manager, in-memory, widely reused | `server/oidc/oidc_session_management.rs:91-96` `SessionManager { sessions: HashMap<...> }`, no `Arc`/lock at all | **No** | **No** | **No** | Has its own unit tests (in-memory only) | not filed | Verified — constructed via bare `Arc::new(SessionManager::new(...))` in CAEP, stepped-up-auth, RAR, CIBA, token-exchange, backchannel/frontchannel logout (6+ call sites); with no interior mutability, mutating methods (`&mut self`) are **unreachable through every one of those `Arc`-wrapped instances** — likely non-functional glue, not just "in-memory" |
 | 10 | DPoP replay-prevention nonces | `server/security/dpop.rs:79` `used_nonces: RwLock<HashMap<...>>` | No | No | No | Not checked | not filed | Verified (field) |
 | 11 | JWT revocation list (secondary layer) | `security/secure_jwt.rs:103,195` — doc comment itself says "in-memory" | No | No | No | Not checked | not filed | Verified |
 | 12 | Secure session store (separate from #7/#9) | `security/secure_session.rs:231-233` `active_sessions`/`user_sessions`/`ip_changes`: `DashMap` | **No, resolved in Phase 3** — the file imports no storage trait at all; Phase 1's "2 storage calls" was `self.store_session(...)` at `:318`, a PRIVATE method (doc: "Store session in memory (in production, use persistent storage)") that only writes the local `DashMap`s. All other hits are test-only. | **No** | **No** | Has its own tests (in-memory only) | not filed | Verified (Phase 3) |
 | 13 | Device authorization grant | `server/oauth/device.rs:118` `authorizations: Arc<RwLock<HashMap<...>>>` | **Yes, resolved in Phase 3** — storage is the actual source of truth: every mutation writes `device_code:{dc}`/`user_code:{uc}` with 600s TTL; reads check storage first, falling back to the local cache only on a miss. Restart-safe. **But has real bugs**: (a) a storage miss can fall back to a stale local cache; (b) **no consume/delete exists anywhere in the file** — RFC 8628 one-time-use is not enforced, `poll_authorization` keeps returning `Authorized` until expiry; (c) `authorize_device` never checks the record is still `Pending`, so a `Denied` record can be flipped to `Authorized`; (d) plaintext key names. Also: nothing in `src/` constructs `DeviceAuthManager` — only re-exported. | Not checked | not filed | Verified (Phase 3) |
-| 14 | Pushed Authorization Requests (PAR) | `server/oauth/par.rs` `requests: Arc<RwLock<HashMap<...>>>` (local cache) | **Yes (Phase 3 corrected Phase 1's "Likely No").** `store_request` writes `par:{request_uri}` with a 90s TTL; `consume_request` reads storage first. **Corrected at `3239b1c3`: the single-use defect Phase 3 found is fixed** (`d67594c7`) — `consume_request` claims `par_spent:{request_uri}` with `store_kv_if_absent` before deleting, so exactly one concurrent or cross-replica redeemer wins, and the marker outlives the request. The local cache fallback on a storage miss remains. Used by `FapiManager`. | Yes | Yes (single use) | Not re-checked | not filed | Re-verified `3239b1c3` (read `par.rs`) |
+| 14 | Pushed Authorization Requests (PAR) | `server/oauth/par.rs` `requests: Arc<RwLock<HashMap<...>>>` (local cache) | **Yes (Phase 3 corrected Phase 1's "Likely No").** `store_request` writes `par:{request_uri}` with a 90s TTL; `consume_request` reads storage first. **Corrected at `3239b1c3`: the single-use defect Phase 3 found is fixed** (`d67594c7`) — `consume_request` claims `par_spent:{request_uri}` with `store_kv_if_absent` before deleting, so at most one redeemer wins (exactly one on a backend with an atomic `store_kv_if_absent`; on a backend that keeps the fail-closed default, #154, every redemption errors), and the marker outlives the request. Cross-replica only on a shared backend (Postgres, SQLite file, Redis), not `MemoryStorage`. The local cache fallback on a storage miss remains. Used by `FapiManager`. | Yes | Yes (single use) on a shared backend with atomic `store_kv_if_absent` | Not re-checked | not filed | Re-verified `3239b1c3` (read `par.rs`) |
 | 15 | Rich Authorization Requests (RAR) decisions/resource cache | `server/oauth/rich_authorization_requests.rs:612,615` | **No** — zero storage refs | No | No | Not checked | not filed | Verified |
 | 16 | `private_key_jwt` client auth: JTI replay list | `server/jwt/private_key_jwt.rs` `used_jtis: RwLock<JtiStore>` (`JtiStore` is a swept in-memory map; no `AuthStorage` call in the file) | **No** | No | **No** — replay protection is per-instance only | Not checked | not filed | Re-verified `3239b1c3` for the storage claim. Corrected: assertions are now verified against the registered public key (`7cd9a6de`); that is signature verification, not replay storage. |
 | 17 | OIDC backchannel/frontchannel logout state | `oidc_backchannel_logout.rs:201,203`, `oidc_frontchannel_logout.rs:116,118` | No | No | No | Not checked | not filed | Verified (fields) |
@@ -77,7 +77,7 @@ was read directly against `origin/main` unless marked "Unverified."
 | 19 | CAEP continuous-access sessions/events/rules | `server/security/caep_continuous_access.rs:497,509,512` | No | No | No | Not checked | not filed | Verified (fields) |
 | 20 | FAPI sessions | `server/security/fapi.rs:61` | No | No | No | Not checked | not filed | Verified (field) |
 | 21 | mTLS client configs | `server/security/mtls.rs:101` | No | No | No | Not checked | not filed | Verified (field) |
-| 22 | X.509 CA/cert store **and revocation list** | `server/security/x509_signing.rs` `certificate_store`/`revocation_list`/`ca_certificates`/`crl_numbers`, all `Arc<RwLock<HashMap>>` | **No** | **No** — a CA's own revocation list resets on restart | **No** | Not checked | not filed | Re-verified `3239b1c3` (fields; the file's cryptography was rewritten in `2ce7ac57`, the storage shape was not) |
+| 22 | X.509 CA/cert store **and revocation list** | `server/security/x509_signing.rs` `certificate_store`/`revocation_list`/`ca_certificates`/`crl_numbers`, all `Arc<RwLock<HashMap>>` | **No** | **No** — a CA's own revocation list resets on restart unless the operator calls `save_state`/`load_state` (opt-in, local file, one writer, not replica-shared; added in `2ce7ac57`, called nowhere else in `src/`) | **No** | Not checked | not filed | Re-verified `3239b1c3` (fields and the opt-in file persistence above; the file's cryptography was rewritten in `2ce7ac57`) |
 | 23 | Token exchange policies/active exchanges | `server/token_exchange/core.rs:330,333` | No | No | No | Not checked | not filed | Verified (fields) |
 | 24 | Token exchange audit trail | `server/token_exchange/advanced_token_exchange.rs:759` `exchange_audit: Arc<RwLock<Vec<...>>>` | **No** — separate from the real audit-log system (#33) | No | No | Not checked | not filed | Verified |
 | 25 | Consent records / device-auth records | `server/core/additional_modules.rs` | **Overstated in Phase 1 ("Yes, heavily") — resolved in Phase 3, conditional with real bugs.** `JwtServer::store_signing_key` writes the caller's raw PEM signing key in **plaintext**, no TTL, under `jwt_key:{kid}` (`:128-132`) — contradicts row 34's "N/A by design," see below. `SamlIdentityProvider` stores bearer SAML assertions in **plaintext**, 1h TTL (`:376-383`). `ConsentManager` only persists via `new_with_storage` — `new()` sets `storage: None`; `has_consent` reads its local cache first and **never checks `expires_at`**, so a revoke on one replica is still honored by every other replica's cache until restart. `DeviceFlowManager::approve` re-stores records containing the **raw access_token** with `TTL=None` despite a comment claiming "preserve remaining TTL" — approved records with plaintext access tokens persist **forever**. None of these managers' constructors are called outside this file. | Conditional | Conditional (consent specifically is NOT replica-safe) | Yes (several `test_saml_idp_*`, consent tests) — none test cross-replica consistency | not filed | Verified (Phase 3) |
@@ -91,7 +91,7 @@ was read directly against `origin/main` unless marked "Unverified."
 | 33 | Audit log events (the real audit system) | `audit.rs` → `build_audit_storage`, `AuditStorage` trait | **WRONG in Phase 1 — resolved in Phase 3.** `build_audit_storage` only offers `Memory` (a fresh private `MemoryStorage`, and the default), `Tracing` (write-only logs), or `UnimplementedAuditStorage` for `File`/`Database`/`External` (errors on every call). `AuditStorage` has NO Postgres/SQLite/Redis/MySQL implementation anywhere. | **No, by default** | **No, by default** | Not re-checked this pass | — | Verified (Phase 3) |
 | 34 | JWKS / signing key material (operator-supplied, at `TokenManager` construction) | `tokens/mod.rs` — key comes from operator-supplied PEM/secret, held as `jsonwebtoken::EncodingKey` in-process | **N/A by design for THIS path** — not app state, it's operator config. **But see row 25: `JwtServer::store_signing_key` is a SEPARATE path that DOES persist a caller-supplied signing key, in plaintext, no TTL** — this row's "N/A by design" framing does not generalize to the whole crate. | N/A | N/A | N/A | — | Verified; caveat added Phase 3 |
 | 35 | SAML IdP metadata registry | `methods/saml/mod.rs:33` `identity_providers: HashMap<...>` | **No** — zero storage refs in file | No | No | Not checked | not filed | Verified (field) |
-| 36 | Passkey/WebAuthn registrations + pending challenges | `methods/passkey/mod.rs:251,255` `RwLock<HashMap<...>>` | **No** — zero storage refs | No | No | Not checked | not filed | Verified (field) |
+| 36 | Passkey/WebAuthn registrations + pending challenges | `methods/passkey/mod.rs` `RwLock<HashMap<...>>` (the in-memory `PasskeyManager`). **Corrected at `3239b1c3`:** the live route `api/webauthn.rs` is separate and persists challenge sessions, credentials and indexes through the framework storage (`store_kv`, and `store_kv_if_absent` for single-use challenge sessions); this row described only the manager. | **No** for `PasskeyManager` — zero storage refs; **Yes** for the API route | No | No | Not checked | not filed | Verified (field) |
 | 37 | Client-cert pinning + per-cert revocation | `methods/client_cert/mod.rs:468,523` | **No** | No | No | Not checked | not filed | Verified (fields) |
 | 38 | Monitoring metrics/health/security-event history | `monitoring/mod.rs:303,305,307`, `collectors.rs` (`AtomicU64` counters) | No — correctly ephemeral by design (process metrics, not credentials) | No | No | Not checked | N/A | Verified |
 | 39 | **Core tokens (access/refresh), the canonical `AuthStorage` token path** — new row, added Phase 3 | `storage/postgres.rs:44-58,151-165`, `storage/sqlite.rs:40,89-99`, `storage/redis.rs:54-55` | Yes | Yes | Yes | Covered by broader test suite | — | Verified (Phase 3) — see Part 2: **stored in plaintext in every backend** |
@@ -114,7 +114,7 @@ listed. The security-relevant ones:
 |---|---|---|
 | Process-global IP blacklist | `api/security_simple.rs:21-22`, `lazy_static` | Crate-wide, not per-tenant; in-memory only |
 | Admin GUI sessions + login lockout | `admin/mod.rs:140,143` | In-memory — lockout bypassable by spreading attempts across replicas, or by restarting |
-| RBAC/ABAC permission checker (role grants/revokes) | `auth_modular/authorization_manager.rs:21`, `authorization.rs:360` | `grant_permission`/`revoke_permission`/`check_user_permission` touch only the in-memory `PermissionChecker` — a `remove_role` on replica A is not honored by replica B until B restarts |
+| RBAC/ABAC permission checker (role grants/revokes) | `auth_modular/authorization_manager.rs:21`, `authorization.rs:360` | `grant_permission`/`revoke_permission`/`check_user_permission` touch the in-memory `PermissionChecker`. **Corrected at `3239b1c3`:** roles and assignments are also persisted to KV (`rbac:role:`, `rbac:user_roles:`) and reloaded by `load_persisted_roles` via `list_kv_keys` — so durability exists (and depends on a `list_kv_keys` that is not the empty default, see Part 3) — but other replicas load only at startup, so a `remove_role` on replica A is not honored by replica B until B restarts |
 | Live OAuth2 authorization-code/refresh-token KV paths | `api/oauth2.rs` | **No Phase 1 row existed for the actual live route at all**, despite being persisted; see Part 2 |
 | Live PAR/device/CIBA records that nothing ever reads back | `api/oauth_advanced.rs:401,470,544` (`par_request:`, `device:`, `ciba:`) | Dead writes — these keys have zero read call sites anywhere in `src/api/` |
 | `private_key_jwt` JTI replay (JWT best-practices variant) | `server/jwt/jwt_best_practices.rs:217` | Separate from row 16's replay list; also per-instance only |
@@ -159,7 +159,7 @@ alone is sufficient to compromise the datum.
 | Passwords | **Hashed**, argon2id or bcrypt per configured `PasswordHashAlgorithm` | Correctly one-way | N/A | Depends on surrounding user-record key, not independently checked | Timing-oracle-safe by construction (dummy-hash-on-unknown-user path, `user_manager.rs:91-117`) | Not checked for Debug/Serialize leakage this pass | **No** (assuming argon2id/bcrypt cost factors are adequate — not independently re-verified here) |
 | **Core tokens (access/refresh) — new row, Phase 3** | **WRONG in Phase 1 ("reasonably protected"). Plaintext everywhere**: Postgres `auth_tokens.access_token`/`refresh_token` are plaintext `TEXT` columns; SQLite the same; Redis puts the raw token **in the key name** (`{prefix}access:{access_token}`). The live OAuth2 refresh-token/auth-code/revocation KV paths (`api/oauth2.rs`) also use raw token values as key names. | Must be one-way or at least opaque to a DB reader — **it isn't, anywhere** | TTL enforced on write; see Part 4 for a read-side caveat | Not checked | Not applicable (not a comparison site) | Not checked | **Yes — a database dump alone lets an attacker replay every live access/refresh token in the system.** |
 | Sessions (canonical) | Session data is largely non-secret (IDs/metadata); not independently checked for embedded secret fields | N/A | Enforced via `cleanup_expired`/backend-specific expiry (Part 4) | Not checked | N/A | Not checked | Not checked |
-| TOTP secret (storage-backed path) | **Corrected at `3239b1c3`: encrypted at rest by default.** The code still calls `self.storage.store_kv(&key, secret.as_bytes(), None)` (`auth_modular/mfa/totp.rs`); the wrapper from #119 encrypts the value, bound to its key name by AAD. At `a254de6b` this was stored with no encryption at all. | **Correct category** (TOTP secrets must be recoverable to compute codes); protection is now at the storage layer. Rows written before #119 are plaintext until the migration tool (`auth-framework-admin security encrypt-kv`) is run; reads of legacy plaintext are accepted for upgrade safety | **None** — `None` TTL, never expires (unchanged) | **No** — key is `user:{user_id}:totp_secret`, no tenant prefix (unchanged) | N/A (not a comparison site) | Not checked | **Corrected at `3239b1c3`: not on a default-configured install once migrated.** It was the most severe at-rest finding at `a254de6b`; a dump of an unmigrated install still yields plaintext. |
+| TOTP secret (storage-backed path) | **Corrected at `3239b1c3`: encrypted at rest by default.** The code still calls `self.storage.store_kv(&key, secret.as_bytes(), None)` (`auth_modular/mfa/totp.rs`); the wrapper from #119 encrypts the value, bound to its key name by AAD. At `a254de6b` this was stored with no encryption at all. | **Correct category** (TOTP secrets must be recoverable to compute codes); protection is now at the storage layer. Rows written before #119 are plaintext at rest and **unreadable** under the default config until the migration tool (`auth-framework-admin security encrypt-kv`) is run (or `allow_plaintext_reads = true` is set transiently) | **None** — `None` TTL, never expires (unchanged) | **No** — key is `user:{user_id}:totp_secret`, no tenant prefix (unchanged) | N/A (not a comparison site) | Not checked | **Corrected at `3239b1c3`: not on a default-configured install once migrated.** It was the most severe at-rest finding at `a254de6b`; a dump of an unmigrated install still yields plaintext. |
 | SMS/Email OTP codes | **Plaintext** 6-digit codes | Correct category (low-entropy, short-lived, one-time use — plaintext is defensible) | **Yes**, 300s (`Duration::from_secs(300)`) | No tenant prefix, but low severity given short TTL + narrow blast radius | **Yes**, `ct_eq` (`sms_kit.rs`) and `constant_time_compare` (`email/mod.rs`) | Not checked | A dump during the 5-minute window exposes active codes only — low impact |
 | Consent/device-auth records (`additional_modules.rs`) | Not independently read at the byte level this pass | Not checked | Not checked | Not checked | Not checked | Not checked | Not checked |
 | Audit log events | `details: HashMap<String,String>` and request metadata (IP, etc.) via `store_event`; **no encryption layer applied** (Part 3) | N/A — not a "secret" in the recoverable/one-way sense, but PII (IPs, user IDs) is sensitive | Backend-specific; `delete_old_events` exists as explicit cleanup, not an automatic TTL | Not checked | N/A | Not checked | A dump exposes the full audit trail, including whatever PII `request_metadata`/`details` carries, in plain form |
@@ -181,15 +181,25 @@ maintenance/backup and analytics), and rejected non-UTF-8 values.
 
 - **Wired, on by default, fail-closed** (#119). `factory.rs` wraps every
   persistent backend in `EncryptedStorage::new(...)` and refuses to start
-  without a key; memory storage is exempt. Caller-supplied storage passed to
-  `new_with_storage`/`replace_storage` gets startup checks (#139).
+  without a key unless `storage_encryption.enabled = false` (which only warns);
+  memory storage is exempt. **Storage the caller supplies through
+  `new_with_storage`/`replace_storage` is NOT wrapped**: it gets a startup
+  check (#139) that warns by default and errors only when
+  `require_wrapped_storage = true` (default `false`).
 - **Ciphertext is bound to its record.** The envelope is versioned with a key id
   for rotation, and v2 binds metadata into the AAD (#133), so a value does not
   decrypt under a different record's key name. Raw bytes are supported.
 - **`list_kv_keys` is overridden** (`encryption.rs`), no longer the empty default.
-- **A migration tool exists** for data written as plaintext: idempotent,
-  resumable, dry-run first, TTL-preserving, and it refuses TTL-blind backends
-  (#119, #138). Backup/restore reads through the wrapper (#121, #132).
+- **A migration tool exists** for data written as plaintext
+  (`auth-framework-admin security encrypt-kv`): safe to re-run, supports
+  `--dry-run`, preserves TTLs, refuses TTL-blind backends unless
+  `--accept-ttl-loss`, and leaves legacy v0/v1 envelopes alone without
+  `--accept-legacy-v0` (#119, #138). Backup files are sealed under the storage
+  key (#121, #132), except when storage is Memory or encryption is disabled.
+- **Pre-#119 plaintext rows are unreadable on a default install** until the
+  tool is run: `allow_plaintext_reads` and `allow_legacy_v0` both default to
+  `false`, and a non-envelope value is a hard error on read unless
+  `allow_plaintext_reads` is set.
 
 **What is still open — these claims from Phase 3 still hold at `3239b1c3`:**
 
@@ -201,9 +211,15 @@ maintenance/backup and analytics), and rejected non-UTF-8 values.
 - **Typed token and session storage is not covered.** `store_token`/
   `store_session` use each backend's own columns (SQLite `auth_tokens.access_token`
   is still a plaintext `TEXT UNIQUE` column), not `store_kv`. The ROADMAP lists
-  this as follow-up; its design is a separate document.
-- **`list_kv_keys` is still the empty-default trait method on four other
-  implementations** (#145).
+  this as follow-up; its design is a separate document. (The test-only
+  `storage::redis::RedisStorage` keys tokens as `{prefix}access:{access_token}`;
+  the production core `RedisStorage`'s token key was not re-read at `3239b1c3`.)
+- **`list_kv_keys` is still the empty-default trait method on five
+  implementations**, none of which the factory wraps: `DashMapMemoryStorage`,
+  `storage::redis::RedisStorage`, `UnifiedStorage`, the `auth-storage-sqlite`
+  crate's `SqliteStorage`, and the test `MockStorage`. #145 lists four and
+  misses the crate. `EncryptedStorage::list_kv_keys` forwards to its inner
+  storage, so wrapping one of these still returns an empty list.
 
 **Open issue index for this part:** #144 (expired tokens returned by SQL and
 in-memory `get_token`), #145 (`list_kv_keys` default), #146 (SQLite `store_kv`
@@ -216,8 +232,7 @@ No divergence found in TTL enforcement at read time: memory
 (`dashmap_memory.rs`) checks `is_expired()` on every `get_kv` and also has a
 `cleanup_expired()` sweep; Postgres filters `expires_at > NOW()` in the
 `SELECT`; SQLite stores the same `expires_at` column pattern (write path
-confirmed; its `get_kv` filter clause was not independently re-read this
-pass — minor gap); Redis uses native `SET EX`. All four read paths behave
+and `get_kv` filter confirmed at `3239b1c3`); Redis uses native `SET EX`. All four read paths behave
 equivalently from a caller's perspective.
 
 **MySQL's KV implementation was not checked this pass.** **Corrected at
@@ -267,7 +282,7 @@ rather than caveated, per Phase 3's own recommendation:
   no `expires_at` check means a revoke doesn't actually propagate across
   replicas even when storage-backed. **PAR (#14) and device authorization
   (#13) move IN to "persisted,"** each with a specific replica-safety bug
-  (PAR: cross-replica replay within its 90s window; device: no
+  (PAR: single use was not enforced at `a254de6b`, fixed since — see row 14; device: no
   one-time-use enforcement at all).
 - **At `a254de6b`, every persisted subsystem examined at the byte level
   stored its secret in plaintext, in the key name, the value, or both** — a
@@ -276,8 +291,12 @@ rather than caveated, per Phase 3's own recommendation:
   in the key name too), two of the four OAuth2 client-secret registries, TOTP
   secrets, SAML bearer assertions, and JWT signing keys loaded via
   `JwtServer`. **Corrected at `3239b1c3`:** the *values* written through
-  `store_kv` (client secrets, TOTP secrets, SAML assertions, signing keys) are
-  now encrypted at rest by default (#119). **Still plaintext at rest:** key
+  `store_kv` on factory-built storage (OAuth2 client secrets, TOTP secrets) are
+  now encrypted at rest by default (#119). SAML assertions and `JwtServer`
+  signing keys are encrypted only if the caller hands those managers the
+  framework's wrapped storage: they take a caller-supplied `Arc<dyn
+  AuthStorage>`, nothing in `src/` constructs them, and `store_signing_key`
+  still writes the raw PEM with no TTL. **Still plaintext at rest:** key
   names (API keys, OAuth2 token values, Redis `access:` keys) and the typed
   token/session columns (core access/refresh tokens in Postgres/SQLite).
 - **At `a254de6b`, none of the 39 had a dedicated
