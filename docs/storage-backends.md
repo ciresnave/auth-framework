@@ -181,12 +181,19 @@ auth.initialize().await?;
 Redis storage uses the following key patterns:
 
 ```text
-{prefix}token:{token_id}         -> AuthToken (JSON)
-{prefix}access:{access_token}    -> token_id (String)
-{prefix}user:{user_id}:tokens    -> [token_ids] (List)
-{prefix}session:{session_id}     -> SessionData (JSON)
-{prefix}kv:{key}                 -> value (Bytes)
+{prefix}token:{token_id}                 -> AuthToken (JSON)
+{prefix}access_h:{digest}                -> token_id (String)
+{prefix}user:{user_id}:tokens            -> [token_ids] (List)
+{prefix}session_h:{digest}               -> SessionData (JSON)
+{prefix}kv:{key}                         -> value (Bytes)
 ```
+
+`{digest}` is a domain-separated SHA-256 of the access token or session id; the
+credential itself is never part of a key name. Rows written by earlier releases
+under `{prefix}access:{access_token}` and `{prefix}session:{session_id}` (and,
+in the `storage::core` Redis backend, `{prefix}access_token:{access_token}`) are
+moved to the new names, with their remaining TTL, the first time they are read.
+API keys are stored in the KV layer as `api_key_h:{digest}`.
 
 ### Use Cases
 

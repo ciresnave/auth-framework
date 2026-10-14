@@ -199,6 +199,65 @@ impl UserManager {
         }
     }
 
+    /// KV row name for an API key: a domain-separated one-way digest, never
+    /// the raw key.
+    fn api_key_storage_key(api_key: &str) -> String {
+        format!(
+            "api_key_h:{}",
+            crate::storage::key_names::digest("api_key", api_key)
+        )
+    }
+
+    /// The pre-fix row name (the raw key). Read only to migrate or delete.
+    fn legacy_api_key_storage_key(api_key: &str) -> String {
+        format!("api_key:{api_key}")
+    }
+
+    /// Fetch an API key's row, migrating one stored under the legacy name:
+    /// create the row under the digest name with its remaining TTL, then delete
+    /// the legacy row.
+    ///
+    /// Safe against a concurrent revoke: the new row is only ever created with
+    /// `store_kv_if_absent` (so it never overwrites a newer write), and after
+    /// creating it the legacy row must still be present. A legacy row that has
+    /// vanished without a new row having been made by another reader was
+    /// deleted (revoked) in between, and the row just created is removed again.
+    async fn get_api_key_row(&self, api_key: &str, storage_key: &str) -> Result<Option<Vec<u8>>> {
+        if let Some(row) = self.storage.get_kv(storage_key).await? {
+            return Ok(Some(row));
+        }
+        let legacy_key = Self::legacy_api_key_storage_key(api_key);
+        let Some(row) = self.storage.get_kv(&legacy_key).await? else {
+            return Ok(None);
+        };
+
+        let remaining = self.storage.get_kv_ttl(&legacy_key).await?;
+        if self.storage.tracks_kv_ttl() {
+            match remaining {
+                // about to expire: serve it, do not write a new row
+                Some(left) if left.is_zero() => return Ok(Some(row)),
+                // no TTL reported: either a row with no expiry or one that
+                // expired between the two reads; only the latter is gone now
+                None if self.storage.get_kv(&legacy_key).await?.is_none() => {
+                    return Ok(None);
+                }
+                _ => {}
+            }
+        }
+
+        let created = self
+            .storage
+            .store_kv_if_absent(storage_key, &row, remaining)
+            .await?;
+        if created && self.storage.get_kv(&legacy_key).await?.is_none() {
+            // revoked while we were migrating: take the new row back out
+            self.storage.delete_kv(storage_key).await?;
+            return Ok(None);
+        }
+        self.storage.delete_kv(&legacy_key).await?;
+        Ok(Some(row))
+    }
+
     /// Create API key for a user.
     ///
     /// # Example
@@ -222,7 +281,9 @@ impl UserManager {
             "expires_at": expires_in.map(|d| chrono::Utc::now() + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::days(365 * 10)))
         });
 
-        let storage_key = format!("api_key:{}", api_key);
+        // The raw key is a bearer credential: the row is named by a one-way
+        // digest so a reader of the store cannot recover working keys.
+        let storage_key = Self::api_key_storage_key(&api_key);
         self.storage
             .store_kv(&storage_key, key_data.to_string().as_bytes(), expires_in)
             .await?;
@@ -241,8 +302,8 @@ impl UserManager {
     pub async fn validate_api_key(&self, api_key: &str) -> Result<UserInfo> {
         debug!("Validating API key");
 
-        let storage_key = format!("api_key:{}", api_key);
-        if let Some(key_data) = self.storage.get_kv(&storage_key).await? {
+        let storage_key = Self::api_key_storage_key(api_key);
+        if let Some(key_data) = self.get_api_key_row(api_key, &storage_key).await? {
             let key_info: serde_json::Value = serde_json::from_slice(&key_data)?;
 
             if let Some(user_id) = key_info["user_id"].as_str() {
@@ -285,8 +346,14 @@ impl UserManager {
     pub async fn revoke_api_key(&self, api_key: &str) -> Result<()> {
         debug!("Revoking API key");
 
-        let storage_key = format!("api_key:{}", api_key);
-        if self.storage.get_kv(&storage_key).await?.is_some() {
+        let storage_key = Self::api_key_storage_key(api_key);
+        let legacy_key = Self::legacy_api_key_storage_key(api_key);
+        let found_new = self.storage.get_kv(&storage_key).await?.is_some();
+        let found_legacy = self.storage.get_kv(&legacy_key).await?.is_some();
+        if found_new || found_legacy {
+            // Both names (a key may exist under either, or both mid-migration),
+            // legacy first so a migration in flight cannot recreate the row.
+            self.storage.delete_kv(&legacy_key).await?;
             self.storage.delete_kv(&storage_key).await?;
             info!("API key revoked");
             Ok(())
