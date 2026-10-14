@@ -268,5 +268,3 @@ mod tests {
         assert_eq!(config.jwt.secret_key, "test-secret");
     }
 }
-
-

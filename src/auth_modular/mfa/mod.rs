@@ -788,7 +788,11 @@ mod tests {
             .complete_cross_method_step(&cross.id, MfaMethod::Totp, &code)
             .await
             .unwrap();
-        assert!(res.success, "a valid TOTP code must complete the step (error={:?})", res.error);
+        assert!(
+            res.success,
+            "a valid TOTP code must complete the step (error={:?})",
+            res.error
+        );
     }
 
     /// Regression test for issue #24: `generate_secret` used to emit a raw,

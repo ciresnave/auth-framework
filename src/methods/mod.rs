@@ -375,5 +375,3 @@ impl MfaChallenge {
         self
     }
 }
-
-

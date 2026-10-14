@@ -75,5 +75,3 @@ pub fn get_api_version(request: &Request) -> ApiVersion {
         .cloned()
         .unwrap_or_default()
 }
-
-

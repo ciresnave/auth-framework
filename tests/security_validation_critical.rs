@@ -1,8 +1,6 @@
 //! Critical security validation test to ensure JWT signature bypass vulnerability is fixed
 
-use auth_framework::{
-    AuthConfig, AuthFramework,
-};
+use auth_framework::{AuthConfig, AuthFramework};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};

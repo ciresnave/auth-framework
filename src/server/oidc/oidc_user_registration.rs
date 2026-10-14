@@ -53,7 +53,9 @@
 //! ```
 
 use crate::errors::{AuthError, Result};
-use crate::server::oidc::oidc_error_extensions::{OidcErrorCode, OidcErrorManager, OidcErrorResponse};
+use crate::server::oidc::oidc_error_extensions::{
+    OidcErrorCode, OidcErrorManager, OidcErrorResponse,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -875,5 +877,3 @@ mod tests {
         assert_eq!(missing_fields, vec!["given_name"]);
     }
 }
-
-

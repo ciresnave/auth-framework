@@ -230,5 +230,3 @@ mod tests {
         assert!(sdk_result.files.contains_key(&SdkLanguage::Python));
     }
 }
-
-

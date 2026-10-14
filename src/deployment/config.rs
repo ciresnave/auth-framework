@@ -695,5 +695,3 @@ app_version = "1.0.0"
         assert!(result.is_ok());
     }
 }
-
-

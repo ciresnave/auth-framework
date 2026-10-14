@@ -134,9 +134,10 @@ fn check_encryption_standards() {
             .output();
 
         if let Ok(result) = output
-            && !result.stdout.is_empty() {
-                println!("✅ {} encryption found in codebase", pattern);
-            }
+            && !result.stdout.is_empty()
+        {
+            println!("✅ {} encryption found in codebase", pattern);
+        }
     }
 
     println!("✅ Encryption standards check complete\n");
@@ -175,21 +176,20 @@ fn check_input_sanitization() {
             .output();
 
         if let Ok(result) = output
-            && !result.stdout.is_empty() {
-                let count: i32 = String::from_utf8_lossy(&result.stdout)
-                    .lines()
-                    .filter_map(|line| line.split(':').nth(1)?.parse::<i32>().ok())
-                    .sum();
-                if count > 0 {
-                    println!(
-                        "✅ {} input sanitization functions: {} occurrences",
-                        pattern, count
-                    );
-                }
+            && !result.stdout.is_empty()
+        {
+            let count: i32 = String::from_utf8_lossy(&result.stdout)
+                .lines()
+                .filter_map(|line| line.split(':').nth(1)?.parse::<i32>().ok())
+                .sum();
+            if count > 0 {
+                println!(
+                    "✅ {} input sanitization functions: {} occurrences",
+                    pattern, count
+                );
             }
+        }
     }
 
     println!("✅ Input sanitization check complete\n");
 }
-
-

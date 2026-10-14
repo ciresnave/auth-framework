@@ -153,5 +153,3 @@ mod tests {
         assert!(limiter.check_rate_limit("192.168.1.1").is_err());
     }
 }
-
-

@@ -713,5 +713,3 @@ mod tests {
         // Implementation would use proper test framework setup
     }
 }
-
-

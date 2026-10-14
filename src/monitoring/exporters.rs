@@ -62,5 +62,3 @@ impl DataDogExporter {
             .collect()
     }
 }
-
-

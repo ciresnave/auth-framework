@@ -286,5 +286,3 @@ pub mod introspection {
 pub mod device_flow_server {
     //! Device flow server-side implementation
 }
-
-
