@@ -108,3 +108,44 @@ fn served_openapi_spec_reports_the_cargo_version() {
         "the served OpenAPI spec must report the crate version it is served by"
     );
 }
+
+/// First `"version": "X"` in `docs/api/README.md` (the example health response).
+fn api_readme_version(text: &str) -> Option<String> {
+    for l in text.lines() {
+        if let Some(rest) = l.trim().strip_prefix("\"version\":") {
+            return Some(
+                rest.trim()
+                    .trim_end_matches(',')
+                    .trim_matches('"')
+                    .to_string(),
+            );
+        }
+    }
+    None
+}
+
+#[test]
+fn api_readme_health_example_carries_the_cargo_version() {
+    let text = include_str!("../docs/api/README.md");
+    let found = api_readme_version(text).expect("control: no `\"version\":` example in README");
+    assert_eq!(
+        found, CARGO_VERSION,
+        "docs/api/README.md shows a health example with version {found}, Cargo.toml is \
+         {CARGO_VERSION}"
+    );
+}
+
+#[test]
+fn roadmap_current_crate_version_is_the_cargo_version() {
+    let text = include_str!("../docs/ROADMAP.md");
+    let lead = "Current crate version: `";
+    let i = text
+        .find(lead)
+        .expect("control: ROADMAP.md must state `Current crate version: `X``");
+    let rest = &text[i + lead.len()..];
+    let found = rest.split('`').next().unwrap_or("");
+    assert_eq!(
+        found, CARGO_VERSION,
+        "docs/ROADMAP.md says the current crate version is {found}, Cargo.toml is {CARGO_VERSION}"
+    );
+}
