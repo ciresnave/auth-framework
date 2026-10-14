@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc55 -- Documentation only. `docs/STORAGE-AUDIT.md` is re-verified against
+  `origin/main` @ `3239b1c3` and corrected in place: encryption at rest is now described as wired
+  by default (what remains open is listed), and the TOTP at-rest, PAR single-use, forwarded-header,
+  MySQL and fixed-advisory claims no longer describe the audited ref `a254de6b` as current.
 - 0.6.0-rc54 -- Documentation and a guard only. The health-response example in
   `docs/api/README.md` carries the crate version and is now checked by
   `openapi_version_matches_cargo` together with the `Current crate version` line in
