@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI only. `ci-cd.yml` runs on pushes and pull requests for `release/**` branches, so this line
+  gets the same checks as main.
+
 ### Security
 
 - **Storage key names no longer hold credentials.** API-key rows, the Redis access-token mapping and
