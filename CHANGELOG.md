@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc64 -- Dependency only. `handlebars` 4.7.9 -> 4.7.10 (dev dependency of the JavaScript SDK,
+  `sdks/javascript/package-lock.json`; supersedes the stale Dependabot PR #128). No library change.
 - 0.6.0-rc63 -- **`AuthStorage::list_kv_keys` no longer defaults to an empty list (#145).** A backend
   that does not override it now gets an error instead of a silent empty key space (analytics,
   compliance, RBAC and maintenance listings read it). `DashMapMemoryStorage`, `UnifiedStorage`,
