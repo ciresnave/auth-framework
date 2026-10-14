@@ -12,13 +12,12 @@
 //!  --features redis-storage -- --ignored`.
 
 use auth_framework::auth_modular::UserManager;
-use auth_framework::config::PasswordHashAlgorithm;
 use auth_framework::storage::{AuthStorage, MemoryStorage};
 use std::sync::Arc;
 use std::time::Duration;
 
 fn manager(storage: Arc<dyn AuthStorage>) -> UserManager {
-    UserManager::new(storage, PasswordHashAlgorithm::Argon2)
+    UserManager::new(storage)
 }
 
 fn metadata(user_id: &str) -> Vec<u8> {
@@ -53,7 +52,7 @@ async fn created_api_key_is_not_in_any_key_name() {
 }
 
 #[tokio::test]
-async fn legacy_api_key_name_is_migrated_with_its_ttl_and_then_gone() {
+async fn legacy_api_key_name_is_migrated_and_then_gone() {
     let storage = Arc::new(MemoryStorage::new());
     let um = manager(storage.clone());
     let key = "ak_legacy_secret_value";
@@ -76,16 +75,6 @@ async fn legacy_api_key_name_is_migrated_with_its_ttl_and_then_gone() {
         "no key name holds the raw key after migration, got {names:?}"
     );
     assert_eq!(names.len(), 1, "exactly one row after migration: {names:?}");
-    let ttl = storage
-        .get_kv_ttl(&names[0])
-        .await
-        .unwrap()
-        .expect("the migrated row keeps a TTL");
-    assert!(
-        ttl <= Duration::from_secs(600) && ttl > Duration::from_secs(500),
-        "TTL carried over, got {ttl:?}"
-    );
-
     // second validation uses the new name
     assert_eq!(um.validate_api_key(key).await.unwrap().id, "bob");
 }

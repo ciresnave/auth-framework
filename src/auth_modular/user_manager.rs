@@ -62,14 +62,14 @@ impl UserManager {
     }
 
     /// Fetch an API key's row, migrating one stored under the legacy name:
-    /// create the row under the digest name with its remaining TTL, then delete
-    /// the legacy row.
+    /// create the row under the digest name, then delete the legacy row.
     ///
-    /// Safe against a concurrent revoke: the new row is only ever created with
-    /// `store_kv_if_absent` (so it never overwrites a newer write), and after
-    /// creating it the legacy row must still be present. A legacy row that has
-    /// vanished without a new row having been made by another reader was
-    /// deleted (revoked) in between, and the row just created is removed again.
+    /// This release's storage trait has no TTL read or create-if-absent, so the
+    /// migrated row's lifetime comes from the row's own `expires_at`, and a
+    /// concurrent revoke is detected by re-reading the legacy row: if it has
+    /// vanished after the new row was written, the key was revoked in between
+    /// and the new row is removed again. API-key rows are never updated, so an
+    /// overwrite by a second migrating reader writes identical content.
     async fn get_api_key_row(&self, api_key: &str, storage_key: &str) -> Result<Option<Vec<u8>>> {
         if let Some(row) = self.storage.get_kv(storage_key).await? {
             return Ok(Some(row));
@@ -79,26 +79,21 @@ impl UserManager {
             return Ok(None);
         };
 
-        let remaining = self.storage.get_kv_ttl(&legacy_key).await?;
-        if self.storage.tracks_kv_ttl() {
-            match remaining {
-                // about to expire: serve it, do not write a new row
-                Some(left) if left.is_zero() => return Ok(Some(row)),
-                // no TTL reported: either a row with no expiry or one that
-                // expired between the two reads; only the latter is gone now
-                None if self.storage.get_kv(&legacy_key).await?.is_none() => {
-                    return Ok(None);
-                }
-                _ => {}
-            }
-        }
+        let remaining = serde_json::from_slice::<serde_json::Value>(&row)
+            .ok()
+            .and_then(|v| v["expires_at"].as_str().map(str::to_owned))
+            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+            .map(|at| at - chrono::Utc::now());
+        let ttl = match remaining {
+            // expired: do not recreate it; the caller rejects it from the row
+            Some(left) if left <= chrono::Duration::zero() => return Ok(Some(row)),
+            Some(left) => left.to_std().ok(),
+            None => None,
+        };
 
-        let created = self
-            .storage
-            .store_kv_if_absent(storage_key, &row, remaining)
-            .await?;
-        if created && self.storage.get_kv(&legacy_key).await?.is_none() {
-            // revoked while we were migrating: take the new row back out
+        self.storage.store_kv(storage_key, &row, ttl).await?;
+        if self.storage.get_kv(&legacy_key).await?.is_none() {
+            // revoked (or migrated by another reader) while we were writing
             self.storage.delete_kv(storage_key).await?;
             return Ok(None);
         }
