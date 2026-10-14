@@ -35,10 +35,12 @@ Facts that shape the design:
    or unique index** is readable by anyone who can read the store, so sealing the value is not enough.
 2. **Callers pass arbitrary strings as the access token** (`AuthTokenBuilder::new(.., impl Into<String>)`,
    `src/tokens/mod.rs:154`), so an unkeyed hash is not a safe index. The index must be keyed.
-3. **`token_id` can be a secret.** It is the JWT `jti` for minted tokens (`src/auth.rs:1152-1156`), but for
-   opaque tokens it equals the access token (`providers.rs:439`), and introspection calls
-   `get_token(<raw presented token>)` (`server/token_exchange/token_introspection.rs:298,318`). It is
-   therefore treated as a secret and blind-indexed like the others.
+3. **`token_id` is bearer-adjacent.** It is the JWT `jti` for minted tokens
+   (`src/auth.rs:1152-1156`, `auth_modular/mod.rs:674-678`), so every holder of the token knows it, and
+   introspection calls `get_token(<raw presented token>)` (`server/token_exchange/token_introspection.rs:298,318`),
+   so a raw bearer string reaches `get_token` as a "token id". (Other constructors give a random UUID,
+   `tokens/mod.rs:832`; token ids are *not* generally equal to the access token.) Blind-indexing it costs
+   nothing and keeps a raw presented token out of key names, so it is treated like the others.
 4. **`count_active_sessions` is on the login path**, not an admin call: `create_session` runs it for the
    100 000-session cap on every login (`src/auth_modular/session_manager.rs:283-284`) and `auth.rs:1606`
    after every `delete_session`.
@@ -108,7 +110,7 @@ copied to another key fails to open.
 dependencies (`Cargo.toml:195,204`).
 
 **Defect found in revision 1:** `StorageEncryption` builds `ciphers: HashMap<String, Aes256Gcm>` and
-zeroizes every raw key at construction (`encryption.rs:318-319,547`), so no raw key exists afterwards to
+zeroizes every raw key at the end of construction (`encryption.rs:548` on error, `:565` on success), so no raw key exists afterwards to
 derive from. The change: derive and retain one index key per key id **inside the constructor, before the
 raw key is zeroized**, in zeroizing storage within the module's existing zeroization scope; `new_random`
 (key id `"test"`) does the same.
@@ -135,14 +137,23 @@ valid"**:
 * **Delete: record first, then indexes.** (Revision 1 had this backwards; deleting indexes first leaves a
   live record that validates by id and is invisible to bulk revocation.) Crash after the record: the
   token is gone, orphan index entries are harmless by the hint rule and are removed lazily when seen.
-  `delete_*` also deletes the legacy typed row while migration read-through is on (§5).
+  If the record cannot be opened (its key was rotated out), `delete_*` still deletes the record key and
+  leaves its indexes to their TTL, so `reset_runtime_data` can always wipe. `delete_*` also deletes the
+  legacy typed row **unconditionally** (§5 rule 3), and returns that error if the legacy delete fails
+  after the sealed delete succeeded: a revoke must not report success while a legacy row lives.
 * **Access-token uniqueness** (today a UNIQUE column on three backends). `tokat:` is written with
   `store_kv_if_absent`; if an entry exists and verifies to a *different live* token, `store_token`
   fails with a duplicate error; a stale entry (record gone or its access token differs) is overwritten.
-  `delete_token` removes `tokat:` only if it still points at *this* token.
-* **Update** requires the record to exist (the Postgres `UPDATE ... WHERE` semantics, not the
-  SQLite/Redis upsert); an absent record is an error, so a concurrent delete is never resurrected by an
-  update that lost the race. If the access token, `user_id` or `expires_at` changed: write new indexes
+  If the entry already verifies to *this same* token (an update that only extends `expires_at`), it is
+  rewritten with a plain `store_kv` so its TTL follows the record (`store_kv_if_absent` only takes over
+  *expired* rows, `postgres.rs:416`, `sqlite.rs:282`). `delete_token` removes `tokat:` only if it still
+  points at *this* token.
+* **Update of an absent record is a no-op returning `Ok`** (the Postgres `UPDATE ... WHERE` semantics,
+  not the SQLite/Redis upsert), so a concurrent delete is never resurrected by an update that lost the
+  race. It must be `Ok`, not an error: `revoke_token` calls `update_token` with the caller's clone and
+  only then writes the `revoked_token:{jti}` marker that JWT validation consults (`auth.rs:1495-1516`);
+  an error would skip the marker for a legacy-only, TTL-evicted or never-stored token. During migration an
+  update first reads through (§5 rule 2) and seals the legacy row, then updates. If the access token, `user_id` or `expires_at` changed: write new indexes
   (with the new TTL) first, then delete the old ones. **Concurrent read-modify-write remains
   last-writer-wins**, as today (`auth.rs:1338-1349` touch vs `auth.rs:1501` revoke); closing that needs
   `kv.compare_and_swap`/`kv.batch_atomic` (§6) and is out of scope. The test plan pins the current
@@ -159,16 +170,19 @@ valid"**:
 A scan of `sess:*` per login is unacceptable on core Redis (`KEYS`, then a TTL call per key,
 `core.rs:1050-1075`) and O(n) elsewhere. The cap is a DoS guard, not an invariant. Options: (1) exact
 scan on every login (rejected); (2) a counter key (rejected: no atomic increment in the trait); (3)
-**the exact scan stays for `count_active_sessions()` itself, and the cap check in
-`auth_modular::SessionManager::create_session` reads a per-process cached count refreshed at most every
-30 s** (recommended; touches `session_manager.rs:283-284`, so it is part of the implementing PR and is
-listed in its `files=`). Stats callers keep the exact value at their own cost.
+**the exact scan stays for `count_active_sessions()` itself, and two call sites read a per-process
+cached count refreshed at most every 30 s: the cap check in
+`auth_modular::SessionManager::create_session` (`session_manager.rs:283-284`) and the monitoring count
+after every `delete_session` (`auth.rs:1600-1610`)** (recommended; both are part of the implementing PR
+and its `files=`). The stats paths (`auth.rs:1683/2046/2764/2779`) keep the exact value at their own
+cost. Bound to price: the cap can be exceeded by (login rate x 30 s x processes).
 
 ### 4.5 Reserved prefix, maintenance, and the refusal point
 
 * **Hidden from callers.** `EncryptedStorage`'s public `store_kv`/`get_kv`/`delete_kv`/`list_kv_keys`
-  reject writes to, and omit from listings, keys under the reserved prefixes; internals use `inner`
-  directly. Consequence for `maintenance.rs`: snapshot `list_kv_keys("")` does **not** see sealed
+  reject **reads, writes and deletes** of, and omit from listings, keys under the reserved prefixes (a
+  caller `get_kv("tok:<BI>")` would otherwise open a sealed record, AAD = that key, and return the token
+  JSON); internals use `inner` directly. Consequence for `maintenance.rs`: snapshot `list_kv_keys("")` does **not** see sealed
   records (they are captured once, through `list_user_*`/typed methods, not duplicated as base64
   plaintext in `kv_entries`); restore's `store_kv` never targets reserved keys (so it cannot abort after
   `reset_runtime_data` has wiped the store); `reset_runtime_data`'s typed deletes remove records *and*
@@ -180,19 +194,25 @@ listed in its `files=`). Stats callers keep the exact value at their own cost.
   wrap custom storage (`factory.rs:67-100`). Add `EncryptedStorage::try_new`, which returns an error
   when `inner.lists_kv_keys()` is false or `inner.tracks_kv_ttl()` is false; the factory uses it; and
   the token/session methods of any `EncryptedStorage` built through the old `new` return a typed
-  `Storage` error under the same condition rather than an empty list.
+  `Storage` error under the same condition rather than an empty list. **This is a breaking change** for
+  direct `EncryptedStorage::new(UnifiedStorage | auth-storage-sqlite | a custom backend)` users and for
+  in-tree test backends that do not report `tracks_kv_ttl()`; it goes in the changelog as Breaking.
 
 ## 5. Migration (0.6.0 is unreleased, so breaking inside the rc line is allowed)
 
 The audit showed read-through alone is unsound, so the rules are explicit:
 
 1. **Mode.** Legacy fall-through is on only when `allow_plaintext_reads` is true (the existing
-   "transitional" flag). With it false, legacy rows are simply unreachable: fail closed, affected users
-   re-authenticate.
-2. **Reads.** `get_token`/`get_session` miss → `inner.get_*` → if found, seal into the new namespace and
-   delete the legacy row. `get_token_by_access_token` falls through to `inner.get_token_by_access_token`.
-3. **Deletes** also call `inner.delete_*` (otherwise a deleted/revoked token or session is resurrected by
-   the next read-through).
+   "transitional" flag). With it false, legacy rows are unreachable: fail closed, affected users
+   re-authenticate. Because startup cannot enumerate (rule 5), the first sealed miss per process probes
+   `inner` for that one id and, if a legacy row exists, logs a `warn` naming `encrypt-tokens`, so the
+   plaintext tail is not silent.
+2. **Reads.** `get_token`/`get_session`/`get_token_by_access_token` and `update_token` on a sealed miss
+   → the matching `inner.*` → if found, seal into the new namespace and delete the legacy row (then, for
+   an update, apply it). Every read-through of one row therefore migrates it.
+3. **Deletes** also call `inner.delete_*`, **regardless of the flag** (otherwise a row deleted while the
+   flag was false is reachable again when it is set back to true, and a deleted token is resurrected by
+   the next read-through). A failing legacy delete is returned (§4.3).
 4. **Lists and counts** union the sealed namespace with `inner.list_user_tokens` /
    `inner.list_user_sessions` / `inner.count_active_sessions` (typed per-user methods exist; migrated rows
    are deleted from legacy at seal time, so the sets are disjoint). Without this, `revoke_all_user_sessions`
@@ -244,7 +264,9 @@ The audit showed read-through alone is unsound, so the rules are explicit:
 4. **Delete ordering:** an inner storage that fails after the record delete leaves no state where
    `get_token(token_id)` or `list_user_tokens` returns the token; one that fails after index deletes (old
    ordering) is the known-bad control and must fail this test.
-5. Update after delete → error, never resurrection; refresh rotation keeps both indexes consistent.
+5. Update after delete → `Ok` no-op, never resurrection; `revoke_token` of a legacy-only token during
+   the tail, of a TTL-evicted token and of a never-stored token still writes the `revoked_token:{jti}`
+   marker; refresh rotation keeps both indexes consistent; an `expires_at`-only update extends `tokat:`.
 6. Rotation: seal under A, rotate to B; lookup and list succeed before and after `reindex`; removing A
    without `reindex` yields a typed error, not a wrong token.
 7. Maintenance: snapshot contains each token once; restore of that snapshot into a wiped store succeeds
@@ -253,7 +275,11 @@ The audit showed read-through alone is unsound, so the rules are explicit:
    deletes it; `revoke_all` sees legacy sessions during the tail; `--purge-legacy` leaves canaries absent.
 9. A custom backend with the default `list_kv_keys` is refused (`try_new`) and its token methods error;
    the factory's `Arc<dyn AuthStorage>` wrapper reports `lists_kv_keys() == true` for a listing backend.
-10. Login-path cost: with 100 000 stub sessions, `create_session` issues no scan (cached count).
+10. Login/logout cost: with 100 000 stub sessions, `create_session` and `delete_session` issue no scan
+    (cached count).
+11. Flag toggle: delete while `allow_plaintext_reads=false`, set it true, the token is still gone; a
+    record whose key was rotated out is still wiped by `reset_runtime_data`; caller `get_kv`/`delete_kv`
+    of a reserved key is rejected.
 
 ## 8. Cost and risk
 
@@ -276,7 +302,7 @@ The audit showed read-through alone is unsound, so the rules are explicit:
 | D-E3 | One user's tokens linkable by `BI(user_id)` | accept; scan-all and filter | accept |
 | D-E4 | `token_id` | clear; blind-indexed | **blind-indexed** (§1 fact 3) |
 | D-E5 | Plaintext tail | sweep or purge at the operator's choice; forced purge at upgrade | operator's choice |
-| D-E6 | Session cap check | exact scan; counter; per-process cached count (§4.4) | **cached count** |
+| D-E6 | Session cap check and post-delete count | exact scan; counter; per-process cached count, bound = login rate x 30 s x processes over the cap (§4.4) | **cached count** |
 | D-E7 | Build order | #145, #144, #147, #148, #146, then the sealing layer; or sealing first | **prerequisites first** (sealing first would ship `KEYS` per login on Redis and the SQLite TTL truncation) |
 | D-E8 | Trait change `lists_kv_keys` (§3) | add; ship Option A without it | **add** |
 
