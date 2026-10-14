@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0-rc33] - 2026-10-14
+## [0.5.0-rc34] - 2026-10-14
 
 ### Removed
 
@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (or other default features such as compression or cookies) must enable them on their own
   `actix-web` dependency. The security audit for this line now reports only RUSTSEC-2023-0071
   (`rsa`, no patched release).
+
+### Fixed
+
+- `enhanced-crypto` did not compile on its own: `x25519-dalek`'s `StaticSecret` needs its
+  `static_secrets` feature, which the dependency did not enable (it compiled only when another
+  crate in the graph enabled it). The feature is now requested explicitly, as on main.
 
 ### Changed
 
