@@ -218,20 +218,39 @@ impl UserManager {
     /// the legacy row.
     ///
     /// Safe against a concurrent revoke: the new row is only ever created with
-    /// `store_kv_if_absent` (so it never overwrites a newer write), and after
-    /// creating it the legacy row must still be present. A legacy row that has
-    /// vanished without a new row having been made by another reader was
-    /// deleted (revoked) in between, and the row just created is removed again.
+    /// `store_kv_if_absent` (so it never overwrites a newer write), and only
+    /// the reader that created it deletes the legacy row. After creating it
+    /// the legacy row must therefore still be present: if it has vanished, only
+    /// a revoke can have deleted it, and the row just created is removed again.
+    /// A reader that did not create the digest row leaves the legacy row to the
+    /// creator, so its delete is never mistaken for a revoke.
     async fn get_api_key_row(&self, api_key: &str, storage_key: &str) -> Result<Option<Vec<u8>>> {
         if let Some(row) = self.storage.get_kv(storage_key).await? {
             return Ok(Some(row));
         }
         let legacy_key = Self::legacy_api_key_storage_key(api_key);
         let Some(row) = self.storage.get_kv(&legacy_key).await? else {
-            return Ok(None);
+            // Not under the legacy name either. A migration that ran between
+            // the two reads has moved the row to the digest name: read that
+            // once more rather than report a live key as missing.
+            return self.storage.get_kv(storage_key).await;
         };
 
-        let remaining = self.storage.get_kv_ttl(&legacy_key).await?;
+        // The row's own `expires_at` is authoritative where the backend cannot
+        // report a TTL: an expired row is served as is (the caller rejects it)
+        // and not copied, and a live one keeps its remaining lifetime.
+        let row_expiry = serde_json::from_slice::<serde_json::Value>(&row)
+            .ok()
+            .and_then(|v| v["expires_at"].as_str().map(str::to_owned))
+            .and_then(|at| at.parse::<chrono::DateTime<chrono::Utc>>().ok());
+        let mut remaining = self.storage.get_kv_ttl(&legacy_key).await?;
+        if let Some(at) = row_expiry {
+            match (at - chrono::Utc::now()).to_std() {
+                Err(_) => return Ok(Some(row)),
+                Ok(left) if remaining.is_none() => remaining = Some(left),
+                Ok(_) => {}
+            }
+        }
         if self.storage.tracks_kv_ttl() {
             match remaining {
                 // about to expire: serve it, do not write a new row
@@ -249,8 +268,13 @@ impl UserManager {
             .storage
             .store_kv_if_absent(storage_key, &row, remaining)
             .await?;
-        if created && self.storage.get_kv(&legacy_key).await?.is_none() {
-            // revoked while we were migrating: take the new row back out
+        if !created {
+            // another reader created the digest row and finishes the move
+            return Ok(Some(row));
+        }
+        if self.storage.get_kv(&legacy_key).await?.is_none() {
+            // only this reader deletes the legacy row, so it is gone because
+            // of a revoke while we were migrating: take the new row back out
             self.storage.delete_kv(storage_key).await?;
             return Ok(None);
         }
@@ -348,8 +372,11 @@ impl UserManager {
 
         let storage_key = Self::api_key_storage_key(api_key);
         let legacy_key = Self::legacy_api_key_storage_key(api_key);
-        let found_new = self.storage.get_kv(&storage_key).await?.is_some();
+        // Legacy name first: a migration creates the digest row before it
+        // deletes the legacy row, so a row is always visible under one of the
+        // two names when read in this order.
         let found_legacy = self.storage.get_kv(&legacy_key).await?.is_some();
+        let found_new = self.storage.get_kv(&storage_key).await?.is_some();
         if found_new || found_legacy {
             // Both names (a key may exist under either, or both mid-migration),
             // legacy first so a migration in flight cannot recreate the row.

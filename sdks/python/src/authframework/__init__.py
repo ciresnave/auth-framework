@@ -10,7 +10,7 @@ from .client import AuthFrameworkClient
 from .exceptions import *
 from .models import *
 
-__version__ = "0.6.0rc57"
+__version__ = "0.6.0rc58"
 __author__ = "AuthFramework Team"
 __email__ = "support@authframework.dev"
 
