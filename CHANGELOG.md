@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** the `sms-aws-sns` optional dependency (and the `sms-aws-sns` feature it implied) is
+  removed from the `smskit` feature, and `actix-web` is built with `default-features = false`
+  (`macros` only). The crate never sent through `sms-aws-sns` on this line (the AWS SNS provider
+  only logs), so runtime behaviour is unchanged; the dependency pulled a legacy `rustls` 0.21 /
+  `rustls-webpki` 0.101 / `h2` 0.3 stack that carries open advisories (RUSTSEC-2026-0098/0099/
+  0104/0258, -0346/0349). Applications that enable actix-web's `http2` feature (or compression or
+  cookies) must enable them on their own `actix-web` dependency. The security audit for this line
+  now reports only RUSTSEC-2023-0071 (`rsa`) and RUSTSEC-2025-0111 (`tokio-tar`), neither with a
+  patched release.
+
 ### Changed
 
 - CI only for the workflow: `ci-cd.yml` runs on pushes and pull requests for `release/**`
