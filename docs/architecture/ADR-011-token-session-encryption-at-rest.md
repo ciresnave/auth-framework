@@ -139,11 +139,15 @@ valid"**:
   token is gone, orphan index entries are harmless by the hint rule and are removed lazily when seen.
   If the record cannot be opened (its key was rotated out), `delete_*` still deletes the record key and
   leaves its indexes to their TTL, so `reset_runtime_data` can always wipe. `delete_*` also deletes the
-  legacy typed row **unconditionally** (§5 rule 3), and returns that error if the legacy delete fails
-  after the sealed delete succeeded: a revoke must not report success while a legacy row lives.
+  legacy typed row **unconditionally** (§5 rule 3), **before** the sealed delete: the sealed record
+  stays authoritative until the end, so a crash between the two cannot leave a live legacy row for a
+  later read-through to reseal. A failing legacy delete is returned, and the sealed delete is not run,
+  so a revoke never reports success while a legacy row lives.
 * **Access-token uniqueness** (today a UNIQUE column on three backends). `tokat:` is written with
   `store_kv_if_absent`; if an entry exists and verifies to a *different live* token, `store_token`
-  fails with a duplicate error; a stale entry (record gone or its access token differs) is overwritten.
+  fails with a duplicate error; a stale entry (record gone or its access token differs) is deleted and the `store_kv_if_absent` retried
+  **once**; if that still returns false, the store fails as a duplicate. (Check-then-overwrite would let
+  two racing duplicates both win.)
   If the entry already verifies to *this same* token (an update that only extends `expires_at`), it is
   rewritten with a plain `store_kv` so its TTL follows the record (`store_kv_if_absent` only takes over
   *expired* rows, `postgres.rs:416`, `sqlite.rs:282`). `delete_token` removes `tokat:` only if it still
@@ -175,14 +179,19 @@ cached count refreshed at most every 30 s: the cap check in
 `auth_modular::SessionManager::create_session` (`session_manager.rs:283-284`) and the monitoring count
 after every `delete_session` (`auth.rs:1600-1610`)** (recommended; both are part of the implementing PR
 and its `files=`). The stats paths (`auth.rs:1683/2046/2764/2779`) keep the exact value at their own
-cost. Bound to price: the cap can be exceeded by (login rate x 30 s x processes).
+cost. Bound to price: the cap can be exceeded by (login rate x 30 s x processes). Side effect:
+`create_session_limited` returns `total + 1` (`session_manager.rs:308`), which `auth.rs:1557-1560` feeds
+to the monitoring session gauge; with a cached total that gauge is stale-plus-one per login and can step
+backwards at each refresh (monitoring only).
 
 ### 4.5 Reserved prefix, maintenance, and the refusal point
 
 * **Hidden from callers.** `EncryptedStorage`'s public `store_kv`/`get_kv`/`delete_kv`/`list_kv_keys`
-  reject **reads, writes and deletes** of, and omit from listings, keys under the reserved prefixes (a
-  caller `get_kv("tok:<BI>")` would otherwise open a sealed record, AAD = that key, and return the token
-  JSON); internals use `inner` directly. Consequence for `maintenance.rs`: snapshot `list_kv_keys("")` does **not** see sealed
+  reject **reads, writes and deletes** of, and omit from listings, keys under the reserved prefixes, on
+  all six KV methods (`store_kv`, `store_kv_if_absent`, `get_kv`, `get_kv_ttl`, `delete_kv`,
+  `list_kv_keys`; a caller `get_kv("tok:<BI>")` would otherwise open a sealed record, AAD = that key,
+  and return the token JSON, and `get_kv_ttl` would reveal its existence and expiry); internals use
+  `inner` directly. Consequence for `maintenance.rs`: snapshot `list_kv_keys("")` does **not** see sealed
   records (they are captured once, through `list_user_*`/typed methods, not duplicated as base64
   plaintext in `kv_entries`); restore's `store_kv` never targets reserved keys (so it cannot abort after
   `reset_runtime_data` has wiped the store); `reset_runtime_data`'s typed deletes remove records *and*
@@ -204,16 +213,23 @@ The audit showed read-through alone is unsound, so the rules are explicit:
 
 1. **Mode.** Legacy fall-through is on only when `allow_plaintext_reads` is true (the existing
    "transitional" flag). With it false, legacy rows are unreachable: fail closed, affected users
-   re-authenticate. Because startup cannot enumerate (rule 5), the first sealed miss per process probes
-   `inner` for that one id and, if a legacy row exists, logs a `warn` naming `encrypt-tokens`, so the
-   plaintext tail is not silent.
+   re-authenticate. Because startup cannot enumerate (rule 5), **every** sealed miss by id probes `inner`
+   for that one id (the one permitted read of a legacy row while the flag is false) and, if a legacy
+   row exists, logs a `warn` naming `encrypt-tokens`, rate-limited to once a minute per process. The
+   tail is reported only for ids that are actually presented; `encrypt-tokens` is the only complete
+   count. **Setting the flag false and then true again is unsupported**: it revives any legacy row that
+   was not deleted in between. Use true only until `encrypt-tokens` (or `--purge-legacy`) has finished,
+   then false for good.
 2. **Reads.** `get_token`/`get_session`/`get_token_by_access_token` and `update_token` on a sealed miss
    → the matching `inner.*` → if found, seal into the new namespace and delete the legacy row (then, for
-   an update, apply it). Every read-through of one row therefore migrates it.
+   an update, apply it). Every read-through of one row therefore migrates it. With the flag false there
+   is no read-through, but `update_token` on a sealed miss still calls `inner.update_token` (without
+   sealing), so a `revoke_token` revokes a legacy row regardless of the flag.
 3. **Deletes** also call `inner.delete_*`, **regardless of the flag** (otherwise a row deleted while the
    flag was false is reachable again when it is set back to true, and a deleted token is resurrected by
    the next read-through). A failing legacy delete is returned (§4.3).
-4. **Lists and counts** union the sealed namespace with `inner.list_user_tokens` /
+4. **Lists and counts** (only while the flag is true; with it false they do not include legacy rows,
+   which are unreachable by id as well) union the sealed namespace with `inner.list_user_tokens` /
    `inner.list_user_sessions` / `inner.count_active_sessions` (typed per-user methods exist; migrated rows
    are deleted from legacy at seal time, so the sets are disjoint). Without this, `revoke_all_user_sessions`
    and the per-user limits (100 tokens, 50 sessions) would not see legacy rows that `get_session` still
@@ -277,7 +293,10 @@ The audit showed read-through alone is unsound, so the rules are explicit:
    the factory's `Arc<dyn AuthStorage>` wrapper reports `lists_kv_keys() == true` for a listing backend.
 10. Login/logout cost: with 100 000 stub sessions, `create_session` and `delete_session` issue no scan
     (cached count).
-11. Flag toggle: delete while `allow_plaintext_reads=false`, set it true, the token is still gone; a
+11. Flag false: `revoke_token` of a legacy row revokes it (no revival of a non-revoked row if the flag
+    is later set true, though that toggle is unsupported); delete while `allow_plaintext_reads=false`,
+    set it true, the token is still gone; a crash injected between the legacy and sealed delete leaves
+    the token gone or both present, never legacy-only; a
     record whose key was rotated out is still wiped by `reset_runtime_data`; caller `get_kv`/`delete_kv`
     of a reserved key is rejected.
 
