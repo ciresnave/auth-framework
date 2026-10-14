@@ -783,6 +783,15 @@ impl AuthStorage for DashMapMemoryStorage {
         true
     }
 
+    async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        Ok(self
+            .kv_store
+            .iter()
+            .filter(|entry| entry.key().starts_with(prefix) && !entry.value().is_expired())
+            .map(|entry| entry.key().clone())
+            .collect())
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         // SAFE: Extract creation timestamp before removal
         let created_at = if let Some(timestamped) = self.kv_store.get(key) {

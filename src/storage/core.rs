@@ -36,7 +36,7 @@ use crate::errors::StorageError;
 ///    simultaneously. Use connection pooling or interior mutability.
 /// 3. **Honour TTL** — [`store_kv`](Self::store_kv) accepts an optional TTL.
 ///    Expired entries must not be returned by [`get_kv`](Self::get_kv).
-/// 4. **Override `list_kv_keys`** — the default returns an empty `Vec`.
+/// 4. **Override `list_kv_keys`** — the default returns an error.
 ///    Analytics, compliance, and RBAC queries depend on real data.
 /// 5. **Implement `cleanup_expired`** — periodically called to prune stale
 ///    tokens and sessions.
@@ -207,14 +207,19 @@ pub trait AuthStorage: Send + Sync {
 
     /// List keys with a specific prefix.
     ///
-    /// **Important:** All storage backends must override this method to return
-    /// real key data. The default returns an empty `Vec` for backward compatibility
-    /// but will cause analytics, compliance, and RBAC queries to operate on empty data.
+    /// **Important:** every storage backend must override this method. The default
+    /// returns an error: an empty list would be indistinguishable from "no keys", and
+    /// analytics, compliance and RBAC queries would silently operate on no data.
+    /// Expired keys are not listed.
     async fn list_kv_keys(&self, _prefix: &str) -> Result<Vec<String>> {
-        tracing::warn!(
-            "list_kv_keys called on a storage backend that does not override it — returning empty"
-        );
-        Ok(Vec::new())
+        Err(crate::errors::AuthError::Storage(
+            crate::errors::StorageError::operation_failed(
+                "this storage backend does not implement list_kv_keys, which analytics, \
+                 compliance, RBAC and maintenance listing require; implement it to return \
+                 the unexpired KV keys that start with the prefix"
+                    .to_string(),
+            ),
+        ))
     }
 
     /// Clean up expired data.

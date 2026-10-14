@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc63 -- **`AuthStorage::list_kv_keys` no longer defaults to an empty list (#145).** A backend
+  that does not override it now gets an error instead of a silent empty key space (analytics,
+  compliance, RBAC and maintenance listings read it). `DashMapMemoryStorage`, `UnifiedStorage`,
+  `storage::redis::RedisStorage`, `testing::utilities::MockStorage` and the `auth-storage-sqlite`
+  crate's `SqliteStorage` implement it (expired keys
+  are not listed; the Redis one uses SCAN with the prefix matched literally). **Breaking for
+  out-of-tree `AuthStorage` implementations that relied on the default:** implement
+  `list_kv_keys` (see the trait documentation).
 - 0.6.0-rc62 -- Repository hygiene only. Adds `.github/CODEOWNERS` (`* @ciresnave`, WSP-001) and
   `docs/glossary.md` (DOC-009), sets top-level `permissions: contents: read` in `ci-cd.yml` and
   `release.yml` (SUP-008 excessive-permissions; jobs that need more already declare it), and

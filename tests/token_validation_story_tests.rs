@@ -77,6 +77,9 @@ mod token_validation_story_tests {
         async fn delete_kv(&self, k: &str) -> R<()> {
             self.inner.delete_kv(k).await
         }
+        async fn list_kv_keys(&self, prefix: &str) -> R<Vec<String>> {
+            self.inner.list_kv_keys(prefix).await
+        }
         async fn cleanup_expired(&self) -> R<()> {
             self.inner.cleanup_expired().await
         }

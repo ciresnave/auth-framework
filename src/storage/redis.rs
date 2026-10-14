@@ -408,6 +408,47 @@ impl AuthStorage for RedisStorage {
         Ok(())
     }
 
+    async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        let mut conn = self.get_connection().await?;
+        let kv_prefix = self.kv_key("");
+        // Redis MATCH is a glob: escape its metacharacters in the caller's prefix.
+        let mut pattern = String::with_capacity(kv_prefix.len() + prefix.len() + 1);
+        for c in kv_prefix.chars().chain(prefix.chars()) {
+            if matches!(c, '*' | '?' | '[' | ']' | '\\') {
+                pattern.push('\\');
+            }
+            pattern.push(c);
+        }
+        pattern.push('*');
+
+        let mut keys = Vec::new();
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+            keys.extend(
+                batch
+                    .into_iter()
+                    .filter_map(|k| k.strip_prefix(&kv_prefix).map(str::to_owned)),
+            );
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+        // SCAN may return a key more than once.
+        keys.sort_unstable();
+        keys.dedup();
+        Ok(keys)
+    }
+
     async fn cleanup_expired(&self) -> Result<()> {
         // Redis handles expiration automatically via TTL
         Ok(())
