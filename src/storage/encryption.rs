@@ -1031,7 +1031,7 @@ where
     // unchanged so RBAC role reload, maintenance/backup, and analytics
     // (all of which call this) keep working once this wrapper is in the
     // default path. Without this override, the AuthStorage trait's
-    // default implementation silently returns an empty Vec.
+    // default implementation would fail (it used to return an empty Vec).
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         self.inner.list_kv_keys(prefix).await
     }

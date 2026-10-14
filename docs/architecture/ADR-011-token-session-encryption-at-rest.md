@@ -74,8 +74,8 @@ design does not protect them and says so rather than implying it does. Backup *f
 
 **One small trait change is unavoidable and is stated as such:** `AuthStorage::lists_kv_keys(&self) ->
 bool` (default `false`, like `tracks_kv_ttl`). Three shipped backends do not override `list_kv_keys`
-(`auth-storage-sqlite`, `src/storage/redis.rs`, `unified.rs`; the default returns empty with a warning,
-`core.rs:213-218`), and under Option A an empty list is a silent security-relevant failure (a user's
+(`auth-storage-sqlite`, `src/storage/redis.rs`, `unified.rs`; the default returned empty with a warning,
+`core.rs:213-218`, until #145 / rc63 made it an error and implemented them), and under Option A an empty list is a silent security-relevant failure (a user's
 tokens not listed, so not revoked). Requirements for the change: every shipped backend that lists returns
 `true`; `impl AuthStorage for Arc<dyn AuthStorage>` (`core.rs:241-340`) and `EncryptedStorage` forward it
 (a missed forward makes the factory's own type report `false` and every deployment refuse to start —

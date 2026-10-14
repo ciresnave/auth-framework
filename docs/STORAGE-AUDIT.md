@@ -214,12 +214,13 @@ maintenance/backup and analytics), and rejected non-UTF-8 values.
   this as follow-up; its design is a separate document. (The test-only
   `storage::redis::RedisStorage` keys tokens as `{prefix}access:{access_token}`;
   the production core `RedisStorage`'s token key was not re-read at `3239b1c3`.)
-- **`list_kv_keys` is still the empty-default trait method on five
-  implementations**, none of which the factory wraps: `DashMapMemoryStorage`,
-  `storage::redis::RedisStorage`, `UnifiedStorage`, the `auth-storage-sqlite`
-  crate's `SqliteStorage`, and the test `MockStorage`. #145 lists four and
-  misses the crate. `EncryptedStorage::list_kv_keys` forwards to its inner
-  storage, so wrapping one of these still returns an empty list.
+- **`list_kv_keys` was the empty-default trait method on five
+  implementations** at the audited ref, none of which the factory wraps:
+  `DashMapMemoryStorage`, `storage::redis::RedisStorage`, `UnifiedStorage`,
+  the `auth-storage-sqlite` crate's `SqliteStorage`, and the test
+  `MockStorage`. #145 listed four and missed the crate. Since 0.6.0-rc63
+  (#145) the default is an error and all five implement it.
+  `EncryptedStorage::list_kv_keys` forwards to its inner storage.
 
 **Open issue index for this part:** #144 (expired tokens returned by SQL and
 in-memory `get_token`), #145 (`list_kv_keys` default), #146 (SQLite `store_kv`

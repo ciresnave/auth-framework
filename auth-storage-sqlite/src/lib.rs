@@ -332,6 +332,29 @@ impl AuthStorage for SqliteStorage {
         Ok(())
     }
 
+    async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        let now = chrono::Utc::now().timestamp();
+        // `%`, `_` and `\` in the caller's prefix are literals, not LIKE wildcards.
+        let mut pattern = String::with_capacity(prefix.len() + 1);
+        for c in prefix.chars() {
+            if matches!(c, '%' | '_' | '\\') {
+                pattern.push('\\');
+            }
+            pattern.push(c);
+        }
+        pattern.push('%');
+        let rows = sqlx::query(
+            "SELECT key FROM kv_store WHERE key LIKE ? ESCAPE '\\' \
+             AND (expires_at IS NULL OR expires_at >= ?) ORDER BY key",
+        )
+        .bind(pattern)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage_err)?;
+        Ok(rows.into_iter().map(|row| row.get("key")).collect())
+    }
+
     async fn cleanup_expired(&self) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
         sqlx::query("DELETE FROM kv_store WHERE expires_at IS NOT NULL AND expires_at < ?")
@@ -396,6 +419,39 @@ mod tests {
             user_agent: Some("test-agent".to_string()),
             data: HashMap::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn test_list_kv_keys_prefix_expiry_and_literal_wildcards() {
+        let storage = create_test_storage().await;
+        storage.store_kv("p:a", b"1", None).await.unwrap();
+        storage.store_kv("p:b", b"2", None).await.unwrap();
+        storage.store_kv("q:c", b"3", None).await.unwrap();
+        storage.store_kv("w%_x", b"4", None).await.unwrap();
+        storage.store_kv("wZZx", b"5", None).await.unwrap();
+        storage
+            .store_kv("e:short", b"6", Some(Duration::from_secs(1)))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            storage.list_kv_keys("p:").await.unwrap(),
+            vec!["p:a", "p:b"]
+        );
+        assert_eq!(
+            storage.list_kv_keys("w%_").await.unwrap(),
+            vec!["w%_x"],
+            "LIKE wildcards in the prefix are matched literally"
+        );
+        assert!(storage.list_kv_keys("zzz:").await.unwrap().is_empty());
+
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        assert!(
+            storage.list_kv_keys("e:").await.unwrap().is_empty(),
+            "an expired key is not listed"
+        );
+        storage.delete_kv("p:a").await.unwrap();
+        assert_eq!(storage.list_kv_keys("p:").await.unwrap(), vec!["p:b"]);
     }
 
     #[tokio::test]
