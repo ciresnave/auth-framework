@@ -1010,12 +1010,24 @@ impl AuthStorage for RedisStorage {
         let mut seen = std::collections::HashSet::new();
 
         // Check each session to see if it belongs to the user
+        let legacy_prefix = self.legacy_session_key("");
         for key in keys {
-            if let Ok(session_json) = redis::cmd("GET")
-                .arg(&key)
-                .query_async::<Option<String>>(&mut conn)
-                .await
-                && let Some(session_json) = session_json
+            // A row still under the pre-fix name is moved to its digest name as
+            // it is listed, so it stops exposing the raw session id in key names.
+            let session_json = match key.strip_prefix(&legacy_prefix) {
+                Some(session_id) => self
+                    .get_migrating(&self.session_key(session_id), &key)
+                    .await
+                    .ok()
+                    .flatten(),
+                None => redis::cmd("GET")
+                    .arg(&key)
+                    .query_async::<Option<String>>(&mut conn)
+                    .await
+                    .ok()
+                    .flatten(),
+            };
+            if let Some(session_json) = session_json
                 && let Ok(session) = serde_json::from_str::<SessionData>(&session_json)
                 && session.user_id == user_id
                 && !session.is_expired()

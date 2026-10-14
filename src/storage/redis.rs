@@ -257,8 +257,19 @@ impl AuthStorage for RedisStorage {
 
         let mut user_sessions = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        let legacy_prefix = self.legacy_session_key("");
         for key in keys {
-            if let Ok(session_json) = conn.get::<_, String>(&key).await
+            // A row still under the pre-fix name is moved to its digest name as
+            // it is listed, so it stops exposing the raw session id in key names.
+            let session_json = match key.strip_prefix(&legacy_prefix) {
+                Some(session_id) => self
+                    .get_migrating(&self.session_key(session_id), &key)
+                    .await
+                    .ok()
+                    .flatten(),
+                None => conn.get::<_, String>(&key).await.ok(),
+            };
+            if let Some(session_json) = session_json
                 && let Ok(session) = serde_json::from_str::<SessionData>(&session_json)
                 && session.user_id == user_id
                 && !session.is_expired()
