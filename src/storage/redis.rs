@@ -51,7 +51,18 @@ impl RedisStorage {
         format!("{}token:{}", self.key_prefix, token_id)
     }
 
+    /// The raw access token is a bearer credential and is never used as a
+    /// key name (see [`crate::storage::key_names`]).
     fn access_token_key(&self, access_token: &str) -> String {
+        format!(
+            "{}access_h:{}",
+            self.key_prefix,
+            crate::storage::key_names::digest("access_token", access_token)
+        )
+    }
+
+    /// The pre-fix name, kept only to read-and-migrate or delete old rows.
+    fn legacy_access_token_key(&self, access_token: &str) -> String {
         format!("{}access:{}", self.key_prefix, access_token)
     }
 
@@ -59,8 +70,117 @@ impl RedisStorage {
         format!("{}user:{}:tokens", self.key_prefix, user_id)
     }
 
+    /// The session id is a bearer credential; it is never used as a key name.
     fn session_key(&self, session_id: &str) -> String {
+        format!(
+            "{}session_h:{}",
+            self.key_prefix,
+            crate::storage::key_names::digest("session", session_id)
+        )
+    }
+
+    /// The pre-fix name, kept only to read-and-migrate or delete old rows.
+    fn legacy_session_key(&self, session_id: &str) -> String {
         format!("{}session:{}", self.key_prefix, session_id)
+    }
+
+    /// Every session key, under the digest name and under the legacy name.
+    /// Two exact-prefix patterns, so nothing else sharing the key prefix
+    /// matches. A session present under both names (a crash between the two
+    /// writes of a migration) appears twice.
+    async fn session_keys(&self, conn: &mut MultiplexedConnection) -> Result<Vec<String>> {
+        let mut all = Vec::new();
+        for pattern in [
+            format!("{}session_h:*", self.key_prefix),
+            format!("{}session:*", self.key_prefix),
+        ] {
+            let keys: Vec<String> = conn
+                .keys(&pattern)
+                .await
+                .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+            all.extend(keys);
+        }
+        Ok(all)
+    }
+
+    /// Read `new_key`; on a miss, move a row stored under `legacy_key` (the raw
+    /// credential name used before digest naming) to `new_key`, keeping its
+    /// remaining lifetime, and return it.
+    async fn get_migrating(&self, new_key: &str, legacy_key: &str) -> Result<Option<String>> {
+        let mut conn = self.get_connection().await?;
+        // Plain read first: it needs no scripting permission, and a digest-named
+        // row is the common case.
+        let value: Option<String> = redis::cmd("GET")
+            .arg(new_key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        if value.is_some() {
+            // A legacy twin can only be left by an interrupted write and still
+            // holds the raw id in its name: drop it (best effort).
+            let _ = redis::cmd("DEL")
+                .arg(legacy_key)
+                .query_async::<usize>(&mut conn)
+                .await;
+            return Ok(value);
+        }
+        // One Lua script, so a concurrent store or delete cannot interleave with the
+        // move: it never overwrites a row already at `new_key` and never recreates
+        // a row that was deleted.
+        const MIGRATE: &str = r#"
+            local l = redis.call('GET', KEYS[2])
+            if not l then return redis.call('GET', KEYS[1]) end
+            local v = redis.call('GET', KEYS[1])
+            if v then
+                redis.call('DEL', KEYS[2])
+                return v
+            end
+            local t = redis.call('PTTL', KEYS[2])
+            if t > 0 then
+                redis.call('SET', KEYS[1], l, 'PX', t)
+            elseif t == -1 then
+                redis.call('SET', KEYS[1], l)
+            else
+                return false
+            end
+            redis.call('DEL', KEYS[2])
+            return l
+        "#;
+        match redis::Script::new(MIGRATE)
+            .key(new_key)
+            .key(legacy_key)
+            .invoke_async::<Option<String>>(&mut conn)
+            .await
+        {
+            Ok(value) => Ok(value),
+            Err(script_err) => {
+                // Scripting denied (restricted ACL) or unavailable: serve the row
+                // where it is. It moves once scripts are allowed or the record is
+                // rewritten.
+                tracing::warn!(
+                    error = %script_err,
+                    "legacy-name migration script failed; serving the row unmigrated"
+                );
+                let legacy: Option<String> = redis::cmd("GET")
+                    .arg(legacy_key)
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|e| {
+                        AuthError::Storage(StorageError::operation_failed(e.to_string()))
+                    })?;
+                Ok(legacy)
+            }
+        }
+    }
+
+    /// Delete a key left under a pre-fix (raw credential) name, if any.
+    async fn del_legacy(&self, legacy_key: &str) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        let _: usize = conn
+            .del(legacy_key)
+            .await
+            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        Ok(())
     }
 
     fn kv_key(&self, key: &str) -> String {
@@ -96,16 +216,19 @@ impl AuthStorage for RedisStorage {
             .set_ex(&session_key, &session_data, ttl)
             .await
             .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        // Drop a record left under the pre-fix name (it held the raw session id).
+        self.del_legacy(&self.legacy_session_key(session_id))
+            .await?;
         Ok(())
     }
 
     async fn get_session(&self, session_id: &str) -> Result<Option<SessionData>> {
-        let mut conn = self.get_connection().await?;
-        let session_key = self.session_key(session_id);
-        let session_data: Option<String> = conn
-            .get(&session_key)
-            .await
-            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        let session_data = self
+            .get_migrating(
+                &self.session_key(session_id),
+                &self.legacy_session_key(session_id),
+            )
+            .await?;
         match session_data {
             Some(data) => {
                 let session: SessionData = serde_json::from_str(&data)
@@ -119,6 +242,10 @@ impl AuthStorage for RedisStorage {
     async fn delete_session(&self, session_id: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
         let session_key = self.session_key(session_id);
+        // Legacy name first: a migration that runs in between then finds no
+        // legacy row to move, so a deleted session cannot be recreated.
+        self.del_legacy(&self.legacy_session_key(session_id))
+            .await?;
         let _: usize = conn
             .del(&session_key)
             .await
@@ -128,22 +255,29 @@ impl AuthStorage for RedisStorage {
 
     async fn list_user_sessions(&self, user_id: &str) -> Result<Vec<SessionData>> {
         let mut conn = self.get_connection().await?;
-        let pattern = format!("{}session:*", self.key_prefix);
-
-        // Use SCAN to find all session keys
-        let keys: Vec<String> = conn
-            .keys(&pattern)
-            .await
-            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        let keys = self.session_keys(&mut conn).await?;
 
         let mut user_sessions = Vec::new();
+        let mut seen = std::collections::HashSet::new();
 
+        let legacy_prefix = self.legacy_session_key("");
         // Check each session to see if it belongs to the user
         for key in keys {
-            if let Ok(session_json) = conn.get::<_, String>(&key).await
+            // A row still under the pre-fix name is moved to its digest name as
+            // it is listed, so it stops exposing the raw session id in key names.
+            let session_json = match key.strip_prefix(&legacy_prefix) {
+                Some(session_id) => self
+                    .get_migrating(&self.session_key(session_id), &key)
+                    .await
+                    .ok()
+                    .flatten(),
+                None => conn.get::<_, String>(&key).await.ok(),
+            };
+            if let Some(session_json) = session_json
                 && let Ok(session) = serde_json::from_str::<SessionData>(&session_json)
                 && session.user_id == user_id
                 && !session.is_expired()
+                && seen.insert(session.session_id.clone())
             {
                 user_sessions.push(session);
             }
@@ -218,6 +352,10 @@ impl AuthStorage for RedisStorage {
             .await
             .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
 
+        // Drop a mapping left under the pre-fix name (it held the raw token).
+        self.del_legacy(&self.legacy_access_token_key(&token.access_token))
+            .await?;
+
         // Add to user's token set
         let user_tokens_key = self.user_tokens_key(&token.user_id);
         let _: () = conn
@@ -254,13 +392,12 @@ impl AuthStorage for RedisStorage {
     }
 
     async fn get_token_by_access_token(&self, access_token: &str) -> Result<Option<AuthToken>> {
-        let mut conn = self.get_connection().await?;
-        let access_key = self.access_token_key(access_token);
-
-        let token_id: Option<String> = conn
-            .get(&access_key)
-            .await
-            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        let token_id = self
+            .get_migrating(
+                &self.access_token_key(access_token),
+                &self.legacy_access_token_key(access_token),
+            )
+            .await?;
 
         match token_id {
             Some(id) => self.get_token(&id).await,
@@ -276,6 +413,8 @@ impl AuthStorage for RedisStorage {
             let token_key = self.token_key(token_id);
             let access_key = self.access_token_key(&token.access_token);
             let user_tokens_key = self.user_tokens_key(&token.user_id);
+            self.del_legacy(&self.legacy_access_token_key(&token.access_token))
+                .await?;
 
             // Delete token
             let _: usize = conn
@@ -319,14 +458,15 @@ impl AuthStorage for RedisStorage {
 
     async fn count_active_sessions(&self) -> Result<u64> {
         let mut conn = self.get_connection().await?;
-        let pattern = format!("{}session:*", self.key_prefix);
+        let keys = self.session_keys(&mut conn).await?;
+        // A session present under both names is one session.
+        let keys = crate::storage::key_names::without_shadowed_legacy(
+            keys,
+            &self.legacy_session_key(""),
+            &format!("{}session_h:", self.key_prefix),
+            "session",
+        );
 
-        let keys: Vec<String> = conn
-            .keys(&pattern)
-            .await
-            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
-
-        // Count only non-expired sessions
         let mut active_count = 0u64;
         for key in keys {
             let ttl: i64 = conn
@@ -345,5 +485,3 @@ impl AuthStorage for RedisStorage {
         Ok(active_count)
     }
 }
-
-

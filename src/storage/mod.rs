@@ -1,4 +1,5 @@
 pub mod core;
+pub(crate) mod key_names; // one-way key names for credentials
 pub mod dashmap_memory; // DashMap-based storage proof-of-concept
 pub mod encryption; // AES-256-GCM encryption for storage at rest
 pub mod memory;
