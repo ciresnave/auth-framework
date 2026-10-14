@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc57 -- **Storage key names changed (API keys, access-token mapping, sessions).** API-key
+  rows, the Redis access-token-to-token-id mapping and Redis session records are now named by a
+  domain-separated SHA-256 digest of the credential (`api_key_h:`, `access_token_h:`/`access_h:`,
+  `session_h:`) instead of the credential itself, so a key name never holds a usable credential.
+  Rows written under the previous names keep working: each is moved to its new name, with its
+  remaining TTL, the first time it is read, and `revoke`/`delete` remove both names. **Upgrade
+  note:** upgrade every node that shares a Redis or database together (or drain old nodes first).
+  A node still running the previous release neither sees rows written by an upgraded node nor
+  keeps the rows an upgraded node has already moved. Backups taken before the upgrade still hold
+  the previous key names, and keys that were readable from such a backup should be rotated.
+  `storage::redis::RedisStorage` and `storage::core::RedisStorage` list sessions under both
+  naming schemes while old rows remain.
 - 0.6.0-rc55 -- Documentation only. `docs/STORAGE-AUDIT.md` is re-verified against
   `origin/main` @ `3239b1c3` and corrected in place: encryption at rest is now described as wired
   by default (what remains open is listed), and the TOTP at-rest, PAR single-use, forwarded-header,
