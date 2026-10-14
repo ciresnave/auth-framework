@@ -75,7 +75,7 @@ url = "2.4"
 base64 = "0.22"
 
 # MaxMind GeoIP2 for IP geolocation
-maxminddb = "0.26"
+maxminddb = "0.27"
 
 # Threat intelligence integration
 ipnetwork = "0.21"            # For CIDR network parsing

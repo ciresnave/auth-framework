@@ -307,21 +307,26 @@ impl IPSecurityUtils {
         };
 
         match maxminddb::Reader::open_readfile(&db_path) {
-            Ok(reader) => match reader.lookup::<maxminddb::geoip2::City>(ip_addr) {
-                Ok(Some(city)) => {
-                    if let Some(location) = city.location
-                        && let (Some(lat), Some(lon)) = (location.latitude, location.longitude)
-                    {
-                        log::debug!("MaxMind lookup for {}: lat={}, lon={}", ip, lat, lon);
-                        return Some((lat, lon));
+            Ok(reader) => match reader.lookup(ip_addr) {
+                Ok(result) => match result.decode::<maxminddb::geoip2::City>() {
+                    Ok(Some(city)) => {
+                        let location = &city.location;
+                        if let (Some(lat), Some(lon)) = (location.latitude, location.longitude) {
+                            log::debug!("MaxMind lookup for {}: lat={}, lon={}", ip, lat, lon);
+                            return Some((lat, lon));
+                        }
+                        log::debug!("MaxMind lookup for {} returned no coordinates", ip);
+                        None
                     }
-                    log::debug!("MaxMind lookup for {} returned no coordinates", ip);
-                    None
-                }
-                Ok(None) => {
-                    log::debug!("MaxMind lookup for {} returned no data", ip);
-                    None
-                }
+                    Ok(None) => {
+                        log::debug!("MaxMind lookup for {} returned no data", ip);
+                        None
+                    }
+                    Err(e) => {
+                        log::debug!("MaxMind lookup failed for {}: {}", ip, e);
+                        None
+                    }
+                },
                 Err(e) => {
                     log::debug!("MaxMind lookup failed for {}: {}", ip, e);
                     None
