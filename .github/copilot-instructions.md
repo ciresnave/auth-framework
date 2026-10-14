@@ -1,7 +1,7 @@
 # AuthFramework - Copilot Instructions
 
 ## Project Overview
-AuthFramework is a high-performance Rust authentication and authorization client and server library designed to be THE premier authentication and authorization solution. Focus on exceptional performance, comprehensive security, cross-platform compatibility, multi-language SDK support, and a batteries-included developer experience where the product works out of the box with minimal configuration.
+AuthFramework is a high-performance Rust authentication and authorization client and server library designed as a complete authentication and authorization solution. Focus on exceptional performance, comprehensive security, cross-platform compatibility, multi-language SDK support, and a batteries-included developer experience where the product works out of the box with minimal configuration.
 
 ## Core Principles
 

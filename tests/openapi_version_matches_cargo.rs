@@ -12,10 +12,13 @@
 //! 2. Every checked-in OpenAPI document's `info.version`, and every `version:` example in
 //!    `schemas/health.yaml`, equals the Cargo version. These are static files and cannot be
 //!    derived, so a release bump must touch them; this fails the bump that forgets.
+//! 3. The health-response example in `docs/api/README.md` and the `Current crate version`
+//!    line in `docs/ROADMAP.md` equal the Cargo version (same reason as 2).
 //!
 //! # What this does NOT cover
 //!
-//! - Other docs that name a version (guides, footers).
+//! - Other docs that name a version (guides, footers). The root README and the developer
+//!   guide are checked by `readme_claims_are_true_of_the_artifact`, on the `0.N` line only.
 //! - Whether the yaml files describe the same routes as the served spec.
 
 const CARGO_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -106,5 +109,46 @@ fn served_openapi_spec_reports_the_cargo_version() {
         spec["info"]["version"].as_str(),
         Some(CARGO_VERSION),
         "the served OpenAPI spec must report the crate version it is served by"
+    );
+}
+
+/// First `"version": "X"` in `docs/api/README.md` (the example health response).
+fn api_readme_version(text: &str) -> Option<String> {
+    for l in text.lines() {
+        if let Some(rest) = l.trim().strip_prefix("\"version\":") {
+            return Some(
+                rest.trim()
+                    .trim_end_matches(',')
+                    .trim_matches('"')
+                    .to_string(),
+            );
+        }
+    }
+    None
+}
+
+#[test]
+fn api_readme_health_example_carries_the_cargo_version() {
+    let text = include_str!("../docs/api/README.md");
+    let found = api_readme_version(text).expect("control: no `\"version\":` example in README");
+    assert_eq!(
+        found, CARGO_VERSION,
+        "docs/api/README.md shows a health example with version {found}, Cargo.toml is \
+         {CARGO_VERSION}"
+    );
+}
+
+#[test]
+fn roadmap_current_crate_version_is_the_cargo_version() {
+    let text = include_str!("../docs/ROADMAP.md");
+    let lead = "Current crate version: `";
+    let i = text
+        .find(lead)
+        .expect("control: ROADMAP.md must state `Current crate version: `X``");
+    let rest = &text[i + lead.len()..];
+    let found = rest.split('`').next().unwrap_or("");
+    assert_eq!(
+        found, CARGO_VERSION,
+        "docs/ROADMAP.md says the current crate version is {found}, Cargo.toml is {CARGO_VERSION}"
     );
 }

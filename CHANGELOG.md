@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc54 -- Documentation and a guard only. The health-response example in
+  `docs/api/README.md` carries the crate version and is now checked by
+  `openapi_version_matches_cargo` together with the `Current crate version` line in
+  `docs/ROADMAP.md`; the bug-report and question issue templates no longer suggest a specific
+  version ("the version in your Cargo.lock"); `.github/copilot-instructions.md` no longer says
+  "THE premier". `docs/ROADMAP.md`'s "aims to become the premier ..." is an aspiration, not a
+  claim, and is unchanged.
 - 0.6.0-rc53 -- **Served value changed:** the OpenAPI document the API serves
   (`generate_openapi_spec()`, `info.version`) reported the literal `0.5.0-rc24` on every release
   since rc24; it now reports the crate version (`env!("CARGO_PKG_VERSION")`), so it cannot drift.
