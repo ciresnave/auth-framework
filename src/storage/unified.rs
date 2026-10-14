@@ -602,6 +602,23 @@ impl AuthStorage for UnifiedStorage {
         true
     }
 
+    async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        let now = SystemTime::now();
+        Ok(self
+            .storage
+            .iter()
+            .filter_map(|entry| match entry.key() {
+                StorageKey::KeyValue(key)
+                    if key.starts_with(prefix)
+                        && !entry.value().expires_at.is_some_and(|at| now > at) =>
+                {
+                    Some(key.clone())
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
     async fn delete_kv(&self, key: &str) -> Result<()> {
         self.storage.remove(&StorageKey::KeyValue(key.to_string()));
         Ok(())
