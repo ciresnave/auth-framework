@@ -11,6 +11,10 @@ on:
         required: true
         type: string
 
+# Least privilege: jobs that need more raise it themselves (see their permissions blocks).
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
