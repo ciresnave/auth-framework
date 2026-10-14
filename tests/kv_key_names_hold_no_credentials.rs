@@ -148,15 +148,27 @@ async fn expired_legacy_api_key_is_rejected_and_not_migrated() {
     let storage = Arc::new(MemoryStorage::new());
     let um = manager(storage.clone());
     let key = "ak_legacy_expiring";
+    // No storage TTL: the row is still present, and only its own `expires_at`
+    // says it is over, so validation reaches the helper's expired-row branch.
+    let row = serde_json::json!({
+        "user_id": "erin",
+        "created_at": chrono::Utc::now() - chrono::Duration::hours(2),
+        "expires_at": chrono::Utc::now() - chrono::Duration::hours(1),
+    })
+    .to_string()
+    .into_bytes();
     storage
-        .store_kv(
-            &format!("api_key:{key}"),
-            &metadata("erin"),
-            Some(Duration::from_millis(50)),
-        )
+        .store_kv(&format!("api_key:{key}"), &row, None)
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(
+        storage
+            .get_kv(&format!("api_key:{key}"))
+            .await
+            .unwrap()
+            .is_some(),
+        "control: the expired row is still stored, so the storage TTL did not hide it"
+    );
 
     assert!(um.validate_api_key(key).await.is_err());
     assert!(
@@ -506,6 +518,96 @@ mod redis_key_names {
             );
             clear(prefix).await;
         }
+    }
+
+    /// A record under both names (an interrupted write) is one session, and
+    /// reading it by id drops the legacy twin that still holds the raw id.
+    #[tokio::test]
+    #[ignore]
+    async fn session_under_both_names_counts_once_and_a_read_drops_the_twin() {
+        let prefix = "kvkn_twin:";
+        clear(prefix).await;
+        let storage = CoreRedis::new(&url(), prefix).unwrap();
+        let sid = "twin-session-id";
+        let session = SessionData::new(sid, "u_twin", Duration::from_secs(600));
+        storage.store_session(sid, &session).await.unwrap();
+        raw_set(
+            &format!("{prefix}session:{sid}"),
+            &serde_json::to_string(&session).unwrap(),
+            600,
+        )
+        .await;
+        assert_eq!(all_keys(prefix).await.len(), 2, "control: both names exist");
+
+        assert_eq!(
+            storage.count_active_sessions().await.unwrap(),
+            1,
+            "one session under two names is counted once"
+        );
+        assert!(storage.get_session(sid).await.unwrap().is_some());
+        let keys = all_keys(prefix).await;
+        assert!(
+            keys.iter().all(|k| !k.contains(sid)),
+            "the legacy twin is dropped by a read: {keys:?}"
+        );
+        clear(prefix).await;
+    }
+
+    /// Under an ACL that denies scripting, a digest-named row reads normally
+    /// and a legacy row is still served (unmigrated) instead of failing.
+    #[tokio::test]
+    #[ignore]
+    async fn reads_work_when_the_acl_denies_scripting() {
+        let prefix = "kvkn_acl:";
+        clear(prefix).await;
+        let admin = redis::Client::open(url()).unwrap();
+        let mut conn = admin.get_multiplexed_async_connection().await.unwrap();
+        let _: () = redis::cmd("ACL")
+            .arg("SETUSER")
+            .arg("kvkn_noscript")
+            .arg("on")
+            .arg(">pw")
+            .arg("~*")
+            .arg("+@all")
+            .arg("-@scripting")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let restricted_url = url().replacen("redis://", "redis://kvkn_noscript:pw@", 1);
+        let storage = CoreRedis::new(&restricted_url, prefix).unwrap();
+
+        let fresh = "acl-fresh-session";
+        storage
+            .store_session(
+                fresh,
+                &SessionData::new(fresh, "u_acl", Duration::from_secs(600)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            storage.get_session(fresh).await.unwrap().is_some(),
+            "a digest-named session reads without scripting"
+        );
+
+        let legacy = "acl-legacy-session";
+        raw_set(
+            &format!("{prefix}session:{legacy}"),
+            &serde_json::to_string(&SessionData::new(legacy, "u_acl", Duration::from_secs(600)))
+                .unwrap(),
+            600,
+        )
+        .await;
+        assert!(
+            storage.get_session(legacy).await.unwrap().is_some(),
+            "a legacy session is served when migration cannot run"
+        );
+        let _: () = redis::cmd("ACL")
+            .arg("DELUSER")
+            .arg("kvkn_noscript")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        clear(prefix).await;
     }
 
     #[tokio::test]

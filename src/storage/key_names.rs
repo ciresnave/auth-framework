@@ -40,6 +40,32 @@ pub(crate) fn digest(domain: &str, secret: &str) -> String {
     hex
 }
 
+/// Drop the legacy-named keys whose digest-named twin is also in `keys`, so a
+/// record present under both names (an interrupted write) is seen once.
+///
+/// `legacy_prefix` and `new_prefix` are the full key prefixes (including any
+/// namespace) up to the credential / digest; `domain` is the one passed to
+/// [`digest`] for that credential.
+pub(crate) fn without_shadowed_legacy(
+    keys: Vec<String>,
+    legacy_prefix: &str,
+    new_prefix: &str,
+    domain: &str,
+) -> Vec<String> {
+    let present: std::collections::HashSet<&str> = keys.iter().map(String::as_str).collect();
+    let shadowed: Vec<bool> = keys
+        .iter()
+        .map(|k| match k.strip_prefix(legacy_prefix) {
+            Some(raw) => present.contains(format!("{new_prefix}{}", digest(domain, raw)).as_str()),
+            None => false,
+        })
+        .collect();
+    keys.into_iter()
+        .zip(shadowed)
+        .filter_map(|(k, drop)| (!drop).then_some(k))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::digest;
