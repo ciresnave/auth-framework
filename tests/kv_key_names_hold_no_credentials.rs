@@ -444,6 +444,16 @@ mod redis_key_names {
         let got = storage.get_token_by_access_token(access).await.unwrap();
         assert_eq!(got.unwrap().token_id, token.token_id);
         assert!(raw_get(&legacy_key).await.is_none());
+        let digest_keys = all_keys(prefix).await;
+        let mapping = digest_keys
+            .iter()
+            .find(|k| k.contains("access_h:"))
+            .expect("the mapping is now stored under its digest name");
+        assert_eq!(
+            raw_get(mapping).await.as_deref(),
+            Some(token.token_id.as_str()),
+            "the digest-named mapping holds the token id"
+        );
         storage.delete_token(&token.token_id).await.unwrap();
 
         // session, legacy layout, then the same session under both names
@@ -453,6 +463,14 @@ mod redis_key_names {
         raw_set(&format!("{prefix}session:{sid}"), &json, 600).await;
         assert!(storage.get_session(sid).await.unwrap().is_some());
         assert!(raw_get(&format!("{prefix}session:{sid}")).await.is_none());
+        let moved = all_keys(prefix)
+            .await
+            .into_iter()
+            .find(|k| k.contains("session_h:"))
+            .expect("the session is now stored under its digest name");
+        let moved_session: SessionData =
+            serde_json::from_str(&raw_get(&moved).await.unwrap()).unwrap();
+        assert_eq!(moved_session.user_id, "u_modl");
 
         raw_set(&format!("{prefix}session:{sid}"), &json, 600).await; // both names now
         let listed = storage.list_user_sessions("u_modl").await.unwrap();
