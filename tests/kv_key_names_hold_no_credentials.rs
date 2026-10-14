@@ -16,6 +16,19 @@ use auth_framework::storage::{AuthStorage, MemoryStorage};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Same construction as `storage::key_names::digest` (this release's
+/// `MemoryStorage` cannot list its key names, so the tests probe by name).
+fn digest(domain: &str, secret: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"auth-framework/key-name/v1\0");
+    h.update((domain.len() as u64).to_be_bytes());
+    h.update(domain.as_bytes());
+    h.update((secret.len() as u64).to_be_bytes());
+    h.update(secret.as_bytes());
+    hex::encode(h.finalize())
+}
+
 fn manager(storage: Arc<dyn AuthStorage>) -> UserManager {
     UserManager::new(storage)
 }
@@ -37,14 +50,17 @@ async fn created_api_key_is_not_in_any_key_name() {
 
     let key = um.create_api_key("alice", None).await.unwrap();
 
-    let names = storage.list_kv_keys("").await.unwrap();
     assert!(
-        !names.is_empty(),
-        "control: the key's metadata row must be listed, got {names:?}"
+        storage.get_kv(&format!("api_key:{key}")).await.unwrap().is_none(),
+        "the raw API key must not be a key name"
     );
     assert!(
-        names.iter().all(|n| !n.contains(&key)),
-        "the raw API key must not appear in any key name, got {names:?}"
+        storage
+            .get_kv(&format!("api_key_h:{}", digest("api_key", &key)))
+            .await
+            .unwrap()
+            .is_some(),
+        "control: the row is stored under the digest name"
     );
     // the key still authenticates
     let info = um.validate_api_key(&key).await.unwrap();
@@ -69,12 +85,14 @@ async fn legacy_api_key_name_is_migrated_and_then_gone() {
         storage.get_kv(&legacy).await.unwrap().is_none(),
         "the legacy key name is deleted once migrated"
     );
-    let names = storage.list_kv_keys("").await.unwrap();
     assert!(
-        names.iter().all(|n| !n.contains(key)),
-        "no key name holds the raw key after migration, got {names:?}"
+        storage
+            .get_kv(&format!("api_key_h:{}", digest("api_key", key)))
+            .await
+            .unwrap()
+            .is_some(),
+        "the row now lives under the digest name"
     );
-    assert_eq!(names.len(), 1, "exactly one row after migration: {names:?}");
     // second validation uses the new name
     assert_eq!(um.validate_api_key(key).await.unwrap().id, "bob");
 }
@@ -97,10 +115,20 @@ async fn revoke_removes_both_names() {
 
     assert!(um.validate_api_key(&fresh).await.is_err());
     assert!(um.validate_api_key(legacy_key).await.is_err());
-    assert!(
-        storage.list_kv_keys("").await.unwrap().is_empty(),
-        "revoke leaves no row under either name"
-    );
+    for k in [fresh.as_str(), legacy_key] {
+        assert!(
+            storage.get_kv(&format!("api_key:{k}")).await.unwrap().is_none(),
+            "revoke leaves no row under the legacy name"
+        );
+        assert!(
+            storage
+                .get_kv(&format!("api_key_h:{}", digest("api_key", k)))
+                .await
+                .unwrap()
+                .is_none(),
+            "revoke leaves no row under the digest name"
+        );
+    }
     assert!(
         um.revoke_api_key("ak_never_existed").await.is_err(),
         "revoking an unknown key is still an error"
@@ -124,7 +152,11 @@ async fn expired_legacy_api_key_is_rejected_and_not_migrated() {
 
     assert!(um.validate_api_key(key).await.is_err());
     assert!(
-        storage.list_kv_keys("api_key_h:").await.unwrap().is_empty(),
+        storage
+            .get_kv(&format!("api_key_h:{}", digest("api_key", key)))
+            .await
+            .unwrap()
+            .is_none(),
         "an expired legacy row must not be recreated under the new name"
     );
 }
