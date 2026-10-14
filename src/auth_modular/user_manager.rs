@@ -61,39 +61,61 @@ impl UserManager {
         format!("api_key:{api_key}")
     }
 
+    /// Tombstone written by a revoke, so a migration that read the legacy row
+    /// before the revoke and writes the digest row after it can tell, and take
+    /// its row back out. Short-lived: it only has to outlast an in-flight
+    /// migration, and a revoke removes the legacy row that migrations read.
+    fn revoked_marker_key(api_key: &str) -> String {
+        format!(
+            "api_key_revoked:{}",
+            crate::storage::key_names::digest("api_key", api_key)
+        )
+    }
+
     /// Fetch an API key's row, migrating one stored under the legacy name:
-    /// create the row under the digest name, then delete the legacy row.
+    /// write the row under the digest name, then delete the legacy row.
     ///
-    /// This release's storage trait has no TTL read or create-if-absent, so the
-    /// migrated row's lifetime comes from the row's own `expires_at`, and a
-    /// concurrent revoke is detected by re-reading the legacy row: if it has
-    /// vanished after the new row was written, the key was revoked in between
-    /// and the new row is removed again. API-key rows are never updated, so an
-    /// overwrite by a second migrating reader writes identical content.
+    /// This release's storage trait has no create-if-absent, so races are
+    /// settled by ordering and a revoke marker rather than by who created the
+    /// row. Several readers may migrate at once: they write identical rows and
+    /// each deletes the legacy name, which is harmless. A revoke deletes the
+    /// legacy row, the digest row and leaves a marker; a migration that wrote
+    /// its digest row after the revoke finds the marker and removes the row
+    /// again. The migrated row's lifetime comes from its own `expires_at`.
     async fn get_api_key_row(&self, api_key: &str, storage_key: &str) -> Result<Option<Vec<u8>>> {
         if let Some(row) = self.storage.get_kv(storage_key).await? {
             return Ok(Some(row));
         }
         let legacy_key = Self::legacy_api_key_storage_key(api_key);
         let Some(row) = self.storage.get_kv(&legacy_key).await? else {
-            return Ok(None);
+            // Not under the legacy name either: a migration that ran between
+            // the two reads has moved the row, so read the digest name again.
+            return self.storage.get_kv(storage_key).await;
         };
 
-        let remaining = serde_json::from_slice::<serde_json::Value>(&row)
+        let ttl = match serde_json::from_slice::<serde_json::Value>(&row)
             .ok()
             .and_then(|v| v["expires_at"].as_str().map(str::to_owned))
             .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
-            .map(|at| at - chrono::Utc::now());
-        let ttl = match remaining {
+            .map(|at| at - chrono::Utc::now())
+        {
             // expired: do not recreate it; the caller rejects it from the row
             Some(left) if left <= chrono::Duration::zero() => return Ok(Some(row)),
-            Some(left) => left.to_std().ok(),
+            // whole seconds, rounded up: the Redis backends cannot take less
+            Some(left) => left.to_std().ok().map(|d| {
+                std::time::Duration::from_secs(d.as_secs() + u64::from(d.subsec_nanos() > 0))
+            }),
             None => None,
         };
 
         self.storage.store_kv(storage_key, &row, ttl).await?;
-        if self.storage.get_kv(&legacy_key).await?.is_none() {
-            // revoked (or migrated by another reader) while we were writing
+        if self
+            .storage
+            .get_kv(&Self::revoked_marker_key(api_key))
+            .await?
+            .is_some()
+        {
+            // revoked while we were migrating: take the new row back out
             self.storage.delete_kv(storage_key).await?;
             return Ok(None);
         }
@@ -191,9 +213,21 @@ impl UserManager {
 
         let storage_key = Self::api_key_storage_key(api_key);
         let legacy_key = Self::legacy_api_key_storage_key(api_key);
-        let found_new = self.storage.get_kv(&storage_key).await?.is_some();
+        // Legacy name first: a migration writes the digest row before it
+        // deletes the legacy row, so a row is always visible under one of the
+        // two names when read in this order.
         let found_legacy = self.storage.get_kv(&legacy_key).await?.is_some();
+        let found_new = self.storage.get_kv(&storage_key).await?.is_some();
         if found_new || found_legacy {
+            // Marker first, so a migration that read the legacy row earlier
+            // and writes the digest row after this revoke removes it again.
+            self.storage
+                .store_kv(
+                    &Self::revoked_marker_key(api_key),
+                    b"1",
+                    Some(std::time::Duration::from_secs(300)),
+                )
+                .await?;
             // Both names (a key may exist under either, or both mid-migration),
             // legacy first so a migration in flight cannot recreate the row.
             self.storage.delete_kv(&legacy_key).await?;

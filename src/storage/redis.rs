@@ -87,7 +87,7 @@ impl RedisStorage {
     /// Every session key, under the digest name and under the legacy name,
     /// found with cursor-based SCAN (SEC-M3). Two exact-prefix patterns, so
     /// nothing else sharing the key prefix matches. A session present under both
-    /// names (a crash between the two writes of a migration) appears twice.
+    /// names (a crash between the two writes of a store) appears twice.
     async fn session_keys(
         &self,
         conn: &mut redis::aio::MultiplexedConnection,
@@ -124,14 +124,34 @@ impl RedisStorage {
     /// credential name used before digest naming) to `new_key`, keeping its
     /// remaining lifetime, and return it.
     async fn get_migrating(&self, new_key: &str, legacy_key: &str) -> Result<Option<String>> {
+        let mut conn = self.get_connection().await?;
+        // Plain read first: it needs no scripting permission, and a digest-named
+        // row is the common case.
+        let value: Option<String> = redis::cmd("GET")
+            .arg(new_key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        if value.is_some() {
+            // A legacy twin can only be left by an interrupted write and still
+            // holds the raw id in its name: drop it (best effort).
+            let _ = redis::cmd("DEL")
+                .arg(legacy_key)
+                .query_async::<usize>(&mut conn)
+                .await;
+            return Ok(value);
+        }
         // One Lua script, so a concurrent store or delete cannot interleave with the
         // move: it never overwrites a row already at `new_key` and never recreates
         // a row that was deleted.
         const MIGRATE: &str = r#"
-            local v = redis.call('GET', KEYS[1])
-            if v then return v end
             local l = redis.call('GET', KEYS[2])
-            if not l then return false end
+            if not l then return redis.call('GET', KEYS[1]) end
+            local v = redis.call('GET', KEYS[1])
+            if v then
+                redis.call('DEL', KEYS[2])
+                return v
+            end
             local t = redis.call('PTTL', KEYS[2])
             if t > 0 then
                 redis.call('SET', KEYS[1], l, 'PX', t)
@@ -143,14 +163,31 @@ impl RedisStorage {
             redis.call('DEL', KEYS[2])
             return l
         "#;
-        let mut conn = self.get_connection().await?;
-        let value: Option<String> = redis::Script::new(MIGRATE)
+        match redis::Script::new(MIGRATE)
             .key(new_key)
             .key(legacy_key)
-            .invoke_async(&mut conn)
+            .invoke_async::<Option<String>>(&mut conn)
             .await
-            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
-        Ok(value)
+        {
+            Ok(value) => Ok(value),
+            Err(script_err) => {
+                // Scripting denied (restricted ACL) or unavailable: serve the row
+                // where it is. It moves once scripts are allowed or the record is
+                // rewritten.
+                tracing::warn!(
+                    error = %script_err,
+                    "legacy-name migration script failed; serving the row unmigrated"
+                );
+                let legacy: Option<String> = redis::cmd("GET")
+                    .arg(legacy_key)
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|e| {
+                        AuthError::Storage(StorageError::operation_failed(e.to_string()))
+                    })?;
+                Ok(legacy)
+            }
+        }
     }
 
     /// Delete a key left under a pre-fix (raw credential) name, if any.
@@ -463,6 +500,13 @@ impl AuthStorage for RedisStorage {
     async fn count_active_sessions(&self) -> Result<u64> {
         let mut conn = self.get_connection().await?;
         let keys = self.session_keys(&mut conn).await?;
+        // A session present under both names is one session.
+        let keys = crate::storage::key_names::without_shadowed_legacy(
+            keys,
+            &self.legacy_session_key(""),
+            &format!("{}session_h:", self.key_prefix),
+            "session",
+        );
 
         let mut active_count = 0u64;
         for key in keys {
