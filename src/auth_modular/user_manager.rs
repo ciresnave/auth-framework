@@ -97,10 +97,9 @@ impl UserManager {
             // expired: do not recreate it; the caller rejects it from the row
             Some(left) if left <= chrono::Duration::zero() => return Ok(Some(row)),
             // whole seconds, rounded up: the Redis backends cannot take less
-            Some(left) => left
-                .to_std()
-                .ok()
-                .map(|d| std::time::Duration::from_secs(d.as_secs() + u64::from(d.subsec_nanos() > 0))),
+            Some(left) => left.to_std().ok().map(|d| {
+                std::time::Duration::from_secs(d.as_secs() + u64::from(d.subsec_nanos() > 0))
+            }),
             None => None,
         };
 
