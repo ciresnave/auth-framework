@@ -202,7 +202,7 @@ askama = { version = "0.14", optional = true }
 # Note: askama_axum was removed in askama 0.13+ - axum integration is now built into askama
 
 # XML processing for SAML
-quick-xml = { version = "0.38", features = ["serialize"], optional = true }
+quick-xml = { version = "0.41", features = ["serialize"], optional = true }
 
 # Passkey/WebAuthn dependencies
 passkey = { version = "0.4", optional = true }        # Updated to fix idna dependency
