@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc58 -- **Fixes to the rc57 key-name migration (API keys, Redis sessions, access-token
+  mappings).** Two concurrent validators migrating the same legacy API key no longer delete the
+  row they share (only the reader that created the new row removes the legacy one, so a delete is
+  always a revoke); `revoke_api_key` reads the legacy name before the new one so a migration in
+  flight cannot hide the row from it; a reader that loses a migration race re-reads the new name
+  instead of reporting the key missing; an expired legacy row is rejected and not copied; a Redis
+  record read under the new name drops a legacy twin; a session stored under both names is counted
+  once; and Redis reads no longer fail when the ACL denies scripting (the legacy row is served
+  unmigrated).
 - 0.6.0-rc57 -- **Storage key names changed (API keys, access-token mapping, sessions).** API-key
   rows, the Redis access-token-to-token-id mapping and Redis session records are now named by a
   domain-separated SHA-256 digest of the credential (`api_key_h:`, `access_token_h:`/`access_h:`,
