@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc59 -- Dependency only. `rustls` 0.23.45 -> 0.23.46 in `Cargo.lock`, which fixes
+  RUSTSEC-2026-0346, -0347, -0348 and -0349 (published 2026-10-14) that fail the advisory audit.
 - 0.6.0-rc58 -- **Fixes to the rc57 key-name migration (API keys, Redis sessions, access-token
   mappings).** Two concurrent validators migrating the same legacy API key no longer delete the
   row they share (only the reader that created the new row removes the legacy one, so a delete is
