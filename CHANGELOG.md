@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc32] - 2026-10-14
+
+### Security
+
+- **Storage key names no longer hold credentials.** API-key rows, the Redis access-token mapping and
+  Redis session records are named by a domain-separated SHA-256 digest of the credential
+  (`api_key_h:`, `access_token_h:`/`access_h:`, `session_h:`) instead of the credential itself.
+  Storage encryption protects values only, so a raw credential in a key name was readable by
+  anyone able to read the store. Rows written under the previous names keep working: each is moved
+  to its new name, with its remaining TTL, the first time it is read, and revoke/delete remove both
+  names. **Upgrade note:** upgrade every node that shares a Redis or database together (or drain
+  old nodes first): a node still on the previous release neither sees rows written by an upgraded
+  node nor keeps rows an upgraded node has moved. Backups taken before the upgrade still hold the
+  previous key names; API keys readable from such a backup should be rotated.
+
 ## [0.5.0-rc31] - 2026-10-12
 
 ### Security

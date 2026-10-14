@@ -185,9 +185,9 @@ Redis storage uses the following key patterns:
 
 ```text
 {prefix}token:{token_id}         -> AuthToken (JSON)
-{prefix}access:{access_token}    -> token_id (String)
+{prefix}access_h:{digest}        -> token_id (String; digest = SHA-256 of the access token)
 {prefix}user:{user_id}:tokens    -> [token_ids] (List)
-{prefix}session:{session_id}     -> SessionData (JSON)
+{prefix}session_h:{digest}       -> SessionData (JSON; digest = SHA-256 of the session id)
 {prefix}kv:{key}                 -> value (Bytes)
 ```
 
