@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc33] - 2026-10-14
+
+### Changed
+
+- CI only. `ci-cd.yml` runs on pushes and pull requests for `release/**` branches, so this line
+  gets the same checks as main.
+
 ## [0.5.0-rc32] - 2026-10-14
 
 ### Security
