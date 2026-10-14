@@ -870,4 +870,4 @@ auth-framework-admin reports compliance --type monthly --output /reports/complia
 
 ---
 
-AuthFramework v0.5.0-rc24 - THE premier authentication and authorization solution
+AuthFramework -- Security Configuration Guide

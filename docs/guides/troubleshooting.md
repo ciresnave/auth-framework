@@ -1195,4 +1195,4 @@ When reporting issues, please include:
 
 ---
 
-AuthFramework v0.5.0-rc24 - THE premier authentication and authorization solution
+AuthFramework -- Troubleshooting Guide
