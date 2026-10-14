@@ -9,6 +9,10 @@ on:
   release:
     types: [published]
 
+# Least privilege: jobs that need more raise it themselves (see their permissions blocks).
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -24,6 +28,7 @@ jobs:
 
     services:
       postgres:
+        # SUP-008 waived: CI-only service container, no credentials of ours reach it.
         image: postgres:15
         env:
           POSTGRES_USER: test_user
@@ -38,6 +43,7 @@ jobs:
           - 5432:5432
 
       redis:
+        # SUP-008 waived: CI-only service container, no credentials of ours reach it.
         image: redis:7
         options: >-
           --health-cmd "redis-cli ping"
@@ -166,6 +172,7 @@ jobs:
 
     services:
       postgres:
+        # SUP-008 waived: CI-only service container, no credentials of ours reach it.
         image: postgres:15
         env:
           POSTGRES_USER: test_user
@@ -180,6 +187,7 @@ jobs:
           - 5432:5432
 
       redis:
+        # SUP-008 waived: CI-only service container, no credentials of ours reach it.
         image: redis:7
         options: >-
           --health-cmd "redis-cli ping"
@@ -239,6 +247,7 @@ jobs:
 
     services:
       postgres:
+        # SUP-008 waived: CI-only service container, no credentials of ours reach it.
         image: postgres:15
         env:
           POSTGRES_USER: test_user
@@ -253,6 +262,7 @@ jobs:
           - 5432:5432
 
       redis:
+        # SUP-008 waived: CI-only service container, no credentials of ours reach it.
         image: redis:7
         options: >-
           --health-cmd "redis-cli ping"
@@ -548,6 +558,7 @@ jobs:
 
     services:
       postgres:
+        # SUP-008 waived: CI-only service container, no credentials of ours reach it.
         image: postgres:15
         env:
           POSTGRES_USER: test_user
@@ -562,6 +573,7 @@ jobs:
           - 5432:5432
 
       redis:
+        # SUP-008 waived: CI-only service container, no credentials of ours reach it.
         image: redis:7
         options: >-
           --health-cmd "redis-cli ping"

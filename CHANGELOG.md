@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc62 -- Repository hygiene only. Adds `.github/CODEOWNERS` (`* @ciresnave`, WSP-001) and
+  `docs/glossary.md` (DOC-009), sets top-level `permissions: contents: read` in `ci-cd.yml` and
+  `release.yml` (SUP-008 excessive-permissions; jobs that need more already declare it), and
+  records the waiver for the CI-only `postgres:15`/`redis:7` service-container images
+  (SUP-008 unpinned-images). No library or behaviour change.
 - 0.6.0-rc61 -- CI only. `ci-cd.yml` also runs on pushes to `release/**` branches, so the
   release lines get the same checks.
 - 0.6.0-rc60 -- CI only. The GitHub Actions in `ci-cd.yml` and `release.yml` are pinned to
