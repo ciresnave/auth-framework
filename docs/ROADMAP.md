@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc55`
+- Current crate version: `0.6.0-rc56`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -272,10 +272,12 @@ path rather than bumping the version number.
 - [ ] Extend storage-at-rest encryption to core token/session storage.
       Today's `EncryptedStorage` only covers the generic KV layer
       (`store_kv`/`get_kv`); `store_token`/`store_session` and friends go
-      through each backend's own typed columns and are not covered. Needs
-      either per-column encryption in each backend implementation or a
-      deeper `AuthStorage` trait change -- bigger than a KV-layer wrapper,
-      deliberately out of scope for the KV-layer work above.
+      through each backend's own typed columns and are not covered.
+      **Designed, not built:** `docs/architecture/ADR-011-token-session-encryption-at-rest.md`
+      (proposed: seal whole records above the backend in the KV namespace with
+      blind-indexed lookups, no `AuthStorage` trait change; aligned with
+      PersistAnt's `kv.*` capabilities; prerequisites #144, #145, #146, #147, #148;
+      decisions D-E1..D-E8 await CireSnave/PM). Stable-release MUST.
 
 ### Community and Project Hygiene
 
