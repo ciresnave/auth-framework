@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc60 -- CI only. The GitHub Actions in `ci-cd.yml` and `release.yml` are pinned to
+  commit SHAs (43 moved, 11 kept); no library change.
 - 0.6.0-rc59 -- Dependency only. `rustls` 0.23.45 -> 0.23.46 in `Cargo.lock`, which fixes
   RUSTSEC-2026-0346, -0347, -0348 and -0349 (published 2026-10-14) that fail the advisory audit.
 - 0.6.0-rc58 -- **Fixes to the rc57 key-name migration (API keys, Redis sessions, access-token
