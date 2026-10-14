@@ -412,6 +412,62 @@ mod redis_key_names {
         );
     }
 
+    /// A legacy session that is only ever *listed* (never fetched by id) must
+    /// not keep its raw id in key names after the upgrade: listing migrates it.
+    #[tokio::test]
+    #[ignore]
+    async fn listing_migrates_a_legacy_session_and_keeps_its_ttl() {
+        for module in [false, true] {
+            let prefix = if module {
+                "kvkn_list_mod:"
+            } else {
+                "kvkn_list_core:"
+            };
+            clear(prefix).await;
+            let sid = if module {
+                "legacy-listed-session-mod"
+            } else {
+                "legacy-listed-session-core"
+            };
+            let session = SessionData::new(sid, "u_list", Duration::from_secs(600));
+            raw_set(
+                &format!("{prefix}session:{sid}"),
+                &serde_json::to_string(&session).unwrap(),
+                600,
+            )
+            .await;
+
+            let listed = if module {
+                ModRedis::with_config(&url(), prefix, Duration::from_secs(600))
+                    .await
+                    .unwrap()
+                    .list_user_sessions("u_list")
+                    .await
+                    .unwrap()
+            } else {
+                CoreRedis::new(&url(), prefix)
+                    .unwrap()
+                    .list_user_sessions("u_list")
+                    .await
+                    .unwrap()
+            };
+            assert_eq!(listed.len(), 1, "the legacy session is still listed");
+
+            let keys = all_keys(prefix).await;
+            assert!(
+                keys.iter().all(|k| !k.contains(sid)),
+                "listing left the raw session id in a key name: {keys:?}"
+            );
+            assert_eq!(keys.len(), 1, "one migrated key: {keys:?}");
+            let pttl = raw_pttl(&keys[0]).await;
+            assert!(
+                pttl > 500_000 && pttl <= 600_000,
+                "TTL carried over, got {pttl} ms"
+            );
+            clear(prefix).await;
+        }
+    }
+
     #[tokio::test]
     #[ignore]
     async fn session_count_ignores_keys_that_only_start_with_session() {
