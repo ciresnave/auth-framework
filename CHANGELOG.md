@@ -9,8 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- CI only. `ci-cd.yml` runs on pushes and pull requests for `release/**` branches, so this line
-  gets the same checks as main.
+- CI only for the workflow: `ci-cd.yml` runs on pushes and pull requests for `release/**`
+  branches, so this line gets the same checks as main. The workflow no longer fails the Slack
+  step when no webhook is configured.
+- Dependencies: `cargo fmt` applied to the tree; `Cargo.lock` raised for RUSTSEC-2025-0055,
+  -2026-0007, -2026-0009, -2026-0037, -2026-0178, -2026-0179, -2026-0180, -2026-0185,
+  -2026-0204, -2026-0258 (h2 0.4.x), -2026-0338..-0342; `quick-xml` 0.38 -> 0.41
+  (RUSTSEC-2026-0194/0195); `maxminddb` 0.26 -> 0.27 (RUSTSEC-2025-0132). **Behaviour change:**
+  with `maxminddb` 0.27 the session location string no longer carries the `proxy` and
+  `satellite` threat flags (the model only exposes `is_anycast`); coordinates, country, region
+  and city are unchanged. No public signature changes.
 
 ### Security
 
