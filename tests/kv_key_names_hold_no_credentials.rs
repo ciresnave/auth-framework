@@ -51,7 +51,11 @@ async fn created_api_key_is_not_in_any_key_name() {
     let key = um.create_api_key("alice", None).await.unwrap();
 
     assert!(
-        storage.get_kv(&format!("api_key:{key}")).await.unwrap().is_none(),
+        storage
+            .get_kv(&format!("api_key:{key}"))
+            .await
+            .unwrap()
+            .is_none(),
         "the raw API key must not be a key name"
     );
     assert!(
@@ -117,7 +121,11 @@ async fn revoke_removes_both_names() {
     assert!(um.validate_api_key(legacy_key).await.is_err());
     for k in [fresh.as_str(), legacy_key] {
         assert!(
-            storage.get_kv(&format!("api_key:{k}")).await.unwrap().is_none(),
+            storage
+                .get_kv(&format!("api_key:{k}"))
+                .await
+                .unwrap()
+                .is_none(),
             "revoke leaves no row under the legacy name"
         );
         assert!(
