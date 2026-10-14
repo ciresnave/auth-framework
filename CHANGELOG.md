@@ -11,8 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- CI only. `ci-cd.yml` runs on pushes and pull requests for `release/**` branches, so this line
-  gets the same checks as main.
+- CI only for the workflow: `ci-cd.yml` runs on pushes and pull requests for `release/**`
+  branches, so this line gets the same checks as main. The workflow's MSRV job uses 1.88.0
+  (the crate's `rust-version`), the feature matrix no longer names the absent `testing` feature,
+  and the Slack step is skipped when no webhook is configured.
+- Dependencies: `cargo fmt` applied; `Cargo.lock` raised for RUSTSEC-2026-0112, -0113, -0141,
+  -0145, -0178, -0179, -0180, -0185, -0199, -0204, -0258 (h2 0.4.x), -0286, -0338..-0342;
+  `quick-xml` 0.39 -> 0.41 (RUSTSEC-2026-0194/0195). No behaviour or signature changes.
 
 ## [0.5.0-rc32] - 2026-10-14
 
