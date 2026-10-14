@@ -4,9 +4,9 @@ name: AuthFramework CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
   release:
     types: [published]
 
