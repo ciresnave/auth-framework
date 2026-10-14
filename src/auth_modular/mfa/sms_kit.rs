@@ -42,8 +42,9 @@ impl Default for SmsKitConfig {
 
 /// Supported SMSKit providers
 ///
-/// `Plivo` and `AwsSns` require the `smskit` feature flag and their respective
-/// SDK crates (`sms-plivo`, `sms-aws-sns`). When selected without the feature
+/// `Plivo` requires the `smskit` feature flag and its SDK crate (`sms-plivo`);
+/// `AwsSns` is kept so existing configuration still deserializes, but sending fails: the
+/// `sms-aws-sns` backend was removed. When selected without the feature
 /// enabled, `send_sms_with_fallback` returns a descriptive error at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SmsKitProvider {
@@ -459,45 +460,11 @@ impl SmsKitManager {
         ))
     }
 
-    /// Send SMS via AWS SNS using sms-aws-sns crate
-    #[cfg(feature = "smskit")]
-    async fn send_via_aws_sns(&self, phone_number: &str, message: &str) -> Result<String> {
-        use sms_core::SmsClient;
-
-        let client = if let SmsKitProviderConfig::AwsSns {
-            region,
-            access_key_id,
-            secret_access_key,
-        } = &self.config.config
-        {
-            if access_key_id.is_empty() || secret_access_key.is_empty() {
-                return Err(AuthError::internal("AWS credentials are incomplete"));
-            }
-            sms_aws_sns::AwsSnsClient::new(region, access_key_id, secret_access_key)
-        } else {
-            sms_aws_sns::AwsSnsClient::from_env()
-                .map_err(|e| AuthError::internal(format!("AWS SNS env config failed: {}", e)))?
-        };
-
-        let request = sms_core::SendRequest {
-            to: phone_number,
-            from: "",
-            text: message,
-        };
-
-        let response = client
-            .send(request)
-            .await
-            .map_err(|e| AuthError::internal(format!("AWS SNS SMS send failed: {}", e)))?;
-
-        debug!("AWS SNS SMS sent successfully, ID: {}", response.id);
-        Ok(response.id)
-    }
-
-    #[cfg(not(feature = "smskit"))]
+    /// AWS SNS is no longer a supported backend: the `sms-aws-sns` crate pulled in a legacy
+    /// `rustls`/`h2` stack with open advisories and was removed from this release line.
     async fn send_via_aws_sns(&self, _phone_number: &str, _message: &str) -> Result<String> {
         Err(AuthError::internal(
-            "AWS SNS SMS requires the 'smskit' feature flag to be enabled",
+            "AWS SNS SMS support was removed from this release line (the sms-aws-sns backend);              use Twilio or Plivo, or see the CHANGELOG entry for the removal",
         ))
     }
 

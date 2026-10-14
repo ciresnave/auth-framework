@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0-rc33] - 2026-10-14
 
+### Removed
+
+- **Breaking:** the `sms-aws-sns` SMS backend is removed from the `smskit` feature, and `actix-web`
+  is built with `default-features = false` (`macros` only). `sms-aws-sns` pulled `aws-config` /
+  `aws-smithy-http-client` and with them a legacy `rustls` 0.21 / `rustls-webpki` 0.101 / `h2` 0.3
+  stack that carries open advisories (RUSTSEC-2026-0098/0099/0104/0258, -0346/0349); main removed
+  it for the same reason. `SmsKitProvider::AwsSns` and `SmsKitProviderConfig::AwsSns` stay so
+  existing configuration still deserializes, but selecting AWS SNS now fails at send time with an
+  error that says the backend was removed. Applications that enable actix-web's `http2` feature
+  (or other default features such as compression or cookies) must enable them on their own
+  `actix-web` dependency. The security audit for this line now reports only RUSTSEC-2023-0071
+  (`rsa`, no patched release).
+
 ### Changed
 
 - CI only for the workflow: `ci-cd.yml` runs on pushes and pull requests for `release/**`
