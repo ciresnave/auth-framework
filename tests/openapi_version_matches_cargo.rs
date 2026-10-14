@@ -12,10 +12,13 @@
 //! 2. Every checked-in OpenAPI document's `info.version`, and every `version:` example in
 //!    `schemas/health.yaml`, equals the Cargo version. These are static files and cannot be
 //!    derived, so a release bump must touch them; this fails the bump that forgets.
+//! 3. The health-response example in `docs/api/README.md` and the `Current crate version`
+//!    line in `docs/ROADMAP.md` equal the Cargo version (same reason as 2).
 //!
 //! # What this does NOT cover
 //!
-//! - Other docs that name a version (guides, footers).
+//! - Other docs that name a version (guides, footers). The root README and the developer
+//!   guide are checked by `readme_claims_are_true_of_the_artifact`, on the `0.N` line only.
 //! - Whether the yaml files describe the same routes as the served spec.
 
 const CARGO_VERSION: &str = env!("CARGO_PKG_VERSION");
