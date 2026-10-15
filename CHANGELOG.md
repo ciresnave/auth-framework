@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `sqlx` is built with only the backend a storage feature asks for: `postgres-storage` enables
+  `sqlx/postgres`, `mysql-storage` enables `sqlx/mysql`. Before, `postgres-storage` (a default feature)
+  compiled `sqlx-mysql` and with it the `rsa` crate (RUSTSEC-2023-0071). Feature names and public API
+  are unchanged; only `mysql-storage` still builds `sqlx-mysql`.
+
 - `testcontainers` 0.25 -> 0.27 (the optional `docker-tests` feature). 0.25 depended on `tokio-tar`
   0.3.1 (RUSTSEC-2025-0111, no patched release); 0.27 uses the maintained `astral-tokio-tar`. Test
   infrastructure only, no public API change.
