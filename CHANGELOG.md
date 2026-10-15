@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Cargo.lock`: `anyhow` 1.0.102 -> 1.0.104 (RUSTSEC-2026-0190) and `chacha20` 0.10.0 -> 0.10.2 (yanked), so
   the cargo-deny advisories check passes. `unsafe-libyaml` (RUSTSEC-2024-0449, unmaintained, via
   `serde_yaml`) is ignored in deny.toml with a reason; replacing `serde_yaml` is a source change left to main.
-
+- CI: the cargo-deny job ran `EmbarkStudios/cargo-deny-action@v1`, whose bundled Cargo cannot parse edition
+  2024, so it failed before checking anything. It now installs cargo-deny and runs
+  `cargo deny --all-features check`, as main does; `CC0-1.0`, `0BSD` and `BSL-1.0` are allowed in deny.toml.
+  `spin` 0.9.8 -> 0.9.9 (yanked).
 ## [0.5.0-rc40] - 2026-10-15
 
 ### Security

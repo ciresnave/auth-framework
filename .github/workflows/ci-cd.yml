@@ -306,8 +306,11 @@ jobs:
       - name: Run security audit
         run: cargo audit
 
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
       - name: Run cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v1
+        run: cargo deny --all-features check
 
   security-audit-rsa-absence:
     name: Security Audit (rsa absence)

@@ -30,9 +30,12 @@
     # License policy - allow common open source licenses
     allow = [
         "Apache-2.0 WITH LLVM-exception",
+        "0BSD",                           # BSD Zero Clause; fully permissive
         "Apache-2.0",
         "BSD-2-Clause",
         "BSD-3-Clause",
+        "BSL-1.0",                        # Boost Software License; permissive (xxhash-rust)
+        "CC0-1.0",                        # notify, tiny-keccak; public-domain dedication
         "CDLA-Permissive-2.0",            # Community Data License Agreement - for webpki-roots
         "ISC",
         "MIT",
