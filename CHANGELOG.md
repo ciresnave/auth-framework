@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `#[async_trait]` trait under current stable clippy (the "Run Clippy" step failed on it). The "Run
   integration tests" workflow step is removed: it ran `cargo test --test integration`, a target that does
   not exist on this line, and the preceding `--workspace` step already runs every test target.
+- `Cargo.lock`: `anyhow` 1.0.102 -> 1.0.104 (RUSTSEC-2026-0190) and `chacha20` 0.10.0 -> 0.10.2 (yanked), so
+  the cargo-deny advisories check passes. `unsafe-libyaml` (RUSTSEC-2024-0449, unmaintained, via
+  `serde_yaml`) is ignored in deny.toml with a reason; replacing `serde_yaml` is a source change left to main.
 
 ## [0.5.0-rc40] - 2026-10-15
 

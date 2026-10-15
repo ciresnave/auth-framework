@@ -19,6 +19,11 @@
         # Impact: None; `paste` is a compile-time macro crate with no runtime attack surface
         # Tracking: Will resolve when cryptoki drops `paste` or migrates to an alternative
         "RUSTSEC-2024-0436",
+        # `unsafe-libyaml` unmaintained (RUSTSEC-2024-0449), via serde_yaml 0.9, which this
+        # line uses directly for YAML config (src/admin/cli.rs, src/config, src/deployment).
+        # Impact: none known; it is an unmaintained notice, not a vulnerability. Main replaced
+        # serde_yaml with serde-saphyr, a source change not made on this release line.
+        "RUSTSEC-2024-0449",
     ]
 
 [licenses]
