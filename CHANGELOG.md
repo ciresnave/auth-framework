@@ -23,7 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: add `deny.toml` so the cargo-deny job has a licence and advisory policy (it had none and failed
   on every crate). `unsafe-libyaml` (RUSTSEC-2024-0449, unmaintained, via `serde_yaml`) is ignored with a
   stated reason; replacing `serde_yaml` is a source change left to main.
-
+- CI: the cargo-deny job used `EmbarkStudios/cargo-deny-action@v1`, whose bundled Cargo cannot parse edition
+  2024; it now installs cargo-deny and runs `cargo deny --all-features check`. `paste` (RUSTSEC-2024-0436)
+  and `opentelemetry-jaeger` (RUSTSEC-2025-0123), both unmaintained notices behind optional features, are
+  ignored with stated reasons; `0BSD`, `BSL-1.0` and `CC0-1.0` are allowed.
 ## [0.4.10] - 2026-10-15
 
 ### Removed
