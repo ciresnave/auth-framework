@@ -82,13 +82,13 @@ impl SecureMfaService {
         let mut out = [0u8; 32];
         pbkdf2::derive(
             pbkdf2::PBKDF2_HMAC_SHA256,
-            std::num::NonZeroU32::new(10_000).unwrap(),
+            std::num::NonZeroU32::new(10_000).expect("10_000 is non-zero"),
             salt,
             code.as_bytes(),
             &mut out,
         );
 
-        Ok(base64::engine::general_purpose::STANDARD.encode(&out))
+        Ok(base64::engine::general_purpose::STANDARD.encode(out))
     }
 
     /// Generate secure salt

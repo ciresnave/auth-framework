@@ -88,7 +88,7 @@ impl ClientRegistry {
     /// Validate that a redirect URI is authorized for a client
     pub async fn validate_redirect_uri(&self, client_id: &str, redirect_uri: &str) -> Result<bool> {
         if let Some(client) = self.get_client(client_id).await? {
-            Ok(client.redirect_uris.contains(&redirect_uri.to_string()))
+            Ok(client.redirect_uris.contains(redirect_uri))
         } else {
             Ok(false)
         }
@@ -97,7 +97,7 @@ impl ClientRegistry {
     /// Validate that a scope is authorized for a client
     pub async fn validate_scope(&self, client_id: &str, scope: &str) -> Result<bool> {
         if let Some(client) = self.get_client(client_id).await? {
-            Ok(client.authorized_scopes.contains(&scope.to_string()))
+            Ok(client.authorized_scopes.contains(scope))
         } else {
             Ok(false)
         }
@@ -106,9 +106,7 @@ impl ClientRegistry {
     /// Validate that a grant type is authorized for a client
     pub async fn validate_grant_type(&self, client_id: &str, grant_type: &str) -> Result<bool> {
         if let Some(client) = self.get_client(client_id).await? {
-            Ok(client
-                .authorized_grant_types
-                .contains(&grant_type.to_string()))
+            Ok(client.authorized_grant_types.contains(grant_type))
         } else {
             Ok(false)
         }

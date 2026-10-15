@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc35] - 2026-10-15
+
+### Fixed
+
+- `cargo clippy --all-targets -- -D warnings` (the CI gate) passes again on this line. The
+  changes are mechanical and behaviour-neutral: collapsed `if` chains, removed needless borrows,
+  `to_string` and `return`s, derived impls, `sort_by_key`, `matches!`, and `as_chunks` for the
+  Kerberos AES-CBC block loop. Lock `unwrap()`s in `client_cert` and a few infallible conversions
+  became `expect()` with the invariant stated; a handful of lints that cannot be fixed without
+  changing the public API (`result_large_err`, `new_without_default`, `new_ret_no_self`) carry a
+  per-site `#[allow]` with the reason. The `auth_performance` bench built an `AuthConfig` without
+  the fields added since rc18 and did not compile; it now uses `..Default::default()`.
+
 ## [0.5.0-rc34] - 2026-10-14
 
 ### Removed

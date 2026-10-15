@@ -402,10 +402,10 @@ fn extract_assertion(rstr: &str) -> Result<String> {
 
     for (open_tag, close_tag) in &assertion_tags {
         let open = format!("<{open_tag}");
-        if let Some(start) = rstr.find(&open) {
-            if let Some(end) = rstr[start..].find(close_tag) {
-                return Ok(rstr[start..start + end + close_tag.len()].to_string());
-            }
+        if let Some(start) = rstr.find(&open)
+            && let Some(end) = rstr[start..].find(close_tag)
+        {
+            return Ok(rstr[start..start + end + close_tag.len()].to_string());
         }
     }
 
@@ -415,6 +415,7 @@ fn extract_assertion(rstr: &str) -> Result<String> {
 }
 
 /// Parse a SAML 2.0 assertion.
+#[allow(clippy::type_complexity)] // one-off return type of a private helper; an alias would only be used once
 fn parse_saml20_assertion(
     xml: &str,
 ) -> Result<(
@@ -460,6 +461,7 @@ fn parse_saml20_assertion(
 }
 
 /// Parse a SAML 1.1 assertion.
+#[allow(clippy::type_complexity)] // one-off return type of a private helper; an alias would only be used once
 fn parse_saml11_assertion(
     xml: &str,
 ) -> Result<(
@@ -507,6 +509,7 @@ fn parse_saml11_assertion(
 /// NOTE: This performs payload extraction and validation of standard claims
 /// without cryptographic signature verification. Signature verification
 /// requires the IdP's public keys (from federation metadata JWKS).
+#[allow(clippy::type_complexity)] // one-off return type of a private helper; an alias would only be used once
 fn parse_jwt_token(
     jwt_str: &str,
 ) -> Result<(
@@ -643,7 +646,7 @@ fn extract_saml_attributes(xml: &str) -> HashMap<String, Vec<String>> {
 
         // Find the closing </Attribute> or </saml:Attribute>
         let close_tag = "</Attribute>";
-        let alt_close = format!("</saml:Attribute>");
+        let alt_close = "</saml:Attribute>".to_string();
         let end_pos = xml[tag_end..]
             .find(close_tag)
             .or_else(|| xml[tag_end..].find(&alt_close))

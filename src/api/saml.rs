@@ -580,10 +580,10 @@ pub async fn handle_saml_slo_response(
     #[cfg(not(feature = "saml"))]
     {
         let _ = params;
-        return Json(ApiResponse::error_typed(
+        Json(ApiResponse::error_typed(
             "SAML_SIGNATURE_UNAVAILABLE",
             "SAML logout response validation is not available; the server must be compiled with the 'saml' feature",
-        ));
+        ))
     }
 
     #[cfg(feature = "saml")]

@@ -1067,7 +1067,7 @@ impl AuthToken {
     /// assert!(!token.has_scope("admin"));
     /// ```
     pub fn has_scope(&self, scope: &str) -> bool {
-        self.scopes.contains(&scope.to_string())
+        self.scopes.contains(scope)
     }
 
     /// Set the refresh token.
@@ -1199,7 +1199,7 @@ impl AuthToken {
     /// assert!(token.has_permission("admin"));
     /// ```
     pub fn has_permission(&self, permission: &str) -> bool {
-        self.permissions.contains(&permission.to_string())
+        self.permissions.contains(permission)
     }
 
     /// Add a permission to the token.
@@ -1255,7 +1255,7 @@ impl AuthToken {
     /// assert!(!token.has_role("guest"));
     /// ```
     pub fn has_role(&self, role: &str) -> bool {
-        self.roles.contains(&role.to_string())
+        self.roles.contains(role)
     }
 
     /// Set the permissions.

@@ -702,12 +702,10 @@ impl MfaManager {
             .storage
             .get_kv(&format!("user_phone:{}", user_id))
             .await
+            && let Ok(phone) = String::from_utf8(data)
+            && phone.len() >= 4
         {
-            if let Ok(phone) = String::from_utf8(data) {
-                if phone.len() >= 4 {
-                    return Ok(format!("***-***-{}", &phone[phone.len() - 4..]));
-                }
-            }
+            return Ok(format!("***-***-{}", &phone[phone.len() - 4..]));
         }
         // Fallback: no phone data in storage
         Ok("Phone on file".to_string())
@@ -719,17 +717,15 @@ impl MfaManager {
             .storage
             .get_kv(&format!("user_email:{}", user_id))
             .await
+            && let Ok(email) = String::from_utf8(data)
+            && let Some(at_pos) = email.find('@')
         {
-            if let Ok(email) = String::from_utf8(data) {
-                if let Some(at_pos) = email.find('@') {
-                    let prefix_len = at_pos.min(2);
-                    return Ok(format!(
-                        "{}****@****{}",
-                        &email[..prefix_len],
-                        &email[at_pos..]
-                    ));
-                }
-            }
+            let prefix_len = at_pos.min(2);
+            return Ok(format!(
+                "{}****@****{}",
+                &email[..prefix_len],
+                &email[at_pos..]
+            ));
         }
         // Fallback: no email data in storage
         Ok(format!("{}****@****.com", &user_id[..user_id.len().min(2)]))

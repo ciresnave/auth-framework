@@ -39,12 +39,11 @@ impl UserContext {
     }
 
     pub fn has_scope(&self, scope: &str) -> bool {
-        self.scopes.contains(&scope.to_string())
+        self.scopes.contains(scope)
     }
 }
 
 /// Session store for managing user authentication state
-
 impl UserContext {
     /// Create a new builder for UserContext
     pub fn builder(user_id: impl Into<String>, username: impl Into<String>) -> UserContextBuilder {

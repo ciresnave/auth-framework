@@ -115,7 +115,7 @@ fn normalize_json_value(value: Value) -> Value {
                 .into_iter()
                 .map(normalize_json_value)
                 .collect::<Vec<_>>();
-            normalized.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
+            normalized.sort_by_key(|left| left.to_string());
             Value::Array(normalized)
         }
         Value::Object(object) => {
@@ -342,10 +342,10 @@ pub async fn backup_to_file(
     let snapshot = collect_snapshot(framework).await?;
 
     if !dry_run {
-        if let Some(parent) = output_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
+        if let Some(parent) = output_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            tokio::fs::create_dir_all(parent).await?;
         }
 
         let data = serde_json::to_vec_pretty(&snapshot).map_err(|e| {
@@ -496,7 +496,7 @@ async fn create_migration_template_for_backend(
     name: &str,
 ) -> Result<MigrationFileReport> {
     let sanitized_name = sanitize_migration_name(name)?;
-    let directory = PathBuf::from("migrations").join(&backend);
+    let directory = PathBuf::from("migrations").join(backend);
     tokio::fs::create_dir_all(&directory).await?;
 
     let file_name = format!(

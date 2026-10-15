@@ -12,6 +12,7 @@ const N: &str = "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86
 const E: &str = "AQAB";
 const CLIENT: &str = "forged_client";
 
+#[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
 fn manager() -> PrivateKeyJwtManager {
     // A deployment that accepts HS256 assertions for this client: the enhanced validator is told
     // to expect the client id as issuer (the default issuer allow-list would refuse every client).

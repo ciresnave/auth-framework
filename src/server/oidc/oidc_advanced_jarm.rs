@@ -458,7 +458,8 @@ impl AdvancedJarmManager {
             http_client: {
                 use crate::server::core::common_config::EndpointConfig;
                 let endpoint_config = EndpointConfig::new("https://localhost");
-                crate::server::core::common_http::HttpClient::new(endpoint_config).unwrap()
+                crate::server::core::common_http::HttpClient::new(endpoint_config)
+                    .expect("HttpClient construction with a fixed https endpoint cannot fail")
             },
             jwe_public_key,
             jwe_private_key,

@@ -230,6 +230,7 @@ impl AppConfig {
     }
 
     /// Convert to SecurityConfig
+    #[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
     pub fn to_security_config(&self) -> SecurityConfig {
         let mut config = SecurityConfig::default();
         config.min_password_length = self.security.password_min_length;

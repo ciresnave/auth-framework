@@ -117,7 +117,6 @@ fn is_hmac_algorithm(alg: Algorithm) -> bool {
 ///
 /// [`cleanup_revoked_tokens`] enforces a hard cap of 10 000 entries and time-based eviction
 /// to prevent unbounded memory growth.
-
 impl SecureJwtConfig {
     /// Create a new builder with secure default configurations.
     pub fn builder() -> SecureJwtConfigBuilder {
@@ -126,16 +125,9 @@ impl SecureJwtConfig {
 }
 
 /// A builder for SecureJwtConfig
+#[derive(Default)]
 pub struct SecureJwtConfigBuilder {
     config: SecureJwtConfig,
-}
-
-impl Default for SecureJwtConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: SecureJwtConfig::default(),
-        }
-    }
 }
 
 impl SecureJwtConfigBuilder {
@@ -205,6 +197,7 @@ pub struct SecureJwtValidator {
     /// Use [`set_on_revoke`] to register a closure that persists the revocation to durable
     /// storage (database, KV store, etc.). The callback is invoked **after** the in-memory
     /// insertion succeeds.
+    #[allow(clippy::type_complexity)] // private field; an alias would only be used once
     on_revoke: std::sync::Mutex<Option<Box<dyn Fn(&str) + Send + Sync>>>,
 }
 
@@ -506,13 +499,14 @@ impl SecureJwtValidator {
         }
 
         // Token type restriction.
-        if !self.config.allowed_token_types.is_empty() && !claims.typ.is_empty() {
-            if !self.config.allowed_token_types.contains(&claims.typ) {
-                return Err(AuthError::Unauthorized(format!(
-                    "Token type '{}' is not permitted",
-                    claims.typ
-                )));
-            }
+        if !self.config.allowed_token_types.is_empty()
+            && !claims.typ.is_empty()
+            && !self.config.allowed_token_types.contains(&claims.typ)
+        {
+            return Err(AuthError::Unauthorized(format!(
+                "Token type '{}' is not permitted",
+                claims.typ
+            )));
         }
 
         Ok(claims)
@@ -589,13 +583,14 @@ impl SecureJwtValidator {
             ));
         }
 
-        if !self.config.allowed_token_types.is_empty() && !claims.typ.is_empty() {
-            if !self.config.allowed_token_types.contains(&claims.typ) {
-                return Err(AuthError::Unauthorized(format!(
-                    "Token type '{}' is not permitted",
-                    claims.typ
-                )));
-            }
+        if !self.config.allowed_token_types.is_empty()
+            && !claims.typ.is_empty()
+            && !self.config.allowed_token_types.contains(&claims.typ)
+        {
+            return Err(AuthError::Unauthorized(format!(
+                "Token type '{}' is not permitted",
+                claims.typ
+            )));
         }
 
         Ok(claims)

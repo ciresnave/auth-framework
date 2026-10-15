@@ -802,6 +802,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
     fn test_lifetime_clamped_to_max() {
         let mut config = StsConfig::default();
         config.max_token_lifetime = Duration::hours(2);
@@ -922,6 +923,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
     fn test_issue_with_proof_token_symmetric_key() {
         let mut config = StsConfig::default();
         config.include_proof_tokens = true;

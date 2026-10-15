@@ -712,13 +712,13 @@ impl AuthConfig {
         }
 
         #[cfg(feature = "redis-storage")]
-        if matches!(config.storage, StorageConfig::Memory) {
-            if let Ok(url) = std::env::var("REDIS_URL") {
-                config.storage = StorageConfig::Redis {
-                    url,
-                    key_prefix: "auth:".to_string(),
-                };
-            }
+        if matches!(config.storage, StorageConfig::Memory)
+            && let Ok(url) = std::env::var("REDIS_URL")
+        {
+            config.storage = StorageConfig::Redis {
+                url,
+                key_prefix: "auth:".to_string(),
+            };
         }
 
         config

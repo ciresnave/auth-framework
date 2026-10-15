@@ -196,13 +196,13 @@ fn apply_common_env_overrides(config: &mut AuthConfig) {
     }
 
     #[cfg(feature = "redis-storage")]
-    if matches!(config.storage, StorageConfig::Memory) {
-        if let Ok(url) = env::var("REDIS_URL") {
-            config.storage = StorageConfig::Redis {
-                url,
-                key_prefix: "auth:".to_string(),
-            };
-        }
+    if matches!(config.storage, StorageConfig::Memory)
+        && let Ok(url) = env::var("REDIS_URL")
+    {
+        config.storage = StorageConfig::Redis {
+            url,
+            key_prefix: "auth:".to_string(),
+        };
     }
 }
 

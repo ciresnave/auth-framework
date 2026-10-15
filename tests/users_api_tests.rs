@@ -695,7 +695,7 @@ mod users_api_tests {
         let req3 = RegisterRequest {
             username: "conflict_reg_user2".to_string(),
             email: "conflict_reg@example.com".to_string(),
-            password: password,
+            password,
         };
         let api_resp3 = auth_handlers::register(State(state), Json(req3)).await;
         assert!(!api_resp3.success, "duplicate-email registration must fail");
@@ -809,7 +809,7 @@ mod users_api_tests {
         assert!(response.success, "admin get_user_profile should succeed");
         let profile = response.data.expect("response should contain profile data");
         assert!(
-            profile.roles.contains(&"editor".to_string()),
+            profile.roles.contains("editor"),
             "admin get_user_profile must return the target user's actual roles, got: {:?}",
             profile.roles
         );

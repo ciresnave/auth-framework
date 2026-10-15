@@ -609,7 +609,7 @@ mod tests {
             .await
             .unwrap();
         let after = mgr.count_active_sessions().await.unwrap();
-        assert!(after >= before + 1);
+        assert!(after > before);
     }
 
     // ── create_session_limited ──────────────────────────────────────────

@@ -40,10 +40,11 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// Hash algorithm used for disclosure digests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SdHashAlgorithm {
     /// SHA-256 (default, recommended).
     #[serde(rename = "sha-256")]
+    #[default]
     Sha256,
 }
 
@@ -60,12 +61,6 @@ impl SdHashAlgorithm {
         match self {
             Self::Sha256 => Sha256::digest(input).to_vec(),
         }
-    }
-}
-
-impl Default for SdHashAlgorithm {
-    fn default() -> Self {
-        Self::Sha256
     }
 }
 
@@ -277,7 +272,7 @@ impl SdJwtVerifier {
         }
 
         let jwt = parts[0].to_string();
-        let last = *parts.last().unwrap();
+        let last = *parts.last().expect("parts.len() >= 2 was checked above");
 
         // If the last part is empty, there is no key-binding JWT.
         // If the last part looks like a JWT (has dots), treat it as KB-JWT.
