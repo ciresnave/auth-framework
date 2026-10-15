@@ -66,18 +66,6 @@ export DATABASE_URL="postgres://user:password@localhost:5432/authdb"
 
 Feature: `postgres-storage` (default)
 
-### MySQL
-
-```bash
-export MYSQL_URL="mysql://user:password@localhost:3306/authdb"
-```
-
-Feature: `mysql-storage` (add to your `Cargo.toml`)
-
-```toml
-auth-framework = { version = "0.5", features = ["mysql-storage"] }
-```
-
 ### Redis
 
 Used as a caching/session layer alongside a primary database.
@@ -203,7 +191,6 @@ The default build includes:
 
 | Feature         | Description                 |
 | --------------- | --------------------------- |
-| `mysql-storage` | MySQL/MariaDB backend       |
 | `redis-storage` | Redis caching/sessions      |
 | `web-gui`       | Admin web interface         |
 | `ldap-auth`     | LDAP/AD integration         |
@@ -249,7 +236,6 @@ For horizontal scaling:
 | Variable             | Required         | Description                                   |
 | -------------------- | ---------------- | --------------------------------------------- |
 | `DATABASE_URL`       | Yes (postgres)   | PostgreSQL connection string                  |
-| `MYSQL_URL`          | Yes (mysql)      | MySQL connection string                       |
 | `REDIS_URL`          | Yes (redis)      | Redis connection string                       |
 | `JWT_SECRET`         | Yes (production) | Shared JWT signing secret                     |
 | `TLS_CERT_PATH`      | Recommended      | TLS certificate path                          |
@@ -286,7 +272,7 @@ openssl rand -base64 64
 
 ### "Production memory storage" warning
 
-You are using in-memory storage in a production build. Switch to PostgreSQL or MySQL.
+You are using in-memory storage in a production build. Switch to PostgreSQL.
 
 ### Connection refused on startup
 

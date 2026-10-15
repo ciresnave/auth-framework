@@ -139,8 +139,6 @@ fn storage_backend_name(config: &StorageConfig) -> &'static str {
         StorageConfig::Postgres { .. } => "postgres",
         #[cfg(feature = "redis-storage")]
         StorageConfig::Redis { .. } => "redis",
-        #[cfg(feature = "mysql-storage")]
-        StorageConfig::MySQL { .. } => "mysql",
         #[cfg(feature = "sqlite-storage")]
         StorageConfig::Sqlite { .. } => "sqlite",
         StorageConfig::Custom(_) => "custom",

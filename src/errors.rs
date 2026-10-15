@@ -468,7 +468,7 @@ pub enum PermissionError {
 /// Storage backend errors.
 ///
 /// Covers connectivity, query execution, and serialization issues for
-/// all storage backends (Memory, PostgreSQL, MySQL, Redis, SQLite).
+/// all storage backends (Memory, PostgreSQL, Redis, SQLite).
 #[derive(Error, Debug)]
 pub enum StorageError {
     /// Could not establish a connection to the storage backend.

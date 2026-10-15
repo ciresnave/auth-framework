@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc38] - 2026-10-15
+
+### Removed
+
+- **Breaking:** the `mysql-storage` feature and everything behind it are removed: `MySqlStorage`,
+  `StorageConfig::MySQL`, `StorageConfigBuilder::mysql`, the MySQL migrations and the MySQL
+  integration tests. `sqlx-mysql` depends on the `rsa` crate (RUSTSEC-2023-0071, no patched
+  release) for `caching_sha2_password`, so it could not be kept without keeping `rsa`. MySQL was
+  ruled dropped for this project (decision #113); this brings the 0.5.x line in line with main.
+  Applications on MySQL should stay on a release that still ships `mysql-storage` (0.4.4 stable, or
+  any 0.5.0-rc up to rc37) or move to `postgres-storage`, `sqlite-storage` or `redis-storage`.
+  A `mysql://` database URL is now rejected with a message naming the removal.
+
 ## [0.5.0-rc37] - 2026-10-15
 
 ### Security

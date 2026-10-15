@@ -162,7 +162,7 @@ pub mod config;
 /// Storage backends and the [`AuthStorage`](storage::AuthStorage) trait.
 ///
 /// See the trait documentation for available backends (Memory, PostgreSQL,
-/// MySQL, Redis, SQLite, Encrypted) and guidance on writing custom backends.
+/// Redis, SQLite, Encrypted) and guidance on writing custom backends.
 pub mod storage;
 
 // ────────────────────────────────────────────────────────────────────────────

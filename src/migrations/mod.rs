@@ -1,40 +1,6 @@
 //! Database migration system for auth-framework.
 //! This module provides tools for managing database schema changes
 //! and ensuring proper setup of authentication-related tables.
-#[cfg(feature = "mysql-storage")]
-use sqlx::MySqlPool;
-
-#[cfg(feature = "mysql-storage")]
-pub struct MySqlMigrationManager {
-    pool: MySqlPool,
-}
-
-#[cfg(feature = "mysql-storage")]
-impl MySqlMigrationManager {
-    pub fn new(pool: MySqlPool) -> Self {
-        Self { pool }
-    }
-
-    /// Run all pending migrations.
-    ///
-    /// Currently creates the `users` table if it does not already exist.
-    pub async fn migrate(&self) -> Result<(), sqlx::Error> {
-        // Example: create users table if not exists
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS users (
-                id VARCHAR(36) PRIMARY KEY,
-                username VARCHAR(255) NOT NULL,
-                password_hash VARCHAR(255) NOT NULL,
-                email VARCHAR(255),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )"#,
-        )
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-}
-
 #[cfg(any(feature = "cli", feature = "postgres-storage"))]
 use tokio_postgres::{Client, Error as PgError};
 
