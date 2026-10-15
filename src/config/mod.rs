@@ -521,13 +521,13 @@ impl AuthConfig {
     /// Validate storage configuration
     fn validate_storage_config(&self) -> Result<()> {
         match &self.storage {
-            StorageConfig::Memory => {
-                if self.is_production_environment() && !self.is_test_environment() {
-                    return Err(AuthError::config(
-                        "Memory storage is not suitable for production environments. \
+            StorageConfig::Memory
+                if self.is_production_environment() && !self.is_test_environment() =>
+            {
+                return Err(AuthError::config(
+                    "Memory storage is not suitable for production environments. \
                          Use PostgreSQL or Redis storage.",
-                    ));
-                }
+                ));
             }
             _ => {} // PostgreSQL and Redis are production-ready
         }

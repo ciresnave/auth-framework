@@ -1779,10 +1779,7 @@ impl AuthFramework {
                         }
                     }
 
-                    if totp_verification_success {
-                        return Ok(true);
-                    }
-                    Ok(false)
+                    Ok(totp_verification_success)
                 } else {
                     // No TOTP secret stored for user
                     Ok(false)

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-10-15
+
+### Changed
+
+- CI: `cargo clippy --all-targets --all-features -- -D warnings` passes again on stable and beta (mechanical,
+  behaviour-neutral: `async-trait` 0.1.89 -> 0.1.92 clears `double_must_use`; `sort_by_key`, `strip_prefix`
+  and similar rewrites; per-site `#[allow]` with a stated reason where the fix would change public API
+  or remove code). No functional change.
+- CI: the Docker test image is built with `load: true` so `docker run authframework:test` finds it.
+
 ## [0.4.11] - 2026-10-15
 
 ### Security

@@ -135,6 +135,7 @@ jobs:
           file: ./Dockerfile.optimized
           target: testing
           push: false
+          load: true
           tags: authframework:test
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -81,12 +81,9 @@ async fn handle_config_validate(state: AppState, file: Option<String>) -> Result
         state.config_manager.validate()
     };
 
-    spinner.finish_with_message(if result.is_ok() {
-        "✅ Configuration is valid".green().to_string()
-    } else {
-        format!("❌ Configuration error: {}", result.unwrap_err())
-            .red()
-            .to_string()
+    spinner.finish_with_message(match &result {
+        Ok(_) => "✅ Configuration is valid".green().to_string(),
+        Err(e) => format!("❌ Configuration error: {}", e).red().to_string(),
     });
 
     Ok(())

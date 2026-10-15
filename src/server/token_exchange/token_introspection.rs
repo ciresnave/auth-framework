@@ -211,6 +211,8 @@ pub struct TokenIntrospectionService {
     storage: Arc<dyn AuthStorage>,
 
     /// Token manager for JWT validation
+    #[allow(dead_code)]
+    // unused on this release line; kept unchanged in this mechanical clippy pass
     token_manager: Arc<TokenManager>,
 
     /// JWT access token validator

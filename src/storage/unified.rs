@@ -53,6 +53,7 @@ pub struct StorageValue {
 
 /// Storage data variants
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)] // variant layout is public API; boxing would change it on a release line
 pub enum StorageData {
     Token(AuthToken),
     TokenRef(String),           // Reference to token ID for access token lookups
@@ -63,6 +64,7 @@ pub enum StorageData {
 }
 
 /// High-performance unified storage with optimizations
+#[allow(dead_code)] // unused on this release line; kept unchanged in this mechanical clippy pass
 pub struct UnifiedStorage {
     /// Single DashMap for all storage operations
     storage: Arc<DashMap<StorageKey, StorageValue>>,
@@ -99,7 +101,7 @@ impl UnifiedStorage {
         let storage = Arc::new(DashMap::with_capacity(config.initial_capacity));
 
         #[cfg(feature = "object-pool")]
-        let token_pool = Pool::new(config.pool_size, || pooled_defaults::create_default_token());
+        let token_pool = Pool::new(config.pool_size, pooled_defaults::create_default_token);
 
         #[cfg(feature = "object-pool")]
         let session_pool = Pool::new(config.pool_size, || {
@@ -151,11 +153,11 @@ impl UnifiedStorage {
                 for entry in storage.iter() {
                     let (key, value) = (entry.key(), entry.value());
 
-                    if let Some(expires_at) = value.expires_at {
-                        if now > expires_at {
-                            expired_keys.push(key.clone());
-                            memory_freed += Self::estimate_value_size(value);
-                        }
+                    if let Some(expires_at) = value.expires_at
+                        && now > expires_at
+                    {
+                        expired_keys.push(key.clone());
+                        memory_freed += Self::estimate_value_size(value);
                     }
                 }
 
@@ -187,7 +189,7 @@ impl UnifiedStorage {
             .collect();
 
         // Sort by last accessed time (oldest first)
-        entries.sort_by(|a, b| a.1.cmp(&b.1));
+        entries.sort_by_key(|a| a.1);
 
         let mut memory_freed = 0usize;
         let target_memory = max_memory * 3 / 4; // Free to 75% capacity
@@ -276,13 +278,13 @@ impl UnifiedStorage {
     fn get_internal(&self, key: &StorageKey) -> Option<StorageValue> {
         if let Some(mut entry) = self.storage.get_mut(key) {
             // Check expiration
-            if let Some(expires_at) = entry.expires_at {
-                if SystemTime::now() > expires_at {
-                    drop(entry);
-                    self.storage.remove(key);
-                    self.miss_count.fetch_add(1, Ordering::Relaxed);
-                    return None;
-                }
+            if let Some(expires_at) = entry.expires_at
+                && SystemTime::now() > expires_at
+            {
+                drop(entry);
+                self.storage.remove(key);
+                self.miss_count.fetch_add(1, Ordering::Relaxed);
+                return None;
             }
 
             // Update access statistics
@@ -386,11 +388,11 @@ impl AuthStorage for UnifiedStorage {
 
             // Update user token list
             let user_key = StorageKey::UserTokens(token.user_id.clone());
-            if let Some(value) = self.get_internal(&user_key) {
-                if let StorageData::UserTokenList(mut tokens) = value.data {
-                    tokens.retain(|t| t != token_id);
-                    let _ = self.store_internal(user_key, StorageData::UserTokenList(tokens), None);
-                }
+            if let Some(value) = self.get_internal(&user_key)
+                && let StorageData::UserTokenList(mut tokens) = value.data
+            {
+                tokens.retain(|t| t != token_id);
+                let _ = self.store_internal(user_key, StorageData::UserTokenList(tokens), None);
             }
         }
 
@@ -469,12 +471,11 @@ impl AuthStorage for UnifiedStorage {
 
             // Update user session list
             let user_key = StorageKey::UserSessions(session.user_id.clone());
-            if let Some(value) = self.get_internal(&user_key) {
-                if let StorageData::UserSessionList(mut sessions) = value.data {
-                    sessions.retain(|s| s != session_id);
-                    let _ =
-                        self.store_internal(user_key, StorageData::UserSessionList(sessions), None);
-                }
+            if let Some(value) = self.get_internal(&user_key)
+                && let StorageData::UserSessionList(mut sessions) = value.data
+            {
+                sessions.retain(|s| s != session_id);
+                let _ = self.store_internal(user_key, StorageData::UserSessionList(sessions), None);
             }
         }
 
@@ -508,7 +509,7 @@ impl AuthStorage for UnifiedStorage {
         self.store_internal(
             StorageKey::KeyValue(key.to_string()),
             StorageData::KeyValue(value.to_vec()),
-            ttl.or_else(|| Some(self.default_ttl)),
+            ttl.or(Some(self.default_ttl)),
         )
     }
 
