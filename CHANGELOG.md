@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-10-15
+
+### Security
+
+- `sqlx` 0.8 -> 0.9: `rsa` (RUSTSEC-2023-0071) is no longer listed in `Cargo.lock` at all (sqlx 0.8 kept a
+  `sqlx-mysql` stub entry that pulled it in), so lockfile scanners no longer report it.
+  `cargo audit` passes. `anyhow` 1.0.99 -> 1.0.104 (RUSTSEC-2026-0190) and `rand` 0.9.2 -> 0.9.5
+  (RUSTSEC-2026-0097) are raised in the lockfile.
+
+### Changed
+
+- **MSRV is now 1.94** (`rust-version`), the minimum sqlx 0.9 supports. The `runtime-tokio-rustls` sqlx
+  feature is now `runtime-tokio` + `tls-rustls` (same combination); no source change.
+- CI: add `deny.toml` so the cargo-deny job has a licence and advisory policy (it had none and failed
+  on every crate). `unsafe-libyaml` (RUSTSEC-2024-0449, unmaintained, via `serde_yaml`) is ignored with a
+  stated reason; replacing `serde_yaml` is a source change left to main.
+
 ## [0.4.10] - 2026-10-15
 
 ### Removed

@@ -1,8 +1,9 @@
 [package]
 description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
 name = "auth-framework"
-version = "0.4.10"
+version = "0.4.11"
 edition = "2024"
+rust-version = "1.94"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/auth-framework"
@@ -223,8 +224,9 @@ serde_urlencoded = { version = "0.7", optional = true }
 # Database integrations (optional). Deliberately does NOT list "postgres": the storage feature
 # below enables only its own backend. `mysql-storage` was removed: sqlx-mysql depends on the `rsa`
 # crate (RUSTSEC-2023-0071).
-sqlx = { version = "0.8", features = [
-  "runtime-tokio-rustls",
+sqlx = { version = "0.9", features = [
+  "runtime-tokio",
+  "tls-rustls",
   "chrono",
   "uuid",
 ], optional = true }
