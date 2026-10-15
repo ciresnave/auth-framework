@@ -57,8 +57,8 @@
   name          = "auth-framework"
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
-  rust-version  = "1.88"
-  version       = "0.5.0-rc39"
+  rust-version  = "1.94"
+  version       = "0.5.0-rc40"
 
 [[bin]]
   name              = "auth-framework"
@@ -368,9 +368,10 @@
   # entirely -- sqlx-mysql's own `rsa` dependency (RUSTSEC-2023-0071) for
   # its caching_sha2_password auth-plugin was the last remaining path to
   # that crate in this codebase; see CHANGELOG.md for the migration note.
-  sqlx = { version = "0.8.6", features = [
+  sqlx = { version = "0.9", features = [
     "chrono",
-    "runtime-tokio-rustls",
+    "runtime-tokio",
+    "tls-rustls",
     "uuid",
   ], optional = true }
   tokio-postgres = { version = "0.7.14", optional = true }

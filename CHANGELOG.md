@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc40] - 2026-10-15
+
+### Security
+
+- `sqlx` 0.8.6 -> 0.9.0: `rsa` (RUSTSEC-2023-0071) is no longer listed in `Cargo.lock` at all (sqlx 0.8
+  kept a `sqlx-mysql` stub entry that pulled it in), so `cargo audit` on the lockfile is clean of it. The
+  matching `deny.toml` ignore is removed.
+
+### Changed
+
+- **MSRV raised 1.88 -> 1.94** (sqlx 0.9 requires Rust 1.94). The `runtime-tokio-rustls` sqlx feature is
+  now `runtime-tokio` + `tls-rustls` (same combination); no source change.
+
 ## [0.5.0-rc39] - 2026-10-15
 
 ### Security
