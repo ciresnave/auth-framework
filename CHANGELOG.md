@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc39] - 2026-10-15
+
+### Security
+
+- The `saml` feature no longer builds the `rsa` crate (RUSTSEC-2023-0071): `bergshamra` 0.3 -> 0.9
+  with its `aws-lc` backend, and public keys are imported through `kryptering` instead of
+  `rsa::RsaPublicKey`. `cargo tree -i rsa --all-features` is now empty on this line.
+
+### Changed
+
+- **Breaking for Windows:** with the `aws-lc` backend, `saml` builds only on Linux and macOS
+  (x86_64/aarch64); `kryptering` rejects other targets with a `compile_error!`. `saml` no longer
+  builds on Windows on this line, as on main (decision #112, tracking issue #106). Builds without
+  `saml` are unaffected.
+
 ## [0.5.0-rc38] - 2026-10-15
 
 ### Removed

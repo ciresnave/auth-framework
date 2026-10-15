@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.88"
-  version       = "0.5.0-rc38"
+  version       = "0.5.0-rc39"
 
 [[bin]]
   name              = "auth-framework"
@@ -125,12 +125,11 @@
 
   # Cryptography
   rand = { version = "0.10.0", features = ["std_rng"] }
-  rand_core = "0.6"  # Compatible version for rsa crate's OsRng
+  rand_core = "0.6"
   ring = "0.17.14"
-  # Optional: only pulled in by the `saml` feature (api/saml.rs parses RSA IdP certificates
-  # through bergshamra 0.3.x, which needs an `rsa::RsaPublicKey`). RSA JWKS export and JARM
-  # RSA-OAEP JWE use `aws-lc-rs`, which is not subject to RUSTSEC-2023-0071.
-  rsa = { version = "0.9", features = ["sha2"], optional = true }
+  # `rsa` is not a dependency of this crate in any feature combination: jsonwebtoken and
+  # the RSA JWKS / JARM paths use `aws-lc-rs`, bergshamra is selected with its `aws-lc`
+  # feature, `openidconnect` and `mysql-storage` are removed. If it reappears, something regressed.
 
   # Time handling
   time = { version = "0.3.47", features = ["formatting", "parsing", "serde"] }
@@ -311,8 +310,36 @@
   # XML processing for SAML
   quick-xml = { version = "0.41.0", features = ["serialize"], optional = true }
 
-  # XML-DSig signature validation for SAML
-  bergshamra = { version = "0.3", optional = true }
+  # XML-DSig signature validation for SAML. default-features = false,
+  # features = ["aws-lc"]: bergshamra's default pulls in its own
+  # "rustcrypto" feature, which depends on the `rsa` crate
+  # (RUSTSEC-2023-0071) among others -- selecting "aws-lc" instead routes
+  # bergshamra's crypto through aws-lc-rs (not subject to that advisory;
+  # see the jsonwebtoken dependency comment above for the same backend).
+  # Confirmed by reading bergshamra/bergshamra-keys/kryptering's own
+  # Cargo.toml files at v0.9.2 that "aws-lc" never pulls `dep:rsa`.
+  # legacy-algorithms/post-quantum/pkcs11 (also in bergshamra's default)
+  # are deliberately left off: no current SAML use case needs weak-digest
+  # interop, post-quantum XML-DSig, or PKCS#11-backed keys, and each adds
+  # real dependency weight. See
+  # `tests::test_bergshamra_feature_choices_are_deliberate` below, which
+  # fails if this feature list drifts without updating that reasoning.
+  bergshamra = { version = "0.9", default-features = false, features = [
+    "aws-lc",
+  ], optional = true }
+  # Needed directly (not just transitively through bergshamra) to name
+  # `kryptering::KeyAlgorithm`/`EcCurve` when importing a parsed X.509
+  # certificate's public key via `KeyData::from_spki_der` (api/saml.rs) --
+  # bergshamra's own public API re-exports `KeyData`/`Key` but not the
+  # algorithm-selector types its constructors take.
+  # default-features = false: kryptering's own default pulls its
+  # "rustcrypto" feature (-> `dep:rsa`) same as bergshamra's does --
+  # without this, enabling `saml` would reintroduce `rsa` through this
+  # direct dependency even though bergshamra's own request above is for
+  # "aws-lc" only. No extra features requested here: Cargo unions the
+  # "aws-lc" feature bergshamra's own dependency edge already requests,
+  # so this just needs to exist as a nameable crate for KeyAlgorithm/EcCurve.
+  kryptering = { version = "0.6", default-features = false, optional = true }
   p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
   p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 
@@ -416,7 +443,7 @@ pasetors = "0.7.7"
   otp-auth = ["otpauth"]
   passkeys = ["coset", "passkey", "passkey-client"]
   hsm = ["cryptoki"]  # PKCS#11 / HSM integration for X.509 certificate loading
-  saml = ["bergshamra", "p256", "p384", "quick-xml", "dep:rsa"]
+  saml = ["dep:bergshamra", "dep:kryptering", "p256", "p384", "quick-xml"]
   tui = ["colored", "console", "crossterm", "indicatif", "ratatui", "tui-input"]
   unicode-support = ["unicode-normalization"]
   warp-integration = ["warp"]
