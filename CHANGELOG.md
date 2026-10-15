@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc42] - 2026-10-15
+
+### Removed
+
+- **Breaking:** `SmsKitProvider::AwsSns` and `SmsKitProviderConfig::AwsSns` are removed, completing the
+  `sms-aws-sns` removal from rc34 and matching main. The `AwsSns` variants were kept in rc34 so existing
+  configuration still deserialized and failed at send time; they are now gone, so a serialized `AwsSns`
+  provider selection fails to deserialize. Switch to `Twilio` or `Plivo`. The `send_via_aws_sns` stub and
+  the `aws_sns` mentions in `config/methods/mfa.toml` and the smskit example are removed with them.
+
 ## [0.5.0-rc41] - 2026-10-15
 
 ### Changed

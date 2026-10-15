@@ -42,17 +42,12 @@ impl Default for SmsKitConfig {
 
 /// Supported SMSKit providers
 ///
-/// `Plivo` requires the `smskit` feature flag and its SDK crate (`sms-plivo`);
-/// `AwsSns` is kept so existing configuration still deserializes, but sending fails: the
-/// `sms-aws-sns` backend was removed. When selected without the feature
-/// enabled, `send_sms_with_fallback` returns a descriptive error at runtime.
+/// `Plivo` requires the `smskit` feature flag and its SDK crate (`sms-plivo`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SmsKitProvider {
     Twilio,
     /// Requires `smskit` feature and `sms-plivo` crate.
     Plivo,
-    /// Requires `smskit` feature and `sms-aws-sns` crate.
-    AwsSns,
     Development,
 }
 
@@ -70,11 +65,6 @@ pub enum SmsKitProviderConfig {
         auth_token: String,
         from_number: String,
         webhook_url: Option<String>,
-    },
-    AwsSns {
-        region: String,
-        access_key_id: String,
-        secret_access_key: String,
     },
     Development,
 }
@@ -322,7 +312,6 @@ impl SmsKitManager {
         let result = match &self.config.provider {
             SmsKitProvider::Twilio => self.send_via_twilio(phone_number, message).await,
             SmsKitProvider::Plivo => self.send_via_plivo(phone_number, message).await,
-            SmsKitProvider::AwsSns => self.send_via_aws_sns(phone_number, message).await,
             SmsKitProvider::Development => {
                 info!("📱 [SMSKit Development] SMS sent to: {}", phone_number);
                 info!("   Message: {}", message);
@@ -460,14 +449,6 @@ impl SmsKitManager {
         ))
     }
 
-    /// AWS SNS is no longer a supported backend: the `sms-aws-sns` crate pulled in a legacy
-    /// `rustls`/`h2` stack with open advisories and was removed from this release line.
-    async fn send_via_aws_sns(&self, _phone_number: &str, _message: &str) -> Result<String> {
-        Err(AuthError::internal(
-            "AWS SNS SMS support was removed from this release line (the sms-aws-sns backend);              use Twilio or Plivo, or see the CHANGELOG entry for the removal",
-        ))
-    }
-
     async fn update_rate_limits(&self, user_id: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
 
@@ -547,5 +528,18 @@ impl SmsKitManager {
             .await?;
 
         Ok(code)
+    }
+}
+
+#[cfg(test)]
+mod aws_sns_removed_tests {
+    use super::*;
+
+    #[test]
+    fn removed_aws_sns_provider_no_longer_deserializes() {
+        assert!(serde_json::from_str::<SmsKitProvider>("\"AwsSns\"").is_err());
+        let cfg = r#"{"AwsSns":{"region":"r","access_key_id":"a","secret_access_key":"s"}}"#;
+        assert!(serde_json::from_str::<SmsKitProviderConfig>(cfg).is_err());
+        assert!(serde_json::from_str::<SmsKitProvider>("\"Twilio\"").is_ok());
     }
 }

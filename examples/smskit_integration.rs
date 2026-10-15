@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
     println!("1. Replace `SmsManager` with `SmsKitManager`");
     println!("2. Update configuration to use `SmsKitConfig`");
     println!("3. Enable 'smskit' feature flag in Cargo.toml");
-    println!("4. Configure providers (Twilio, Plivo, AWS SNS)");
+    println!("4. Configure providers (Twilio, Plivo)");
     println!("5. Set up webhooks for delivery status tracking");
     println!("6. Configure rate limiting for production use");
 
