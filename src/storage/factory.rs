@@ -39,28 +39,6 @@ pub(crate) async fn build_storage_backend(
 
             Ok(Arc::new(storage))
         }
-        #[cfg(feature = "mysql-storage")]
-        StorageConfig::MySQL {
-            connection_string,
-            table_prefix: _,
-        } => {
-            use sqlx::mysql::MySqlPoolOptions;
-
-            let pool = MySqlPoolOptions::new()
-                .max_connections(_pool_size.unwrap_or(10))
-                .connect(connection_string)
-                .await
-                .map_err(|e| {
-                    AuthError::configuration(format!("Failed to connect MySQL storage: {e}"))
-                })?;
-
-            let storage = crate::storage::mysql::MySqlStorage::new(pool);
-            storage.migrate().await.map_err(|e| {
-                AuthError::configuration(format!("Failed to initialize MySQL storage: {e}"))
-            })?;
-
-            Ok(Arc::new(storage))
-        }
         #[cfg(feature = "sqlite-storage")]
         StorageConfig::Sqlite { connection_string } => {
             use sqlx::sqlite::SqlitePoolOptions;

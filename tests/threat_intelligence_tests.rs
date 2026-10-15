@@ -55,7 +55,7 @@ fn default_config_has_expected_feeds() {
     assert!(config.feeds.contains_key("emergingthreats_compromised"));
 
     // All default feeds are disabled
-    for (_name, feed) in &config.feeds {
+    for feed in config.feeds.values() {
         assert!(!feed.enabled);
     }
 }

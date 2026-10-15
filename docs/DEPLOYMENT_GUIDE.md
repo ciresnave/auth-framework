@@ -360,7 +360,7 @@ Before deploying to production:
 
 ### Configuration
 
-- [ ] Use PostgreSQL/MySQL (not SQLite) for production
+- [ ] Use PostgreSQL (not SQLite) for production
 - [ ] Configure Redis for session storage
 - [ ] Set appropriate JWT token TTLs
 - [ ] Configure proper logging level

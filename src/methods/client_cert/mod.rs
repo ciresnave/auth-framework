@@ -476,23 +476,35 @@ impl CertPinStore {
 
     /// Add a pin by SHA-256 hex fingerprint.
     pub fn add(&self, pin: &CertPin) {
-        self.pins.write().unwrap().insert(pin.sha256_hex.clone());
+        self.pins
+            .write()
+            .expect("certificate pin store lock poisoned")
+            .insert(pin.sha256_hex.clone());
     }
 
     /// Remove a pin.
     pub fn remove(&self, pin: &CertPin) -> bool {
-        self.pins.write().unwrap().remove(&pin.sha256_hex)
+        self.pins
+            .write()
+            .expect("certificate pin store lock poisoned")
+            .remove(&pin.sha256_hex)
     }
 
     /// Check if a certificate (DER) matches any pinned fingerprint.
     pub fn is_pinned(&self, cert_der: &[u8]) -> bool {
         let pin = CertPin::from_der(cert_der);
-        self.pins.read().unwrap().contains(&pin.sha256_hex)
+        self.pins
+            .read()
+            .expect("certificate pin store lock poisoned")
+            .contains(&pin.sha256_hex)
     }
 
     /// Number of stored pins.
     pub fn count(&self) -> usize {
-        self.pins.read().unwrap().len()
+        self.pins
+            .read()
+            .expect("certificate pin store lock poisoned")
+            .len()
     }
 }
 
@@ -533,7 +545,7 @@ impl CrlStore {
     pub fn add_revoked(&self, issuer_dn: &str, serial_hex: &str) {
         self.revoked
             .write()
-            .unwrap()
+            .expect("CRL store lock poisoned")
             .entry(issuer_dn.to_string())
             .or_default()
             .insert(serial_hex.to_lowercase());
@@ -541,11 +553,11 @@ impl CrlStore {
 
     /// Check if a certificate (by issuer DN and serial hex) is revoked.
     pub fn check(&self, issuer_dn: &str, serial_hex: &str) -> RevocationStatus {
-        let store = self.revoked.read().unwrap();
-        if let Some(serials) = store.get(issuer_dn) {
-            if serials.contains(&serial_hex.to_lowercase()) {
-                return RevocationStatus::Revoked { reason: None };
-            }
+        let store = self.revoked.read().expect("CRL store lock poisoned");
+        if let Some(serials) = store.get(issuer_dn)
+            && serials.contains(&serial_hex.to_lowercase())
+        {
+            return RevocationStatus::Revoked { reason: None };
         }
         RevocationStatus::Good
     }
@@ -563,12 +575,20 @@ impl CrlStore {
 
     /// Total count of revoked serial numbers across all issuers.
     pub fn revoked_count(&self) -> usize {
-        self.revoked.read().unwrap().values().map(|s| s.len()).sum()
+        self.revoked
+            .read()
+            .expect("CRL store lock poisoned")
+            .values()
+            .map(|s| s.len())
+            .sum()
     }
 
     /// Remove all entries for an issuer.
     pub fn clear_issuer(&self, issuer_dn: &str) {
-        self.revoked.write().unwrap().remove(issuer_dn);
+        self.revoked
+            .write()
+            .expect("CRL store lock poisoned")
+            .remove(issuer_dn);
     }
 }
 

@@ -126,7 +126,7 @@ pub async fn send_verification(
 
     // Store: email_verify:{token} → user_id
     let verify_key = format!("{VERIFY_KEY_PREFIX}{verify_token}");
-    if let Err(_) = state
+    if state
         .auth_framework
         .storage()
         .store_kv(
@@ -135,6 +135,7 @@ pub async fn send_verification(
             Some(VERIFICATION_TOKEN_TTL),
         )
         .await
+        .is_err()
     {
         return ApiResponse::error_typed("INTERNAL_ERROR", "Failed to store verification token");
     }
@@ -200,11 +201,12 @@ pub async fn verify_email(
 
     user_json["email_verified"] = serde_json::Value::Bool(true);
 
-    if let Err(_) = state
+    if state
         .auth_framework
         .storage()
         .store_kv(&user_key, user_json.to_string().as_bytes(), None)
         .await
+        .is_err()
     {
         return ApiResponse::error_typed("INTERNAL_ERROR", "Failed to update user record");
     }
@@ -312,7 +314,7 @@ pub async fn resend_verification(
     };
 
     let verify_key = format!("{VERIFY_KEY_PREFIX}{verify_token}");
-    if let Err(_) = state
+    if state
         .auth_framework
         .storage()
         .store_kv(
@@ -321,6 +323,7 @@ pub async fn resend_verification(
             Some(VERIFICATION_TOKEN_TTL),
         )
         .await
+        .is_err()
     {
         return ApiResponse::error_typed("INTERNAL_ERROR", "Failed to store verification token");
     }

@@ -57,8 +57,8 @@
   name          = "auth-framework"
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
-  rust-version  = "1.88"
-  version       = "0.5.0-rc32"
+  rust-version  = "1.94"
+  version       = "0.5.0-rc41"
 
 [[bin]]
   name              = "auth-framework"
@@ -79,8 +79,12 @@
   # Async runtime
   tokio = { version = "1.47.1", features = ["full"] }
 
-  # JWT handling
-  jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
+  # JWT handling. Backed by jsonwebtoken's "aws_lc_rs" provider, not "rust_crypto":
+  # "rust_crypto" unconditionally enables the `rsa` crate (RUSTSEC-2023-0071) while
+  # "aws_lc_rs" covers the same Algorithm set through AWS-LC. jsonwebtoken panics at
+  # runtime unless one of the two is enabled BY LITERAL NAME; listing its
+  # sub-dependencies individually compiles and then fails on the first sign/verify.
+  jsonwebtoken = { version = "10.3", features = ["aws_lc_rs"] }
 
   # HTTP client for OAuth flows
   reqwest = { version = "0.13.2", features = ["json", "form"] }
@@ -121,9 +125,11 @@
 
   # Cryptography
   rand = { version = "0.10.0", features = ["std_rng"] }
-  rand_core = "0.6"  # Compatible version for rsa crate's OsRng
+  rand_core = "0.6"
   ring = "0.17.14"
-  rsa = { version = "0.9", features = ["sha2"] }  # RSA-OAEP for JWE key wrapping
+  # `rsa` is not a dependency of this crate in any feature combination: jsonwebtoken and
+  # the RSA JWKS / JARM paths use `aws-lc-rs`, bergshamra is selected with its `aws-lc`
+  # feature, `openidconnect` and `mysql-storage` are removed. If it reappears, something regressed.
 
   # Time handling
   time = { version = "0.3.47", features = ["formatting", "parsing", "serde"] }
@@ -260,9 +266,6 @@
   # OAuth device flows (optional enhanced device flow support)
   oauth-device-flows = { version = "0.1.0", optional = true }
 
-  # OpenID Connect support (optional) - Updated to fix RSA dependency
-  openidconnect = { version = "4.0.1", optional = true }
-
   # Archive extraction for threat intelligence feeds (tar.gz, zip)
   flate2 = "1"
   tar    = "0.4.45"
@@ -305,10 +308,38 @@
   # Note: askama_axum was removed in askama 0.13+ - axum integration is now built into askama
 
   # XML processing for SAML
-  quick-xml = { version = "0.39.2", features = ["serialize"], optional = true }
+  quick-xml = { version = "0.41.0", features = ["serialize"], optional = true }
 
-  # XML-DSig signature validation for SAML
-  bergshamra = { version = "0.3", optional = true }
+  # XML-DSig signature validation for SAML. default-features = false,
+  # features = ["aws-lc"]: bergshamra's default pulls in its own
+  # "rustcrypto" feature, which depends on the `rsa` crate
+  # (RUSTSEC-2023-0071) among others -- selecting "aws-lc" instead routes
+  # bergshamra's crypto through aws-lc-rs (not subject to that advisory;
+  # see the jsonwebtoken dependency comment above for the same backend).
+  # Confirmed by reading bergshamra/bergshamra-keys/kryptering's own
+  # Cargo.toml files at v0.9.2 that "aws-lc" never pulls `dep:rsa`.
+  # legacy-algorithms/post-quantum/pkcs11 (also in bergshamra's default)
+  # are deliberately left off: no current SAML use case needs weak-digest
+  # interop, post-quantum XML-DSig, or PKCS#11-backed keys, and each adds
+  # real dependency weight. See
+  # `tests::test_bergshamra_feature_choices_are_deliberate` below, which
+  # fails if this feature list drifts without updating that reasoning.
+  bergshamra = { version = "0.9", default-features = false, features = [
+    "aws-lc",
+  ], optional = true }
+  # Needed directly (not just transitively through bergshamra) to name
+  # `kryptering::KeyAlgorithm`/`EcCurve` when importing a parsed X.509
+  # certificate's public key via `KeyData::from_spki_der` (api/saml.rs) --
+  # bergshamra's own public API re-exports `KeyData`/`Key` but not the
+  # algorithm-selector types its constructors take.
+  # default-features = false: kryptering's own default pulls its
+  # "rustcrypto" feature (-> `dep:rsa`) same as bergshamra's does --
+  # without this, enabling `saml` would reintroduce `rsa` through this
+  # direct dependency even though bergshamra's own request above is for
+  # "aws-lc" only. No extra features requested here: Cargo unions the
+  # "aws-lc" feature bergshamra's own dependency edge already requests,
+  # so this just needs to exist as a nameable crate for KeyAlgorithm/EcCurve.
+  kryptering = { version = "0.6", default-features = false, optional = true }
   p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
   p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 
@@ -318,7 +349,7 @@
   passkey-client = { version = "0.5.0", optional = true } # Updated to latest version
 
   # Web framework integrations (optional)
-  actix-web = { version = "4.11.0", optional = true }
+  actix-web = { version = "4.11.0", default-features = false, features = ["macros"], optional = true }
   axum = { version = "0.8.6", features = ["macros"], optional = true }
   serde_urlencoded = { version = "0.7", optional = true }
   tower = { version = "0.5.2", features = ["util"], optional = true }
@@ -329,13 +360,18 @@
   ], optional = true }
   warp = { version = "0.4.2", features = ["server", "test"], optional = true }
 
-  # Database integrations (optional) - Updated sqlx to fix RSA vulnerability
-  sqlx = { version = "0.8.6", features = [
+  # Database integrations (optional). Deliberately does NOT list "sqlite"
+  # or "postgres" here -- those are enabled per-backend by
+  # sqlite-storage/postgres-storage below (see those features' own
+  # comments), not unconditionally by every build that turns on `sqlx` at
+  # all. `mysql-storage` (and MySQL support generally) was removed
+  # entirely -- sqlx-mysql's own `rsa` dependency (RUSTSEC-2023-0071) for
+  # its caching_sha2_password auth-plugin was the last remaining path to
+  # that crate in this codebase; see CHANGELOG.md for the migration note.
+  sqlx = { version = "0.9", features = [
     "chrono",
-    "mysql",
-    "sqlite",
-    "postgres",
-    "runtime-tokio-rustls",
+    "runtime-tokio",
+    "tls-rustls",
     "uuid",
   ], optional = true }
   tokio-postgres = { version = "0.7.14", optional = true }
@@ -346,7 +382,6 @@
 
   # SMSKit dependencies for next-gen SMS support
   regex           = "1.11.3"
-  sms-aws-sns     = { version = "0.3.0", optional = true }
   sms-core        = { version = "0.3.0", optional = true }
   sms-plivo       = { version = "0.3.0", optional = true }
   sms-twilio      = { version = "0.3.0", optional = true }
@@ -372,15 +407,19 @@ pasetors = "0.7.7"
     "postgres-storage",
   ] # PostgreSQL recommended
   enhanced-device-flow = ["oauth-device-flows"]
-  mysql-storage = ["sqlx"]
-sqlite-storage = ["sqlx"]
-  openid-connect = ["openidconnect"]
-  postgres-storage = ["sqlx", "tokio-postgres"]
+  # Each storage feature enables only its own sqlx sub-feature.
+  sqlite-storage = ["dep:sqlx", "sqlx/sqlite"]
+  # No-op: the optional `openidconnect` dependency was removed because it carries a hard
+  # dependency on the `rsa` crate and nothing in this crate calls it. The feature name stays
+  # so `features = ["openid-connect"]` keeps resolving.
+  openid-connect = []
+  postgres-storage = ["dep:sqlx", "sqlx/postgres", "tokio-postgres"]
   redis-storage = ["redis"]
   # Enhanced cryptography features
   distributed-rate-limiting = ["redis"]
   # Reserved for future enhanced cryptographic operations — currently a no-op
   enhanced-crypto           = ["chacha20poly1305", "ed25519-dalek", "x25519-dalek"]
+  aws-lc-rs                 = []  # always built now; kept so the feature name keeps resolving
   fips-compliance           = ["aws-lc-rs"]
 
   # Enterprise RBAC with role-system v1.0
@@ -405,7 +444,7 @@ sqlite-storage = ["sqlx"]
   otp-auth = ["otpauth"]
   passkeys = ["coset", "passkey", "passkey-client"]
   hsm = ["cryptoki"]  # PKCS#11 / HSM integration for X.509 certificate loading
-  saml = ["bergshamra", "p256", "p384", "quick-xml"]
+  saml = ["dep:bergshamra", "dep:kryptering", "p256", "p384", "quick-xml"]
   tui = ["colored", "console", "crossterm", "indicatif", "ratatui", "tui-input"]
   unicode-support = ["unicode-normalization"]
   warp-integration = ["warp"]
@@ -433,7 +472,6 @@ sqlite-storage = ["sqlx"]
 
   # SMSKit integration (next-generation SMS support)
   smskit = [
-    "sms-aws-sns",
     "sms-core",
     "sms-plivo",
     "sms-twilio",
@@ -452,6 +490,7 @@ sqlite-storage = ["sqlx"]
   [dependencies.x25519-dalek]
     optional = true
     version  = "2.0"
+    features = ["static_secrets"]
 
   [dependencies.ed25519-dalek]
     features = ["rand_core"]
@@ -460,7 +499,6 @@ sqlite-storage = ["sqlx"]
 
   [dependencies.aws-lc-rs]
     features = ["aws-lc-sys"]
-    optional = true
     version  = "1.14.1"
 
   [dependencies.parking_lot]

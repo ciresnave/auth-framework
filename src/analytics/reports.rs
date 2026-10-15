@@ -79,25 +79,24 @@ impl ReportGenerator {
         let mut duration_count: u64 = 0;
 
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
-                {
-                    // Filter by time range
-                    if event.timestamp < time_range.start || event.timestamp > time_range.end {
-                        continue;
-                    }
-                    total_events += 1;
-                    match event.result {
-                        crate::analytics::EventResult::Success => success_count += 1,
-                        _ => failure_count += 1,
-                    }
-                    *event_types
-                        .entry(format!("{:?}", event.event_type))
-                        .or_insert(0) += 1;
-                    if let Some(d) = event.duration_ms {
-                        total_duration_ms += d as f64;
-                        duration_count += 1;
-                    }
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+            {
+                // Filter by time range
+                if event.timestamp < time_range.start || event.timestamp > time_range.end {
+                    continue;
+                }
+                total_events += 1;
+                match event.result {
+                    crate::analytics::EventResult::Success => success_count += 1,
+                    _ => failure_count += 1,
+                }
+                *event_types
+                    .entry(format!("{:?}", event.event_type))
+                    .or_insert(0) += 1;
+                if let Some(d) = event.duration_ms {
+                    total_duration_ms += d as f64;
+                    duration_count += 1;
                 }
             }
         }
@@ -130,7 +129,7 @@ impl ReportGenerator {
             "event_type_breakdown": event_types,
         });
 
-        serde_json::to_string_pretty(&report).map_err(|e| AnalyticsError::SerializationError(e))
+        serde_json::to_string_pretty(&report).map_err(AnalyticsError::SerializationError)
     }
 }
 

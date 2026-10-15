@@ -1100,13 +1100,13 @@ async fn create_incremental_backup(config: &MigrationConfig) -> Result<String, M
 
         while let Ok(Some(entry)) = read_dir.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with("_status.json") || name.ends_with("_manifest.json") {
-                if let Ok(content) = fs::read_to_string(entry.path()).await {
-                    entries.push(serde_json::json!({
-                        "path": name,
-                        "content": content,
-                    }));
-                }
+            if (name.ends_with("_status.json") || name.ends_with("_manifest.json"))
+                && let Ok(content) = fs::read_to_string(entry.path()).await
+            {
+                entries.push(serde_json::json!({
+                    "path": name,
+                    "content": content,
+                }));
             }
         }
     }
@@ -1145,13 +1145,14 @@ async fn create_data_backup(config: &MigrationConfig) -> Result<String, Migratio
 
         while let Ok(Some(entry)) = read_dir.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".json") && !name.ends_with("_status.json") {
-                if let Ok(content) = fs::read_to_string(entry.path()).await {
-                    entries.push(serde_json::json!({
-                        "path": name,
-                        "content": content,
-                    }));
-                }
+            if name.ends_with(".json")
+                && !name.ends_with("_status.json")
+                && let Ok(content) = fs::read_to_string(entry.path()).await
+            {
+                entries.push(serde_json::json!({
+                    "path": name,
+                    "content": content,
+                }));
             }
         }
     }

@@ -237,7 +237,7 @@ mod tests {
         assert!(
             !registered_client
                 .authorized_grant_types
-                .contains(&"implicit".to_string())
+                .contains("implicit")
         );
         assert!(
             !registered_client

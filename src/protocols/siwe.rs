@@ -228,22 +228,22 @@ pub fn verify_siwe_message(
         return Err(AuthError::validation("Domain mismatch"));
     }
 
-    if let Some(expected) = expected_nonce {
-        if msg.nonce != expected {
-            return Err(AuthError::validation("Nonce mismatch"));
-        }
+    if let Some(expected) = expected_nonce
+        && msg.nonce != expected
+    {
+        return Err(AuthError::validation("Nonce mismatch"));
     }
 
     let now = Utc::now();
-    if let Some(ref exp) = msg.expiration_time {
-        if &now > exp {
-            return Err(AuthError::validation("SIWE message has expired"));
-        }
+    if let Some(ref exp) = msg.expiration_time
+        && &now > exp
+    {
+        return Err(AuthError::validation("SIWE message has expired"));
     }
-    if let Some(ref nb) = msg.not_before {
-        if &now < nb {
-            return Err(AuthError::validation("SIWE message is not yet valid"));
-        }
+    if let Some(ref nb) = msg.not_before
+        && &now < nb
+    {
+        return Err(AuthError::validation("SIWE message is not yet valid"));
     }
 
     validate_address(&msg.address)?;

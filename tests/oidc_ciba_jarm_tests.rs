@@ -327,6 +327,7 @@ async fn jarm_custom_claims_added() {
 }
 
 #[tokio::test]
+#[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
 async fn jarm_too_many_custom_claims_rejected() {
     let mut config = AdvancedJarmConfig::default();
     config.max_custom_claims = 2;
@@ -352,6 +353,7 @@ async fn jarm_too_many_custom_claims_rejected() {
 }
 
 #[tokio::test]
+#[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
 async fn jarm_custom_claims_disabled_rejects() {
     let mut config = AdvancedJarmConfig::default();
     config.enable_custom_claims = false;

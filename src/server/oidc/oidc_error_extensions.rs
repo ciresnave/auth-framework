@@ -197,6 +197,7 @@ impl OidcErrorResponse {
     ///     .state("abc123")
     ///     .build();
     /// ```
+    #[allow(clippy::new_ret_no_self)] // constructor of a builder type; renaming would be a breaking change
     pub fn new(error: OidcErrorCode) -> OidcErrorResponseBuilder {
         OidcErrorResponseBuilder {
             inner: OidcErrorResponse {

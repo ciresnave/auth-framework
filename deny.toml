@@ -9,23 +9,33 @@
     # Security-first approach: Only allow explicitly documented exceptions
     # This forces explicit review and justification of ALL security issues
     ignore = [
-        # RSA timing attack - no fix available yet, used by essential dependencies
-        # Impact: Low risk in our authentication context as we don't expose raw RSA operations
-        # Tracking: Will update when sqlx/openidconnect provide fixed versions
-        "RUSTSEC-2023-0071",
+        # RUSTSEC-2023-0071 (rsa, Marvin Attack, no patched release): the ignore that
+        # used to be here was removed because `rsa` is no longer in Cargo.lock at all
+        # (jsonwebtoken moved to aws-lc-rs, saml to bergshamra's aws-lc backend,
+        # mysql-storage was dropped, and sqlx 0.9 no longer lists sqlx-mysql's rsa).
+        # The "Security Audit (rsa absence)" CI job keeps it out of the dependency
+        # graph for every shipped feature set.
         # `paste` crate unmaintained - transitive dependency via cryptoki 0.7.0
         # Impact: None; `paste` is a compile-time macro crate with no runtime attack surface
         # Tracking: Will resolve when cryptoki drops `paste` or migrates to an alternative
         "RUSTSEC-2024-0436",
+        # `unsafe-libyaml` unmaintained (RUSTSEC-2024-0449), via serde_yaml 0.9, which this
+        # line uses directly for YAML config (src/admin/cli.rs, src/config, src/deployment).
+        # Impact: none known; it is an unmaintained notice, not a vulnerability. Main replaced
+        # serde_yaml with serde-saphyr, a source change not made on this release line.
+        "RUSTSEC-2024-0449",
     ]
 
 [licenses]
     # License policy - allow common open source licenses
     allow = [
         "Apache-2.0 WITH LLVM-exception",
+        "0BSD",                           # BSD Zero Clause; fully permissive
         "Apache-2.0",
         "BSD-2-Clause",
         "BSD-3-Clause",
+        "BSL-1.0",                        # Boost Software License; permissive (xxhash-rust)
+        "CC0-1.0",                        # notify, tiny-keccak; public-domain dedication
         "CDLA-Permissive-2.0",            # Community Data License Agreement - for webpki-roots
         "ISC",
         "MIT",

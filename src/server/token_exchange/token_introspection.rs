@@ -212,6 +212,8 @@ pub struct TokenIntrospectionService {
     storage: Arc<dyn AuthStorage>,
 
     /// Token manager for JWT validation
+    #[allow(dead_code)]
+    // kept as a constructor argument of the public service; removing it changes `new`
     token_manager: Arc<TokenManager>,
 
     /// JWT access token validator

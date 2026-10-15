@@ -282,7 +282,7 @@ impl DashMapMemoryStorage {
             ));
         }
 
-        aged_tokens.sort_by(|a, b| b.2.cmp(&a.2)); // Sort by age descending
+        aged_tokens.sort_by_key(|t| std::cmp::Reverse(t.2)); // Sort by age descending
         aged_tokens
     }
 
@@ -300,7 +300,7 @@ impl DashMapMemoryStorage {
             ));
         }
 
-        aged_sessions.sort_by(|a, b| b.2.cmp(&a.2)); // Sort by age descending
+        aged_sessions.sort_by_key(|s| std::cmp::Reverse(s.2)); // Sort by age descending
         aged_sessions
     }
 

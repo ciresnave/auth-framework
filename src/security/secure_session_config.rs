@@ -256,7 +256,7 @@ impl IPSecurityUtils {
             Some((39.0458, -76.6413)) // US East Coast
         } else {
             // Real MaxMind GeoIP2 integration for accurate geolocation
-            Self::lookup_maxmind_coordinates(ip).or_else(|| {
+            Self::lookup_maxmind_coordinates(ip).or({
                 // Unknown location fallback — (0,0) means "no data"
                 Some((0.0, 0.0))
             })

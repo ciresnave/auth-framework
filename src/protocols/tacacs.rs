@@ -263,6 +263,7 @@ pub struct AuthorRequestBody {
 
 impl AuthorRequestBody {
     /// Serialize to wire format.
+    #[allow(clippy::vec_init_then_push)] // wire-format builder: one push per protocol field reads as the spec table
     pub fn to_bytes(&self) -> Vec<u8> {
         let user_bytes = self.user.as_bytes();
         let port_bytes = self.port.as_bytes();
@@ -270,6 +271,7 @@ impl AuthorRequestBody {
         let arg_count = self.args.len() as u8;
 
         // Fixed header: 8 bytes + arg_count * 1 (arg lengths) + variable fields
+        // wire-format builder: one push per protocol field reads as the spec table
         let mut buf = Vec::new();
         buf.push(self.authen_method);
         buf.push(0x01); // priv_lvl
@@ -400,12 +402,14 @@ pub struct AcctRequestBody {
 
 impl AcctRequestBody {
     /// Serialize to wire format.
+    #[allow(clippy::vec_init_then_push)] // wire-format builder: one push per protocol field reads as the spec table
     pub fn to_bytes(&self) -> Vec<u8> {
         let user_bytes = self.user.as_bytes();
         let port_bytes = self.port.as_bytes();
         let rem_bytes = self.remote_address.as_bytes();
         let arg_count = self.args.len() as u8;
 
+        // wire-format builder: one push per protocol field reads as the spec table
         let mut buf = Vec::new();
         buf.push(self.flags.0);
         buf.push(self.authen_method);

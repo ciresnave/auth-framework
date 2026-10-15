@@ -7,6 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc41] - 2026-10-15
+
+### Changed
+
+- CI only: `async-trait` 0.1.89 -> 0.1.92 in `Cargo.lock` stops `clippy::double_must_use` firing on every
+  `#[async_trait]` trait under current stable clippy (the "Run Clippy" step failed on it). The "Run
+  integration tests" workflow step is removed: it ran `cargo test --test integration`, a target that does
+  not exist on this line, and the preceding `--workspace` step already runs every test target.
+- `Cargo.lock`: `anyhow` 1.0.102 -> 1.0.104 (RUSTSEC-2026-0190) and `chacha20` 0.10.0 -> 0.10.2 (yanked), so
+  the cargo-deny advisories check passes. `unsafe-libyaml` (RUSTSEC-2024-0449, unmaintained, via
+  `serde_yaml`) is ignored in deny.toml with a reason; replacing `serde_yaml` is a source change left to main.
+- CI: the cargo-deny job ran `EmbarkStudios/cargo-deny-action@v1`, whose bundled Cargo cannot parse edition
+  2024, so it failed before checking anything. It now installs cargo-deny and runs
+  `cargo deny --all-features check`, as main does; `CC0-1.0`, `0BSD` and `BSL-1.0` are allowed in deny.toml.
+  `spin` 0.9.8 -> 0.9.9 (yanked).
+- Docker builder image `rust:1.88-slim` -> `rust:1.94-slim` (sqlx 0.9 and `rust-version` need 1.94).
+## [0.5.0-rc40] - 2026-10-15
+
+### Security
+
+- `sqlx` 0.8.6 -> 0.9.0: `rsa` (RUSTSEC-2023-0071) is no longer listed in `Cargo.lock` at all (sqlx 0.8
+  kept a `sqlx-mysql` stub entry that pulled it in), so `cargo audit` on the lockfile is clean of it. The
+  matching `deny.toml` ignore is removed.
+
+### Changed
+
+- **MSRV raised 1.88 -> 1.94** (sqlx 0.9 requires Rust 1.94). The `runtime-tokio-rustls` sqlx feature is
+  now `runtime-tokio` + `tls-rustls` (same combination); no source change.
+
+## [0.5.0-rc39] - 2026-10-15
+
+### Security
+
+- The `saml` feature no longer builds the `rsa` crate (RUSTSEC-2023-0071): `bergshamra` 0.3 -> 0.9
+  with its `aws-lc` backend, and public keys are imported through `kryptering` instead of
+  `rsa::RsaPublicKey`. `cargo tree -i rsa --all-features` is now empty on this line.
+
+### Changed
+
+- **Breaking for Windows:** with the `aws-lc` backend, `saml` builds only on Linux and macOS
+  (x86_64/aarch64); `kryptering` rejects other targets with a `compile_error!`. `saml` no longer
+  builds on Windows on this line, as on main (decision #112, tracking issue #106). Builds without
+  `saml` are unaffected.
+
+## [0.5.0-rc38] - 2026-10-15
+
+### Removed
+
+- **Breaking:** the `mysql-storage` feature and everything behind it are removed: `MySqlStorage`,
+  `StorageConfig::MySQL`, `StorageConfigBuilder::mysql`, the MySQL migrations and the MySQL
+  integration tests. `sqlx-mysql` depends on the `rsa` crate (RUSTSEC-2023-0071, no patched
+  release) for `caching_sha2_password`, so it could not be kept without keeping `rsa`. MySQL was
+  ruled dropped for this project (decision #113); this brings the 0.5.x line in line with main.
+  Applications on MySQL should stay on a release that still ships `mysql-storage` (0.4.4 stable, or
+  any 0.5.0-rc up to rc37) or move to `postgres-storage`, `sqlite-storage` or `redis-storage`.
+  A `mysql://` database URL is now rejected with a message naming the removal.
+
+## [0.5.0-rc37] - 2026-10-15
+
+### Security
+
+- The `rsa` crate (RUSTSEC-2023-0071, "Marvin Attack", no patched release) is no longer in the default
+  build. `jsonwebtoken` now uses its `aws_lc_rs` provider instead of `rust_crypto` (same algorithm
+  set), RSA JWKS export and the JARM RSA-OAEP JWE paths use `aws-lc-rs`, and the optional
+  `openidconnect` dependency, which carries a hard dependency on `rsa`, is removed. `rsa` is now
+  built only by the `saml` feature (until bergshamra is upgraded) and, through `sqlx-mysql`, by
+  `mysql-storage`.
+
+### Changed
+
+- **Behaviour:** JARM RSA-OAEP recipient keys must now be 2048-8192 bits (the `aws-lc-rs` range);
+  a smaller key is rejected with a warning at start-up instead of being loaded.
+- The `openid-connect` feature is now a no-op alias; nothing in this crate called `openidconnect`.
+  The feature name still resolves. The `aws-lc-rs` dependency is always built (it already was, via
+  `jsonwebtoken`); the `aws-lc-rs` and `fips-compliance` feature names are unchanged.
+
+## [0.5.0-rc36] - 2026-10-15
+
+### Changed
+
+- `sqlx` is now built with only the backend a storage feature asks for: `mysql-storage` enables
+  `sqlx/mysql`, `sqlite-storage` enables `sqlx/sqlite`, `postgres-storage` enables `sqlx/postgres`.
+  Before, enabling any one of them compiled `sqlx-mysql` and with it the `rsa` crate
+  (RUSTSEC-2023-0071), so the default build carried `rsa` through a backend nobody asked for. The
+  feature names and public API are unchanged; only `mysql-storage` still builds `sqlx-mysql`.
+
+## [0.5.0-rc35] - 2026-10-15
+
+### Fixed
+
+- `cargo clippy --all-targets -- -D warnings` (the CI gate) passes again on this line. The
+  changes are mechanical and behaviour-neutral: collapsed `if` chains, removed needless borrows,
+  `to_string` and `return`s, derived impls, `sort_by_key`, `matches!`, and `as_chunks` for the
+  Kerberos AES-CBC block loop. Lock `unwrap()`s in `client_cert` and a few infallible conversions
+  became `expect()` with the invariant stated; a handful of lints that cannot be fixed without
+  changing the public API (`result_large_err`, `new_without_default`, `new_ret_no_self`) carry a
+  per-site `#[allow]` with the reason. The `auth_performance` bench built an `AuthConfig` without
+  the fields added since rc18 and did not compile; it now uses `..Default::default()`.
+
+## [0.5.0-rc34] - 2026-10-14
+
+### Removed
+
+- **Breaking:** the `sms-aws-sns` SMS backend is removed from the `smskit` feature, and `actix-web`
+  is built with `default-features = false` (`macros` only). `sms-aws-sns` pulled `aws-config` /
+  `aws-smithy-http-client` and with them a legacy `rustls` 0.21 / `rustls-webpki` 0.101 / `h2` 0.3
+  stack that carries open advisories (RUSTSEC-2026-0098/0099/0104/0258, -0346/0349); main removed
+  it for the same reason. `SmsKitProvider::AwsSns` and `SmsKitProviderConfig::AwsSns` stay so
+  existing configuration still deserializes, but selecting AWS SNS now fails at send time with an
+  error that says the backend was removed. Applications that enable actix-web's `http2` feature
+  (or other default features such as compression or cookies) must enable them on their own
+  `actix-web` dependency. The security audit for this line now reports only RUSTSEC-2023-0071
+  (`rsa`, no patched release).
+
+### Fixed
+
+- `enhanced-crypto` did not compile on its own: `x25519-dalek`'s `StaticSecret` needs its
+  `static_secrets` feature, which the dependency did not enable (it compiled only when another
+  crate in the graph enabled it). The feature is now requested explicitly, as on main.
+
+### Changed
+
+- CI only for the workflow: `ci-cd.yml` runs on pushes and pull requests for `release/**`
+  branches, so this line gets the same checks as main. The workflow's MSRV job uses 1.88.0
+  (the crate's `rust-version`), the feature matrix no longer names the absent `testing` feature,
+  and the Slack step is skipped when no webhook is configured.
+- Dependencies: `cargo fmt` applied; `Cargo.lock` raised for RUSTSEC-2026-0112, -0113, -0141,
+  -0145, -0178, -0179, -0180, -0185, -0199, -0204, -0258 (h2 0.4.x), -0286, -0338..-0342;
+  `quick-xml` 0.39 -> 0.41 (RUSTSEC-2026-0194/0195). No behaviour or signature changes.
+
 ## [0.5.0-rc32] - 2026-10-14
 
 ### Security

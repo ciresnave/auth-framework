@@ -125,10 +125,7 @@ impl RoleConverter {
         // Handle parent role (role-system v1.0 supports single parent)
         let parent_role_id = if self.preserve_hierarchy && !legacy_role.parent_roles.is_empty() {
             // Take the first parent role if multiple exist
-            Some(format!(
-                "{}{}",
-                self.id_prefix, &legacy_role.parent_roles[0]
-            ))
+            Some(format!("{}{}", self.id_prefix, legacy_role.parent_roles[0]))
         } else {
             None
         };

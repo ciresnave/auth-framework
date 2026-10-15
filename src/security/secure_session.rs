@@ -741,12 +741,11 @@ impl SecureSessionManager {
             return true;
         }
         // RFC 1918: 172.16.0.0 – 172.31.255.255
-        if let Some(rest) = ip.strip_prefix("172.") {
-            if let Some(second_octet_str) = rest.split('.').next() {
-                if let Ok(second_octet) = second_octet_str.parse::<u8>() {
-                    return (16..=31).contains(&second_octet);
-                }
-            }
+        if let Some(rest) = ip.strip_prefix("172.")
+            && let Some(second_octet_str) = rest.split('.').next()
+            && let Ok(second_octet) = second_octet_str.parse::<u8>()
+        {
+            return (16..=31).contains(&second_octet);
         }
         false
     }

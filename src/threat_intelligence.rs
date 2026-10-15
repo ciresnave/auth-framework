@@ -231,6 +231,7 @@ impl ThreatIntelConfig {
     /// ```rust,ignore
     /// let config = ThreatIntelConfig::aggressive();
     /// ```
+    #[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
     pub fn aggressive() -> Self {
         let mut base = Self::default();
         base.auto_update_enabled = true;

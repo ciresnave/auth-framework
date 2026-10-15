@@ -23,7 +23,6 @@ use crate::errors::StorageError;
 /// |---------|------|-------------|
 /// | In-memory (DashMap) | [`MemoryStorage`] | *(always available)* |
 /// | PostgreSQL | [`PostgresStorage`](crate::storage::postgres::PostgresStorage) | `postgres-storage` |
-/// | MySQL | [`MySqlStorage`](crate::storage::mysql::MySqlStorage) | `mysql-storage` |
 /// | Redis | [`RedisStorage`] | `redis-storage` |
 /// | SQLite | [`SqliteStorage`](crate::storage::sqlite::SqliteStorage) | `sqlite-storage` |
 /// | Encrypted wrapper | [`EncryptedStorage`](crate::storage::encryption::EncryptedStorage) | *(always available)* |
@@ -227,7 +226,7 @@ pub struct SessionData {
 /// - **Single Instance**: Cannot be used in multi-instance deployments
 /// - **No Persistence**: No option to back up or export data
 ///
-/// Use `PostgresStorage`, `MySqlStorage`, `RedisStorage`, or `SqliteStorage` for production.
+/// Use `PostgresStorage`, `RedisStorage`, or `SqliteStorage` for production.
 ///
 /// SECURITY UPDATE: Now uses DashMap for deadlock-free concurrent operations
 #[derive(Debug, Clone)]

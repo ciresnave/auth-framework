@@ -292,6 +292,7 @@ pub struct IndieAuthServer {
     /// Authorization code store: code → StoredAuthCode
     codes: Arc<RwLock<HashMap<String, StoredAuthCode>>>,
     /// Access token store: token → (me, scope, created_at)
+    #[allow(clippy::type_complexity)] // private field; an alias would only be used once
     tokens: Arc<RwLock<HashMap<String, (String, Option<String>, u64)>>>,
     /// Authorization code lifetime (seconds).
     code_lifetime: u64,

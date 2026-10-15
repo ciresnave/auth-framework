@@ -4,9 +4,6 @@ use crate::providers::{OAuthProvider, ProfileExtractor, ProviderProfile};
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use rsa::pkcs1::DecodeRsaPublicKey;
-use rsa::pkcs8::DecodePublicKey;
-use rsa::traits::PublicKeyParts;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(feature = "postgres-storage")]
@@ -1067,7 +1064,7 @@ impl AuthToken {
     /// assert!(!token.has_scope("admin"));
     /// ```
     pub fn has_scope(&self, scope: &str) -> bool {
-        self.scopes.contains(&scope.to_string())
+        self.scopes.contains(scope)
     }
 
     /// Set the refresh token.
@@ -1199,7 +1196,7 @@ impl AuthToken {
     /// assert!(token.has_permission("admin"));
     /// ```
     pub fn has_permission(&self, permission: &str) -> bool {
-        self.permissions.contains(&permission.to_string())
+        self.permissions.contains(permission)
     }
 
     /// Add a permission to the token.
@@ -1255,7 +1252,7 @@ impl AuthToken {
     /// assert!(!token.has_role("guest"));
     /// ```
     pub fn has_role(&self, role: &str) -> bool {
-        self.roles.contains(&role.to_string())
+        self.roles.contains(role)
     }
 
     /// Set the permissions.
@@ -1336,25 +1333,41 @@ impl Clone for TokenManager {
     }
 }
 
+/// Strip PEM headers/footers and whitespace, then base64-decode to DER.
+fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
+    let b64: String = pem
+        .lines()
+        .filter(|line| {
+            !line.starts_with("-----BEGIN") && !line.starts_with("-----END") && !line.is_empty()
+        })
+        .collect();
+
+    base64::engine::general_purpose::STANDARD
+        .decode(&b64)
+        .map_err(|e| AuthError::crypto(format!("Failed to base64-decode PEM: {e}")))
+}
+
 impl TokenManager {
     fn jwks_from_public_pem(public_key: &[u8], algorithm: Algorithm) -> Result<JwksPublicKey> {
         let pem = std::str::from_utf8(public_key)
             .map_err(|e| AuthError::crypto(format!("Invalid RSA public key PEM encoding: {e}")))?;
+        let der = pem_to_der(pem)?;
 
-        let public_key = rsa::RsaPublicKey::from_public_key_pem(pem)
-            .or_else(|_| rsa::RsaPublicKey::from_pkcs1_pem(pem))
-            .map_err(|e| {
-                AuthError::crypto(format!(
-                    "Failed to parse RSA public key for JWKS export: {e}"
-                ))
-            })?;
+        // `PublicKey::from_der` parses either RFC8017 (PKCS#1) or RFC5280
+        // (X.509 SubjectPublicKeyInfo / PKCS#8) DER automatically -- no need
+        // to try two separate parse paths as the `rsa` crate required.
+        let public_key = aws_lc_rs::rsa::PublicKey::from_der(&der).map_err(|e| {
+            AuthError::crypto(format!(
+                "Failed to parse RSA public key for JWKS export: {e}"
+            ))
+        })?;
 
-        let modulus = public_key.n().to_bytes_be();
-        let exponent = public_key.e().to_bytes_be();
-        let kid_digest = Sha256::digest(&modulus);
+        let modulus = public_key.modulus().big_endian_without_leading_zero();
+        let exponent = public_key.exponent().big_endian_without_leading_zero();
+        let kid_digest = Sha256::digest(modulus);
 
-        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&modulus);
-        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&exponent);
+        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(modulus);
+        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(exponent);
         let kid = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(kid_digest);
 
         Ok(JwksPublicKey {
@@ -1758,5 +1771,138 @@ mod tests {
         assert!(token.is_revoked());
         assert!(!token.is_valid());
         assert!(token.metadata.revoked);
+    }
+
+    fn generate_test_rsa_pems() -> (Vec<u8>, Vec<u8>) {
+        use aws_lc_rs::signature::KeyPair as _;
+
+        fn der_to_pem(der: &[u8], label: &str) -> Vec<u8> {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+            let mut pem = format!("-----BEGIN {label}-----\n");
+            for chunk in b64.as_bytes().chunks(64) {
+                pem.push_str(std::str::from_utf8(chunk).unwrap());
+                pem.push('\n');
+            }
+            pem.push_str(&format!("-----END {label}-----\n"));
+            pem.into_bytes()
+        }
+
+        let key_pair = aws_lc_rs::rsa::KeyPair::generate(aws_lc_rs::rsa::KeySize::Rsa2048)
+            .expect("RSA key generation failed");
+        let priv_der =
+            aws_lc_rs::encoding::AsDer::<aws_lc_rs::encoding::Pkcs8V1Der>::as_der(&key_pair)
+                .expect("private key DER export failed");
+        let pub_der = key_pair.public_key().as_ref();
+
+        (
+            der_to_pem(priv_der.as_ref(), "PRIVATE KEY"),
+            // PublicKey::as_ref() returns RFC8017 (PKCS#1 RSAPublicKey) DER,
+            // not SPKI -- label accordingly, matching jsonwebtoken's own
+            // PEM classifier (Standard::Pkcs1 for the "RSA PUBLIC KEY" tag).
+            der_to_pem(pub_der, "RSA PUBLIC KEY"),
+        )
+    }
+
+    /// Same key pair as `generate_test_rsa_pems`, but the public half in
+    /// SPKI/PKCS#8 ("PUBLIC KEY") form -- the format the old `rsa` crate's
+    /// `from_public_key_pem` treated as primary, and a different parse path
+    /// through `jwks_from_public_pem`/`pem_to_der` than the PKCS#1 form
+    /// above.
+    fn generate_test_rsa_pems_spki_public() -> (Vec<u8>, Vec<u8>) {
+        use aws_lc_rs::signature::KeyPair as _;
+
+        fn der_to_pem(der: &[u8], label: &str) -> Vec<u8> {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+            let mut pem = format!("-----BEGIN {label}-----\n");
+            for chunk in b64.as_bytes().chunks(64) {
+                pem.push_str(std::str::from_utf8(chunk).unwrap());
+                pem.push('\n');
+            }
+            pem.push_str(&format!("-----END {label}-----\n"));
+            pem.into_bytes()
+        }
+
+        let key_pair = aws_lc_rs::rsa::KeyPair::generate(aws_lc_rs::rsa::KeySize::Rsa2048)
+            .expect("RSA key generation failed");
+        let priv_der =
+            aws_lc_rs::encoding::AsDer::<aws_lc_rs::encoding::Pkcs8V1Der>::as_der(&key_pair)
+                .expect("private key DER export failed");
+        let public_key = aws_lc_rs::rsa::PublicKey::from_der(key_pair.public_key().as_ref())
+            .expect("re-parsing the freshly generated public key must succeed");
+        let spki_der = aws_lc_rs::encoding::AsDer::<aws_lc_rs::encoding::PublicKeyX509Der>::as_der(
+            &public_key,
+        )
+        .expect("SPKI DER export failed");
+
+        (
+            der_to_pem(priv_der.as_ref(), "PRIVATE KEY"),
+            der_to_pem(spki_der.as_ref(), "PUBLIC KEY"),
+        )
+    }
+
+    /// Regression/coverage test for the RSA-removal rewrite of
+    /// `jwks_from_public_pem`: a real RSA key's exported JWKS `n`/`e` must
+    /// match the key's own modulus/exponent, and the exported key must
+    /// actually be usable to verify a token signed by the paired private key.
+    #[test]
+    fn test_export_public_jwks_round_trips_rsa_key() {
+        let (priv_pem, pub_pem) = generate_test_rsa_pems();
+        let manager = TokenManager::new_rsa(&priv_pem, &pub_pem, "test-issuer", "test-audience")
+            .expect("TokenManager::new_rsa should accept a freshly generated RSA key pair");
+
+        let jwks = manager
+            .export_public_jwks()
+            .expect("JWKS export should succeed for a valid RSA key");
+        assert_eq!(jwks.len(), 1, "exactly one key, no previous key configured");
+
+        let exported = &jwks[0];
+        assert_eq!(exported.algorithm, Algorithm::RS256);
+        assert!(!exported.n.is_empty());
+        assert!(!exported.e.is_empty());
+
+        // Independently re-derive n/e directly from the DER and confirm they
+        // match what jwks_from_public_pem produced -- not just "didn't error."
+        let der = pem_to_der(std::str::from_utf8(&pub_pem).unwrap()).unwrap();
+        let public_key =
+            aws_lc_rs::rsa::PublicKey::from_der(&der).expect("public key DER should parse");
+        let expected_n = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(public_key.modulus().big_endian_without_leading_zero());
+        let expected_e = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(public_key.exponent().big_endian_without_leading_zero());
+        assert_eq!(exported.n, expected_n);
+        assert_eq!(exported.e, expected_e);
+
+        // The exported JWKS must be independently usable: sign a real token
+        // with the manager's private key, then verify it using ONLY the
+        // exported n/e (not the manager, not the PEM) -- the actual use case
+        // a resource server validating against a published JWKS exercises.
+        let token = manager
+            .create_jwt_token("test-user", vec![], None)
+            .expect("signing with the freshly generated RSA key should succeed");
+        let decoding_key = DecodingKey::from_rsa_components(&exported.n, &exported.e)
+            .expect("DecodingKey should accept the exported n/e");
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_issuer(&["test-issuer"]);
+        validation.set_audience(&["test-audience"]);
+        decode::<JwtClaims>(&token, &decoding_key, &validation)
+            .expect("a token signed by this key must verify against its own exported JWKS");
+    }
+
+    /// Same as the PKCS#1 test above, but for the SPKI ("PUBLIC KEY") PEM
+    /// form -- the format the old `rsa` crate's `from_public_key_pem`
+    /// treated as primary, and a different parse path through
+    /// `pem_to_der`/`PublicKey::from_der` than the PKCS#1 form.
+    #[test]
+    fn test_export_public_jwks_accepts_spki_public_key_pem() {
+        let (priv_pem, pub_pem) = generate_test_rsa_pems_spki_public();
+        let manager = TokenManager::new_rsa(&priv_pem, &pub_pem, "test-issuer", "test-audience")
+            .expect("TokenManager::new_rsa should accept an SPKI-form public key");
+
+        let jwks = manager
+            .export_public_jwks()
+            .expect("JWKS export should succeed for an SPKI-form RSA public key");
+        assert_eq!(jwks.len(), 1);
+        assert!(!jwks[0].n.is_empty());
+        assert!(!jwks[0].e.is_empty());
     }
 }

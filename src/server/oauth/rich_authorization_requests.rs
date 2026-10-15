@@ -854,12 +854,12 @@ impl RarManager {
         for required_field in &rule.required_fields {
             match required_field.as_str() {
                 "actions" => {
-                    if detail.actions.as_ref().map_or(true, |a| a.is_empty()) {
+                    if detail.actions.as_ref().is_none_or(|a| a.is_empty()) {
                         errors.push(format!("Required field '{}' is missing", required_field));
                     }
                 }
                 "locations" => {
-                    if detail.locations.as_ref().map_or(true, |l| l.is_empty()) {
+                    if detail.locations.as_ref().is_none_or(|l| l.is_empty()) {
                         errors.push(format!("Required field '{}' is missing", required_field));
                     }
                 }

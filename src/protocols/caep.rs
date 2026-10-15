@@ -163,7 +163,8 @@ impl CaepEvent {
             "subject": self.subject,
         });
         if let Some(ref entity) = self.initiating_entity {
-            event_body["initiating_entity"] = serde_json::to_value(entity).unwrap();
+            event_body["initiating_entity"] = serde_json::to_value(entity)
+                .expect("serialising a serde value to JSON cannot fail");
         }
         if let Some(ref r) = self.reason_admin {
             event_body["reason_admin"] = serde_json::json!({"en": r});
@@ -396,7 +397,11 @@ impl CaepTransmitter {
         change_type: ChangeType,
     ) -> Result<CaepEvent> {
         let event = CaepEvent::new(&self.issuer, event_types::CREDENTIAL_CHANGE, subject)
-            .with_property("change_type", serde_json::to_value(&change_type).unwrap());
+            .with_property(
+                "change_type",
+                serde_json::to_value(&change_type)
+                    .expect("serialising a serde value to JSON cannot fail"),
+            );
         self.dispatch_event(&event).await;
         Ok(event)
     }
@@ -424,7 +429,10 @@ impl CaepTransmitter {
         claims: HashMap<String, serde_json::Value>,
     ) -> Result<CaepEvent> {
         let mut event = CaepEvent::new(&self.issuer, event_types::TOKEN_CLAIMS_CHANGE, subject);
-        event = event.with_property("claims", serde_json::to_value(&claims).unwrap());
+        event = event.with_property(
+            "claims",
+            serde_json::to_value(&claims).expect("serialising a serde value to JSON cannot fail"),
+        );
         self.dispatch_event(&event).await;
         Ok(event)
     }

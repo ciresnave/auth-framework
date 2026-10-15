@@ -28,7 +28,7 @@ async fn test_monitoring_manager_default_config() {
     let manager = MonitoringManager::new(config);
     let metrics = manager.get_performance_metrics();
     // All counters start at zero
-    for (_key, val) in &metrics {
+    for val in metrics.values() {
         assert_eq!(*val, 0);
     }
 }
@@ -134,6 +134,7 @@ async fn test_record_mfa_challenge() {
 }
 
 #[tokio::test]
+#[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
 async fn test_security_events_limit() {
     let mut config = MonitoringConfig::default();
     config.max_history_size = 5;
@@ -214,6 +215,7 @@ async fn test_health_check_returns_all_components() {
 }
 
 #[tokio::test]
+#[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
 async fn test_health_check_disabled() {
     let mut config = MonitoringConfig::default();
     config.enable_health_checks = false;
@@ -294,6 +296,7 @@ async fn test_prometheus_export_format() {
 }
 
 #[tokio::test]
+#[allow(clippy::field_reassign_with_default)] // each override stays on its own line so the diff against Default is readable
 async fn test_security_metrics_disabled() {
     let mut config = MonitoringConfig::default();
     config.enable_security_metrics = false;

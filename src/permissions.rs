@@ -30,6 +30,7 @@ pub struct AbacRule {
 
 impl AbacPolicy {
     /// Create a new empty ABAC policy.
+    #[allow(clippy::new_without_default)] // adding Default would extend the public API of a release line
     pub fn new() -> Self {
         Self {
             attributes: HashMap::new(),

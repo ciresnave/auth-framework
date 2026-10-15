@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 /// Enhanced RBAC middleware using role-system v1.0
+#[allow(clippy::result_large_err)] // the Err type is part of the existing public signature; boxing it would change the API of a release line
 pub async fn rbac_middleware(
     State(state): State<ApiState>,
     request: Request,
@@ -64,6 +65,7 @@ pub async fn rbac_middleware(
 }
 
 /// Conditional permission middleware for time/location-based access
+#[allow(clippy::result_large_err)] // the Err type is part of the existing public signature; boxing it would change the API of a release line
 pub async fn conditional_permission_middleware(
     State(state): State<ApiState>,
     request: Request,
@@ -107,6 +109,7 @@ pub async fn conditional_permission_middleware(
 }
 
 /// Role elevation middleware for administrative actions
+#[allow(clippy::result_large_err)] // the Err type is part of the existing public signature; boxing it would change the API of a release line
 pub async fn role_elevation_middleware(
     State(state): State<ApiState>,
     request: Request,
@@ -320,7 +323,7 @@ pub fn require_permission(
 /// Basic permission check using auth token (fallback)
 fn check_token_permission(auth_token: &AuthToken, action: &str, resource: &str) -> bool {
     // Check for admin role (has all permissions)
-    if auth_token.roles.contains(&"admin".to_string()) {
+    if auth_token.roles.contains("admin") {
         return true;
     }
 

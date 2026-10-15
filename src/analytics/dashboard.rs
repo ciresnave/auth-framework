@@ -507,13 +507,11 @@ impl DashboardManager {
             .unwrap_or_default();
         let mut total = 0;
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
-                {
-                    if event.event_type == crate::analytics::RbacEventType::RoleAssignment {
-                        total += 1;
-                    }
-                }
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+                && event.event_type == crate::analytics::RbacEventType::RoleAssignment
+            {
+                total += 1;
             }
         }
         Ok(vec![ChartSeries {
@@ -542,13 +540,11 @@ impl DashboardManager {
             .unwrap_or_default();
         let mut total = 0;
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
-                {
-                    if event.event_type == crate::analytics::RbacEventType::PermissionCheck {
-                        total += 1;
-                    }
-                }
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+                && event.event_type == crate::analytics::RbacEventType::PermissionCheck
+            {
+                total += 1;
             }
         }
         Ok(vec![ChartSeries {
@@ -577,15 +573,14 @@ impl DashboardManager {
         let mut total = 0;
         let mut violations = 0;
         for key in keys {
-            if let Ok(Some(data)) = self.storage.get_kv(&key).await {
-                if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+            if let Ok(Some(data)) = self.storage.get_kv(&key).await
+                && let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+            {
+                total += 1;
+                if let Some(action) = &event.action
+                    && (action.contains("Violation") || action.contains("Denied"))
                 {
-                    total += 1;
-                    if let Some(action) = &event.action {
-                        if action.contains("Violation") || action.contains("Denied") {
-                            violations += 1;
-                        }
-                    }
+                    violations += 1;
                 }
             }
         }
@@ -623,14 +618,12 @@ impl DashboardManager {
         let mut count = 0_u64;
 
         for key in &keys {
-            if let Ok(Some(data)) = self.storage.get_kv(key).await {
-                if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
-                {
-                    if let Some(dur) = event.duration_ms {
-                        total_duration_ms += dur as f64;
-                        count += 1;
-                    }
-                }
+            if let Ok(Some(data)) = self.storage.get_kv(key).await
+                && let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+                && let Some(dur) = event.duration_ms
+            {
+                total_duration_ms += dur as f64;
+                count += 1;
             }
         }
 
@@ -666,16 +659,15 @@ impl DashboardManager {
             .unwrap_or_default();
         let mut count = 0u64;
         for key in &keys {
-            if let Ok(Some(data)) = self.storage.get_kv(key).await {
-                if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
-                {
-                    let matches = match event_type {
-                        Some(et) => format!("{:?}", event.event_type) == et,
-                        None => true,
-                    };
-                    if matches {
-                        count += 1;
-                    }
+            if let Ok(Some(data)) = self.storage.get_kv(key).await
+                && let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+            {
+                let matches = match event_type {
+                    Some(et) => format!("{:?}", event.event_type) == et,
+                    None => true,
+                };
+                if matches {
+                    count += 1;
                 }
             }
         }
@@ -706,15 +698,14 @@ impl DashboardManager {
             .unwrap_or_default();
         let mut count = 0u64;
         for key in &keys {
-            if let Ok(Some(data)) = self.storage.get_kv(key).await {
-                if let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
-                {
-                    // Match events whose action or resource contains the query string
-                    let matches = event.action.as_deref().is_some_and(|a| a.contains(query))
-                        || event.resource.as_deref().is_some_and(|r| r.contains(query));
-                    if matches {
-                        count += 1;
-                    }
+            if let Ok(Some(data)) = self.storage.get_kv(key).await
+                && let Ok(event) = serde_json::from_slice::<crate::analytics::AnalyticsEvent>(&data)
+            {
+                // Match events whose action or resource contains the query string
+                let matches = event.action.as_deref().is_some_and(|a| a.contains(query))
+                    || event.resource.as_deref().is_some_and(|r| r.contains(query));
+                if matches {
+                    count += 1;
                 }
             }
         }

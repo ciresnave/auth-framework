@@ -689,17 +689,9 @@ impl WsSecurityConfig {
 /// A builder for [`WsSecurityConfig`].
 ///
 /// Obtain via [`WsSecurityConfig::builder()`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WsSecurityConfigBuilder {
     config: WsSecurityConfig,
-}
-
-impl Default for WsSecurityConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: WsSecurityConfig::default(),
-        }
-    }
 }
 
 impl WsSecurityConfigBuilder {

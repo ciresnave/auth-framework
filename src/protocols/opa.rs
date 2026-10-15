@@ -129,7 +129,7 @@ impl OpaClient {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
             .build()
-            .map_err(|e| AuthError::internal(&format!("HTTP client init failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("HTTP client init failed: {e}")))?;
 
         Ok(Self {
             config,
@@ -191,12 +191,12 @@ impl OpaClient {
         let resp = request
             .send()
             .await
-            .map_err(|e| AuthError::internal(&format!("OPA request failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("OPA request failed: {e}")))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = read_error_body(resp).await;
-            return Err(AuthError::internal(&format!(
+            return Err(AuthError::internal(format!(
                 "OPA returned HTTP {status}: {body}"
             )));
         }
@@ -204,7 +204,7 @@ impl OpaClient {
         let opa_response: OpaResponse = resp
             .json()
             .await
-            .map_err(|e| AuthError::internal(&format!("Invalid OPA response: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("Invalid OPA response: {e}")))?;
 
         // Update cache
         if self.config.enable_cache {
@@ -240,7 +240,7 @@ impl OpaClient {
         let resp = request
             .send()
             .await
-            .map_err(|e| AuthError::internal(&format!("OPA health check failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("OPA health check failed: {e}")))?;
         Ok(resp.status().is_success())
     }
 
@@ -259,11 +259,11 @@ impl OpaClient {
         let resp = request
             .send()
             .await
-            .map_err(|e| AuthError::internal(&format!("OPA policy upload failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("OPA policy upload failed: {e}")))?;
 
         if !resp.status().is_success() {
             let body = read_error_body(resp).await;
-            return Err(AuthError::internal(&format!(
+            return Err(AuthError::internal(format!(
                 "OPA policy upload returned error: {body}"
             )));
         }
@@ -281,11 +281,11 @@ impl OpaClient {
         let resp = request
             .send()
             .await
-            .map_err(|e| AuthError::internal(&format!("OPA policy delete failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("OPA policy delete failed: {e}")))?;
 
         if !resp.status().is_success() {
             let body = read_error_body(resp).await;
-            return Err(AuthError::internal(&format!(
+            return Err(AuthError::internal(format!(
                 "OPA policy delete returned error: {body}"
             )));
         }
@@ -303,11 +303,11 @@ impl OpaClient {
         let resp = request
             .send()
             .await
-            .map_err(|e| AuthError::internal(&format!("OPA data upload failed: {e}")))?;
+            .map_err(|e| AuthError::internal(format!("OPA data upload failed: {e}")))?;
 
         if !resp.status().is_success() {
             let body = read_error_body(resp).await;
-            return Err(AuthError::internal(&format!(
+            return Err(AuthError::internal(format!(
                 "OPA data upload error: {body}"
             )));
         }
@@ -317,7 +317,7 @@ impl OpaClient {
     fn build_static_url(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
-            .map_err(|e| AuthError::internal(&format!("Failed to build OPA URL: {e}")))
+            .map_err(|e| AuthError::internal(format!("Failed to build OPA URL: {e}")))
     }
 
     fn build_api_url(&self, prefix: &str, path: &str) -> Result<Url> {

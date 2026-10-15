@@ -782,10 +782,10 @@ impl TokenExchangeManager {
             return Ok(ExchangeScenario::OnBehalfOf);
         }
 
-        if let Some(audience) = context.audience.as_ref() {
-            if audience != &context.subject_claims.aud {
-                return Ok(ExchangeScenario::AudienceRestriction);
-            }
+        if let Some(audience) = context.audience.as_ref()
+            && audience != &context.subject_claims.aud
+        {
+            return Ok(ExchangeScenario::AudienceRestriction);
         }
 
         if let Some(requested_scope) = &context.scope {
@@ -821,15 +821,14 @@ impl TokenExchangeManager {
                 }
             }
             ExchangeScenario::AudienceRestriction => {
-                if let Some(audience) = context.audience.as_ref() {
-                    if !policy.allowed_audiences.is_empty()
-                        && !policy.allowed_audiences.contains(audience)
-                    {
-                        return Err(AuthError::auth_method(
-                            "token_exchange",
-                            "Audience not allowed",
-                        ));
-                    }
+                if let Some(audience) = context.audience.as_ref()
+                    && !policy.allowed_audiences.is_empty()
+                    && !policy.allowed_audiences.contains(audience)
+                {
+                    return Err(AuthError::auth_method(
+                        "token_exchange",
+                        "Audience not allowed",
+                    ));
                 }
             }
             _ => {}

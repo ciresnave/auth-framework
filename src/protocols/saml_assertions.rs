@@ -558,7 +558,7 @@ impl SamlAssertionValidator {
             if !ALLOWED_METHODS.contains(&confirmation.method.as_str()) {
                 return Err(AuthError::auth_method(
                     "saml",
-                    &format!(
+                    format!(
                         "Unsupported subject confirmation method: {}",
                         confirmation.method
                     ),
@@ -570,35 +570,34 @@ impl SamlAssertionValidator {
                 let now = Utc::now();
 
                 // NotOnOrAfter must not have passed.
-                if let Some(not_on_or_after) = data.not_on_or_after {
-                    if now >= not_on_or_after + self.clock_skew {
-                        return Err(AuthError::auth_method(
-                            "saml",
-                            "Subject confirmation has expired (NotOnOrAfter)",
-                        ));
-                    }
+                if let Some(not_on_or_after) = data.not_on_or_after
+                    && now >= not_on_or_after + self.clock_skew
+                {
+                    return Err(AuthError::auth_method(
+                        "saml",
+                        "Subject confirmation has expired (NotOnOrAfter)",
+                    ));
                 }
 
                 // NotBefore must have passed.
-                if let Some(not_before) = data.not_before {
-                    if now < not_before - self.clock_skew {
-                        return Err(AuthError::auth_method(
-                            "saml",
-                            "Subject confirmation is not yet valid (NotBefore)",
-                        ));
-                    }
+                if let Some(not_before) = data.not_before
+                    && now < not_before - self.clock_skew
+                {
+                    return Err(AuthError::auth_method(
+                        "saml",
+                        "Subject confirmation is not yet valid (NotBefore)",
+                    ));
                 }
 
                 // Recipient must match one of our expected audiences (if we have any).
-                if let Some(ref recipient) = data.recipient {
-                    if !self.expected_audiences.is_empty()
-                        && !self.expected_audiences.contains(recipient)
-                    {
-                        return Err(AuthError::auth_method(
-                            "saml",
-                            "Subject confirmation recipient does not match expected audience",
-                        ));
-                    }
+                if let Some(ref recipient) = data.recipient
+                    && !self.expected_audiences.is_empty()
+                    && !self.expected_audiences.contains(recipient)
+                {
+                    return Err(AuthError::auth_method(
+                        "saml",
+                        "Subject confirmation recipient does not match expected audience",
+                    ));
                 }
             }
         }
