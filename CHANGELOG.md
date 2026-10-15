@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `SecureValidation::validate_username` accepted control characters (for example ``) whenever the
+- **Security-relevant:** `SecureValidation::validate_username` accepted control characters (for example ``) whenever the
   `unicode-support` feature was enabled, because the control-character check lived only in the
   `not(unicode-support)` branch. The check now always runs, as on 0.5.x and main.
 - `AuthError::Internal` reported HTTP 400 from `ResponseError::status_code` while `error_response` returned
