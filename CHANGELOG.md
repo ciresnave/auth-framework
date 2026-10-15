@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc37] - 2026-10-15
+
+### Security
+
+- The `rsa` crate (RUSTSEC-2023-0071, "Marvin Attack", no patched release) is no longer in the default
+  build. `jsonwebtoken` now uses its `aws_lc_rs` provider instead of `rust_crypto` (same algorithm
+  set), RSA JWKS export and the JARM RSA-OAEP JWE paths use `aws-lc-rs`, and the optional
+  `openidconnect` dependency, which carries a hard dependency on `rsa`, is removed. `rsa` is now
+  built only by the `saml` feature (until bergshamra is upgraded) and, through `sqlx-mysql`, by
+  `mysql-storage`.
+
+### Changed
+
+- **Behaviour:** JARM RSA-OAEP recipient keys must now be 2048-8192 bits (the `aws-lc-rs` range);
+  a smaller key is rejected with a warning at start-up instead of being loaded.
+- The `openid-connect` feature is now a no-op alias; nothing in this crate called `openidconnect`.
+  The feature name still resolves. The `aws-lc-rs` dependency is always built (it already was, via
+  `jsonwebtoken`); the `aws-lc-rs` and `fips-compliance` feature names are unchanged.
+
 ## [0.5.0-rc36] - 2026-10-15
 
 ### Changed
