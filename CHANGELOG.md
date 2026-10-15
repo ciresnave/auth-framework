@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc41] - 2026-10-15
+
+### Changed
+
+- CI only: `async-trait` 0.1.89 -> 0.1.92 in `Cargo.lock` stops `clippy::double_must_use` firing on every
+  `#[async_trait]` trait under current stable clippy (the "Run Clippy" step failed on it). The "Run
+  integration tests" workflow step is removed: it ran `cargo test --test integration`, a target that does
+  not exist on this line, and the preceding `--workspace` step already runs every test target.
+
 ## [0.5.0-rc40] - 2026-10-15
 
 ### Security
