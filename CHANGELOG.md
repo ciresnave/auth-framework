@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-10-15
+
+### Removed
+
+- **Breaking:** `SmsKitProvider::AwsSns` and `SmsKitProviderConfig::AwsSns` are removed, completing the
+  `sms-aws-sns` removal from 0.4.11 and matching main (board 204). The variants only logged on this line,
+  and a serialized `AwsSns` provider selection now fails to deserialize; switch to `Twilio` or `Plivo`. The
+  `aws_sns` mentions in `config/methods/mfa.toml` and the smskit example are removed with them.
+  Versioning: this is a breaking change and stays on the 0.4 line as 0.4.13, because 0.5.0 is the next
+  line; the pre-1.0 "second number is the major" rule cannot apply here.
+
 ## [0.4.12] - 2026-10-15
 
 ### Changed
