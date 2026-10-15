@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2024, so it failed before checking anything. It now installs cargo-deny and runs
   `cargo deny --all-features check`, as main does; `CC0-1.0`, `0BSD` and `BSL-1.0` are allowed in deny.toml.
   `spin` 0.9.8 -> 0.9.9 (yanked).
+- Docker builder image `rust:1.88-slim` -> `rust:1.94-slim` (sqlx 0.9 and `rust-version` need 1.94).
 ## [0.5.0-rc40] - 2026-10-15
 
 ### Security
