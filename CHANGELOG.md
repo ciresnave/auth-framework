@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc36] - 2026-10-15
+
+### Changed
+
+- `sqlx` is now built with only the backend a storage feature asks for: `mysql-storage` enables
+  `sqlx/mysql`, `sqlite-storage` enables `sqlx/sqlite`, `postgres-storage` enables `sqlx/postgres`.
+  Before, enabling any one of them compiled `sqlx-mysql` and with it the `rsa` crate
+  (RUSTSEC-2023-0071), so the default build carried `rsa` through a backend nobody asked for. The
+  feature names and public API are unchanged; only `mysql-storage` still builds `sqlx-mysql`.
+
 ## [0.5.0-rc35] - 2026-10-15
 
 ### Fixed
