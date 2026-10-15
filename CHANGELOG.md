@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `testcontainers` 0.25 -> 0.27 (the optional `docker-tests` feature). 0.25 depended on `tokio-tar`
+  0.3.1 (RUSTSEC-2025-0111, no patched release); 0.27 uses the maintained `astral-tokio-tar`. Test
+  infrastructure only, no public API change.
+
 - CI only for the workflow: `ci-cd.yml` runs on pushes and pull requests for `release/**`
   branches, so this line gets the same checks as main. The workflow no longer fails the Slack
   step when no webhook is configured.

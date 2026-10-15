@@ -232,7 +232,7 @@ sqlx = { version = "0.8", features = [
 tokio-postgres = { version = "0.7", optional = true }
 
 # Testing infrastructure (optional)
-testcontainers = { version = "0.25", optional = true }
+testcontainers = { version = "0.27", optional = true }
 html-escape = "0.2.13"
 
 # SMSKit dependencies for next-gen SMS support
