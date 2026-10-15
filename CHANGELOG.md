@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2024; it now installs cargo-deny and runs `cargo deny --all-features check`. `paste` (RUSTSEC-2024-0436)
   and `opentelemetry-jaeger` (RUSTSEC-2025-0123), both unmaintained notices behind optional features, are
   ignored with stated reasons; `0BSD`, `BSL-1.0` and `CC0-1.0` are allowed.
+- Docker builder image `rust:1.75-slim` -> `rust:1.94-slim` (it could not parse edition 2024; `rust-version` is now 1.94).
 ## [0.4.10] - 2026-10-15
 
 ### Removed
