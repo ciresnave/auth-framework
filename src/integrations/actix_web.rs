@@ -473,10 +473,19 @@ mod tests {
         )
         .await;
 
-        // Test request without authorization should fail
+        // Test request without authorization should fail. The middleware rejects by returning
+        // `Err(ActixError)`, which a running server renders through `ResponseError`; the
+        // `call_service` helper instead panics on any service error, so use `try_call_service`
+        // and check the response the server would produce.
         let req = test::TestRequest::get().uri("/protected").to_request();
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_client_error());
+        let err = match test::try_call_service(&app, req).await {
+            Ok(resp) => panic!("request without a token was accepted: {}", resp.status()),
+            Err(err) => err,
+        };
+        assert_eq!(
+            err.as_response_error().status_code(),
+            actix_web::http::StatusCode::UNAUTHORIZED
+        );
 
         unsafe {
             std::env::remove_var("JWT_SECRET");

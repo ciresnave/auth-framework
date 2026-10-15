@@ -803,9 +803,9 @@ impl actix_web::ResponseError for AuthError {
             AuthError::Token(_) => actix_web::http::StatusCode::UNAUTHORIZED,
             AuthError::Permission(_) => actix_web::http::StatusCode::FORBIDDEN,
             AuthError::RateLimit { .. } => actix_web::http::StatusCode::TOO_MANY_REQUESTS,
-            AuthError::Configuration { .. } | AuthError::Storage(_) => {
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
-            }
+            AuthError::Internal { .. }
+            | AuthError::Configuration { .. }
+            | AuthError::Storage(_) => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
             _ => actix_web::http::StatusCode::BAD_REQUEST,
         }
     }

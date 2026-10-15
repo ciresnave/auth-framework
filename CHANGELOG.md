@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.14] - 2026-10-15
+
+### Fixed
+
+- `SecureValidation::validate_username` accepted control characters (for example ``) whenever the
+  `unicode-support` feature was enabled, because the control-character check lived only in the
+  `not(unicode-support)` branch. The check now always runs, as on 0.5.x and main.
+- `AuthError::Internal` reported HTTP 400 from `ResponseError::status_code` while `error_response` returned
+  500; `status_code` now returns 500, consistent with the response body.
+- Test only: `integrations::actix_web::tests::test_auth_middleware` called `call_service`, which panics on a
+  service `Err`; it now uses `try_call_service` and asserts the 401 the server renders. No middleware change.
+
 ## [0.4.13] - 2026-10-15
 
 ### Removed

@@ -162,6 +162,13 @@ impl SecureValidation {
             ));
         }
 
+        // Control characters must always be rejected, regardless of unicode-support feature
+        if username.chars().any(|c| c.is_control()) {
+            return Err(AuthError::validation(
+                "Username contains invalid control characters".to_string(),
+            ));
+        }
+
         // Unicode normalization to prevent bypass attacks
         #[cfg(feature = "unicode-support")]
         {
@@ -176,12 +183,7 @@ impl SecureValidation {
 
         #[cfg(not(feature = "unicode-support"))]
         {
-            // Basic checks without unicode normalization
-            if username.chars().any(|c| c.is_control()) {
-                return Err(AuthError::validation(
-                    "Username contains invalid control characters".to_string(),
-                ));
-            }
+            // No additional checks needed; the control-character check above covers this path.
         }
 
         Ok(())
