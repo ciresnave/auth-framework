@@ -1,5 +1,7 @@
 # Security Advisory - AuthFramework v0.3.0
 
+> **Superseded for MySQL:** `mysql-storage` was removed in 0.4.10; the MySQL-specific mitigations below no longer apply. See `CHANGELOG.md`.
+
 ## Current Security Status
 
 **Overall Status: PRODUCTION READY** ✅

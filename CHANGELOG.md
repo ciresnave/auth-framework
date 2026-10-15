@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-10-15
+
 ### Removed
 
+- **Breaking:** the `mysql-storage` feature and everything behind it are removed: `storage::mysql`
+  (`MySqlStorage`), `StorageConfig::MySQL`, `migrations::MySqlMigrationManager` and the MySQL
+  migration files. `sqlx-mysql` depends on the `rsa` crate (RUSTSEC-2023-0071, no patched release)
+  for `caching_sha2_password`. MySQL was ruled dropped for this project (decision #113). A
+  Cargo-level consequence: `features = ["mysql-storage"]` no longer resolves. Applications on MySQL
+  should stay on a release that still ships it (0.4.8 is the last one published), or move to `postgres-storage` / `redis-storage`.
+- The optional `openidconnect` dependency is removed (it has a hard dependency on `rsa`); nothing in
+  this crate called it, and the `openid-connect` feature stays as a no-op alias.
 - **Breaking:** the `sms-aws-sns` optional dependency (and the `sms-aws-sns` feature it implied) is
   removed from the `smskit` feature, and `actix-web` is built with `default-features = false`
   (`macros` only). The crate never sent through `sms-aws-sns` on this line (the AWS SNS provider
@@ -16,15 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rustls-webpki` 0.101 / `h2` 0.3 stack that carries open advisories (RUSTSEC-2026-0098/0099/
   0104/0258, -0346/0349). Applications that enable actix-web's `http2` feature (or compression or
   cookies) must enable them on their own `actix-web` dependency. The security audit for this line
-  now reports only RUSTSEC-2023-0071 (`rsa`) and RUSTSEC-2025-0111 (`tokio-tar`), neither with a
-  patched release.
+  reported only RUSTSEC-2023-0071 (`rsa`) and RUSTSEC-2025-0111 (`tokio-tar`), neither with a
+  patched release; both are removed below.
+
+### Security
+
+- `cargo tree -i rsa --all-features` is now empty on this line, and `tokio-tar` (RUSTSEC-2025-0111) is
+  gone with the `testcontainers` bump below. The security audit for this line reports neither.
 
 ### Changed
 
-- `sqlx` is built with only the backend a storage feature asks for: `postgres-storage` enables
-  `sqlx/postgres`, `mysql-storage` enables `sqlx/mysql`. Before, `postgres-storage` (a default feature)
-  compiled `sqlx-mysql` and with it the `rsa` crate (RUSTSEC-2023-0071). Feature names and public API
-  are unchanged; only `mysql-storage` still builds `sqlx-mysql`.
+- `sqlx` is built with only the backend the storage feature asks for (`postgres-storage` enables
+  `sqlx/postgres`). Before, `postgres-storage` (a default feature) also compiled `sqlx-mysql` and with
+  it the `rsa` crate (RUSTSEC-2023-0071). Feature names and public API are unchanged.
 
 - `testcontainers` 0.25 -> 0.27 (the optional `docker-tests` feature). 0.25 depended on `tokio-tar`
   0.3.1 (RUSTSEC-2025-0111, no patched release); 0.27 uses the maintained `astral-tokio-tar`. Test

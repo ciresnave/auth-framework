@@ -68,13 +68,6 @@ pub enum StorageConfig {
         table_prefix: String,
     },
 
-    /// MySQL storage
-    #[cfg(feature = "mysql-storage")]
-    MySQL {
-        connection_string: String,
-        table_prefix: String,
-    },
-
     /// Custom storage backend
     Custom(String),
 }
@@ -532,16 +525,9 @@ impl AuthConfig {
                 if self.is_production_environment() && !self.is_test_environment() {
                     return Err(AuthError::config(
                         "Memory storage is not suitable for production environments. \
-                         Use PostgreSQL, Redis, or MySQL storage.",
+                         Use PostgreSQL or Redis storage.",
                     ));
                 }
-            }
-            #[cfg(feature = "mysql-storage")]
-            StorageConfig::MySQL { .. } => {
-                tracing::warn!(
-                    "MySQL storage has known RSA vulnerability (RUSTSEC-2023-0071). \
-                     Consider using PostgreSQL for enhanced security."
-                );
             }
             _ => {} // PostgreSQL and Redis are production-ready
         }
