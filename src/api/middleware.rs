@@ -68,6 +68,7 @@ fn parse_forwarded_addr(entry: &str) -> Option<IpAddr> {
 }
 
 /// Authentication middleware
+#[allow(clippy::result_large_err)] // the Err type is part of the existing public signature; boxing it would change the API of a release line
 pub async fn auth_middleware(
     State(state): State<ApiState>,
     mut request: Request,
@@ -104,6 +105,7 @@ pub async fn auth_middleware(
 }
 
 /// Admin authorization middleware
+#[allow(clippy::result_large_err)] // the Err type is part of the existing public signature; boxing it would change the API of a release line
 pub async fn admin_middleware(
     State(_state): State<ApiState>,
     request: Request,
@@ -128,6 +130,7 @@ pub async fn admin_middleware(
 }
 
 /// Rate limiting middleware
+#[allow(clippy::result_large_err)] // the Err type is part of the existing public signature; boxing it would change the API of a release line
 pub async fn rate_limit_middleware(request: Request, next: Next) -> Result<Response, Response> {
     // In a real implementation, use a distributed rate limiter like Redis
     // For now, just add rate limit headers
@@ -233,6 +236,7 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
 }
 
 /// Request timeout middleware
+#[allow(clippy::result_large_err)] // the Err type is part of the existing public signature; boxing it would change the API of a release line
 pub async fn timeout_middleware(request: Request, next: Next) -> Result<Response, Response> {
     // Set a 30-second timeout for all requests
     match tokio::time::timeout(Duration::from_secs(30), next.run(request)).await {
@@ -270,5 +274,3 @@ pub fn check_role(auth_token: &crate::tokens::AuthToken, required_role: &str) ->
     auth_token.roles.contains(&required_role.to_string())
         || auth_token.roles.contains(&"admin".to_string()) // Admin has all roles
 }
-
-

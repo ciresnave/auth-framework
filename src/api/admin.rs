@@ -488,5 +488,3 @@ pub async fn get_audit_logs(
         None => ApiResponse::unauthorized_typed(),
     }
 }
-
-

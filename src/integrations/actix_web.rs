@@ -275,13 +275,13 @@ impl<S: AuthorizationStorage + 'static> RequirePermission<S> {
         let user_id = claims.sub;
 
         // PRODUCTION FIX: Validate specific user ID if required
-        if let Some(expected_id) = &self.expected_user_id {
-            if user_id != *expected_id {
-                return Err(AuthError::access_denied(format!(
-                    "Token user ID '{}' does not match expected user ID '{}'",
-                    user_id, expected_id
-                )));
-            }
+        if let Some(expected_id) = &self.expected_user_id
+            && user_id != *expected_id
+        {
+            return Err(AuthError::access_denied(format!(
+                "Token user ID '{}' does not match expected user ID '{}'",
+                user_id, expected_id
+            )));
         }
 
         // Check if user has the required permission
@@ -473,10 +473,19 @@ mod tests {
         )
         .await;
 
-        // Test request without authorization should fail
+        // Test request without authorization should fail. The middleware rejects by returning
+        // `Err(ActixError)`, which a running server renders through `ResponseError`; the
+        // `call_service` helper instead panics on any service error, so use `try_call_service`
+        // and check the response the server would produce.
         let req = test::TestRequest::get().uri("/protected").to_request();
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_client_error());
+        let err = match test::try_call_service(&app, req).await {
+            Ok(resp) => panic!("request without a token was accepted: {}", resp.status()),
+            Err(err) => err,
+        };
+        assert_eq!(
+            err.as_response_error().status_code(),
+            actix_web::http::StatusCode::UNAUTHORIZED
+        );
 
         unsafe {
             std::env::remove_var("JWT_SECRET");

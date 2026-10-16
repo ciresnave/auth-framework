@@ -842,63 +842,49 @@ impl DeviceFingerprintGenerator {
 
         match maxminddb::Reader::open_readfile(&db_path) {
             Ok(reader) => {
-                match reader.lookup::<maxminddb::geoip2::City>((*ip).into()) {
-                    Ok(Some(city)) => {
-                        let mut location_parts = Vec::new();
+                match reader.lookup((*ip).into()) {
+                    Ok(result) => match result.decode::<maxminddb::geoip2::City>() {
+                        Ok(Some(city)) => {
+                            let mut location_parts = Vec::new();
 
-                        // Build location string from MaxMind data
-                        if let Some(country) = city.country.and_then(|c| c.names)
-                            && let Some(name) = country.get("en")
-                        {
-                            location_parts.push(format!("country:{}", name));
-                        }
-
-                        if let Some(subdivisions) = city.subdivisions
-                            && let Some(subdivision) = subdivisions.first()
-                            && let Some(names) = &subdivision.names
-                            && let Some(name) = names.get("en")
-                        {
-                            location_parts.push(format!("region:{}", name));
-                        }
-
-                        if let Some(city_data) = city.city.and_then(|c| c.names)
-                            && let Some(name) = city_data.get("en")
-                        {
-                            location_parts.push(format!("city:{}", name));
-                        }
-
-                        if let Some(location) = city.location
-                            && let (Some(lat), Some(lon)) = (location.latitude, location.longitude)
-                        {
-                            location_parts.push(format!("coords:{:.4},{:.4}", lat, lon));
-                        }
-
-                        // Add threat intelligence from MaxMind
-                        if let Some(traits) = city.traits {
-                            let mut risk_indicators = Vec::new();
-
-                            if traits.is_anonymous_proxy == Some(true) {
-                                risk_indicators.push("proxy");
-                            }
-                            if traits.is_satellite_provider == Some(true) {
-                                risk_indicators.push("satellite");
-                            }
-                            if traits.is_anycast == Some(true) {
-                                risk_indicators.push("anycast");
+                            // Build location string from MaxMind data
+                            if let Some(name) = city.country.names.english {
+                                location_parts.push(format!("country:{}", name));
                             }
 
-                            if !risk_indicators.is_empty() {
-                                location_parts
-                                    .push(format!("threats:{}", risk_indicators.join(",")));
+                            if let Some(subdivision) = city.subdivisions.first()
+                                && let Some(name) = subdivision.names.english
+                            {
+                                location_parts.push(format!("region:{}", name));
                             }
-                        }
 
-                        Some(location_parts.join("|"))
-                    }
-                    Ok(None) => {
-                        log::debug!("MaxMind lookup returned no data for {}", ip);
-                        None
-                    }
+                            if let Some(name) = city.city.names.english {
+                                location_parts.push(format!("city:{}", name));
+                            }
+
+                            let location = &city.location;
+                            if let (Some(lat), Some(lon)) = (location.latitude, location.longitude)
+                            {
+                                location_parts.push(format!("coords:{:.4},{:.4}", lat, lon));
+                            }
+
+                            // Threat indicators: maxminddb 0.27 only exposes `is_anycast`
+                            // (the proxy / satellite flags are no longer in the model).
+                            if city.traits.is_anycast == Some(true) {
+                                location_parts.push("threats:anycast".to_string());
+                            }
+
+                            Some(location_parts.join("|"))
+                        }
+                        Ok(None) => {
+                            log::debug!("MaxMind lookup returned no data for {}", ip);
+                            None
+                        }
+                        Err(e) => {
+                            log::debug!("MaxMind decode failed for {}: {}", ip, e);
+                            None
+                        }
+                    },
                     Err(e) => {
                         log::debug!("MaxMind lookup failed for {}: {}", ip, e);
                         None

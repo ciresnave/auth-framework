@@ -12,26 +12,52 @@
 //!
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
-//! use axum::{Router, routing::get};
+//! use auth_framework::integrations::axum::auth_middleware;
+//! use axum::{Router, middleware, routing::get};
+//! use std::sync::Arc;
 //!
-//! let auth = AuthFramework::quick_start()
-//!     .jwt_auth_from_env()
-//!     .with_axum()
-//!     .build().await?;
+//! async fn public_handler() -> &'static str {
+//!     "public"
+//! }
 //!
-//! let app = Router::new()
+//! async fn protected_handler() -> &'static str {
+//!     "protected"
+//! }
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let auth = Arc::new(
+//!     AuthFramework::quick_start()
+//!         .jwt_auth_from_env()
+//!         .with_axum()
+//!         .build().await?,
+//! );
+//!
+//! // Routes behind the authentication middleware
+//! let protected = Router::new()
+//!     .route("/protected", get(protected_handler))
+//!     .route_layer(middleware::from_fn_with_state(auth.clone(), auth_middleware));
+//!
+//! let app: Router = Router::new()
 //!     .route("/public", get(public_handler))
-//!     .route("/protected", get(protected(protected_handler)))
-//!     .route("/admin", get(protected(admin_handler).require_role("admin")))
+//!     .merge(protected)
 //!     .with_state(auth);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Advanced Usage
 //!
 //! ```rust,no_run
-//! use auth_framework::prelude::*;
-//! use auth_framework::integrations::axum::*;
+//! use auth_framework::AuthFramework;
+//! use auth_framework::integrations::axum::{AuthRouter, auth_middleware};
+//! use axum::{Router, middleware, routing::get};
+//! use std::sync::Arc;
 //!
+//! async fn profile_handler() -> &'static str {
+//!     "profile"
+//! }
+//!
+//! # async fn example(auth: Arc<AuthFramework>) {
 //! // Custom auth routes
 //! let auth_routes = AuthRouter::new()
 //!     .login_route("/auth/login")
@@ -39,11 +65,16 @@
 //!     .refresh_route("/auth/refresh")
 //!     .build();
 //!
-//! let app = Router::new()
-//!     .merge(auth_routes)
+//! // Routes behind the authentication middleware
+//! let protected = Router::new()
 //!     .route("/api/profile", get(profile_handler))
-//!     .layer(RequireAuth::new())
+//!     .route_layer(middleware::from_fn_with_state(auth.clone(), auth_middleware));
+//!
+//! let app: Router = Router::new()
+//!     .merge(auth_routes)
+//!     .merge(protected)
 //!     .with_state(auth);
+//! # }
 //! ```
 
 use crate::{AuthError, AuthFramework, AuthToken};
@@ -127,6 +158,8 @@ where
 /// Protected handler wrapper
 #[derive(Clone)]
 pub struct ProtectedHandler<F> {
+    #[allow(dead_code)]
+    // unused on this release line; kept unchanged in this mechanical clippy pass
     handler: F,
     required_permissions: Vec<String>,
     required_roles: Vec<String>,
@@ -134,6 +167,7 @@ pub struct ProtectedHandler<F> {
 
 impl RequireAuth {
     /// Create a new authentication middleware
+    #[allow(clippy::new_without_default)] // adding Default would extend the public API of a release line
     pub fn new() -> Self {
         Self {
             required_permissions: Vec::new(),
@@ -206,6 +240,7 @@ impl<F> ProtectedHandler<F> {
 
 impl AuthRouter {
     /// Create a new auth router builder
+    #[allow(clippy::new_without_default)] // adding Default would extend the public API of a release line
     pub fn new() -> Self {
         Self {
             login_path: "/auth/login".to_string(),
@@ -281,6 +316,7 @@ async fn login_handler(
     Ok(Json(response))
 }
 
+#[allow(dead_code)] // unused on this release line; kept unchanged in this mechanical clippy pass
 async fn logout_handler(
     State(_auth): State<Arc<AuthFramework>>,
     user: AuthenticatedUser,
@@ -303,6 +339,7 @@ async fn refresh_handler(
     ))
 }
 
+#[allow(dead_code)] // unused on this release line; kept unchanged in this mechanical clippy pass
 async fn profile_handler(user: AuthenticatedUser) -> Result<impl IntoResponse, AuthError> {
     Ok(Json(UserInfo {
         id: user.user_id,
@@ -339,8 +376,8 @@ fn extract_bearer_token(request: &Request) -> Result<String, AuthError> {
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| AuthError::Token(crate::errors::TokenError::Missing))?;
 
-    if auth_header.starts_with("Bearer ") {
-        Ok(auth_header[7..].to_string())
+    if let Some(token) = auth_header.strip_prefix("Bearer ") {
+        Ok(token.to_string())
     } else {
         Err(AuthError::Token(crate::errors::TokenError::Invalid {
             message: "Authorization header must use Bearer scheme".to_string(),
@@ -408,8 +445,8 @@ fn extract_bearer_token_from_parts(parts: &Parts) -> Result<String, AuthError> {
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| AuthError::Token(crate::errors::TokenError::Missing))?;
 
-    if auth_header.starts_with("Bearer ") {
-        Ok(auth_header[7..].to_string())
+    if let Some(token) = auth_header.strip_prefix("Bearer ") {
+        Ok(token.to_string())
     } else {
         Err(AuthError::Token(crate::errors::TokenError::Invalid {
             message: "Authorization header must use Bearer scheme".to_string(),

@@ -3,7 +3,7 @@ use crate::errors::{AuthError, Result};
 use base64::Engine;
 use ring::rand::{SecureRandom, SystemRandom};
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 
 /// A secure string that is automatically zeroized when dropped
 #[derive(Debug, Clone, ZeroizeOnDrop)]
@@ -73,29 +73,10 @@ impl SecureComparison {
     /// Compare strings with timing attack protection
     /// This function always takes the same amount of time regardless of where differences occur
     pub fn secure_string_compare(a: &str, b: &str) -> bool {
-        // Normalize lengths to prevent length-based timing attacks
-        let max_len = a.len().max(b.len()).min(1024); // Cap at reasonable length
-
-        let mut a_padded = vec![0u8; max_len];
-        let mut b_padded = vec![0u8; max_len];
-
-        // Copy actual data
-        let a_bytes = a.as_bytes();
-        let b_bytes = b.as_bytes();
-
-        a_padded[..a_bytes.len().min(max_len)]
-            .copy_from_slice(&a_bytes[..a_bytes.len().min(max_len)]);
-        b_padded[..b_bytes.len().min(max_len)]
-            .copy_from_slice(&b_bytes[..b_bytes.len().min(max_len)]);
-
-        // Constant-time comparison
-        let result = a_padded.ct_eq(&b_padded).into() && a.len() == b.len();
-
-        // Explicitly clear sensitive data
-        a_padded.zeroize();
-        b_padded.zeroize();
-
-        result
+        // Every byte is compared: an earlier version truncated both inputs to 1024 bytes, so two
+        // longer strings that differed only after that point compared equal. The length itself is
+        // not secret, and `ct_eq` examines all bytes of equal-length slices without early exit.
+        a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()))
     }
 
     /// Verify that two tokens match using constant-time comparison
@@ -162,6 +143,13 @@ impl SecureValidation {
             ));
         }
 
+        // Control characters must always be rejected, regardless of unicode-support feature
+        if username.chars().any(|c| c.is_control()) {
+            return Err(AuthError::validation(
+                "Username contains invalid control characters".to_string(),
+            ));
+        }
+
         // Unicode normalization to prevent bypass attacks
         #[cfg(feature = "unicode-support")]
         {
@@ -176,12 +164,7 @@ impl SecureValidation {
 
         #[cfg(not(feature = "unicode-support"))]
         {
-            // Basic checks without unicode normalization
-            if username.chars().any(|c| c.is_control()) {
-                return Err(AuthError::validation(
-                    "Username contains invalid control characters".to_string(),
-                ));
-            }
+            // No additional checks needed; the control-character check above covers this path.
         }
 
         Ok(())
@@ -291,7 +274,7 @@ impl SecureValidation {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::constant_time_compare;
+/// use auth_framework::security::secure_utils::constant_time_compare;
 ///
 /// let token1 = b"secure_token_value";
 /// let token2 = b"secure_token_value";
@@ -328,7 +311,7 @@ pub fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::generate_secure_token;
+/// use auth_framework::security::secure_utils::generate_secure_token;
 ///
 /// // Generate a 256-bit (32-byte) token
 /// let token = generate_secure_token(32).unwrap();
@@ -363,7 +346,7 @@ pub fn generate_secure_token(byte_length: usize) -> Result<String> {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::hash_password;
+/// use auth_framework::security::secure_utils::hash_password;
 ///
 /// let password = "user_password_123";
 /// let hash = hash_password(password).unwrap();
@@ -406,7 +389,7 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// # Example
 ///
 /// ```rust
-/// use auth_framework::secure_utils::{hash_password, verify_password};
+/// use auth_framework::security::secure_utils::{hash_password, verify_password};
 ///
 /// let password = "user_password_123";
 /// let hash = hash_password(password).unwrap();
@@ -546,7 +529,7 @@ mod tests {
         for byte_len in [8, 16, 32, 64] {
             let token = SecureRandomGen::generate_string(byte_len).unwrap();
             // Base64url encoding: 4 chars per 3 bytes, no padding
-            let expected_len = (byte_len * 4 + 2) / 3;
+            let expected_len = (byte_len * 4).div_ceil(3);
             assert!(
                 token.len() >= expected_len - 2 && token.len() <= expected_len + 2,
                 "Token length {} not in expected range for {} bytes",

@@ -289,7 +289,7 @@ impl DashMapMemoryStorage {
             ));
         }
 
-        aged_tokens.sort_by(|a, b| b.2.cmp(&a.2)); // Sort by age descending
+        aged_tokens.sort_by_key(|t| std::cmp::Reverse(t.2)); // Sort by age descending
         aged_tokens
     }
 
@@ -307,7 +307,7 @@ impl DashMapMemoryStorage {
             ));
         }
 
-        aged_sessions.sort_by(|a, b| b.2.cmp(&a.2)); // Sort by age descending
+        aged_sessions.sort_by_key(|t| std::cmp::Reverse(t.2)); // Sort by age descending
         aged_sessions
     }
 
@@ -390,6 +390,20 @@ impl DashMapMemoryStorage {
                 self.user_to_sessions.remove(user_id);
             }
         }
+    }
+
+    /// Return all KV keys that start with `prefix`.
+    pub fn list_kv_keys_by_prefix(&self, prefix: &str) -> Vec<String> {
+        self.kv_store
+            .iter()
+            .filter_map(|entry| {
+                if entry.key().starts_with(prefix) {
+                    Some(entry.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }
 
@@ -1036,4 +1050,3 @@ mod tests {
         }
     }
 }
-

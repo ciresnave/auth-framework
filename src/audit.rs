@@ -840,5 +840,3 @@ mod tests {
         assert_eq!(metadata.endpoint, Some("/api/auth/login".to_string()));
     }
 }
-
-

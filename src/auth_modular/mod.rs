@@ -32,7 +32,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use auth_framework::auth_modular::AuthFramework;
 //! use auth_framework::config::AuthConfig;
 //!
@@ -55,8 +55,8 @@ pub mod mfa;
 pub mod session_manager;
 pub mod user_manager;
 
-use crate::config::AuthConfig;
 use crate::authentication::credentials::{Credential, CredentialMetadata};
+use crate::config::AuthConfig;
 use crate::errors::{AuthError, MfaError, Result};
 use crate::methods::{AuthMethod, AuthMethodEnum, MethodResult, MfaChallenge};
 use crate::permissions::{Permission, PermissionChecker};
@@ -676,6 +676,3 @@ mod tests {
         let _user_manager = framework.user_manager();
     }
 }
-
-
-

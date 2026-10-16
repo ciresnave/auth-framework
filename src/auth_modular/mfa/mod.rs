@@ -63,20 +63,21 @@ pub use sms_kit::SmsKitManager as SmsManager;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::auth_modular::mfa::MfaManager;
+/// use std::sync::Arc;
 ///
+/// # async fn example(storage: Arc<dyn auth_framework::storage::AuthStorage>) -> Result<(), Box<dyn std::error::Error>> {
 /// // Create MFA manager with storage backend
 /// let mfa_manager = MfaManager::new(storage);
 ///
-/// // Setup TOTP for a user
-/// let setup_result = mfa_manager.totp.setup_totp("user123", "user@example.com").await?;
+/// // Generate a TOTP secret for a user (store it and show QR code to the user)
+/// let secret = mfa_manager.totp.generate_secret("user123").await?;
 ///
-/// // Generate challenge
-/// let challenge = mfa_manager.create_challenge("user123", MfaMethodType::Totp).await?;
-///
-/// // Verify user's response
-/// let verification = mfa_manager.verify_challenge(&challenge.id, "123456").await?;
+/// // Verify a TOTP code during an authentication attempt
+/// let is_valid = mfa_manager.totp.verify_code("user123", "123456").await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Thread Safety
@@ -788,7 +789,11 @@ mod tests {
             .complete_cross_method_step(&cross.id, MfaMethod::Totp, &code)
             .await
             .unwrap();
-        assert!(res.success, "a valid TOTP code must complete the step (error={:?})", res.error);
+        assert!(
+            res.success,
+            "a valid TOTP code must complete the step (error={:?})",
+            res.error
+        );
     }
 
     /// Regression test for issue #24: `generate_secret` used to emit a raw,

@@ -1,0 +1,59 @@
+# Cargo-deny configuration for AuthFramework
+# Security-first configuration for authentication framework
+
+[advisories]
+    # Vulnerability database settings
+    db-path = "~/.cargo/advisory-db"
+    db-urls = ["https://github.com/RustSec/advisory-db"]
+
+    # Security-first approach: Only allow explicitly documented exceptions
+    # This forces explicit review and justification of ALL security issues
+    ignore = [
+        # RUSTSEC-2023-0071 (rsa, Marvin Attack, no patched release) is not ignored: `rsa` is
+        # no longer in Cargo.lock (mysql-storage and the openidconnect dependency were removed,
+        # and sqlx 0.9 does not list sqlx-mysql's rsa).
+        # `unsafe-libyaml` unmaintained (RUSTSEC-2024-0449), via serde_yaml 0.9, which this
+        # line uses directly for YAML config (src/admin/cli.rs, src/config, src/deployment).
+        # Impact: none known; it is an unmaintained notice, not a vulnerability. Main replaced
+        # serde_yaml with serde-saphyr, a source change not made on this release line.
+        "RUSTSEC-2024-0449",
+        # `paste` (RUSTSEC-2024-0436) and `opentelemetry-jaeger` (RUSTSEC-2025-0123) are
+        # unmaintained notices, not vulnerabilities, reached only through optional features
+        # (cryptoki, the opentelemetry exporter). Replacing them is a feature-level change
+        # this release line does not take.
+        "RUSTSEC-2024-0436",
+        "RUSTSEC-2025-0123",
+    ]
+
+[licenses]
+    # License policy - allow common open source licenses
+    allow = [
+        "Apache-2.0 WITH LLVM-exception",
+        "0BSD",                           # BSD Zero Clause; fully permissive
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "BSL-1.0",                        # Boost Software License; permissive (xxhash-rust)
+        "CC0-1.0",                        # tiny-keccak (via ordered-multimap/const-random); public-domain dedication
+        "CDLA-Permissive-2.0",            # Community Data License Agreement - for webpki-roots
+        "ISC",
+        "MIT",
+        "MPL-2.0",                        # Mozilla Public License 2.0 - weak copyleft, commercial-friendly
+        "Unicode-3.0",                    # Unicode License v3 - for ICU components
+        "Zlib",                           # Zlib license - very permissive, commercial-friendly
+    ]
+    # Confidence threshold for license detection
+    confidence-threshold = 0.8
+
+[bans]
+    # Crate banning rules
+    highlight         = "all"   # Highlight all issues
+    multiple-versions = "warn"  # Allow multiple versions but warn
+    wildcards         = "allow" # Allow wildcard dependencies
+
+[sources]
+    # Source repository settings
+    allow-git        = []
+    allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
+    unknown-git      = "warn"                                           # Warn about unknown git sources
+    unknown-registry = "warn"                                           # Warn about unknown registries

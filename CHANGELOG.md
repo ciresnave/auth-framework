@@ -7,6 +7,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-10-16
+
+### Fixed
+
+- CI only: removed the `Run integration tests` step of `ci-cd.yml`. It ran `cargo test --test integration`, a
+  target this line does not have (the integration tests are `tests/integration_tests.rs`, already run by
+  `cargo test --all-features --workspace`), so the Test Suite failed on both stable and beta. Same removal as 0.5.x.
+
+## [0.4.18] - 2026-10-16
+
+### Security
+
+- `SecureComparison::secure_string_compare` (and `verify_token`, which calls it) truncated both inputs to
+  1024 bytes before comparing, so two strings of equal length that differed only after byte 1024 compared
+  equal. It now compares every byte. Tokens and secrets are normally far shorter than 1024 bytes, so
+  practical exposure is small, but a verification helper must not ignore input.
+
+### Fixed
+
+- Test only: `test_timing_attack_resistance` compared two string literals against a 1 ms wall-clock bound,
+  which measured scheduler noise and exercised no crate code (it failed under CPU load). It is replaced by
+  tests of `constant_time_compare` (a mismatch at every byte position is detected; lengths differ) and of
+  `secure_string_compare` over inputs around and beyond 1024 bytes.
+
+## [0.4.17] - 2026-10-16
+
+### Fixed
+
+- Documentation only: 36 doc examples did not compile (wrong import paths such as `auth_framework::server::X`
+  and `auth_framework::secure_utils`, `await` outside `async`, unbound variables, `?` on a non-`Result`,
+  a nonexistent `AdminInterface`, `AuthError::RateLimited { retry_after }`), so `cargo test --doc` failed.
+  They are corrected, with `no_run` where an example needs keys, a database or network. No code changed.
+- Known gap, not changed here: `integrations::axum::AuthenticatedUser` cannot be used as a handler argument
+  with `Arc<AuthFramework>` state, because its `FromRequestParts` impl requires
+  `Arc<AuthFramework>: FromRequestParts<S>`. The axum examples use plain handlers behind `auth_middleware`.
+
+## [0.4.16] - 2026-10-16
+
+### Security
+
+- `AuthFramework::get_permission_audit_logs` returned three hardcoded, fabricated log entries (for users
+  `user123`, `user456`, `user789`) and ignored its `user_id`, `action`, `resource` and `limit` arguments, so a
+  security API reported audit history that never happened. It now returns the recorded permission and role
+  audit events (newest first), filtered by `user_id`, `action` (case-insensitive, matched against the event
+  description and details) and `resource` (resource type or id), then truncated to `limit`. An empty audit log
+  returns an empty list. The entry text format changed to `<time> - <EventType> user=<id> outcome=<Outcome> - <description>`.
+  Callers that parsed the old placeholder strings must update. This matches 0.5.x and main.
+  To make that possible the in-memory audit store can now list its events: `MemoryStorage`'s audit
+  queries (`query_events`, `count_events`, and the statistics built on them) previously always saw an empty
+  event list because the key lister was a stub. They now see recorded events.
+
+## [0.4.15] - 2026-10-16
+
+### Fixed
+
+- Test only: the integration tests used a JWT secret (`"test-secret"`, 11 characters) that 0.4.x config
+  validation rejects (minimum 32); 41 call sites now use a 39-character secret. No validation change.
+- Test only: `security_validation_test` and `security_validation_critical` signed tokens with the configured
+  secret but never called `AuthFramework::initialize()`, so the manager still held its temporary secret and
+  rejected them as "Invalid token format". Both now initialize first.
+- Test only: `test_security_audit_documentation_exists` checked for a `CRITICAL_SECURITY_AUDIT_REPORT.md`
+  that no release line ships; it now checks `SECURITY_GUIDE.md`.
+
+## [0.4.14] - 2026-10-15
+
+### Fixed
+
+- **Security-relevant:** `SecureValidation::validate_username` accepted control characters (for example ``) whenever the
+  `unicode-support` feature was enabled, because the control-character check lived only in the
+  `not(unicode-support)` branch. The check now always runs, as on 0.5.x and main.
+- `AuthError::Internal` reported HTTP 400 from `ResponseError::status_code` while `error_response` returned
+  500; `status_code` now returns 500, consistent with the response body.
+- Test only: `integrations::actix_web::tests::test_auth_middleware` called `call_service`, which panics on a
+  service `Err`; it now uses `try_call_service` and asserts the 401 the server renders. No middleware change.
+
+## [0.4.13] - 2026-10-15
+
+### Removed
+
+- **Breaking:** `SmsKitProvider::AwsSns` and `SmsKitProviderConfig::AwsSns` are removed, completing the
+  `sms-aws-sns` removal from 0.4.11 and matching main (board 204). The variants only logged on this line,
+  and a serialized `AwsSns` provider selection now fails to deserialize; switch to `Twilio` or `Plivo`. The
+  `aws_sns` mentions in `config/methods/mfa.toml` and the smskit example are removed with them.
+  Versioning: this is a breaking change and stays on the 0.4 line as 0.4.13, because 0.5.0 is the next
+  line; the pre-1.0 "second number is the major" rule cannot apply here.
+
+## [0.4.12] - 2026-10-15
+
+### Changed
+
+- CI: `cargo clippy --all-targets --all-features -- -D warnings` passes again on stable and beta (mechanical,
+  behaviour-neutral: `async-trait` 0.1.89 -> 0.1.92 clears `double_must_use`; `sort_by_key`, `strip_prefix`
+  and similar rewrites; per-site `#[allow]` with a stated reason where the fix would change public API
+  or remove code). No functional change.
+- CI: the Docker test image is built with `load: true` so `docker run authframework:test` finds it.
+
+## [0.4.11] - 2026-10-15
+
+### Security
+
+- `sqlx` 0.8 -> 0.9: `rsa` (RUSTSEC-2023-0071) is no longer listed in `Cargo.lock` at all (sqlx 0.8 kept a
+  `sqlx-mysql` stub entry that pulled it in), so lockfile scanners no longer report it.
+  `cargo audit` passes. `anyhow` 1.0.99 -> 1.0.104 (RUSTSEC-2026-0190) and `rand` 0.9.2 -> 0.9.5
+  (RUSTSEC-2026-0097) are raised in the lockfile.
+
+### Changed
+
+- **MSRV is now 1.94** (`rust-version`), the minimum sqlx 0.9 supports. The `runtime-tokio-rustls` sqlx
+  feature is now `runtime-tokio` + `tls-rustls` (same combination); no source change.
+- CI: add `deny.toml` so the cargo-deny job has a licence and advisory policy (it had none and failed
+  on every crate). `unsafe-libyaml` (RUSTSEC-2024-0449, unmaintained, via `serde_yaml`) is ignored with a
+  stated reason; replacing `serde_yaml` is a source change left to main.
+- CI: the cargo-deny job used `EmbarkStudios/cargo-deny-action@v1`, whose bundled Cargo cannot parse edition
+  2024; it now installs cargo-deny and runs `cargo deny --all-features check`. `paste` (RUSTSEC-2024-0436)
+  and `opentelemetry-jaeger` (RUSTSEC-2025-0123), both unmaintained notices behind optional features, are
+  ignored with stated reasons; `0BSD`, `BSL-1.0` and `CC0-1.0` are allowed.
+- Docker builder image `rust:1.75-slim` -> `rust:1.94-slim` (it could not parse edition 2024; `rust-version` is now 1.94).
+## [0.4.10] - 2026-10-15
+
+### Removed
+
+- **Breaking:** the `mysql-storage` feature and everything behind it are removed: `storage::mysql`
+  (`MySqlStorage`), `StorageConfig::MySQL`, `migrations::MySqlMigrationManager` and the MySQL
+  migration files. `sqlx-mysql` depends on the `rsa` crate (RUSTSEC-2023-0071, no patched release)
+  for `caching_sha2_password`. MySQL was ruled dropped for this project (decision #113). A
+  Cargo-level consequence: `features = ["mysql-storage"]` no longer resolves. Applications on MySQL
+  should stay on a release that still ships it (0.4.8 is the last one published), or move to `postgres-storage` / `redis-storage`.
+- The optional `openidconnect` dependency is removed (it has a hard dependency on `rsa`); nothing in
+  this crate called it, and the `openid-connect` feature stays as a no-op alias.
+- **Breaking:** the `sms-aws-sns` optional dependency (and the `sms-aws-sns` feature it implied) is
+  removed from the `smskit` feature, and `actix-web` is built with `default-features = false`
+  (`macros` only). The crate never sent through `sms-aws-sns` on this line (the AWS SNS provider
+  only logs), so runtime behaviour is unchanged; the dependency pulled a legacy `rustls` 0.21 /
+  `rustls-webpki` 0.101 / `h2` 0.3 stack that carries open advisories (RUSTSEC-2026-0098/0099/
+  0104/0258, -0346/0349). Applications that enable actix-web's `http2` feature (or compression or
+  cookies) must enable them on their own `actix-web` dependency. The security audit for this line
+  reported only RUSTSEC-2023-0071 (`rsa`) and RUSTSEC-2025-0111 (`tokio-tar`), neither with a
+  patched release; both are removed below.
+
+### Security
+
+- `cargo tree -i rsa --all-features` is now empty on this line, and `tokio-tar` (RUSTSEC-2025-0111) is
+  gone with the `testcontainers` bump below. The security audit for this line reports neither.
+
+### Changed
+
+- `sqlx` is built with only the backend the storage feature asks for (`postgres-storage` enables
+  `sqlx/postgres`). Before, `postgres-storage` (a default feature) also compiled `sqlx-mysql` and with
+  it the `rsa` crate (RUSTSEC-2023-0071). Feature names and public API are unchanged.
+
+- `testcontainers` 0.25 -> 0.27 (the optional `docker-tests` feature). 0.25 depended on `tokio-tar`
+  0.3.1 (RUSTSEC-2025-0111, no patched release); 0.27 uses the maintained `astral-tokio-tar`. Test
+  infrastructure only, no public API change.
+
+- CI only for the workflow: `ci-cd.yml` runs on pushes and pull requests for `release/**`
+  branches, so this line gets the same checks as main. The workflow no longer fails the Slack
+  step when no webhook is configured.
+- Dependencies: `cargo fmt` applied to the tree; `Cargo.lock` raised for RUSTSEC-2025-0055,
+  -2026-0007, -2026-0009, -2026-0037, -2026-0178, -2026-0179, -2026-0180, -2026-0185,
+  -2026-0204, -2026-0258 (h2 0.4.x), -2026-0338..-0342; `quick-xml` 0.38 -> 0.41
+  (RUSTSEC-2026-0194/0195); `maxminddb` 0.26 -> 0.27 (RUSTSEC-2025-0132). **Behaviour change:**
+  with `maxminddb` 0.27 the session location string no longer carries the `proxy` and
+  `satellite` threat flags (the model only exposes `is_anycast`); coordinates, country, region
+  and city are unchanged. No public signature changes.
+
 ### Security
 
 - **Storage key names no longer hold credentials.** API-key rows, the Redis access-token mapping and

@@ -83,19 +83,23 @@ pub struct UserInfo {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::{AuthFramework, AuthConfig};
+/// use auth_framework::authentication::credentials::Credential;
+/// use auth_framework::methods::AuthMethodEnum;
 ///
+/// # async fn example(password_method: AuthMethodEnum, credential: Credential) -> Result<(), Box<dyn std::error::Error>> {
 /// // Create framework with default configuration
 /// let config = AuthConfig::default();
-/// let auth = AuthFramework::new(config);
+/// let mut auth = AuthFramework::new(config);
 ///
-/// // Register authentication methods
+/// // Register an authentication method
 /// auth.register_method("password", password_method);
-/// auth.register_method("oauth2", oauth2_method);
 ///
 /// // Authenticate a user
-/// let result = auth.authenticate("password", credential, metadata).await?;
+/// let result = auth.authenticate("password", credential).await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Security Considerations
@@ -1779,10 +1783,7 @@ impl AuthFramework {
                         }
                     }
 
-                    if totp_verification_success {
-                        return Ok(true);
-                    }
-                    Ok(false)
+                    Ok(totp_verification_success)
                 } else {
                     // No TOTP secret stored for user
                     Ok(false)
@@ -2315,14 +2316,18 @@ impl AuthFramework {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # use auth_framework::AuthFramework;
+    /// # async fn example(auth_framework: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
     /// let monitoring = auth_framework.get_monitoring_manager();
     ///
     /// // Use for health checks
-    /// let health_status = monitoring.get_health_status().await;
+    /// let health_status = monitoring.health_check().await?;
     ///
     /// // Use for metrics collection
-    /// let metrics = monitoring.get_performance_metrics().await;
+    /// let metrics = monitoring.get_performance_metrics();
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_monitoring_manager(&self) -> Arc<crate::monitoring::MonitoringManager> {
         self.monitoring_manager.clone()
@@ -2799,15 +2804,66 @@ impl AuthFramework {
             user_id, action, resource, limit
         );
 
-        // For now, return simplified audit logs
-        // In a full implementation, this would query audit logs from storage with proper filtering
-        let mut logs = vec![
-            "2024-08-12T10:00:00Z - Permission granted: read:document to user123".to_string(),
-            "2024-08-12T10:05:00Z - Permission revoked: write:sensitive to user456".to_string(),
-            "2024-08-12T10:10:00Z - Role assigned: admin to user789".to_string(),
-        ];
+        use crate::audit::{AuditEventType, AuditQuery, SortOrder};
 
-        // Apply limit if specified
+        // Real events from the audit log, newest first. `action` and `resource` are matched after
+        // the query (the storage layer filters on type and user only), so `limit` is applied last.
+        let query = AuditQuery {
+            event_types: Some(vec![
+                AuditEventType::PermissionGranted,
+                AuditEventType::PermissionDenied,
+                AuditEventType::RoleAssigned,
+                AuditEventType::RoleRevoked,
+                AuditEventType::RoleCreated,
+                AuditEventType::RoleUpdated,
+                AuditEventType::RoleDeleted,
+            ]),
+            user_id: user_id.map(str::to_string),
+            risk_level: None,
+            outcome: None,
+            time_range: None,
+            ip_address: None,
+            resource_type: None,
+            actor_id: None,
+            correlation_id: None,
+            limit: None,
+            offset: None,
+            sort_order: SortOrder::TimestampDesc,
+        };
+
+        let action = action.map(str::to_lowercase);
+        let mut logs: Vec<String> = self
+            .audit_manager
+            .query_events(&query)
+            .await?
+            .into_iter()
+            .filter(|e| {
+                action.as_deref().is_none_or(|a| {
+                    e.description.to_lowercase().contains(a)
+                        || e.details.values().any(|v| v.to_lowercase().contains(a))
+                })
+            })
+            .filter(|e| {
+                resource.is_none_or(|r| {
+                    e.resource
+                        .as_ref()
+                        .is_some_and(|ri| ri.resource_type == r || ri.resource_id == r)
+                })
+            })
+            .map(|e| {
+                let ts =
+                    chrono::DateTime::<chrono::Utc>::from(e.timestamp).format("%Y-%m-%dT%H:%M:%SZ");
+                format!(
+                    "{} - {:?} user={} outcome={:?} - {}",
+                    ts,
+                    e.event_type,
+                    e.user_id.as_deref().unwrap_or("system"),
+                    e.outcome,
+                    e.description
+                )
+            })
+            .collect();
+
         if let Some(limit_value) = limit {
             logs.truncate(limit_value);
         }
@@ -2995,10 +3051,12 @@ impl SecurityAuditStats {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # use auth_framework::auth::SecurityAuditStats;
+    /// # let security_stats = SecurityAuditStats { active_sessions: 0, failed_logins_24h: 0, successful_logins_24h: 0, unique_users_24h: 0, token_issued_24h: 0, password_resets_24h: 0, admin_actions_24h: 0, security_alerts_24h: 0, collection_timestamp: chrono::Utc::now() };
     /// if security_stats.requires_immediate_attention() {
     ///     // Trigger security alerts, notify administrators
-    ///     alert_security_team(&security_stats);
+    ///     eprintln!("Security score: {}", security_stats.security_score());
     /// }
     /// ```
     pub fn requires_immediate_attention(&self) -> bool {
@@ -3028,10 +3086,11 @@ impl SecurityAuditStats {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # use auth_framework::auth::SecurityAuditStats;
+    /// # let security_stats = SecurityAuditStats { active_sessions: 0, failed_logins_24h: 0, successful_logins_24h: 0, unique_users_24h: 0, token_issued_24h: 0, password_resets_24h: 0, admin_actions_24h: 0, security_alerts_24h: 0, collection_timestamp: chrono::Utc::now() };
     /// if let Some(alert) = security_stats.security_alert_message() {
-    ///     log::error!("Security Alert: {}", alert);
-    ///     notify_administrators(&alert);
+    ///     eprintln!("Security Alert: {}", alert);
     /// }
     /// ```
     pub fn security_alert_message(&self) -> Option<String> {
@@ -3285,5 +3344,97 @@ mod tests {
 
         // This test would need expired data to be meaningful
         assert!(framework.cleanup_expired_data().await.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod permission_audit_log_tests {
+    use super::*;
+    use crate::audit::{RequestMetadata, ResourceInfo};
+    use std::collections::HashMap;
+
+    fn framework() -> AuthFramework {
+        AuthFramework::new(
+            AuthConfig::new().secret("test-secret-with-at-least-32-characters".to_string()),
+        )
+    }
+
+    fn meta() -> RequestMetadata {
+        RequestMetadata {
+            ip_address: None,
+            user_agent: None,
+            request_id: None,
+            endpoint: None,
+            http_method: None,
+            geolocation: None,
+            device_info: None,
+        }
+    }
+
+    fn resource(kind: &str) -> ResourceInfo {
+        ResourceInfo {
+            resource_type: kind.to_string(),
+            resource_id: format!("{kind}-1"),
+            resource_name: None,
+            attributes: HashMap::new(),
+        }
+    }
+
+    /// The method used to return three hardcoded fabricated entries regardless of
+    /// what had been recorded. An empty audit log must now yield an empty result.
+    #[tokio::test]
+    async fn empty_audit_log_returns_no_entries() {
+        let fw = framework();
+        let logs = fw
+            .get_permission_audit_logs(None, None, None, None)
+            .await
+            .unwrap();
+        assert!(logs.is_empty(), "fabricated entries returned: {logs:?}");
+    }
+
+    #[tokio::test]
+    async fn returns_recorded_events_and_applies_filters() {
+        let fw = framework();
+        fw.audit_manager
+            .log_permission_denied("alice", resource("document"), "read", meta())
+            .await
+            .unwrap();
+        fw.audit_manager
+            .log_permission_denied("bob", resource("invoice"), "write", meta())
+            .await
+            .unwrap();
+
+        let all = fw
+            .get_permission_audit_logs(None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2, "{all:?}");
+        assert!(all.iter().all(|l| l.contains("user=")));
+
+        let alice = fw
+            .get_permission_audit_logs(Some("alice"), None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(alice.len(), 1, "{alice:?}");
+        assert!(alice[0].contains("user=alice") && alice[0].contains("document"));
+
+        let by_action = fw
+            .get_permission_audit_logs(None, Some("WRITE"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(by_action.len(), 1, "{by_action:?}");
+        assert!(by_action[0].contains("user=bob"));
+
+        let by_resource = fw
+            .get_permission_audit_logs(None, None, Some("document"), None)
+            .await
+            .unwrap();
+        assert_eq!(by_resource.len(), 1, "{by_resource:?}");
+
+        let limited = fw
+            .get_permission_audit_logs(None, None, None, Some(1))
+            .await
+            .unwrap();
+        assert_eq!(limited.len(), 1);
     }
 }

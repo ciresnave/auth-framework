@@ -55,7 +55,7 @@
 //!     jwt_secret: std::env::var("JWT_SECRET").expect("JWT_SECRET must be set").into(),
 //!     ..SecureJwtConfig::default()
 //! };
-//! let jwt_validator = SecureJwtValidator::new(jwt_config)?;
+//! let jwt_validator = SecureJwtValidator::new(jwt_config);
 //!
 //! // Create manager with custom cleanup interval
 //! let manager = PrivateKeyJwtManager::new(jwt_validator)

@@ -484,9 +484,9 @@ impl TokenManager {
     /// ```rust,no_run
     /// use auth_framework::tokens::TokenManager;
     ///
-    /// // Both PKCS#1 and PKCS#8 formats work
-    /// let private_key = include_bytes!("../../private.pem");  // Either format
-    /// let public_key = include_bytes!("../../public.pem");
+    /// // Both PKCS#1 and PKCS#8 formats work; provide PEM bytes from your key store.
+    /// # let private_key: &[u8] = b"";
+    /// # let public_key: &[u8] = b"";
     ///
     /// let manager = TokenManager::new_rsa(
     ///     private_key,

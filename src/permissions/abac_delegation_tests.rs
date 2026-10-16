@@ -1,7 +1,7 @@
 // Comprehensive tests for ABAC and delegation
 #[cfg(test)]
 mod tests {
-    
+
     use crate::permissions::{AbacPolicy, AbacRule, Delegation, Permission, PermissionChecker};
     use chrono::Utc;
     use serde_json::json;
@@ -67,5 +67,3 @@ mod tests {
         assert!(!checker.check_delegation("user1", &read_permission, &delegations));
     }
 }
-
-

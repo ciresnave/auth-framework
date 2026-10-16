@@ -28,7 +28,7 @@ Production-ready • Enterprise-grade • Security-first • Bulletproof
 
 > 🔐 **Security Notice**: This framework requires a JWT secret to be configured before use. See [`SECURITY_GUIDE.md`](SECURITY_GUIDE.md) for critical security requirements and best practices.
 >
-> ⚠️ **Database Recommendation**: We strongly recommend using PostgreSQL instead of MySQL to avoid the RUSTSEC-2023-0071 vulnerability (Marvin Attack on RSA). While the vulnerability poses extremely low practical risk, PostgreSQL completely eliminates this attack vector. See [`SECURITY.md`](SECURITY.md) for details.
+> ⚠️ **MySQL storage removed**: `mysql-storage` has been removed (it pulled in the `rsa` crate, RUSTSEC-2023-0071, through `sqlx-mysql`). Use `postgres-storage` or `redis-storage`. See [`SECURITY.md`](SECURITY.md) and `CHANGELOG.md`.
 
 ## 🆕 What's New in Latest Version
 
@@ -91,7 +91,7 @@ Production-ready • Enterprise-grade • Security-first • Bulletproof
 ### 🏗️ Production Infrastructure
 
 - **Complete Server Stack**: OAuth 2.0 server, OIDC provider, JWT server, SAML IdP, WebAuthn RP, and API gateway
-- **Multiple Storage Backends**: PostgreSQL (recommended), Redis (high-performance), MySQL, in-memory (development) with connection pooling
+- **Multiple Storage Backends**: PostgreSQL (recommended), Redis (high-performance), in-memory (development) with connection pooling
 - **Framework Integration**: Native middleware for Axum, Actix Web, Warp, and extensible for any framework
 - **Distributed Architecture**: Cross-node authentication validation and distributed rate limiting
 - **Permission System**: Role-based access control (RBAC) with fine-grained permissions and attribute-based access control (ABAC)
@@ -471,7 +471,7 @@ println!("Can read: {}, Can write: {}, Can delete: {}", can_read, can_write, can
 
 ### Storage Configuration
 
-> **Security Recommendation**: Use PostgreSQL for optimal security. PostgreSQL eliminates the RUSTSEC-2023-0071 vulnerability present in MySQL storage.
+> **Security Recommendation**: Use PostgreSQL or Redis; MySQL storage was removed because of RUSTSEC-2023-0071.
 
 #### PostgreSQL Storage (Recommended)
 

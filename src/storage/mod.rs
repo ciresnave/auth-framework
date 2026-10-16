@@ -1,10 +1,8 @@
 pub mod core;
-pub(crate) mod key_names; // one-way key names for credentials
 pub mod dashmap_memory; // DashMap-based storage proof-of-concept
 pub mod encryption; // AES-256-GCM encryption for storage at rest
+pub(crate) mod key_names; // one-way key names for credentials
 pub mod memory;
-#[cfg(feature = "mysql-storage")]
-pub mod mysql;
 #[cfg(feature = "postgres-storage")]
 pub mod postgres;
 #[cfg(feature = "redis")]
@@ -24,5 +22,3 @@ pub use unified::{StorageStats, UnifiedStorage, UnifiedStorageConfig};
 
 // Convenience re-export for common trait
 pub use crate::storage::core::AuthStorage;
-
-

@@ -13,6 +13,8 @@
 //! # Usage
 //!
 //! ```rust,no_run
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use auth_framework::prelude::*;
 //!
 //! // Quick setup with security preset
@@ -24,6 +26,8 @@
 //! // Or apply to existing configuration
 //! let config = AuthConfig::new()
 //!     .security(SecurityPreset::Paranoid.to_config());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Security Validation
@@ -32,6 +36,8 @@
 //! are met for the target environment:
 //!
 //! ```rust,no_run
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use auth_framework::prelude::*;
 //!
 //! // Validate security configuration
@@ -43,6 +49,8 @@
 //!     println!("⚠️  {}: {}", issue.severity, issue.description);
 //!     println!("💡 Fix: {}", issue.suggestion);
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::{

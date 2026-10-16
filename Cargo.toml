@@ -1,8 +1,9 @@
 [package]
 description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
 name = "auth-framework"
-version = "0.4.8"
+version = "0.4.21"
 edition = "2024"
+rust-version = "1.94"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/auth-framework"
@@ -75,7 +76,7 @@ url = "2.4"
 base64 = "0.22"
 
 # MaxMind GeoIP2 for IP geolocation
-maxminddb = "0.26"
+maxminddb = "0.27"
 
 # Threat intelligence integration
 ipnetwork = "0.21"            # For CIDR network parsing
@@ -172,7 +173,6 @@ bumpalo = { version = "3.14", optional = true }
 oauth-device-flows = { version = "0.1", optional = true }
 
 # OpenID Connect support (optional) - Updated to fix RSA dependency
-openidconnect = { version = "4.0", optional = true }
 
 # Missing dependencies for 100% completion
 ldap3 = { version = "0.11", optional = true }
@@ -202,7 +202,7 @@ askama = { version = "0.14", optional = true }
 # Note: askama_axum was removed in askama 0.13+ - axum integration is now built into askama
 
 # XML processing for SAML
-quick-xml = { version = "0.38", features = ["serialize"], optional = true }
+quick-xml = { version = "0.41", features = ["serialize"], optional = true }
 
 # Passkey/WebAuthn dependencies
 passkey = { version = "0.4", optional = true }        # Updated to fix idna dependency
@@ -211,7 +211,7 @@ passkey-client = { version = "0.4", optional = true } # Updated to fix idna depe
 
 # Web framework integrations (optional)
 warp = { version = "0.4", features = ["server", "test"], optional = true }
-actix-web = { version = "4.0", optional = true }
+actix-web = { version = "4.0", default-features = false, features = ["macros"], optional = true }
 axum = { version = "0.8", features = ["macros"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 tower-http = { version = "0.6", features = [
@@ -221,25 +221,25 @@ tower-http = { version = "0.6", features = [
 ], optional = true }
 serde_urlencoded = { version = "0.7", optional = true }
 
-# Database integrations (optional) - Updated sqlx to fix RSA vulnerability
-sqlx = { version = "0.8", features = [
-  "runtime-tokio-rustls",
-  "postgres",
-  "mysql",
+# Database integrations (optional). Deliberately does NOT list "postgres": the storage feature
+# below enables only its own backend. `mysql-storage` was removed: sqlx-mysql depends on the `rsa`
+# crate (RUSTSEC-2023-0071).
+sqlx = { version = "0.9", features = [
+  "runtime-tokio",
+  "tls-rustls",
   "chrono",
   "uuid",
 ], optional = true }
 tokio-postgres = { version = "0.7", optional = true }
 
 # Testing infrastructure (optional)
-testcontainers = { version = "0.25", optional = true }
+testcontainers = { version = "0.27", optional = true }
 html-escape = "0.2.13"
 
 # SMSKit dependencies for next-gen SMS support
 sms-core = { version = "0.2", optional = true }
 sms-plivo = { version = "0.2", optional = true }
 sms-twilio = { version = "0.2", optional = true }
-sms-aws-sns = { version = "0.2", optional = true }
 sms-web-generic = { version = "0.2", optional = true }
 sms-web-axum = { version = "0.2", optional = true }
 
@@ -260,11 +260,13 @@ default = [
   "enhanced-rbac",    # Re-enabled for comprehensive authorization testing
 ] # PostgreSQL recommended
 redis-storage = ["redis"]
-postgres-storage = ["sqlx", "tokio-postgres"]
-mysql-storage = ["sqlx"]
+postgres-storage = ["dep:sqlx", "sqlx/postgres", "tokio-postgres"]
 testing = []
 enhanced-device-flow = ["oauth-device-flows"]
-openid-connect = ["openidconnect"]
+# No-op: the optional `openidconnect` dependency was removed because it has a hard dependency on
+# the `rsa` crate (RUSTSEC-2023-0071) and nothing in this crate calls it. The feature name stays so
+# `features = ["openid-connect"]` keeps resolving.
+openid-connect = []
 # Enhanced cryptography features
 enhanced-crypto = ["chacha20poly1305", "x25519-dalek", "ed25519-dalek"]
 fips-compliance = ["aws-lc-rs"]
@@ -323,7 +325,6 @@ smskit = [
   "sms-core",
   "sms-plivo",
   "sms-twilio",
-  "sms-aws-sns",
   "sms-web-generic",
 ]
 smskit-web-axum = ["smskit", "sms-web-axum", "axum-integration"]

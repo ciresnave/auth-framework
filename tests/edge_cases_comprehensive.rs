@@ -10,7 +10,8 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_extreme_input_sizes() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -61,7 +62,8 @@ async fn test_extreme_input_sizes() {
 
 #[tokio::test]
 async fn test_special_character_handling() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -113,7 +115,8 @@ async fn test_special_character_handling() {
 
 #[tokio::test]
 async fn test_session_expiration_edge_cases() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -179,7 +182,8 @@ async fn test_session_expiration_edge_cases() {
 
 #[tokio::test]
 async fn test_token_validation_edge_cases() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -245,7 +249,8 @@ async fn test_token_validation_edge_cases() {
 
 #[tokio::test]
 async fn test_concurrent_data_races() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -313,7 +318,8 @@ async fn test_concurrent_data_races() {
 
 #[tokio::test]
 async fn test_memory_cleanup_edge_cases() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -372,7 +378,8 @@ async fn test_memory_cleanup_edge_cases() {
 
 #[tokio::test]
 async fn test_framework_reinitialization() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -414,7 +421,8 @@ async fn test_framework_reinitialization() {
 
 #[tokio::test]
 async fn test_boundary_value_analysis() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -486,7 +494,8 @@ async fn test_boundary_value_analysis() {
 
 #[tokio::test]
 async fn test_error_propagation_consistency() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);

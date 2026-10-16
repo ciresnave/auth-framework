@@ -293,12 +293,10 @@ impl AuthMethod for AuthMethodEnum {
                     });
                 }
             }
-            Credential::ApiKey { key } => {
-                if key.is_empty() {
-                    return Ok(MethodResult::Failure {
-                        reason: "API key cannot be empty".to_string(),
-                    });
-                }
+            Credential::ApiKey { key } if key.is_empty() => {
+                return Ok(MethodResult::Failure {
+                    reason: "API key cannot be empty".to_string(),
+                });
             }
             _ => {
                 // For other credential types, basic validation passed
@@ -375,5 +373,3 @@ impl MfaChallenge {
         self
     }
 }
-
-

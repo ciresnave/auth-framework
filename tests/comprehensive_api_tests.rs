@@ -197,14 +197,7 @@ mod authentication_tests {
         let result = framework.authenticate("unknown_method", credential).await;
 
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            AuthError::AuthMethod {
-                method: _,
-                message: _,
-                ..
-            }
-        ));
+        assert!(matches!(result.unwrap_err(), AuthError::AuthMethod { .. }));
     }
 
     #[tokio::test]
@@ -330,14 +323,7 @@ mod token_management_tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            AuthError::AuthMethod {
-                method: _,
-                message: _,
-                ..
-            }
-        ));
+        assert!(matches!(result.unwrap_err(), AuthError::AuthMethod { .. }));
     }
 
     #[tokio::test]

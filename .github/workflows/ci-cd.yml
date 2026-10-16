@@ -4,9 +4,9 @@ name: AuthFramework CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
   release:
     types: [published]
 
@@ -83,13 +83,6 @@ jobs:
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: cargo test --all-features --workspace
 
-      - name: Run integration tests
-        env:
-          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
-          REDIS_URL: redis://localhost:6379
-          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --test integration --all-features
-
       - name: Run benchmarks
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
@@ -112,8 +105,11 @@ jobs:
       - name: Run security audit
         run: cargo audit
 
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
       - name: Run cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v1
+        run: cargo deny --all-features check
 
   build:
     name: Build and Test Docker Image
@@ -132,13 +128,16 @@ jobs:
           file: ./Dockerfile.optimized
           target: testing
           push: false
+          load: true
           tags: authframework:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Run Docker tests
+      # The image's default command is a second full run of the suite that Test Suite already does, and
+      # the container has no Postgres or Redis service: check that the image carries the toolchain and client tools.
+      - name: Smoke-test the test image
         run: |
-          docker run --rm authframework:test
+          docker run --rm authframework:test sh -c 'cargo --version && psql --version && redis-cli --version'
 
       - name: Build production image
         uses: docker/build-push-action@v5
@@ -211,7 +210,7 @@ jobs:
           cargo bench --bench auth_performance 2>&1 | tee benchmark_results.txt
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: benchmark-results
           path: benchmark_results.txt
@@ -320,9 +319,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy-production]
     if: always()
+    env:
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
     steps:
       - name: Slack notification
+        # no webhook configured (forks, release lines): skip instead of failing
+        if: ${{ env.SLACK_WEBHOOK != '' }}
         uses: 8398a7/action-slack@v3
         with:
           status: ${{ job.status }}

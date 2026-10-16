@@ -405,5 +405,3 @@ impl EmailManager {
         Ok(code)
     }
 }
-
-

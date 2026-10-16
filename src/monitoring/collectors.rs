@@ -44,5 +44,3 @@ impl TokenMetricsCollector {
         metrics
     }
 }
-
-

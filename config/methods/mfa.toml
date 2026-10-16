@@ -23,7 +23,7 @@ qr_code_error_correction = "M" # L, M, Q, or H
 
 [methods.mfa.sms]
 enabled = false          # Disabled by default (requires SMS service)
-provider = "twilio"      # twilio, aws_sns, custom
+provider = "twilio"      # twilio, custom
 code_length = 6
 code_expiry = "5m"
 rate_limit_per_hour = 10

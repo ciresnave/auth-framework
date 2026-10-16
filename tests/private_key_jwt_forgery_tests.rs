@@ -15,9 +15,11 @@ const CLIENT: &str = "forged_client";
 fn manager() -> PrivateKeyJwtManager {
     // A deployment that accepts HS256 assertions for this client: the enhanced validator is told
     // to expect the client id as issuer (the default issuer allow-list would refuse every client).
-    let mut config = SecureJwtConfig::default();
-    config.required_issuers = std::iter::once(CLIENT.to_string()).collect();
-    config.allowed_algorithms = vec![Algorithm::HS256];
+    let config = SecureJwtConfig {
+        required_issuers: std::iter::once(CLIENT.to_string()).collect(),
+        allowed_algorithms: vec![Algorithm::HS256],
+        ..Default::default()
+    };
     PrivateKeyJwtManager::new(SecureJwtValidator::new(config))
 }
 

@@ -34,7 +34,9 @@ async fn test_jwt_signature_bypass_prevention() {
         .issuer("auth-framework".to_string())
         .audience("auth-framework".to_string());
 
-    let auth_framework = AuthFramework::new(config);
+    // `new()` keeps a temporary secret until `initialize()` installs the configured one.
+    let mut auth_framework = AuthFramework::new(config);
+    auth_framework.initialize().await.unwrap();
     println!("✅ AuthFramework initialized with secure configuration");
 
     // Test 1: Attempt to create a malicious JWT without proper signing

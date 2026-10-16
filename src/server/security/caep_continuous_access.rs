@@ -28,8 +28,8 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use auth_framework::server::caep_continuous_access::*;
-//! use auth_framework::server::{SessionManager, oidc_backchannel_logout::BackChannelLogoutManager};
+//! use auth_framework::server::security::caep_continuous_access::*;
+//! use auth_framework::server::{SessionManager, oidc::oidc_backchannel_logout::BackChannelLogoutManager};
 //! use chrono::Duration;
 //! use std::sync::Arc;
 //! use async_trait::async_trait;
@@ -1221,7 +1221,7 @@ impl CaepManager {
             .cloned()
             .collect();
 
-        events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
 
         if let Some(limit) = limit {
             events.truncate(limit);
@@ -1239,7 +1239,7 @@ impl CaepManager {
 
         // Insert new rule and sort by priority
         rules.push(rule);
-        rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
 
         Ok(())
     }

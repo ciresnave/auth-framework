@@ -442,5 +442,3 @@ pub mod webhooks {
         Ok(format!("sha256={:x}", hash_result))
     }
 }
-
-

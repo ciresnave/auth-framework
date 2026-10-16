@@ -23,7 +23,7 @@
 //! # Usage Examples
 //!
 //! ```rust
-//! use auth_framework::server::oidc_error_extensions::{OidcErrorManager, OidcErrorCode};
+//! use auth_framework::server::oidc::oidc_error_extensions::{OidcErrorManager, OidcErrorCode};
 //!
 //! let mut manager = OidcErrorManager::default();
 //!
@@ -737,5 +737,3 @@ mod tests {
         );
     }
 }
-
-

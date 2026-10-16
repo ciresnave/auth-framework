@@ -47,18 +47,19 @@
 //!
 //! # Example Usage
 //!
-//! ```rust
-//! use auth_framework::admin::{AdminInterface, AppState};
+//! ```rust,no_run
+//! use auth_framework::admin::AppState;
+//! use auth_framework::config::AuthFrameworkSettings;
 //!
-//! // Create administrative interface
-//! let app_state = AppState::new(config_manager).await?;
-//! let admin = AdminInterface::new(app_state);
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create shared administrative state
+//! let app_state = AppState::new(AuthFrameworkSettings::default())?;
 //!
-//! // Start web interface
-//! admin.start_web_interface("127.0.0.1:8080").await?;
-//!
-//! // Start TUI interface
-//! admin.start_tui_interface().await?;
+//! // Start web interface (requires the `web-gui` feature)
+//! auth_framework::admin::web::run_web_gui(app_state, "127.0.0.1", 8080, false, true).await?;
+//! // A terminal UI is available via `admin::tui::run_tui(state, readonly)` (`tui` feature)
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Deployment Scenarios

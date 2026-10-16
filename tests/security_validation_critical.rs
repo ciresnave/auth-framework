@@ -1,8 +1,6 @@
 //! Critical security validation test to ensure JWT signature bypass vulnerability is fixed
 
-use auth_framework::{
-    AuthConfig, AuthFramework,
-};
+use auth_framework::{AuthConfig, AuthFramework};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
@@ -28,7 +26,9 @@ async fn test_jwt_signature_validation() {
         .issuer("auth-framework".to_string())
         .audience("auth-framework".to_string());
 
-    let auth_framework = AuthFramework::new(config);
+    // `new()` keeps a temporary secret until `initialize()` installs the configured one.
+    let mut auth_framework = AuthFramework::new(config);
+    auth_framework.initialize().await.unwrap();
 
     let now = Utc::now().timestamp();
     let claims = TestClaims {

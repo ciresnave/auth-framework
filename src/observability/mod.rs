@@ -39,6 +39,8 @@ pub struct ObservabilityManager {
     security_monitor: Arc<SecurityMonitor>,
 
     /// Configuration
+    #[allow(dead_code)]
+    // unused on this release line; kept unchanged in this mechanical clippy pass
     config: ObservabilityConfig,
 }
 
@@ -97,6 +99,7 @@ pub struct PerformanceMetrics {
 }
 
 /// Security event monitoring
+#[allow(dead_code)] // unused on this release line; kept unchanged in this mechanical clippy pass
 pub struct SecurityMonitor {
     failed_attempts: Arc<AtomicU64>,
     rate_limit_violations: Arc<AtomicU64>,
@@ -619,5 +622,3 @@ impl ObservabilityMiddleware {
         result
     }
 }
-
-

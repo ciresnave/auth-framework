@@ -300,5 +300,3 @@ mod tests {
         assert!(params["response"].starts_with("eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9"));
     }
 }
-
-

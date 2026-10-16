@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn demonstrate_uninitialized_framework_gap() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let framework = AuthFramework::new(config);
@@ -29,7 +30,8 @@ async fn demonstrate_uninitialized_framework_gap() {
 
 #[tokio::test]
 async fn demonstrate_storage_failure_gap() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     // Use default storage configuration
     // This demonstrates we lack proper failure scenario testing
@@ -58,7 +60,8 @@ async fn demonstrate_storage_failure_gap() {
 
 #[tokio::test]
 async fn demonstrate_input_validation_gaps() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -95,7 +98,8 @@ async fn demonstrate_input_validation_gaps() {
 
 #[tokio::test]
 async fn demonstrate_concurrency_gap() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -138,7 +142,8 @@ async fn demonstrate_concurrency_gap() {
 
 #[tokio::test]
 async fn demonstrate_error_propagation_gaps() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -164,7 +169,8 @@ async fn demonstrate_error_propagation_gaps() {
 
 #[tokio::test]
 async fn demonstrate_boundary_condition_gaps() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);

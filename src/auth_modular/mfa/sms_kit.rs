@@ -44,7 +44,6 @@ impl Default for SmsKitConfig {
 pub enum SmsKitProvider {
     Twilio,
     Plivo,
-    AwsSns,
     Development,
 }
 
@@ -62,11 +61,6 @@ pub enum SmsKitProviderConfig {
         auth_token: String,
         from_number: String,
         webhook_url: Option<String>,
-    },
-    AwsSns {
-        region: String,
-        access_key_id: String,
-        secret_access_key: String,
     },
     Development,
 }
@@ -314,9 +308,6 @@ impl SmsKitManager {
             SmsKitProvider::Plivo => {
                 info!("📱 [SMSKit Plivo] SMS would be sent to: {}", phone_number);
             }
-            SmsKitProvider::AwsSns => {
-                info!("📱 [SMSKit AWS SNS] SMS would be sent to: {}", phone_number);
-            }
             SmsKitProvider::Development => {
                 info!(
                     "📱 [SMSKit Development] SMS would be sent to: {}",
@@ -413,5 +404,18 @@ impl SmsKitManager {
             .await?;
 
         Ok(code)
+    }
+}
+
+#[cfg(test)]
+mod aws_sns_removed_tests {
+    use super::*;
+
+    #[test]
+    fn removed_aws_sns_provider_no_longer_deserializes() {
+        assert!(serde_json::from_str::<SmsKitProvider>("\"AwsSns\"").is_err());
+        let cfg = r#"{"AwsSns":{"region":"r","access_key_id":"a","secret_access_key":"s"}}"#;
+        assert!(serde_json::from_str::<SmsKitProviderConfig>(cfg).is_err());
+        assert!(serde_json::from_str::<SmsKitProvider>("\"Twilio\"").is_ok());
     }
 }

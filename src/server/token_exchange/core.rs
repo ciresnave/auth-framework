@@ -31,7 +31,7 @@
 //!
 //! ```rust,no_run
 //! use auth_framework::server::token_exchange::{TokenExchangeManager, TokenExchangeRequest};
-//! use auth_framework::secure_jwt::{SecureJwtValidator, SecureJwtConfig};
+//! use auth_framework::security::secure_jwt::{SecureJwtValidator, SecureJwtConfig};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let jwt_validator = SecureJwtValidator::new(SecureJwtConfig::default());
@@ -1007,5 +1007,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-

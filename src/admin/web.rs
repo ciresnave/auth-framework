@@ -311,7 +311,7 @@ async fn config_edit_handler(
 
 #[cfg(feature = "web-gui")]
 async fn users_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    let _users = vec![
+    let _users = [
         User {
             id: "1".to_string(),
             email: "admin@example.com".to_string(),
@@ -396,7 +396,7 @@ async fn create_user_handler(
 
 #[cfg(feature = "web-gui")]
 async fn security_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    let _security_events = vec![
+    let _security_events = [
         SecurityEvent {
             id: "1".to_string(),
             timestamp: "2024-08-10 14:30:15".to_string(),
@@ -458,7 +458,7 @@ async fn servers_handler(State(state): State<AppState>) -> impl IntoResponse {
 
 #[cfg(feature = "web-gui")]
 async fn logs_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    let _log_entries = vec![
+    let _log_entries = [
         LogEntry {
             id: "1".to_string(),
             timestamp: "2024-08-10 14:35:12".to_string(),
