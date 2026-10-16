@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc65"
+  version       = "0.6.0-rc66"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -295,7 +295,9 @@
   # Archive extraction for threat intelligence feeds (tar.gz, zip)
   flate2 = "1"
   tar    = "0.4.45"
-  zip    = "2"
+  # Feed archives are untrusted input and only need stored + deflate entries; the default features
+  # would also pull bzip2, zstd, lzma, ppmd and AES decoders (and the bzip2-1.0.6 licence).
+  zip    = { version = "9.0.4", default-features = false, features = ["deflate"] }
 
   # Email delivery for alert notifications
   lettre = { version = "0.11", default-features = false, features = [

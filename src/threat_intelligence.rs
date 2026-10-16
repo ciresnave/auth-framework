@@ -782,6 +782,11 @@ impl ThreatFeedManager {
         Ok(())
     }
 
+    /// Whether a zip entry name starts at a filesystem root: `/x`, a backslash root, or `C:` drive form.
+    fn zip_entry_name_is_rooted(name: &str) -> bool {
+        name.starts_with('/') || name.starts_with('\\') || name.as_bytes().get(1) == Some(&b':')
+    }
+
     /// Extract ZIP archives with path traversal protection
     async fn extract_zip(
         content: &[u8],
@@ -802,10 +807,31 @@ impl ThreatFeedManager {
             let canonical_dest = dest.canonicalize().map_err(|e| e.to_string())?;
 
             for i in 0..archive.len() {
-                let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+                // Read the name first: `by_index` fails for entries this build cannot decode, and
+                // the operator needs to know which entry it was.
+                let listed_name = archive
+                    .name_for_index(i)
+                    .map(|n| {
+                        n.map(|c| c.into_owned())
+                            .unwrap_or_else(|e| format!("<unreadable name: {e}>"))
+                    })
+                    .unwrap_or_else(|| "<unnamed>".to_string());
+                let mut file = archive
+                    .by_index(i)
+                    .map_err(|e| format!("Zip entry {listed_name} (#{i}) cannot be read: {e}"))?;
+                // zip 9 returns the name as a Result: an entry name need not be UTF-8.
+                let raw_name = file
+                    .name()
+                    .map(|n| n.into_owned())
+                    .map_err(|e| format!("Zip Slip: entry name is unreadable: {e}"))?;
+                // zip 2 refused rooted names; zip 9 strips the root and extracts them under the
+                // destination. Keep refusing them: no feed legitimately names an absolute path.
+                if Self::zip_entry_name_is_rooted(&raw_name) {
+                    return Err(format!("Zip Slip: entry {raw_name} is an absolute path"));
+                }
                 let name = file
                     .enclosed_name()
-                    .ok_or_else(|| format!("Zip Slip: entry {} has unsafe path", file.name()))?;
+                    .ok_or_else(|| format!("Zip Slip: entry {raw_name} has unsafe path"))?;
 
                 let target = canonical_dest.join(&name);
                 if !target.starts_with(&canonical_dest) {
@@ -822,7 +848,12 @@ impl ThreatFeedManager {
                         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                     }
                     let mut out = std::fs::File::create(&target).map_err(|e| e.to_string())?;
-                    std::io::copy(&mut file, &mut out).map_err(|e| e.to_string())?;
+                    if let Err(e) = std::io::copy(&mut file, &mut out) {
+                        // Never leave a truncated feed behind for a later read to trust.
+                        drop(out);
+                        let _ = std::fs::remove_file(&target);
+                        return Err(format!("Zip entry {raw_name} cannot be extracted: {e}"));
+                    }
                 }
             }
             Ok(())
@@ -1073,4 +1104,213 @@ pub enum FeedStatus {
 
     /// Feed has an error
     Error(String),
+}
+
+#[cfg(test)]
+mod zip_extraction_tests {
+    //! `extract_zip` writes feed archives onto disk, so every way an entry can name a place
+    //! outside the destination must be refused, and a refused archive must leave nothing behind.
+    use super::*;
+    use std::io::Write;
+    use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
+
+    fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zip = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, body) in entries {
+            zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    /// Run `extract_zip` as the feed downloader does: the archive is "extracted to" a path whose
+    /// parent is the destination. Returns (scratch root, destination, result).
+    async fn extract(
+        content: &[u8],
+    ) -> (
+        tempfile::TempDir,
+        PathBuf,
+        Result<(), Box<dyn std::error::Error>>,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("feeds");
+        std::fs::create_dir_all(&dest).unwrap();
+        let result = ThreatFeedManager::extract_zip(content, &dest.join("feed.zip")).await;
+        (root, dest, result)
+    }
+
+    fn files_under(root: &Path) -> Vec<String> {
+        fn walk(dir: &Path, out: &mut Vec<String>, root: &Path) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                out.push(path.strip_prefix(root).unwrap().display().to_string());
+                if path.is_dir() {
+                    walk(&path, out, root);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(root, &mut out, root);
+        out.sort();
+        out
+    }
+
+    #[tokio::test]
+    async fn extracts_regular_and_nested_entries() {
+        let zip = archive(&[("ips.txt", b"1.2.3.4\n"), ("nested/dir/more.txt", b"x")]);
+        let (_root, dest, result) = extract(&zip).await;
+        result.unwrap();
+        assert_eq!(std::fs::read(dest.join("ips.txt")).unwrap(), b"1.2.3.4\n");
+        assert_eq!(
+            std::fs::read(dest.join("nested/dir/more.txt")).unwrap(),
+            b"x"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_parent_directory_entries_and_writes_nothing_outside() {
+        for name in ["../evil.txt", "a/../../evil.txt", "a/b/../../../evil.txt"] {
+            let zip = archive(&[(name, b"pwned")]);
+            let (root, _dest, result) = extract(&zip).await;
+            assert!(result.is_err(), "{name} must be rejected");
+            assert!(
+                !root.path().join("evil.txt").exists(),
+                "{name} escaped the destination"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_absolute_path_entries() {
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("abs.txt");
+        let name = target.to_str().unwrap().to_string();
+        let zip = archive(&[(name.as_str(), b"pwned")]);
+        let (_root, _dest, result) = extract(&zip).await;
+        assert!(result.is_err(), "absolute entry {name} must be rejected");
+        assert!(!target.exists(), "absolute entry was written");
+    }
+
+    /// Rewrite the compression-method field of every entry (local header + central directory) of
+    /// a stored archive, to build an entry this build has no decoder for.
+    fn with_method(mut bytes: Vec<u8>, method: u16) -> Vec<u8> {
+        let m = method.to_le_bytes();
+        let mut patched = 0;
+        for i in 0..bytes.len().saturating_sub(12) {
+            // local file header: PK 03 04, method at +8; central directory: PK 01 02, method at +10
+            let off = match bytes[i..i + 4] {
+                [0x50, 0x4b, 0x03, 0x04] => 8,
+                [0x50, 0x4b, 0x01, 0x02] => 10,
+                _ => continue,
+            };
+            bytes[i + off..i + off + 2].copy_from_slice(&m);
+            patched += 1;
+        }
+        assert_eq!(patched, 2, "expected one local and one central header");
+        bytes
+    }
+
+    #[tokio::test]
+    async fn unsupported_compression_methods_fail_with_a_named_error_and_no_partial_file() {
+        // zip is built with `deflate` only: bzip2 (12), zstd (93) and AES (99) entries must be
+        // refused loudly, never extracted as truncated or garbage output.
+        for (method, label) in [(12u16, "bzip2"), (93, "zstd"), (99, "aes")] {
+            let mut zip = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let stored =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("feed.csv", stored).unwrap();
+            zip.write_all(b"1.2.3.4,bad").unwrap();
+            let bytes = with_method(zip.finish().unwrap().into_inner(), method);
+
+            let (_root, dest, result) = extract(&bytes).await;
+
+            let err = result
+                .expect_err(&format!("{label} entry must be refused"))
+                .to_string();
+            assert!(
+                err.contains("feed.csv") && err.to_lowercase().contains("compression"),
+                "{label}: the error must name the entry and the compression problem, got: {err}"
+            );
+            assert!(
+                !dest.join("feed.csv").exists(),
+                "{label}: a partial file was left behind"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_rooted_names_in_every_spelling() {
+        for name in ["/abs.txt", "\\abs.txt", "C:\\abs.txt", "C:/abs.txt"] {
+            let zip = archive(&[(name, b"pwned")]);
+            let (root, _dest, result) = extract(&zip).await;
+            assert!(result.is_err(), "{name} must be rejected");
+            assert_eq!(
+                files_under(root.path()),
+                vec!["feeds".to_string()],
+                "{name} left something behind"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_archive_leaves_no_earlier_entries_it_should_not_trust() {
+        // The good entry precedes the bad one; the bad one must still stop extraction and
+        // nothing may land outside the destination.
+        let zip = archive(&[("ok.txt", b"fine"), ("../evil.txt", b"pwned")]);
+        let (root, _dest, result) = extract(&zip).await;
+        assert!(result.is_err());
+        assert!(!root.path().join("evil.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_entries_never_become_symlinks_or_redirect_later_writes() {
+        use std::io::Cursor;
+        let outside = tempfile::tempdir().unwrap();
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        zip.add_symlink(
+            "link",
+            outside.path().to_str().unwrap(),
+            SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.start_file("link/pwn.txt", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"pwned").unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let (_root, dest, _result) = extract(&bytes).await;
+
+        // Whether the archive is refused or extracted, nothing may reach the symlink's target.
+        assert!(
+            files_under(outside.path()).is_empty(),
+            "a symlink entry redirected a write outside the destination: {:?}",
+            files_under(outside.path())
+        );
+        let link = dest.join("link");
+        if link.exists() || link.symlink_metadata().is_ok() {
+            assert!(
+                !link.symlink_metadata().unwrap().file_type().is_symlink(),
+                "a symlink entry was materialised as a symlink"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn backslash_inside_a_component_stays_inside_the_destination() {
+        // On Windows a backslash is a separator, so this names `..` twice. Wherever it is
+        // extracted it must not create anything outside the destination.
+        let zip = archive(&[("..\\..\\evil.txt", b"pwned")]);
+        let (root, dest, _result) = extract(&zip).await;
+        assert!(!root.path().join("evil.txt").exists());
+        assert!(!root.path().parent().unwrap().join("evil.txt").exists());
+        for path in files_under(root.path()) {
+            assert!(
+                path == "feeds" || path.starts_with("feeds"),
+                "{path} is outside {}",
+                dest.display()
+            );
+        }
+    }
 }
