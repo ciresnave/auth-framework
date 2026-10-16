@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc67 -- **Removed the ZIP extraction path and the `zip` dependency.** Nothing reached it: the
+  threat-feed downloader extracts only a feed whose filename ends in `.tar.gz`, so a `.zip` feed was
+  never selected, yet the dependency was non-optional and (in the 2.x line) unresolvable. A `.zip` path
+  given to `extract_compressed_feed` is now refused with a "not supported" error and nothing is written,
+  like `.bz2` and `.xz`. Fifteen crates leave `Cargo.lock` and none arrive (including the C-backed
+  `bzip2-sys`, `lzma-sys`, `xz2` and `zstd-sys`). If ZIP feeds are wanted later, support re-enters with
+  size limits and tests.
 - 0.6.0-rc66 -- **`zip` 2 -> 9.0.4: a fresh resolve of the published rc releases failed.** Every `zip` 2.x
   release is yanked on crates.io, and `zip = "2"` was a non-optional dependency, so a project without a
   lockfile entry could not add this crate. The `zip` project yanked the 2.x line with its security
