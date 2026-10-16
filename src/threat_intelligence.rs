@@ -17,6 +17,9 @@ use tokio::fs;
 use tokio_cron_scheduler::Job;
 use tracing::{debug, error, info, warn};
 
+#[cfg(test)]
+mod tar_extraction_tests;
+
 /// Configuration for automated threat intelligence feeds
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatIntelConfig {
@@ -726,7 +729,17 @@ impl ThreatFeedManager {
 
             for entry in archive.entries().map_err(|e| e.to_string())? {
                 let mut entry = entry.map_err(|e| e.to_string())?;
-                let path = entry.path().map_err(|e| e.to_string())?;
+                let path = entry.path().map_err(|e| e.to_string())?.into_owned();
+
+                // A feed is data: extract regular files and directories only.
+                let kind = entry.header().entry_type();
+                if !(kind.is_file() || kind.is_dir()) {
+                    return Err(format!(
+                        "Archive entry {} has unsupported type {:?}: only files and directories are extracted",
+                        path.display(),
+                        kind
+                    ));
+                }
 
                 // Reject absolute paths and path traversal sequences
                 if path.is_absolute()
@@ -749,7 +762,16 @@ impl ThreatFeedManager {
                     ));
                 }
 
-                entry.unpack(&target).map_err(|e| e.to_string())?;
+                // `unpack_in` confines each write to `dest`.
+                let unpacked = entry
+                    .unpack_in(&canonical_dest)
+                    .map_err(|e| e.to_string())?;
+                if !unpacked {
+                    return Err(format!(
+                        "Zip Slip: entry escapes destination: {}",
+                        path.display()
+                    ));
+                }
             }
             Ok(())
         })
