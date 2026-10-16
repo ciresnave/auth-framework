@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.16] - 2026-10-16
+
+### Security
+
+- `AuthFramework::get_permission_audit_logs` returned three hardcoded, fabricated log entries (for users
+  `user123`, `user456`, `user789`) and ignored its `user_id`, `action`, `resource` and `limit` arguments, so a
+  security API reported audit history that never happened. It now returns the recorded permission and role
+  audit events (newest first), filtered by `user_id`, `action` (case-insensitive, matched against the event
+  description and details) and `resource` (resource type or id), then truncated to `limit`. An empty audit log
+  returns an empty list. The entry text format changed to `<time> - <EventType> user=<id> outcome=<Outcome> - <description>`.
+  Callers that parsed the old placeholder strings must update. This matches 0.5.x and main.
+  To make that possible the in-memory audit store can now list its events: `MemoryStorage`'s audit
+  queries (`query_events`, `count_events`, and the statistics built on them) previously always saw an empty
+  event list because the key lister was a stub. They now see recorded events.
+
 ## [0.4.15] - 2026-10-16
 
 ### Fixed

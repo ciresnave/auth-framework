@@ -391,6 +391,20 @@ impl DashMapMemoryStorage {
             }
         }
     }
+
+    /// Return all KV keys that start with `prefix`.
+    pub fn list_kv_keys_by_prefix(&self, prefix: &str) -> Vec<String> {
+        self.kv_store
+            .iter()
+            .filter_map(|entry| {
+                if entry.key().starts_with(prefix) {
+                    Some(entry.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 #[async_trait]

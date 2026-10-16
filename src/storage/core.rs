@@ -1004,11 +1004,7 @@ impl crate::audit::AuditStorage for MemoryStorage {
 impl MemoryStorage {
     /// Helper method to list KV keys with a prefix
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
-        // Simple implementation for memory storage
-        // In a real implementation, this would scan the internal key-value store
-        // For now, return empty as we don't have direct access to internal storage
-        let _prefix = prefix; // Acknowledge parameter
-        Ok(Vec::new())
+        Ok(self.inner.list_kv_keys_by_prefix(prefix))
     }
 }
 
