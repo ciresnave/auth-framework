@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-10-16
+
+### Fixed
+
+- CI only: removed the `Run integration tests` step of `ci-cd.yml`. It ran `cargo test --test integration`, a
+  target this line does not have (the integration tests are `tests/integration_tests.rs`, already run by
+  `cargo test --all-features --workspace`), so the Test Suite failed on both stable and beta. Same removal as 0.5.x.
+
 ## [0.4.18] - 2026-10-16
 
 ### Security
