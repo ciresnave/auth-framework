@@ -3,7 +3,7 @@ use crate::errors::{AuthError, Result};
 use base64::Engine;
 use ring::rand::{SecureRandom, SystemRandom};
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 
 /// A secure string that is automatically zeroized when dropped
 #[derive(Debug, Clone, ZeroizeOnDrop)]
@@ -73,29 +73,10 @@ impl SecureComparison {
     /// Compare strings with timing attack protection
     /// This function always takes the same amount of time regardless of where differences occur
     pub fn secure_string_compare(a: &str, b: &str) -> bool {
-        // Normalize lengths to prevent length-based timing attacks
-        let max_len = a.len().max(b.len()).min(1024); // Cap at reasonable length
-
-        let mut a_padded = vec![0u8; max_len];
-        let mut b_padded = vec![0u8; max_len];
-
-        // Copy actual data
-        let a_bytes = a.as_bytes();
-        let b_bytes = b.as_bytes();
-
-        a_padded[..a_bytes.len().min(max_len)]
-            .copy_from_slice(&a_bytes[..a_bytes.len().min(max_len)]);
-        b_padded[..b_bytes.len().min(max_len)]
-            .copy_from_slice(&b_bytes[..b_bytes.len().min(max_len)]);
-
-        // Constant-time comparison
-        let result = a_padded.ct_eq(&b_padded).into() && a.len() == b.len();
-
-        // Explicitly clear sensitive data
-        a_padded.zeroize();
-        b_padded.zeroize();
-
-        result
+        // Every byte is compared: an earlier version truncated both inputs to 1024 bytes, so two
+        // longer strings that differed only after that point compared equal. The length itself is
+        // not secret, and `ct_eq` examines all bytes of equal-length slices without early exit.
+        a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()))
     }
 
     /// Verify that two tokens match using constant-time comparison

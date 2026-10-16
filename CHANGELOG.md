@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.18] - 2026-10-16
+
+### Security
+
+- `SecureComparison::secure_string_compare` (and `verify_token`, which calls it) truncated both inputs to
+  1024 bytes before comparing, so two strings of equal length that differed only after byte 1024 compared
+  equal. It now compares every byte. Tokens and secrets are normally far shorter than 1024 bytes, so
+  practical exposure is small, but a verification helper must not ignore input.
+
+### Fixed
+
+- Test only: `test_timing_attack_resistance` compared two string literals against a 1 ms wall-clock bound,
+  which measured scheduler noise and exercised no crate code (it failed under CPU load). It is replaced by
+  tests of `constant_time_compare` (a mismatch at every byte position is detected; lengths differ) and of
+  `secure_string_compare` over inputs around and beyond 1024 bytes.
+
 ## [0.4.17] - 2026-10-16
 
 ### Fixed
