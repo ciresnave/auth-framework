@@ -133,9 +133,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Run Docker tests
+      # The image's default command is a second full run of the suite that Test Suite already does, and
+      # the container has no Postgres or Redis service: check that the image carries the toolchain and client tools.
+      - name: Smoke-test the test image
         run: |
-          docker run --rm authframework:test
+          docker run --rm authframework:test sh -c 'cargo --version && psql --version && redis-cli --version'
 
       - name: Build production image
         uses: docker/build-push-action@v5
