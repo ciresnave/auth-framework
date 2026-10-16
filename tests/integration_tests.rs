@@ -215,9 +215,12 @@ async fn test_comprehensive_integration() {
     );
     permissions.add_resource_hierarchy("projects".to_string(), vec!["tasks".to_string()]);
 
-    // Grant admin user hierarchical permissions
-    let admin_permission = Permission::new("manage", "company");
-    permissions.add_user_permission("admin_user", admin_permission);
+    // Grant admin user hierarchical permissions. Hierarchy lookups match the exact action on
+    // an ancestor resource (0.4.x does not treat "manage" as implying "read"/"write"), so
+    // grant the actions the assertions below use.
+    for action in ["manage", "read", "write"] {
+        permissions.add_user_permission("admin_user", Permission::new(action, "company"));
+    }
 
     // Test hierarchical permission checking
     assert!(
