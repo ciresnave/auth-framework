@@ -604,9 +604,14 @@ impl TokenManager {
                     jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
                         AuthError::Token(TokenError::Expired)
                     }
-                    _ => AuthError::Token(TokenError::Invalid {
-                        message: "Invalid token format".to_string(),
-                    }),
+                    kind => {
+                        // The caller gets one opaque message so a client learns nothing about why a
+                        // token was refused; the operator gets the cause. The token is never logged.
+                        tracing::debug!(cause = ?kind, "JWT validation failed");
+                        AuthError::Token(TokenError::Invalid {
+                            message: "Invalid token format".to_string(),
+                        })
+                    }
                 }
             })?;
 
