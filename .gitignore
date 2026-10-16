@@ -1,1 +1,6 @@
 /target
+
+# Written by the migration module's default working directory (./migration); never track run state.
+migration/migration_manifest.jsonl
+migration/test_plan_status.json
+migration/backups/

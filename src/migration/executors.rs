@@ -798,9 +798,12 @@ mod tests {
     #[tokio::test]
     async fn test_execute_migration_plan_dry_run() {
         let plan = create_test_plan();
+        let tmp = tempfile::tempdir().unwrap();
         let config = MigrationConfig {
             dry_run: true,
             verbose: false, // Reduce test output
+            working_directory: tmp.path().to_path_buf(),
+            backup_directory: tmp.path().join("backups"),
             ..Default::default()
         };
 
@@ -814,9 +817,12 @@ mod tests {
     #[tokio::test]
     async fn test_execute_migration_plan_real() {
         let plan = create_test_plan();
+        let tmp = tempfile::tempdir().unwrap();
         let config = MigrationConfig {
             dry_run: false,
             verbose: false, // Reduce test output
+            working_directory: tmp.path().to_path_buf(),
+            backup_directory: tmp.path().join("backups"),
             ..Default::default()
         };
 
