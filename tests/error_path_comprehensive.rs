@@ -11,7 +11,8 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_uninitialized_framework_operations() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let framework = AuthFramework::new(config);
@@ -54,7 +55,8 @@ async fn test_uninitialized_framework_operations() {
 
 #[tokio::test]
 async fn test_malformed_input_handling() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -91,7 +93,8 @@ async fn test_malformed_input_handling() {
 
 #[tokio::test]
 async fn test_invalid_jwt_token_handling() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -130,7 +133,8 @@ async fn test_invalid_jwt_token_handling() {
 
 #[tokio::test]
 async fn test_concurrent_operation_safety() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -190,7 +194,8 @@ async fn test_concurrent_operation_safety() {
 
 #[tokio::test]
 async fn test_session_storage_error_recovery() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -226,7 +231,8 @@ async fn test_session_storage_error_recovery() {
 
 #[tokio::test]
 async fn test_authentication_method_error_paths() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -263,7 +269,8 @@ async fn test_authentication_method_error_paths() {
 
 #[tokio::test]
 async fn test_token_expiration_edge_cases() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -295,7 +302,8 @@ async fn test_token_expiration_edge_cases() {
 
 #[tokio::test]
 async fn test_cleanup_operations_error_handling() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -335,7 +343,8 @@ async fn test_cleanup_operations_error_handling() {
 
 #[tokio::test]
 async fn test_credential_validation_edge_cases() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -365,7 +374,8 @@ async fn test_credential_validation_edge_cases() {
 
 #[tokio::test]
 async fn test_memory_pressure_scenarios() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -401,7 +411,8 @@ async fn test_memory_pressure_scenarios() {
 
 #[tokio::test]
 async fn test_boundary_conditions() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -434,7 +445,8 @@ async fn test_boundary_conditions() {
 
 #[tokio::test]
 async fn test_double_initialization_error() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -466,7 +478,8 @@ async fn test_double_initialization_error() {
 
 #[tokio::test]
 async fn test_invalid_config_handling() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     // Test framework creation with potentially problematic configs
     let config = AuthConfig::default();
@@ -484,7 +497,8 @@ async fn test_invalid_config_handling() {
 
 #[tokio::test]
 async fn test_resource_exhaustion_recovery() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);
@@ -545,7 +559,8 @@ async fn test_resource_exhaustion_recovery() {
 
 #[tokio::test]
 async fn test_error_message_consistency() {
-    let _env = TestEnvironmentGuard::new().with_jwt_secret("test-secret");
+    let _env =
+        TestEnvironmentGuard::new().with_jwt_secret("test-secret-with-at-least-32-characters");
 
     let config = AuthConfig::default();
     let mut framework = AuthFramework::new(config);

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.15] - 2026-10-16
+
+### Fixed
+
+- Test only: the integration tests used a JWT secret (`"test-secret"`, 11 characters) that 0.4.x config
+  validation rejects (minimum 32); 41 call sites now use a 39-character secret. No validation change.
+- Test only: `security_validation_test` and `security_validation_critical` signed tokens with the configured
+  secret but never called `AuthFramework::initialize()`, so the manager still held its temporary secret and
+  rejected them as "Invalid token format". Both now initialize first.
+- Test only: `test_security_audit_documentation_exists` checked for a `CRITICAL_SECURITY_AUDIT_REPORT.md`
+  that no release line ships; it now checks `SECURITY_GUIDE.md`.
+
 ## [0.4.14] - 2026-10-15
 
 ### Fixed
