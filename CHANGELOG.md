@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.31] - Unreleased
+
+### Fixed
+
+- **`cargo test` no longer rewrites the tracked `migration/` state file.** `MigrationConfig::default()` uses `./migration`, which is
+  the crate root's own tracked directory under `cargo test`, so `test_execute_migration_plan_dry_run`, `_real` and
+  `test_migration_manager_creation` rewrote `migration/test_plan_status.json` and created `migration/backups` on every run. Those
+  three tests now use a temporary directory, the state file is untracked and the paths are ignored. The default itself is unchanged:
+  moving it would be a breaking change on a patch line.
+
 ## [0.4.30] - Unreleased
 
 ### Changed
