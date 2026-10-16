@@ -575,7 +575,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_migration_manager_creation() {
-        let config = MigrationConfig::default();
+        let tmp = tempfile::tempdir().unwrap();
+        let config = MigrationConfig {
+            working_directory: tmp.path().to_path_buf(),
+            backup_directory: tmp.path().join("backups"),
+            ..Default::default()
+        };
         let manager = MigrationManager::new(config);
         assert!(manager.is_ok());
     }
