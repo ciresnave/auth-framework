@@ -110,7 +110,10 @@ async fn wrong_audience_logs_its_cause_but_returns_the_opaque_message() {
     let (result, logs) = capture_logs(|| fw.token_manager().validate_jwt_token(&jwt));
 
     let message = invalid_message(result);
-    assert_eq!(message, "Invalid token format", "public message must not change");
+    assert_eq!(
+        message, "Invalid token format",
+        "public message must not change"
+    );
     assert!(
         logs.contains("InvalidAudience"),
         "the cause must be logged, got: {logs:?}"
@@ -133,5 +136,8 @@ async fn malformed_token_logs_its_cause_but_returns_the_opaque_message() {
         logs.contains("JWT validation failed"),
         "the failure must be logged, got: {logs:?}"
     );
-    assert!(!logs.contains("not.a.jwt"), "the token itself must not be logged");
+    assert!(
+        !logs.contains("not.a.jwt"),
+        "the token itself must not be logged"
+    );
 }
