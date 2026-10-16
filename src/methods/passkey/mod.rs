@@ -49,28 +49,29 @@
 //!
 //! # Example Usage
 //!
-//! ```rust
+//! ```rust,no_run
 //! use auth_framework::methods::passkey::{PasskeyAuthMethod, PasskeyConfig};
+//! use auth_framework::tokens::TokenManager;
 //!
+//! # async fn example(token_manager: TokenManager) -> Result<(), Box<dyn std::error::Error>> {
 //! // Configure passkey authentication
 //! let config = PasskeyConfig {
 //!     rp_name: "Example Corp".to_string(),
 //!     rp_id: "example.com".to_string(),
 //!     origin: "https://example.com".to_string(),
-//!     timeout: 60000,
-//!     require_user_verification: true,
+//!     timeout_ms: 60000,
+//!     user_verification: "required".to_string(),
+//!     authenticator_attachment: None,
+//!     require_resident_key: false,
+//!     ..Default::default()
 //! };
 //!
 //! let passkey_method = PasskeyAuthMethod::new(config, token_manager)?;
-//!
-//! // Registration flow
-//! let reg_challenge = passkey_method.start_registration(
-//!     "user123",
-//!     "user@example.com"
-//! ).await?;
-//!
-//! // Authentication flow
-//! let auth_challenge = passkey_method.start_authentication("user123").await?;
+//! // With the `passkeys` feature enabled:
+//! // passkey_method.register_passkey("user123", "user@example.com", "User Name").await?;
+//! // passkey_method.initiate_authentication("user123").await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Browser Compatibility
@@ -203,24 +204,28 @@ impl UserValidationMethod for PasskeyUserValidation {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::methods::passkey::{PasskeyAuthMethod, PasskeyConfig};
+/// use auth_framework::tokens::TokenManager;
 ///
+/// # async fn example(token_manager: TokenManager) -> Result<(), Box<dyn std::error::Error>> {
 /// let config = PasskeyConfig {
 ///     rp_name: "Example Corp".to_string(),
 ///     rp_id: "example.com".to_string(),
 ///     origin: "https://example.com".to_string(),
-///     timeout: 60000,
-///     require_user_verification: true,
+///     timeout_ms: 60000,
+///     user_verification: "required".to_string(),
+///     authenticator_attachment: None,
+///     require_resident_key: false,
+///     ..Default::default()
 /// };
 ///
 /// let passkey_method = PasskeyAuthMethod::new(config, token_manager)?;
-///
-/// // Register a new passkey
-/// let challenge = passkey_method.start_registration("user123", "user@example.com").await?;
-///
-/// // Authenticate with passkey
-/// let auth_challenge = passkey_method.start_authentication("user123").await?;
+/// // With the `passkeys` feature enabled:
+/// // passkey_method.register_passkey("user123", "user@example.com", "User Name").await?;
+/// // passkey_method.initiate_authentication("user123").await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Thread Safety

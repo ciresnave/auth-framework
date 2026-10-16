@@ -32,7 +32,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use auth_framework::auth_modular::AuthFramework;
 //! use auth_framework::config::AuthConfig;
 //!

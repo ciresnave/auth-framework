@@ -170,9 +170,10 @@ impl CommonJwtClaims {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::server::core::common_jwt::{JwtManager, JwtConfig, CommonJwtClaims};
 ///
+/// # fn example(private_key_bytes: &[u8], public_key_bytes: &[u8], expiration_time: i64) -> Result<(), Box<dyn std::error::Error>> {
 /// // Create JWT manager with RSA keys
 /// let config = JwtConfig::with_rsa_keys(
 ///     private_key_bytes,
@@ -187,12 +188,14 @@ impl CommonJwtClaims {
 ///     "user123".to_string(),
 ///     vec!["api".to_string()],
 ///     expiration_time
-/// ).with_custom_claim("scope".to_string(), json!("read write"));
+/// ).with_custom_claim("scope".to_string(), serde_json::json!("read write"));
 ///
 /// let token = jwt_manager.create_token(&claims)?;
 ///
 /// // Verify token
 /// let verified_claims = jwt_manager.verify_token(&token)?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Performance Considerations

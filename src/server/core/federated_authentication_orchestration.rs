@@ -34,8 +34,8 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use auth_framework::server::federated_authentication_orchestration::*;
-//! use auth_framework::server::oidc_session_management::SessionManager;
+//! use auth_framework::server::core::federated_authentication_orchestration::*;
+//! use auth_framework::server::oidc::oidc_session_management::SessionManager;
 //! use std::sync::Arc;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {

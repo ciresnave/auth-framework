@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.17] - 2026-10-16
+
+### Fixed
+
+- Documentation only: 36 doc examples did not compile (wrong import paths such as `auth_framework::server::X`
+  and `auth_framework::secure_utils`, `await` outside `async`, unbound variables, `?` on a non-`Result`,
+  a nonexistent `AdminInterface`, `AuthError::RateLimited { retry_after }`), so `cargo test --doc` failed.
+  They are corrected, with `no_run` where an example needs keys, a database or network. No code changed.
+- Known gap, not changed here: `integrations::axum::AuthenticatedUser` cannot be used as a handler argument
+  with `Arc<AuthFramework>` state, because its `FromRequestParts` impl requires
+  `Arc<AuthFramework>: FromRequestParts<S>`. The axum examples use plain handlers behind `auth_middleware`.
+
 ## [0.4.16] - 2026-10-16
 
 ### Security

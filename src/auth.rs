@@ -83,19 +83,23 @@ pub struct UserInfo {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::{AuthFramework, AuthConfig};
+/// use auth_framework::authentication::credentials::Credential;
+/// use auth_framework::methods::AuthMethodEnum;
 ///
+/// # async fn example(password_method: AuthMethodEnum, credential: Credential) -> Result<(), Box<dyn std::error::Error>> {
 /// // Create framework with default configuration
 /// let config = AuthConfig::default();
-/// let auth = AuthFramework::new(config);
+/// let mut auth = AuthFramework::new(config);
 ///
-/// // Register authentication methods
+/// // Register an authentication method
 /// auth.register_method("password", password_method);
-/// auth.register_method("oauth2", oauth2_method);
 ///
 /// // Authenticate a user
-/// let result = auth.authenticate("password", credential, metadata).await?;
+/// let result = auth.authenticate("password", credential).await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Security Considerations
@@ -2312,14 +2316,18 @@ impl AuthFramework {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # use auth_framework::AuthFramework;
+    /// # async fn example(auth_framework: &AuthFramework) -> Result<(), Box<dyn std::error::Error>> {
     /// let monitoring = auth_framework.get_monitoring_manager();
     ///
     /// // Use for health checks
-    /// let health_status = monitoring.get_health_status().await;
+    /// let health_status = monitoring.health_check().await?;
     ///
     /// // Use for metrics collection
-    /// let metrics = monitoring.get_performance_metrics().await;
+    /// let metrics = monitoring.get_performance_metrics();
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_monitoring_manager(&self) -> Arc<crate::monitoring::MonitoringManager> {
         self.monitoring_manager.clone()
@@ -3043,10 +3051,12 @@ impl SecurityAuditStats {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # use auth_framework::auth::SecurityAuditStats;
+    /// # let security_stats = SecurityAuditStats { active_sessions: 0, failed_logins_24h: 0, successful_logins_24h: 0, unique_users_24h: 0, token_issued_24h: 0, password_resets_24h: 0, admin_actions_24h: 0, security_alerts_24h: 0, collection_timestamp: chrono::Utc::now() };
     /// if security_stats.requires_immediate_attention() {
     ///     // Trigger security alerts, notify administrators
-    ///     alert_security_team(&security_stats);
+    ///     eprintln!("Security score: {}", security_stats.security_score());
     /// }
     /// ```
     pub fn requires_immediate_attention(&self) -> bool {
@@ -3076,10 +3086,11 @@ impl SecurityAuditStats {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// # use auth_framework::auth::SecurityAuditStats;
+    /// # let security_stats = SecurityAuditStats { active_sessions: 0, failed_logins_24h: 0, successful_logins_24h: 0, unique_users_24h: 0, token_issued_24h: 0, password_resets_24h: 0, admin_actions_24h: 0, security_alerts_24h: 0, collection_timestamp: chrono::Utc::now() };
     /// if let Some(alert) = security_stats.security_alert_message() {
-    ///     log::error!("Security Alert: {}", alert);
-    ///     notify_administrators(&alert);
+    ///     eprintln!("Security Alert: {}", alert);
     /// }
     /// ```
     pub fn security_alert_message(&self) -> Option<String> {

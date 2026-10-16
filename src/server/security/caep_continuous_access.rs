@@ -28,8 +28,8 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use auth_framework::server::caep_continuous_access::*;
-//! use auth_framework::server::{SessionManager, oidc_backchannel_logout::BackChannelLogoutManager};
+//! use auth_framework::server::security::caep_continuous_access::*;
+//! use auth_framework::server::{SessionManager, oidc::oidc_backchannel_logout::BackChannelLogoutManager};
 //! use chrono::Duration;
 //! use std::sync::Arc;
 //! use async_trait::async_trait;

@@ -30,7 +30,7 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use auth_framework::server::rich_authorization_requests::*;
+//! use auth_framework::server::oauth::rich_authorization_requests::*;
 //! use auth_framework::server::SessionManager;
 //! use std::sync::Arc;
 //!

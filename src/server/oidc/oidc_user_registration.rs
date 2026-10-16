@@ -28,7 +28,7 @@
 //! # Usage Examples
 //!
 //! ```rust,no_run
-//! use auth_framework::server::oidc_user_registration::{RegistrationManager, RegistrationConfig, RegistrationRequest};
+//! use auth_framework::server::oidc::oidc_user_registration::{RegistrationManager, RegistrationConfig, RegistrationRequest};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut manager = RegistrationManager::new(RegistrationConfig::default());

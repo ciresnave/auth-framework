@@ -12,26 +12,52 @@
 //!
 //! ```rust,no_run
 //! use auth_framework::prelude::*;
-//! use axum::{Router, routing::get};
+//! use auth_framework::integrations::axum::auth_middleware;
+//! use axum::{Router, middleware, routing::get};
+//! use std::sync::Arc;
 //!
-//! let auth = AuthFramework::quick_start()
-//!     .jwt_auth_from_env()
-//!     .with_axum()
-//!     .build().await?;
+//! async fn public_handler() -> &'static str {
+//!     "public"
+//! }
 //!
-//! let app = Router::new()
+//! async fn protected_handler() -> &'static str {
+//!     "protected"
+//! }
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let auth = Arc::new(
+//!     AuthFramework::quick_start()
+//!         .jwt_auth_from_env()
+//!         .with_axum()
+//!         .build().await?,
+//! );
+//!
+//! // Routes behind the authentication middleware
+//! let protected = Router::new()
+//!     .route("/protected", get(protected_handler))
+//!     .route_layer(middleware::from_fn_with_state(auth.clone(), auth_middleware));
+//!
+//! let app: Router = Router::new()
 //!     .route("/public", get(public_handler))
-//!     .route("/protected", get(protected(protected_handler)))
-//!     .route("/admin", get(protected(admin_handler).require_role("admin")))
+//!     .merge(protected)
 //!     .with_state(auth);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Advanced Usage
 //!
 //! ```rust,no_run
-//! use auth_framework::prelude::*;
-//! use auth_framework::integrations::axum::*;
+//! use auth_framework::AuthFramework;
+//! use auth_framework::integrations::axum::{AuthRouter, auth_middleware};
+//! use axum::{Router, middleware, routing::get};
+//! use std::sync::Arc;
 //!
+//! async fn profile_handler() -> &'static str {
+//!     "profile"
+//! }
+//!
+//! # async fn example(auth: Arc<AuthFramework>) {
 //! // Custom auth routes
 //! let auth_routes = AuthRouter::new()
 //!     .login_route("/auth/login")
@@ -39,11 +65,16 @@
 //!     .refresh_route("/auth/refresh")
 //!     .build();
 //!
-//! let app = Router::new()
-//!     .merge(auth_routes)
+//! // Routes behind the authentication middleware
+//! let protected = Router::new()
 //!     .route("/api/profile", get(profile_handler))
-//!     .layer(RequireAuth::new())
+//!     .route_layer(middleware::from_fn_with_state(auth.clone(), auth_middleware));
+//!
+//! let app: Router = Router::new()
+//!     .merge(auth_routes)
+//!     .merge(protected)
 //!     .with_state(auth);
+//! # }
 //! ```
 
 use crate::{AuthError, AuthFramework, AuthToken};

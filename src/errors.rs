@@ -25,23 +25,24 @@
 //!
 //! # Example Error Handling
 //!
-//! ```rust
+//! ```rust,no_run
 //! use auth_framework::{AuthFramework, AuthError};
+//! use auth_framework::authentication::credentials::Credential;
 //!
-//! match auth_framework.authenticate("password", credential, metadata).await {
-//!     Ok(result) => handle_success(result),
+//! # async fn example(auth_framework: &AuthFramework, credential: Credential) {
+//! match auth_framework.authenticate("password", credential).await {
+//!     Ok(result) => println!("Authentication result: {:?}", result),
 //!     Err(AuthError::InvalidCredential { credential_type, message }) => {
-//!         log::warn!("Invalid {} credential: {}", credential_type, message);
-//!         respond_with_auth_failure()
+//!         eprintln!("Invalid {} credential: {}", credential_type, message);
 //!     },
-//!     Err(AuthError::RateLimited { retry_after, .. }) => {
-//!         respond_with_rate_limit(retry_after)
+//!     Err(AuthError::RateLimit { message }) => {
+//!         eprintln!("Rate limited: {}", message);
 //!     },
 //!     Err(e) => {
-//!         log::error!("Authentication system error: {}", e);
-//!         respond_with_system_error()
+//!         eprintln!("Authentication system error: {}", e);
 //!     }
 //! }
+//! # }
 //! ```
 //!
 //! # Security Considerations
@@ -98,28 +99,28 @@ pub type Result<T, E = AuthError> = std::result::Result<T, E>;
 ///
 /// # Enhanced Error Handling
 ///
-/// ```rust
+/// ```rust,no_run
 /// use auth_framework::AuthError;
 ///
+/// # fn example(auth_result: Result<(), AuthError>) {
 /// // Enhanced error handling with contextual help
 /// match auth_result {
 ///     Err(AuthError::Configuration { message, help, docs_url, .. }) => {
-///         eprintln!("❌ Configuration Error: {}", message);
+///         eprintln!("Configuration Error: {}", message);
 ///         if let Some(help) = help {
-///             eprintln!("💡 Help: {}", help);
+///             eprintln!("Help: {}", help);
 ///         }
 ///         if let Some(docs) = docs_url {
-///             eprintln!("📖 See: {}", docs);
+///             eprintln!("See: {}", docs);
 ///         }
 ///     },
-///     Err(AuthError::InvalidCredential { credential_type, message, suggested_fix, .. }) => {
-///         eprintln!("🔐 Invalid {}: {}", credential_type, message);
-///         if let Some(fix) = suggested_fix {
-///             eprintln!("🔧 Suggested fix: {}", fix);
-///         }
+///     Err(AuthError::InvalidCredential { credential_type, message }) => {
+///         eprintln!("Invalid {}: {}", credential_type, message);
 ///     },
 ///     // ... handle other error types
+///     _ => {}
 /// }
+/// # }
 /// ```
 ///
 /// # Security Notes

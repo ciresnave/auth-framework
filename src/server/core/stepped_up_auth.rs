@@ -22,7 +22,7 @@
 //! # Usage Example
 //!
 //! ```rust,no_run
-//! use auth_framework::server::stepped_up_auth::{
+//! use auth_framework::server::core::stepped_up_auth::{
 //!     SteppedUpAuthManager, StepUpConfig, AuthenticationLevel, StepUpContext
 //! };
 //! use std::collections::HashMap;
