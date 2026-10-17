@@ -1530,6 +1530,24 @@ impl AuthFramework {
         self.user_manager.create_api_key(user_id, expires_in).await
     }
 
+    /// Create an API key that carries `role` (one of the roles allowed for API keys).
+    ///
+    /// Authenticating with the key puts the role in the token's roles and, because API-key
+    /// authentication copies roles into scopes, in its scopes too: a key created with `"admin"`
+    /// yields the scope `admin`. Whether the caller may mint such a key is the caller's
+    /// authorization decision; this method does not know who is asking.
+    pub async fn create_api_key_with_role(
+        &self,
+        user_id: &str,
+        role: &str,
+        expires_in: Option<Duration>,
+    ) -> Result<String> {
+        self.require_initialized()?;
+        self.user_manager
+            .create_api_key_with_role(user_id, role, expires_in)
+            .await
+    }
+
     /// Validate an API key and return user information.
     pub async fn validate_api_key(&self, api_key: &str) -> Result<UserInfo> {
         self.require_initialized()?;
