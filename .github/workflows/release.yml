@@ -83,7 +83,7 @@ jobs:
 
       - name: Install cross
         if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: cargo install --locked cross --git https://github.com/cross-rs/cross
 
       - name: Install native musl toolchain
         if: matrix.native_musl
@@ -112,11 +112,11 @@ jobs:
               CC_aarch64_unknown_linux_musl=musl-gcc \
               AR_aarch64_unknown_linux_musl=ar \
               PKG_CONFIG_ALLOW_CROSS=1 \
-              cargo build --release --target ${{ matrix.target }} --features "$features" --bin "$bin_name"
+              cargo build --locked --release --target ${{ matrix.target }} --features "$features" --bin "$bin_name"
             elif [ "${{ matrix.cross }}" = "true" ]; then
               cross build --release --target ${{ matrix.target }} --features "$features" --bin "$bin_name"
             else
-              cargo build --release --target ${{ matrix.target }} --features "$features" --bin "$bin_name"
+              cargo build --locked --release --target ${{ matrix.target }} --features "$features" --bin "$bin_name"
             fi
           }
 
