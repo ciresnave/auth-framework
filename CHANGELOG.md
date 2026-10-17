@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc45] - Unreleased
+
+### Removed
+
+- The ZIP extraction path and the `zip` dependency. Nothing reached it: the threat-feed downloader
+  extracts only a feed whose filename ends in `.tar.gz`, yet `zip = "2"` was a non-optional
+  dependency, every 2.x release is yanked, and RUSTSEC-2026-0367, -0368 and -0369 (fixed in 9.0.0)
+  apply to it. A `.zip` path given to `extract_compressed_feed` is now refused with a "not
+  supported" error and nothing is written, like `.bz2` and `.xz`. If ZIP feeds are wanted later,
+  support re-enters with size limits and tests.
+
 ## [0.5.0-rc44] - Unreleased
 
 ### Changed
