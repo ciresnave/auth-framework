@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc50] - Unreleased
+
+### Fixed
+
+- **The JARM manager no longer signs with a fixed development key.** `AdvancedJarmManager::new` fell back to a key
+  spelled out in the source when no RSA key was configured, and also when configured keys failed to parse, so
+  responses could be signed (and accepted by `validate_jarm_response`) with a value that is the same in every
+  deployment. With no key configured it now generates a random symmetric key for the instance (still warned about:
+  its responses verify only inside that process). Configured keys that do not parse are an error: the new
+  `AdvancedJarmManager::try_new` returns it, and `new` (signature unchanged) panics with it rather than substituting
+  a key.
+
 ## [0.5.0-rc49] - Unreleased
 
 ### Fixed

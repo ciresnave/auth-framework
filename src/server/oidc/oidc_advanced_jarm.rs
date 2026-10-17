@@ -312,8 +312,18 @@ fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
 }
 
 impl AdvancedJarmManager {
-    /// Create new Advanced JARM manager
-    pub fn new(config: AdvancedJarmConfig) -> Self {
+    /// Create new Advanced JARM manager.
+    ///
+    /// Signing keys come from the configuration, then the `JARM_RSA_PRIVATE_KEY_PEM` /
+    /// `JARM_RSA_PUBLIC_KEY_PEM` environment variables. With no key configured the manager signs with
+    /// a random symmetric key generated for this instance (and logs a warning): its responses verify
+    /// only inside this process, and no key is shared between instances or deployments.
+    ///
+    /// # Errors
+    /// Keys that ARE configured but do not parse are an error: the manager never replaces keys the
+    /// operator supplied with a different one. Failure to gather randomness or to initialise the
+    /// internal validator or HTTP client is also an error.
+    pub fn try_new(config: AdvancedJarmConfig) -> Result<Self> {
         // Key resolution order:
         //   1. `config.rsa_private_key_pem` / `config.rsa_public_key_pem` (explicit)
         //   2. `JARM_RSA_PRIVATE_KEY_PEM` / `JARM_RSA_PUBLIC_KEY_PEM` env vars
@@ -331,16 +341,17 @@ impl AdvancedJarmManager {
         /// The `jwt_secret` field is not used for JARM JWT signing/verification
         /// (those use the explicit `encoding_key`/`decoding_key`), but it must not be
         /// a well-known hardcoded value in case it leaks via `get_decoding_key()`.
-        fn make_validator_secret() -> String {
+        fn make_validator_secret() -> Result<String> {
             use ring::rand::{SecureRandom, SystemRandom};
             let rng = SystemRandom::new();
             let mut bytes = [0u8; 32];
-            rng.fill(&mut bytes)
-                .expect("System CSPRNG unavailable; cannot initialize JARM JWT validator secret");
-            bytes.iter().fold(String::with_capacity(64), |mut s, b| {
+            rng.fill(&mut bytes).map_err(|_| {
+                AuthError::crypto("System CSPRNG unavailable; cannot initialize JARM secrets")
+            })?;
+            Ok(bytes.iter().fold(String::with_capacity(64), |mut s, b| {
                 s.push_str(&format!("{b:02x}"));
                 s
-            })
+            }))
         }
 
         // Each arm returns (encoding_key, decoding_key, validator_jwt_secret, validator_rsa_public_key_pem).
@@ -355,42 +366,39 @@ impl AdvancedJarmManager {
                             info!("JARM: loaded RSA signing/verification keys from configuration");
                             // For the internal validator, prefer an explicit env-var secret;
                             // otherwise generate a fresh random value per instance.
-                            let secret = std::env::var("JARM_JWT_SECRET")
-                                .unwrap_or_else(|_| make_validator_secret());
+                            let secret = match std::env::var("JARM_JWT_SECRET") {
+                                Ok(secret) => secret,
+                                Err(_) => make_validator_secret()?,
+                            };
                             (enc, dec, secret, Some(pub_pem))
                         }
                         (Err(e), _) | (_, Err(e)) => {
-                            warn!(
-                                "JARM: failed to parse provided RSA keys ({}). \
-                                 Falling back to development-only symmetric key — \
-                                 DO NOT use in production.",
-                                e
-                            );
-                            (
-                                EncodingKey::from_secret(b"test_key_for_development_only_123456"),
-                                DecodingKey::from_secret(b"test_key_for_development_only_123456"),
-                                "test_key_for_development_only_123456".to_string(),
-                                None,
-                            )
+                            // The operator supplied keys: refuse rather than sign with another key.
+                            return Err(AuthError::config(format!(
+                                "JARM: the configured RSA keys could not be parsed: {e}"
+                            )));
                         }
                     }
                 }
                 _ => {
                     // SECURITY: No RSA key is bundled. Production deployments MUST supply real
-                    // RSA keys via AdvancedJarmConfig or environment configuration.
-                    // The symmetric fallback below is intentionally weak — it triggers visible
-                    // warnings so an operator knows the service is not production-ready.
+                    // RSA keys via AdvancedJarmConfig or environment configuration. Without them
+                    // the manager signs with a random symmetric key generated for this instance:
+                    // responses verify only inside this process, and the key is not shared with
+                    // any other instance or deployment.
                     warn!(
-                        "SECURITY WARNING: AdvancedJarmManager is using a development-only \
-                         symmetric fallback key for JARM signing. This is NOT secure. Supply \
-                         an RSA private key via AdvancedJarmConfig::rsa_private_key_pem or \
-                         the JARM_RSA_PRIVATE_KEY_PEM environment variable before deploying \
-                         to production."
+                        "SECURITY WARNING: AdvancedJarmManager has no RSA key and is using a \
+                         random per-instance symmetric key for JARM signing. Its responses \
+                         cannot be verified outside this process. Supply an RSA private key \
+                         via AdvancedJarmConfig::rsa_private_key_pem or the \
+                         JARM_RSA_PRIVATE_KEY_PEM environment variable before deploying to \
+                         production."
                     );
+                    let signing_secret = make_validator_secret()?;
                     (
-                        EncodingKey::from_secret(b"test_key_for_development_only_123456"),
-                        DecodingKey::from_secret(b"test_key_for_development_only_123456"),
-                        "test_key_for_development_only_123456".to_string(),
+                        EncodingKey::from_secret(signing_secret.as_bytes()),
+                        DecodingKey::from_secret(signing_secret.as_bytes()),
+                        make_validator_secret()?,
                         None,
                     )
                 }
@@ -493,23 +501,40 @@ impl AdvancedJarmManager {
             ed_public_key_pem: None,
         };
 
-        Self {
+        let jwt_validator = SecureJwtValidator::new(jwt_config).map_err(|e| {
+            tracing::error!("Failed to initialize SecureJwtValidator for JARM: {e}");
+            e
+        })?;
+        let http_client = {
+            use crate::server::core::common_config::EndpointConfig;
+            let endpoint_config = EndpointConfig::new("https://localhost");
+            crate::server::core::common_http::HttpClient::new(endpoint_config).map_err(|e| {
+                tracing::error!("Failed to initialize HttpClient for JARM: {e}");
+                e
+            })?
+        };
+
+        Ok(Self {
             config,
-            jwt_validator: Arc::new(SecureJwtValidator::new(jwt_config).unwrap_or_else(|e| {
-                tracing::error!("Failed to initialize SecureJwtValidator for JARM: {e}");
-                panic!("SecureJwtValidator init failed");
-            })),
+            jwt_validator: Arc::new(jwt_validator),
             encoding_key,
             decoding_key,
-            http_client: {
-                use crate::server::core::common_config::EndpointConfig;
-                let endpoint_config = EndpointConfig::new("https://localhost");
-                crate::server::core::common_http::HttpClient::new(endpoint_config)
-                    .expect("HttpClient construction with a fixed https endpoint cannot fail")
-            },
+            http_client,
             jwe_public_key,
             jwe_private_key,
-        }
+        })
+    }
+
+    /// Create a new Advanced JARM manager, panicking on the errors [`Self::try_new`] returns.
+    ///
+    /// Kept so existing callers compile. Prefer [`Self::try_new`].
+    ///
+    /// # Panics
+    /// If the RSA keys the operator configured cannot be parsed, or the manager cannot be
+    /// initialised. It never substitutes a key for ones that were configured.
+    pub fn new(config: AdvancedJarmConfig) -> Self {
+        Self::try_new(config)
+            .expect("AdvancedJarmManager::new failed; use try_new to handle the error")
     }
 
     /// Create JARM response token
