@@ -103,13 +103,11 @@ jobs:
         # (unwrap_used/await_holding_lock).
         run: cargo test --locked --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration,admin-binary,sqlite-storage --workspace
 
-      # tests/storage_postgres.rs and tests/storage_redis.rs are #[ignore]d
-      # (cargo's convention for tests needing an external service) and were
-      # never actually run here despite this job provisioning healthy
-      # postgres/redis services for them (issue #17). Split into two steps
-      # (not one `run: |` block) so a failure in one does not stop the other
-      # from running and reporting under GitHub Actions' default `bash -e`
-      # shell.
+      # tests/storage_postgres.rs is #[ignore]d (cargo's convention for tests
+      # needing an external service) and was never actually run here despite
+      # this job provisioning a healthy postgres service for it (issue #17).
+      # The Redis tests are not ignored: the step above runs them against this
+      # job's redis service (REDIS_URL), so a missing server fails them.
       - name: Run ignored postgres storage integration tests
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
@@ -140,17 +138,6 @@ jobs:
         # internally, which is the whole point of the test. Same
         # --skip-not-#[ignore] mistake as above, caught the same way.
         run: cargo test --locked --test storage_postgres --features postgres-storage -- --ignored --test-threads=1 --skip pg_cleanup_expired --skip pg_token_crud --skip pg_token_update --skip pg_concurrent_migrate_is_safe
-
-      # if: always() -- GitHub Actions skips a step by default once an
-      # earlier step in the job fails, so without this the redis tests
-      # would silently never run again any time the postgres step fails for
-      # any reason (exactly the kind of invisible skip issue #17 was about).
-      - name: Run ignored redis storage integration tests
-        if: always()
-        env:
-          REDIS_URL: redis://localhost:6379
-          JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --locked --test storage_redis --features redis-storage -- --ignored
 
       - name: Verify examples compile
         env:

@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc74 -- Test and CI only. The 16 Redis tests (`storage_redis` 6, `kv_key_names_hold_no_credentials` 9,
+  `storage_list_kv_keys` 1) are no longer `#[ignore]`d. CI's `--ignored` step ran only `storage_redis`, so the
+  key-name migration tests (a security property) and the `list_kv_keys` test never ran in CI; all passed when run
+  once against Redis 7. They now run in the Test Suite and Coverage jobs, which provide a redis service and
+  `REDIS_URL`, and fail without a server instead of being skipped. The `Run ignored redis storage integration tests`
+  step is removed (it would run zero tests).
 - 0.6.0-rc72 -- **`DistributedRateLimiter::with_clock`**, a testing seam like `RateLimiter::with_clock`: the
   in-memory windows and penalties read the supplied clock instead of the system one (`new` is unchanged;
   the Redis path keeps the server's clock). The rate-limiting tests that slept past a window
