@@ -1548,6 +1548,28 @@ impl AuthFramework {
             .await
     }
 
+    /// Replace an API key with a new one for the same user and role, returning the new key once.
+    ///
+    /// The old key stops validating. See `UserManager::rotate_api_key` for the exact semantics
+    /// (single winner among concurrent rotations; a brief overlap in which both keys validate; a
+    /// failed retirement leaves the old key as the only valid one).
+    pub async fn rotate_api_key(&self, old_key: &str) -> Result<String> {
+        self.require_initialized()?;
+        self.user_manager.rotate_api_key(old_key).await
+    }
+
+    /// Like [`Self::rotate_api_key`], choosing the new key's lifetime (`None`: no expiry).
+    pub async fn rotate_api_key_with_expiry(
+        &self,
+        old_key: &str,
+        expires_in: Option<Duration>,
+    ) -> Result<String> {
+        self.require_initialized()?;
+        self.user_manager
+            .rotate_api_key_with_expiry(old_key, expires_in)
+            .await
+    }
+
     /// Validate an API key and return user information.
     pub async fn validate_api_key(&self, api_key: &str) -> Result<UserInfo> {
         self.require_initialized()?;

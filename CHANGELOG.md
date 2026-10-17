@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 0.6.0-rc90 -- **API key rotation.** `UserManager::rotate_api_key(old_key)` (also on `AuthFramework` and
+  `tokens()`, plus `rotate_api_key_with_expiry`) replaces a key with a new one for the same user and role and returns the
+  new key once; the old key stops validating. The new key lives as long as the old one was meant to (a key that never
+  expired still never does), counted from now, or as long as the caller chooses. A revoked, expired, unknown, or
+  role-no-longer-permitted key is refused and nothing is created. Of several simultaneous rotations of one key exactly
+  one succeeds (an atomic `store_kv_if_absent` claim). The new key is stored inert first, the old one deleted second, and
+  the new one made live last; if the delete fails the new key is removed again and the call returns an error, so a
+  returned result always leaves exactly one valid key. A process that dies part-way never leaves two live keys: a death
+  before the old key is deleted leaves the old key as the only live one (retry after the 60-second claim expires), and
+  a death after it leaves no live key until the user creates another (an inert row never authenticates and expires on
+  its own where the backend tracks TTLs). "Never both and never neither" needs a storage transaction, which is not
+  provided. A backend without an atomic `store_kv_if_absent` refuses to rotate. The single-winner behaviour and the
+  crash behaviour at each of the six writes are tested against the memory, SQLite, Redis and PostgreSQL backends
+  (8 concurrent rotations per round; disabling the claim fails all four); any other backend is unverified.
 - 0.6.0-rc89 -- **API keys carry a role.** `UserManager::create_api_key_with_role(user_id, role, expires_in)` stores the
   role with the key and `validate_api_key` returns it (`UserInfo.roles`). The allowed roles are `admin`, `user` and
   `api_user` by default and configurable with `UserManager::with_api_key_roles`; a role outside the set is an error at
