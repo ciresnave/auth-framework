@@ -363,7 +363,6 @@ impl GnapService {
     /// This is called by middleware or application code that extracts the
     /// HTTP message signature from the request before invoking the GNAP
     /// transaction endpoints.
-    #[allow(dead_code)]
     pub fn verify_jwk_signature(jwk: &GnapJwk, message: &[u8], signature: &[u8]) -> Result<()> {
         use base64::Engine;
         use ring::signature;
@@ -423,7 +422,6 @@ impl GnapService {
     }
 
     /// Encode RSA n,e into a DER SubjectPublicKeyInfo structure for ring.
-    #[allow(dead_code)]
     fn encode_rsa_public_key_der(n: &[u8], e: &[u8]) -> Vec<u8> {
         // Build PKCS#1 RSAPublicKey: SEQUENCE { INTEGER n, INTEGER e }
         fn der_integer(val: &[u8]) -> Vec<u8> {

@@ -276,16 +276,13 @@ impl IndieAuthMetadata {
 type TokenRecord = (String, Option<String>, u64);
 
 /// Stored authorization code with associated metadata.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct StoredAuthCode {
-    code: String,
     client_id: String,
     redirect_uri: String,
     me: String,
     scope: Option<String>,
     code_challenge: String,
-    code_challenge_method: String,
     created_at: u64,
 }
 
@@ -352,13 +349,11 @@ impl IndieAuthServer {
         }
         let code = Self::generate_token()?;
         let stored = StoredAuthCode {
-            code: code.clone(),
             client_id: client_id.to_string(),
             redirect_uri: redirect_uri.to_string(),
             me: me.to_string(),
             scope: scope.map(|s| s.to_string()),
             code_challenge: code_challenge.to_string(),
-            code_challenge_method: code_challenge_method.to_string(),
             created_at: Self::now_secs(),
         };
         self.codes.write().await.insert(code.clone(), stored);

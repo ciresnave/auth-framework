@@ -505,7 +505,6 @@ struct LoginForm {
 
 #[cfg(feature = "web-gui")]
 #[derive(Deserialize)]
-#[allow(dead_code)] // Fields are read by axum's Form extractor via serde deserialization.
 struct ConfigEditForm {
     key: String,
     value: String,
@@ -513,7 +512,6 @@ struct ConfigEditForm {
 
 #[cfg(feature = "web-gui")]
 #[derive(Deserialize)]
-#[allow(dead_code)] // Fields are read by axum's Form extractor via serde deserialization.
 struct CreateUserForm {
     email: String,
     password: Zeroizing<String>,
@@ -522,7 +520,6 @@ struct CreateUserForm {
 
 #[cfg(feature = "web-gui")]
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct DeleteUserForm {
     user_id: String,
 }

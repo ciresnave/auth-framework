@@ -29,7 +29,6 @@
 use crate::errors::{AuthError, Result};
 use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 use base64::Engine as _;
-use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::collections::HashMap;
@@ -65,7 +64,10 @@ const KRB5_OID_BYTES: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 
 // ─── Minimal DER Parser ──────────────────────────────────────────────────────
 
 /// A parsed DER Tag-Length-Value.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "mirrors the DER tag-length-value layout being parsed; fields are decoded but not all are consulted by the checks implemented so far"
+)]
 #[derive(Debug)]
 struct DerTlv<'a> {
     /// Tag class: 0=Universal, 1=Application, 2=Context-specific, 3=Private.
@@ -256,7 +258,10 @@ struct ParsedTicket<'a> {
 }
 
 /// Parsed AP-REQ (RFC 4120 §5.5.1).
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "mirrors the AP-REQ structure (RFC 4120 section 5.5.1) being parsed; fields are decoded but not all are consulted by the checks implemented so far"
+)]
 struct ParsedApReq<'a> {
     ap_options: u32,
     ticket: ParsedTicket<'a>,
@@ -264,7 +269,10 @@ struct ParsedApReq<'a> {
 }
 
 /// Decrypted EncTicketPart (RFC 4120 §5.3).
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "mirrors the EncTicketPart structure (RFC 4120 section 5.3) being parsed; fields are decoded but not all are consulted by the checks implemented so far"
+)]
 struct DecryptedTicketPart {
     flags_raw: Vec<u8>,
     session_key_type: i32,
@@ -1478,18 +1486,6 @@ impl KerberosManager {
 
         cache.insert(hash, now);
         Ok(())
-    }
-
-    /// Generate a mutual-authentication response token.
-    #[allow(dead_code)]
-    fn generate_response_token(&self) -> Result<Option<String>> {
-        let rng = ring::rand::SystemRandom::new();
-        let mut nonce = [0u8; 16];
-        rng.fill(&mut nonce)
-            .map_err(|_| AuthError::crypto("Failed to generate SPNEGO response nonce"))?;
-
-        let encoded = base64::engine::general_purpose::STANDARD.encode(nonce);
-        Ok(Some(encoded))
     }
 }
 

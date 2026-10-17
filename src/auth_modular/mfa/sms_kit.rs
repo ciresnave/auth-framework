@@ -126,11 +126,20 @@ impl<'de> Deserialize<'de> for SmsKitProviderConfig {
             },
             Development,
             AwsSns {
-                #[allow(dead_code)]
+                #[allow(
+                    dead_code,
+                    reason = "AwsSns is retained for configuration compatibility; no SMS provider reads these credentials"
+                )]
                 region: String,
-                #[allow(dead_code)]
+                #[allow(
+                    dead_code,
+                    reason = "AwsSns is retained for configuration compatibility; no SMS provider reads these credentials"
+                )]
                 access_key_id: String,
-                #[allow(dead_code)]
+                #[allow(
+                    dead_code,
+                    reason = "AwsSns is retained for configuration compatibility; no SMS provider reads these credentials"
+                )]
                 secret_access_key: String,
             },
         }

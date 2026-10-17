@@ -132,7 +132,10 @@ impl EnhancedDeviceFlowMethod {
 
         #[derive(Deserialize)]
         struct DeviceAuthResponse {
-            #[allow(dead_code)]
+            #[allow(
+                dead_code,
+                reason = "RFC 8628 device authorization response field; deserialized with the rest of the response but not used by this client"
+            )]
             device_code: String,
             user_code: String,
             verification_uri: String,

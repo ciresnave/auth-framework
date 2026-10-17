@@ -34,27 +34,36 @@ fn test_no_todos_in_examples() {
     }
 }
 
-/// Test to audit all #[allow(dead_code)] directives
+/// Every `allow(dead_code)` in production code must say why: `#[allow(dead_code, reason = "...")]`.
+///
+/// `dead_code` is a signal that something is unused, unfinished or unreachable; an allow without a
+/// reason silences it for good. Covers `#[allow(..)]`, `#![allow(..)]` and `cfg_attr(.., allow(..))`.
 #[test]
-#[ignore = "20 unreviewed #[allow(dead_code)] directives, see https://github.com/ciresnave/auth-framework/issues/80"]
 fn test_audit_allow_dead_code_directives() {
-    let allows = find_allow_dead_code_in_directory("src");
-
-    if !allows.is_empty() {
-        let mut error_msg = String::from("Found #[allow(dead_code)] directives in source code:\n");
-        for (file, line_num, content) in allows {
-            error_msg.push_str(&format!("  {}:{} - {}\n", file, line_num, content.trim()));
+    let mut unexplained = Vec::new();
+    for (file, line_num, content) in find_production_pattern_in_directory("src", "allow(dead_code")
+    {
+        // The attribute may be wrapped over a few lines, so look at the line and the three after it.
+        let Ok(text) = fs::read_to_string(&file) else {
+            continue;
+        };
+        let window: String = text
+            .lines()
+            .skip(line_num - 1)
+            .take(4)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !window.contains("reason =") {
+            unexplained.push(format!("  {}:{} - {}", file, line_num, content.trim()));
         }
-        error_msg.push('\n');
-        error_msg.push_str("Each #[allow(dead_code)] directive must be justified:\n");
-        error_msg.push_str("- Is this truly necessary?\n");
-        error_msg.push_str("- Could it be hiding incomplete implementations?\n");
-        error_msg.push_str("- Is there a comment explaining why it's needed?\n");
-        error_msg.push_str("- Could the code be refactored to avoid it?\n\n");
-        error_msg.push_str("Security-critical code should NOT use #[allow(dead_code)]!\n");
-
-        panic!("{}", error_msg);
     }
+
+    assert!(
+        unexplained.is_empty(),
+        "allow(dead_code) without a reason. Remove the dead item, or write \
+         #[allow(dead_code, reason = \"why this is not dead\")]:\n{}",
+        unexplained.join("\n")
+    );
 }
 
 /// Test to ensure no unimplemented!() macros in production code
@@ -581,11 +590,6 @@ mod scanner_tests {
 /// Helper function to find TODO comments in a directory
 fn find_todos_in_directory(dir: &str) -> Vec<(String, usize, String)> {
     find_pattern_in_directory(dir, "TODO")
-}
-
-/// Helper function to find #[allow(dead_code)] in a directory
-fn find_allow_dead_code_in_directory(dir: &str) -> Vec<(String, usize, String)> {
-    find_pattern_in_directory(dir, "#[allow(dead_code)]")
 }
 
 /// Helper function to find patterns in files recursively

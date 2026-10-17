@@ -151,12 +151,10 @@ pub enum CibaError {
 
 // ── Internal state ──────────────────────────────────────────────────
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct PendingAuth {
     request: CibaAuthRequest,
     status: CibaRequestStatus,
-    created_at: u64,
     expires_at: u64,
     last_polled: Option<u64>,
     mode: CibaMode,
@@ -253,7 +251,6 @@ impl CibaProvider {
         let pending = PendingAuth {
             request,
             status: CibaRequestStatus::Pending,
-            created_at: now,
             expires_at: now + expires_in,
             last_polled: None,
             mode,
