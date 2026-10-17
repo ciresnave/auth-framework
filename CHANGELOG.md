@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc82 -- **`SamlAuthMethod::default()` no longer signs tokens with a fixed secret.** The default method used a secret
+  spelled out in the source for its token manager, so a token signed with that value validated through any default
+  `SamlAuthMethod`. It now generates a random secret per instance (its tokens verify only through that method's
+  `token_manager`); build the method with `SamlAuthMethod::new` and your own `TokenManager` when tokens must verify
+  elsewhere.
 - 0.6.0-rc81 -- **The JWT introspection manager no longer signs with a fixed key.** `JwtIntrospectionManager::new` signed
   and verified introspection responses with a key spelled out in the source, so a response claiming a token is active
   (with any scope) could be forged by anyone and accepted by `verify_jwt_response`. `new` now generates a random key per
