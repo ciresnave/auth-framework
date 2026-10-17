@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc51] - Unreleased
+
+### Fixed
+
+- **The JWT introspection manager no longer signs with a fixed key.** `JwtIntrospectionManager::new` signed and verified
+  introspection responses with a key spelled out in the source, so a response claiming a token is active (with any scope)
+  could be forged by anyone and accepted by `verify_jwt_response`. `new` now generates a random key per instance
+  (responses verify only through that manager); the new `JwtIntrospectionManager::with_hmac_secret(config, secret)` takes a
+  shared secret of at least 32 bytes for deployments where issuer and verifier are different processes.
+- **`SamlAuthMethod::default()` no longer signs tokens with a fixed secret.** It generates a random secret per instance;
+  build the method with `SamlAuthMethod::new` and your own `TokenManager` when tokens must verify elsewhere.
+
 ## [0.5.0-rc50] - Unreleased
 
 ### Fixed
