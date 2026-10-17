@@ -82,20 +82,16 @@ fn test_no_unimplemented_in_source() {
 }
 
 /// Test to find potential security-critical panics
+///
+/// Scans production code only: items under `#[cfg(test)]` (or `#[cfg(all(test, ..))]`) and
+/// `#[test]` functions are skipped by [`production_lines`], however the file is named.
 #[test]
-#[ignore = "file-path filter can't tell test code (#[cfg(test)] blocks in ordinarily-named files) from production code, ~15 false positives, see https://github.com/ciresnave/auth-framework/issues/87"]
 fn test_audit_panics_in_source() {
-    let panics = find_pattern_in_directory("src", "panic!");
+    let panics = find_production_pattern_in_directory("src", "panic!");
 
-    // Filter out test-only panics
-    let non_test_panics: Vec<_> = panics
-        .into_iter()
-        .filter(|(file, _, _)| !file.contains("test") && !file.contains("bench"))
-        .collect();
-
-    if !non_test_panics.is_empty() {
+    if !panics.is_empty() {
         let mut error_msg = String::from("Found panic!() calls in non-test source code:\n");
-        for (file, line_num, content) in non_test_panics {
+        for (file, line_num, content) in panics {
             error_msg.push_str(&format!("  {}:{} - {}\n", file, line_num, content.trim()));
         }
         error_msg.push_str("\nProduction code should handle errors gracefully, not panic!\n");
@@ -105,50 +101,480 @@ fn test_audit_panics_in_source() {
     }
 }
 
-/// Test to find hardcoded credentials or secrets
+/// Shapes of a default key, secret, password, salt or token spelled out in production source.
+///
+/// Each pattern is a way a fixed credential has actually appeared in this crate: a secret-named
+/// variable or field set to a string literal, a key constructor handed a literal, a template or
+/// "change me" marker inside a string, or a named byte-string constant. A hit is either a real
+/// defect (fix it: generate a random per-instance value, or require the caller to supply one) or it
+/// is listed in [`SECRET_LITERAL_ALLOWLIST`] with the reason it is harmless.
+const SECRET_LITERAL_PATTERNS: [&str; 5] = [
+    // secret-named identifier = "literal"
+    r#"(?i)\b\w*(password|passwd|secret|api_?key|private_key|signing_key|salt|pepper)\w*\s*(:\s*[^=]{1,40})?[=:]\s*b?"[^"{}$]{8,}""#,
+    // key/secret constructors given a literal
+    r#"(?i)\b(from_secret|new_hmac|from_base64_secret|SecureJwtValidator::new)\(\s*&?b?""#,
+    // builder calls handed a literal secret
+    r#"(?i)\.(secret|jwt_secret|with_jwt_secret|secret_key|password)\(\s*&?""#,
+    // template / placeholder / development-key markers inside a string literal
+    r#"(?i)"[^"]*(change_this|changeme|change-me|change-in-production|change_in_production|development-only|dev-only|test_key|your-secret|replace-with)[^"]*""#,
+    // named byte-string constants that look like keys
+    r#"(?i)\b(const|static|let)\s+\w*(key|secret|salt|nonce)\w*\s*(:[^=]+)?=\s*b"[^"]{8,}""#,
+];
+
+/// Known harmless hits: `(file suffix, text that must appear on the line, reason)`. An entry that
+/// no longer matches anything fails the test, so the list cannot go stale.
+const SECRET_LITERAL_ALLOWLIST: [(&str, &str, &str); 9] = [
+    (
+        "src/bin/oauth2_test_server.rs",
+        "test_oauth2_secret_key_that_is_long_enough",
+        "development test server binary, not library surface; run by hand against localhost",
+    ),
+    (
+        "src/bin/test_oauth2.rs",
+        "test_oauth2_secret_key_that_is_long_enough",
+        "development test binary, not library surface; run by hand against localhost",
+    ),
+    (
+        "src/sdks/python.rs",
+        "api_key=\"your-api-key\"",
+        "template text for generated Python SDK sample code, not used as a credential",
+    ),
+    (
+        "src/testing/test_infrastructure.rs",
+        "test-jwt-secret-for-container-tests",
+        "test helper that sets an environment variable for the container-backed integration tests",
+    ),
+    (
+        "src/auth.rs",
+        "export JWT_SECRET=",
+        "operator-facing error message showing how to set the variable; not a value the code uses",
+    ),
+    (
+        "src/auth.rs",
+        "using development-only default",
+        "log message text; the token manager it refers to is built from a random per-process secret",
+    ),
+    (
+        "src/lib.rs",
+        "replace-with-a-32-char-random-secret",
+        "crate-level documentation example; production validation refuses this placeholder",
+    ),
+    (
+        "src/server/token_exchange/advanced_token_exchange.rs",
+        "BEGIN RSA PRIVATE KEY",
+        "default config holds a truncated PEM that from_rsa_pem rejects, so no usable key exists",
+    ),
+    (
+        "src/server/token_exchange/token_exchange_factory.rs",
+        "SecureJwtValidator::new(\"your-secret-key\"",
+        "inside a raw string of example code returned to the reader, never executed",
+    ),
+];
+
+/// Hits of [`SECRET_LITERAL_PATTERNS`] on the production lines of `content`: `(line number, line)`.
+fn secret_literal_hits<'a>(file: &str, content: &'a str) -> Vec<(usize, &'a str)> {
+    let patterns: Vec<regex::Regex> = SECRET_LITERAL_PATTERNS
+        .iter()
+        .map(|p| regex::Regex::new(p).expect("pattern compiles"))
+        .collect();
+    production_lines(file, content)
+        .into_iter()
+        .filter(|(_, line)| {
+            let t = line.trim_start();
+            !(t.starts_with("//") || t.starts_with('*') || t.starts_with("/*"))
+        })
+        .filter(|(_, line)| patterns.iter().any(|p| p.is_match(line)))
+        .collect()
+}
+
+fn rust_files_under(dir: &str, out: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            rust_files_under(&path.to_string_lossy(), out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path.to_string_lossy().replace('\\', "/"));
+        }
+    }
+}
+
+/// No production source line may spell out a default key, secret, password or salt unless it is
+/// listed (with a reason) as harmless. Older releases shipped fixed signing secrets in several
+/// places; this is the guard against another one appearing.
 #[test]
-#[ignore = "pattern matching is too crude to assert on (~190 hits, all reviewed false positives), see https://github.com/ciresnave/auth-framework/issues/81"]
 fn test_no_hardcoded_secrets() {
-    let patterns = vec![
-        "password",
-        "secret",
-        "api_key",
-        "access_token",
-        "private_key",
-        "client_secret",
-    ];
+    let mut files = Vec::new();
+    rust_files_under("src", &mut files);
+    files.sort();
 
-    let mut found_secrets = Vec::new();
-
-    for pattern in patterns {
-        let matches = find_pattern_in_directory("src", pattern);
-        for (file, line_num, content) in matches {
-            // Skip documentation, comments, and variable names
-            let line = content.to_lowercase();
-            if line.contains(&format!("= \"{}\"", pattern))
-                || line.contains(&format!("= '{}'", pattern))
-                || (line.contains("=")
-                    && line.contains(pattern)
-                    && (line.contains("\"") || line.contains("'"))
-                    && !line.trim_start().starts_with("//")
-                    && !line.trim_start().starts_with("///")
-                    && !line.trim_start().starts_with("*"))
-            {
-                found_secrets.push((file, line_num, content));
+    let mut unexplained = Vec::new();
+    let mut used = [false; SECRET_LITERAL_ALLOWLIST.len()];
+    for file in &files {
+        let Ok(content) = fs::read_to_string(file) else {
+            continue;
+        };
+        for (line_num, line) in secret_literal_hits(file, &content) {
+            let listed = SECRET_LITERAL_ALLOWLIST
+                .iter()
+                .enumerate()
+                .find(|(_, (suffix, text, _))| file.ends_with(suffix) && line.contains(text));
+            match listed {
+                Some((i, _)) => used[i] = true,
+                None => unexplained.push(format!("  {file}:{line_num} - {}", line.trim())),
             }
         }
     }
 
-    if !found_secrets.is_empty() {
-        let mut error_msg = String::from("Found potential hardcoded secrets:\n");
-        for (file, line_num, content) in found_secrets {
-            error_msg.push_str(&format!("  {}:{} - {}\n", file, line_num, content.trim()));
-        }
-        error_msg.push_str(
-            "\nSecrets should come from environment variables or secure configuration!\n",
-        );
+    let stale: Vec<String> = SECRET_LITERAL_ALLOWLIST
+        .iter()
+        .zip(used)
+        .filter(|(_, used)| !used)
+        .map(|((suffix, text, _), _)| format!("  {suffix}: {text}"))
+        .collect();
 
-        panic!("{}", error_msg);
+    assert!(
+        unexplained.is_empty() && stale.is_empty(),
+        "hard-coded secret audit failed.\nUnexplained hits (fix them, or list them with a reason in \
+         SECRET_LITERAL_ALLOWLIST):\n{}\nStale allowlist entries (remove them):\n{}",
+        unexplained.join("\n"),
+        stale.join("\n")
+    );
+}
+
+#[cfg(test)]
+mod secret_scanner_tests {
+    use super::secret_literal_hits;
+
+    fn hits(src: &str) -> usize {
+        secret_literal_hits("fixture.rs", src).len()
+    }
+
+    #[test]
+    fn finds_each_shape_a_fixed_credential_has_taken() {
+        assert_eq!(hits("let jwt_secret = \"correct-horse-battery\";\n"), 1);
+        assert_eq!(
+            hits("cfg.signing_key: \"-----BEGIN RSA PRIVATE KEY-----\".to_string(),\n"),
+            1
+        );
+        assert_eq!(
+            hits("let k = EncodingKey::from_secret(b\"anything\");\n"),
+            1
+        );
+        assert_eq!(
+            hits("TokenManager::new_hmac(b\"x\", \"iss\", \"aud\");\n"),
+            1
+        );
+        assert_eq!(hits("let msg = \"please change-in-production soon\";\n"), 1);
+        assert_eq!(
+            hits("const SIGNING_KEY: &[u8] = b\"0123456789abcdef\";\n"),
+            1
+        );
+    }
+
+    #[test]
+    fn ignores_ordinary_code_comments_and_test_items() {
+        assert_eq!(hits("token_type: \"Bearer\".to_string(),\n"), 0);
+        assert_eq!(hits("let key = format!(\"user:{}\", id);\n"), 0);
+        assert_eq!(hits("// let password = \"hunter2hunter2\";\n"), 0);
+        assert_eq!(hits("/// jwt_secret = \"documented-example\"\n"), 0);
+        assert_eq!(
+            hits("#[test]\nfn t() {\n    let password = \"hunter2hunter2\";\n}\n"),
+            0
+        );
+        assert_eq!(hits("let secret = random_secret();\n"), 0);
+    }
+}
+
+/// Whether `line` is an attribute that makes the item after it test-only.
+fn is_test_attribute(line: &str) -> bool {
+    let line = line.trim();
+    line == "#[test]"
+        || line.starts_with("#[tokio::test")
+        || line == "#[cfg(test)]"
+        || line.starts_with("#[cfg(all(test,")
+        || line.starts_with("#[cfg(all(test)")
+}
+
+/// The index of the line on which the item that starts at `lines[start]` ends: where its braces
+/// balance, or at a `;` that ends a body-less item. Comments, string and raw-string literals, and
+/// character literals are skipped, so a `"{"` or `r#"{"#` inside one does not count as a brace.
+/// `None` if the item never ends.
+fn item_end(lines: &[&str], start: usize) -> Option<usize> {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    let text: Vec<char> = lines[start..].join("\n").chars().collect();
+    let mut i = 0;
+    let mut line = start;
+    let mut braces: i64 = 0;
+    let mut nesting: i64 = 0; // parentheses and brackets
+    let mut opened = false;
+    while i < text.len() {
+        let c = text[i];
+        let prev = if i > 0 { Some(text[i - 1]) } else { None };
+        match c {
+            '\n' => {
+                line += 1;
+                i += 1;
+            }
+            '/' if text.get(i + 1) == Some(&'/') => {
+                while i < text.len() && text[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if text.get(i + 1) == Some(&'*') => {
+                let mut depth = 1;
+                i += 2;
+                while i < text.len() && depth > 0 {
+                    if text[i] == '/' && text.get(i + 1) == Some(&'*') {
+                        depth += 1;
+                        i += 2;
+                    } else if text[i] == '*' && text.get(i + 1) == Some(&'/') {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        if text[i] == '\n' {
+                            line += 1;
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            'r' if !prev.is_some_and(is_ident)
+                || (prev == Some('b') && i >= 2 && !is_ident(text[i - 2])) =>
+            {
+                // Possibly a raw string: r"..." or r#"..."# (any number of #).
+                let mut j = i + 1;
+                let mut hashes = 0;
+                while text.get(j) == Some(&'#') {
+                    hashes += 1;
+                    j += 1;
+                }
+                if text.get(j) != Some(&'"') {
+                    i += 1;
+                    continue;
+                }
+                j += 1;
+                loop {
+                    match text.get(j) {
+                        None => return None,
+                        Some('\n') => {
+                            line += 1;
+                            j += 1;
+                        }
+                        Some('"') if (0..hashes).all(|k| text.get(j + 1 + k) == Some(&'#')) => {
+                            j += 1 + hashes;
+                            break;
+                        }
+                        Some(_) => j += 1,
+                    }
+                }
+                i = j;
+            }
+            '"' => {
+                i += 1;
+                while i < text.len() {
+                    match text[i] {
+                        '\\' => {
+                            if text.get(i + 1) == Some(&'\n') {
+                                line += 1;
+                            }
+                            i += 2;
+                        }
+                        '"' => {
+                            i += 1;
+                            break;
+                        }
+                        '\n' => {
+                            line += 1;
+                            i += 1;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            '\'' => {
+                if text.get(i + 1) == Some(&'\\') {
+                    // escaped character literal: '\n', '\'', '\u{..}'
+                    let mut j = i + 2;
+                    while j < text.len() && text[j] != '\'' {
+                        j += 1;
+                    }
+                    i = j + 1;
+                } else if text.get(i + 2) == Some(&'\'') {
+                    i += 3; // 'x'
+                } else {
+                    i += 1; // a lifetime
+                }
+            }
+            '(' | '[' => {
+                nesting += 1;
+                i += 1;
+            }
+            ')' | ']' => {
+                nesting -= 1;
+                i += 1;
+            }
+            '{' => {
+                braces += 1;
+                opened = true;
+                i += 1;
+            }
+            '}' => {
+                braces -= 1;
+                if opened && braces <= 0 {
+                    return Some(line);
+                }
+                i += 1;
+            }
+            ';' if !opened && nesting <= 0 => return Some(line),
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// The lines of `content` that are production code: everything except the items (module,
+/// function, impl, ...) that carry a test-only attribute (see [`is_test_attribute`]).
+///
+/// An item is skipped from its first non-attribute line to where it ends ([`item_end`]). If a
+/// skipped item never ends before the end of the file this panics, naming the file, rather than
+/// silently dropping the rest of it from the audit.
+fn production_lines<'a>(file: &str, content: &'a str) -> Vec<(usize, &'a str)> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut kept = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if !is_test_attribute(lines[i]) {
+            kept.push((i + 1, lines[i]));
+            i += 1;
+            continue;
+        }
+        // Skip further attributes, doc comments and blanks up to the item itself.
+        let mut j = i + 1;
+        while j < lines.len() {
+            let t = lines[j].trim_start();
+            if t.starts_with("#[") || t.starts_with("//") || t.is_empty() {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        let end = item_end(&lines, j.min(lines.len().saturating_sub(1)));
+        let Some(end) = end else {
+            panic!(
+                "audit scanner lost track of a test-only item starting near {file}:{}: \
+                 it never ended before the end of the file",
+                i + 1
+            );
+        };
+        i = end + 1;
+    }
+    kept
+}
+
+/// Find `pattern` in production code (see [`production_lines`]) under `dir`, ignoring comment lines.
+fn find_production_pattern_in_directory(dir: &str, pattern: &str) -> Vec<(String, usize, String)> {
+    let mut results = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return results;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            results.extend(find_production_pattern_in_directory(
+                &path.to_string_lossy(),
+                pattern,
+            ));
+        } else if path.extension().is_some_and(|ext| ext == "rs")
+            && let Ok(content) = fs::read_to_string(&path)
+        {
+            let file = path.to_string_lossy().to_string();
+            for (line_num, line) in production_lines(&file, &content) {
+                let trimmed = line.trim_start();
+                let is_comment = trimmed.starts_with("//")
+                    || trimmed.starts_with('*')
+                    || trimmed.starts_with("/*");
+                if line.contains(pattern) && !is_comment {
+                    results.push((file.clone(), line_num, line.to_string()));
+                }
+            }
+        }
+    }
+    results
+}
+
+#[cfg(test)]
+mod scanner_tests {
+    use super::production_lines;
+
+    fn kept(src: &str) -> Vec<usize> {
+        production_lines("fixture.rs", src)
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect()
+    }
+
+    #[test]
+    fn skips_a_cfg_test_module_and_keeps_the_rest() {
+        let src =
+            "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() { panic!(\"x\"); }\n}\nfn b() {}\n";
+        assert_eq!(kept(src), [1, 6]);
+    }
+
+    #[test]
+    fn skips_a_test_function_outside_a_test_module() {
+        let src = "fn a() {}\n#[test]\nfn t() {\n    if true { panic!(\"x\"); }\n}\nfn b() {}\n";
+        assert_eq!(kept(src), [1, 6]);
+    }
+
+    #[test]
+    fn skips_cfg_all_test_and_stacked_attributes() {
+        let src = "#[cfg(all(test, feature = \"web-gui\"))]\n#[allow(dead_code)]\n/// doc\nmod tests {\n    fn t() {}\n}\nfn prod() {}\n";
+        assert_eq!(kept(src), [7]);
+    }
+
+    #[test]
+    fn does_not_skip_other_cfg_attributes() {
+        let src =
+            "#[cfg(feature = \"x\")]\nfn a() { panic!(\"real\"); }\n#[cfg(not(test))]\nfn b() {}\n";
+        assert_eq!(kept(src), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn skips_a_test_only_item_that_ends_in_a_semicolon() {
+        let src = "#[cfg(test)]\nuse foo::bar;\nfn a() {}\n";
+        assert_eq!(kept(src), [3]);
+    }
+
+    #[test]
+    #[should_panic(expected = "lost track")]
+    fn fails_loudly_when_the_item_never_ends() {
+        production_lines("fixture.rs", "#[cfg(test)]\nmod tests {\n    fn f() {\n");
+    }
+
+    #[test]
+    fn braces_inside_literals_and_comments_do_not_count() {
+        let src = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    const A: &str = r#\"{\"#;\n",
+            "    const B: &str = \"}\";\n",
+            "    const C: char = '{';\n",
+            "    // }\n",
+            "    /* { */\n",
+            "    fn f<'a>(x: &'a str) -> &'a str { x }\n",
+            "}\n",
+            "fn prod() {}\n",
+        );
+        assert_eq!(kept(src), [10]);
+    }
+
+    #[test]
+    fn a_semicolon_inside_brackets_does_not_end_a_fn_early() {
+        let src = "#[cfg(test)]\nfn f(a: [u8; 4]) {\n    panic!(\"x\");\n}\nfn prod() {}\n";
+        assert_eq!(kept(src), [5]);
     }
 }
 
