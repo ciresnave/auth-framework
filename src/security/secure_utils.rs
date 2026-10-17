@@ -3,7 +3,7 @@ use crate::errors::{AuthError, Result};
 use base64::Engine;
 use ring::rand::{SecureRandom, SystemRandom};
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 
 /// A secure string that is automatically zeroized when dropped
 #[derive(Debug, Clone, ZeroizeOnDrop)]
@@ -54,61 +54,23 @@ impl From<&str> for SecureString {
 pub struct SecureComparison;
 
 impl SecureComparison {
-    /// Constant-time string comparison
-    ///
-    /// To avoid leaking length information via timing, this pads both inputs
-    /// to the same length before comparing, then checks the original lengths.
+    /// Constant-time string comparison over the full length of both inputs.
     pub fn constant_time_eq(a: &str, b: &str) -> bool {
         Self::secure_string_compare(a, b)
     }
 
-    /// Constant-time byte comparison
+    /// Constant-time byte comparison over the full length of both slices.
     ///
-    /// Pads both slices to equal length to avoid leaking length via timing.
+    /// Every byte is compared, however long the inputs are. The length itself is not secret, and
+    /// `ct_eq` examines all bytes of equal-length slices without an early exit.
     pub fn constant_time_eq_bytes(a: &[u8], b: &[u8]) -> bool {
-        let max_len = a.len().max(b.len()).min(1024);
-        let mut a_padded = vec![0u8; max_len];
-        let mut b_padded = vec![0u8; max_len];
-
-        a_padded[..a.len().min(max_len)].copy_from_slice(&a[..a.len().min(max_len)]);
-        b_padded[..b.len().min(max_len)].copy_from_slice(&b[..b.len().min(max_len)]);
-
-        let result = a_padded.ct_eq(&b_padded).into() && a.len() == b.len();
-
-        a_padded.zeroize();
-        b_padded.zeroize();
-
-        result
+        a.len() == b.len() && bool::from(a.ct_eq(b))
     }
 
-    /// Compare strings with timing attack protection
-    /// This function always takes the same amount of time regardless of where differences occur
+    /// Compare strings with timing attack protection, over the full length of both inputs.
     pub fn secure_string_compare(a: &str, b: &str) -> bool {
-        // Normalize lengths to prevent length-based timing attacks
-        let max_len = a.len().max(b.len()).min(1024); // Cap at reasonable length
-
-        let mut a_padded = vec![0u8; max_len];
-        let mut b_padded = vec![0u8; max_len];
-
-        // Copy actual data
-        let a_bytes = a.as_bytes();
-        let b_bytes = b.as_bytes();
-
-        a_padded[..a_bytes.len().min(max_len)]
-            .copy_from_slice(&a_bytes[..a_bytes.len().min(max_len)]);
-        b_padded[..b_bytes.len().min(max_len)]
-            .copy_from_slice(&b_bytes[..b_bytes.len().min(max_len)]);
-
-        // Constant-time comparison
-        let result = a_padded.ct_eq(&b_padded).into() && a.len() == b.len();
-
-        // Explicitly clear sensitive data
-        a_padded.zeroize();
-        b_padded.zeroize();
-
-        result
+        Self::constant_time_eq_bytes(a.as_bytes(), b.as_bytes())
     }
-
     /// Verify that two tokens match using constant-time comparison
     pub fn verify_token(token1: &str, token2: &str) -> bool {
         Self::secure_string_compare(token1, token2)

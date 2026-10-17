@@ -118,6 +118,9 @@ pub struct ThreatFeedManager {
     scheduler: Option<tokio_cron_scheduler::JobScheduler>,
 }
 
+#[cfg(test)]
+mod feed_dispatch_tests;
+
 impl Default for ThreatIntelConfig {
     fn default() -> Self {
         let mut feeds = HashMap::new();
@@ -679,7 +682,7 @@ impl ThreatFeedManager {
         Ok(())
     }
 
-    /// Extract compressed feeds (tar.gz, zip, etc.)
+    /// Extract compressed feeds: tar.gz is extracted, bz2/xz/zip are refused, anything else is saved as-is.
     async fn extract_compressed_feed(
         content: &[u8],
         output_path: &Path,
@@ -692,7 +695,11 @@ impl ThreatFeedManager {
 
         match extension.to_lowercase().as_str() {
             "gz" | "tar" => Self::extract_tar_gz(content, output_path).await,
-            "zip" => Self::extract_zip(content, output_path).await,
+            "zip" => Err(format!(
+                "zip extraction is not supported: {} was not extracted",
+                output_path.display()
+            )
+            .into()),
             "bz2" => Self::extract_bzip2(content, output_path).await,
             "xz" => Self::extract_xz(content, output_path).await,
             _ => {
@@ -770,58 +777,6 @@ impl ThreatFeedManager {
                         "Zip Slip: entry escapes destination: {}",
                         path.display()
                     ));
-                }
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?
-        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-
-        Ok(())
-    }
-
-    /// Extract ZIP archives with path traversal protection
-    async fn extract_zip(
-        content: &[u8],
-        output_path: &Path,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("Extracting ZIP archive to: {}", output_path.display());
-
-        let content = content.to_vec();
-        let dest = output_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
-
-        tokio::task::spawn_blocking(move || -> Result<(), String> {
-            use std::io::Cursor;
-            let cursor = Cursor::new(content);
-            let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
-            let canonical_dest = dest.canonicalize().map_err(|e| e.to_string())?;
-
-            for i in 0..archive.len() {
-                let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
-                let name = file
-                    .enclosed_name()
-                    .ok_or_else(|| format!("Zip Slip: entry {} has unsafe path", file.name()))?;
-
-                let target = canonical_dest.join(&name);
-                if !target.starts_with(&canonical_dest) {
-                    return Err(format!(
-                        "Zip Slip: entry escapes destination: {}",
-                        name.display()
-                    ));
-                }
-
-                if file.is_dir() {
-                    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-                } else {
-                    if let Some(parent) = target.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                    }
-                    let mut out = std::fs::File::create(&target).map_err(|e| e.to_string())?;
-                    std::io::copy(&mut file, &mut out).map_err(|e| e.to_string())?;
                 }
             }
             Ok(())
