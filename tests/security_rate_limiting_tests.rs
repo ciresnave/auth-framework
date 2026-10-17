@@ -140,7 +140,11 @@ async fn test_distributed_rate_limiter_token_bucket() {
         penalty_duration: None,
     };
 
-    let limiter = DistributedRateLimiter::new(config).await.unwrap();
+    // Fake clock: refill by advancing it, so load cannot refill the bucket mid-test.
+    let (clock, now) = fake_clock();
+    let limiter = DistributedRateLimiter::with_clock(config, now)
+        .await
+        .unwrap();
 
     // First 5 requests should be allowed
     for i in 1..=5 {
@@ -160,7 +164,7 @@ async fn test_distributed_rate_limiter_token_bucket() {
     );
 
     // Wait for token bucket to refill
-    sleep(Duration::from_millis(600)).await;
+    *clock.lock().unwrap() += Duration::from_millis(600);
 
     // Should be allowed again
     let result = limiter.check_rate_limit("test_key").await.unwrap();
@@ -187,7 +191,12 @@ async fn test_rate_limit_with_penalty() {
         penalty_duration: Some(Duration::from_millis(500)),
     };
 
-    let limiter = DistributedRateLimiter::new(config).await.unwrap();
+    // Fake clock: the window and the penalty are crossed by advancing it, not by sleeping, so
+    // scheduler delay under load cannot refill the bucket before the fourth request.
+    let (clock, now) = fake_clock();
+    let limiter = DistributedRateLimiter::with_clock(config, now)
+        .await
+        .unwrap();
 
     let key = "penalized_key";
 
@@ -204,7 +213,7 @@ async fn test_rate_limit_with_penalty() {
     );
 
     // Even after window passes, should still be blocked during penalty
-    sleep(Duration::from_millis(150)).await;
+    *clock.lock().unwrap() += Duration::from_millis(150);
     let result = limiter.check_rate_limit(key).await.unwrap();
     assert!(
         matches!(result, RateLimitResult::Blocked { .. }),
@@ -212,7 +221,7 @@ async fn test_rate_limit_with_penalty() {
     );
 
     // After penalty expires, should be allowed
-    sleep(Duration::from_millis(400)).await;
+    *clock.lock().unwrap() += Duration::from_millis(400);
     let result = limiter.check_rate_limit(key).await.unwrap();
     assert!(
         matches!(result, RateLimitResult::Allowed { .. }),
@@ -351,7 +360,9 @@ async fn test_rate_limit_key_isolation() {
 async fn test_rate_limit_window_reset() {
     println!("🔍 Testing: Rate Limit Window Reset");
 
-    let limiter = BasicRateLimiter::new(3, Duration::from_millis(200));
+    // Fake clock: the window is crossed by advancing it, not by sleeping.
+    let (clock, now) = fake_clock();
+    let limiter = BasicRateLimiter::with_clock(3, Duration::from_millis(200), now);
 
     let key = "window_test";
 
@@ -362,7 +373,7 @@ async fn test_rate_limit_window_reset() {
     assert!(!limiter.is_allowed(key)); // Blocked
 
     // Wait for window to reset
-    sleep(Duration::from_millis(250)).await;
+    *clock.lock().unwrap() += Duration::from_millis(250);
 
     // Should be allowed again (full quota restored)
     assert!(
@@ -424,7 +435,12 @@ async fn test_rate_limit_sliding_window() {
         penalty_duration: None,
     };
 
-    let limiter = DistributedRateLimiter::new(config).await.unwrap();
+    // Fake clock: requests 50 ms apart inside a 300 ms window, without real sleeps that scheduler
+    // delay under load could stretch past the window.
+    let (clock, now) = fake_clock();
+    let limiter = DistributedRateLimiter::with_clock(config, now)
+        .await
+        .unwrap();
 
     // Make requests over time
     for i in 1..=3 {
@@ -434,11 +450,11 @@ async fn test_rate_limit_sliding_window() {
             "Request {} should be allowed",
             i
         );
-        sleep(Duration::from_millis(50)).await;
+        *clock.lock().unwrap() += Duration::from_millis(50);
     }
 
     // Wait a bit, then make 2 more (should be within window)
-    sleep(Duration::from_millis(100)).await;
+    *clock.lock().unwrap() += Duration::from_millis(100);
 
     let result = limiter.check_rate_limit("sliding_key").await.unwrap();
     assert!(
@@ -526,7 +542,9 @@ async fn test_rate_limit_burst_allowance() {
 async fn test_rate_limit_cleanup() {
     println!("🔍 Testing: Rate Limit Entry Cleanup");
 
-    let limiter = BasicRateLimiter::new(5, Duration::from_millis(100));
+    // Fake clock: window expiry by advancing it, not by sleeping.
+    let (clock, now) = fake_clock();
+    let limiter = BasicRateLimiter::with_clock(5, Duration::from_millis(100), now);
 
     // Create entries for multiple keys
     for i in 0..10 {
@@ -535,7 +553,7 @@ async fn test_rate_limit_cleanup() {
     }
 
     // Wait for window expiry
-    sleep(Duration::from_millis(150)).await;
+    *clock.lock().unwrap() += Duration::from_millis(150);
 
     // Trigger cleanup (returns Result, but we just want the side effect)
     let _ = limiter.cleanup();

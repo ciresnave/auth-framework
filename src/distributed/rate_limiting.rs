@@ -112,9 +112,13 @@ pub enum RateLimitResult {
     Blocked { unblock_at: Instant, reason: String },
 }
 
+/// Source of the current time; injectable so window and penalty expiry can be tested without sleeping.
+type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
+
 /// Comprehensive rate limiter supporting multiple strategies
 pub struct DistributedRateLimiter {
     config: RateLimitConfig,
+    now: Clock,
     in_memory_limiter: Option<Arc<InMemoryRateLimiter>>,
     #[cfg(feature = "redis-storage")]
     redis_limiter: Option<Arc<RedisRateLimiter>>,
@@ -125,10 +129,24 @@ pub struct DistributedRateLimiter {
 impl DistributedRateLimiter {
     /// Create a new distributed rate limiter
     pub async fn new(config: RateLimitConfig) -> Result<Self> {
+        Self::with_clock(config, Instant::now).await
+    }
+
+    /// Create a rate limiter whose in-memory windows and penalties read `now` instead of the system
+    /// clock. A testing seam: advancing a controlled clock asserts expiry without racing real sleeps
+    /// against scheduler delay. The Redis path keeps the server's own clock.
+    pub async fn with_clock(
+        config: RateLimitConfig,
+        now: impl Fn() -> Instant + Send + Sync + 'static,
+    ) -> Result<Self> {
+        let now: Clock = Arc::new(now);
         let in_memory_limiter = if config.distributed {
             None
         } else {
-            Some(Arc::new(InMemoryRateLimiter::new(&config)?))
+            Some(Arc::new(InMemoryRateLimiter::with_clock(
+                &config,
+                now.clone(),
+            )?))
         };
 
         #[cfg(feature = "redis-storage")]
@@ -151,6 +169,7 @@ impl DistributedRateLimiter {
 
         Ok(Self {
             config,
+            now,
             in_memory_limiter,
             #[cfg(feature = "redis-storage")]
             redis_limiter,
@@ -162,7 +181,7 @@ impl DistributedRateLimiter {
     pub async fn check_rate_limit(&self, key: &str) -> Result<RateLimitResult> {
         // First check for active penalties
         if let Some(unblock_at) = self.get_penalty_expiry(key) {
-            if Instant::now() < unblock_at {
+            if (self.now)() < unblock_at {
                 return Ok(RateLimitResult::Blocked {
                     unblock_at,
                     reason: "Previous rate limit violations".to_string(),
@@ -229,7 +248,7 @@ impl DistributedRateLimiter {
 
     fn apply_penalty(&self, key: &str, duration: Duration) {
         let mut penalties = self.penalties.write();
-        penalties.insert(key.to_string(), Instant::now() + duration);
+        penalties.insert(key.to_string(), (self.now)() + duration);
     }
 
     fn remove_penalty(&self, key: &str) {
@@ -239,7 +258,7 @@ impl DistributedRateLimiter {
 
     async fn fallback_check(&self, key: &str) -> Result<RateLimitResult> {
         // Create a temporary in-memory limiter for fallback
-        let limiter = InMemoryRateLimiter::new(&self.config)?;
+        let limiter = InMemoryRateLimiter::with_clock(&self.config, self.now.clone())?;
         limiter.check_rate_limit(key).await
     }
 }
@@ -247,6 +266,7 @@ impl DistributedRateLimiter {
 /// In-memory rate limiter with basic token bucket implementation
 pub struct InMemoryRateLimiter {
     config: RateLimitConfig,
+    now: Clock,
     buckets: std::sync::Arc<dashmap::DashMap<String, TokenBucket>>,
 }
 
@@ -257,15 +277,14 @@ struct TokenBucket {
 }
 
 impl TokenBucket {
-    fn new(capacity: u32) -> Self {
+    fn new(capacity: u32, now: Instant) -> Self {
         Self {
             tokens: capacity,
-            last_refill: Instant::now(),
+            last_refill: now,
         }
     }
 
-    fn try_consume(&mut self, config: &RateLimitConfig) -> bool {
-        let now = Instant::now();
+    fn try_consume(&mut self, config: &RateLimitConfig, now: Instant) -> bool {
         let elapsed = now.duration_since(self.last_refill);
 
         // Refill tokens based on time elapsed
@@ -285,26 +304,32 @@ impl TokenBucket {
 
 impl InMemoryRateLimiter {
     pub fn new(config: &RateLimitConfig) -> Result<Self> {
+        Self::with_clock(config, Arc::new(Instant::now))
+    }
+
+    fn with_clock(config: &RateLimitConfig, now: Clock) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
+            now,
             buckets: std::sync::Arc::new(dashmap::DashMap::new()),
         })
     }
 
     pub async fn check_rate_limit(&self, key: &str) -> Result<RateLimitResult> {
+        let now = (self.now)();
         let mut bucket = self
             .buckets
             .entry(key.to_string())
-            .or_insert_with(|| TokenBucket::new(self.config.max_requests));
+            .or_insert_with(|| TokenBucket::new(self.config.max_requests, now));
 
-        if bucket.try_consume(&self.config) {
+        if bucket.try_consume(&self.config, now) {
             Ok(RateLimitResult::Allowed {
                 remaining: bucket.tokens,
                 reset_at: bucket.last_refill + self.config.window_duration,
             })
         } else {
             let retry_after =
-                (bucket.last_refill + self.config.window_duration).duration_since(Instant::now());
+                (bucket.last_refill + self.config.window_duration).duration_since(now);
 
             Ok(RateLimitResult::Denied {
                 retry_after,
