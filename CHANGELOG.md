@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc65 -- Archive extraction hardened: entry types and destination confinement. The threat-feed
+  downloader now extracts only regular files and directories from a `.tar.gz` feed, confines every
+  write to the feeds directory, and refuses any other entry type with an error naming the entry.
 - 0.6.0-rc64 -- Dependency only. `handlebars` 4.7.9 -> 4.7.10 (dev dependency of the JavaScript SDK,
   `sdks/javascript/package-lock.json`; supersedes the stale Dependabot PR #128). No library change.
 - 0.6.0-rc63 -- **`AuthStorage::list_kv_keys` no longer defaults to an empty list (#145).** A backend
