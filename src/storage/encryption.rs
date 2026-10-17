@@ -570,6 +570,11 @@ impl StorageEncryption {
         })
     }
 
+    /// The id of the key new values are encrypted under.
+    pub fn current_key_id(&self) -> &str {
+        &self.current_key_id
+    }
+
     /// Create a new encryption manager from the environment (see
     /// [`EnvKeyProvider`]). Convenience wrapper over `new(&EnvKeyProvider)`.
     pub fn from_env() -> Result<Self> {
@@ -1221,6 +1226,22 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
     prefix: &str,
     options: MigrationOptions,
 ) -> Result<KvEncryptionMigrationReport> {
+    let keys = storage.list_kv_keys(prefix).await?;
+    migrate_kv_keys_to_encrypted(storage, encryption, keys, options).await
+}
+
+/// [`migrate_kv_to_encrypted`] for an explicit list of keys instead of a prefix.
+///
+/// Use it when the records to encrypt are not the whole of a prefix (for example the TOTP
+/// secrets, which live under `user:{id}:totp_secret` among other `user:` rows). Every other
+/// property, including idempotence, TTL preservation and what `options` mean, is that of
+/// [`migrate_kv_to_encrypted`]; the report's `scanned` is `keys.len()`.
+pub async fn migrate_kv_keys_to_encrypted<S: AuthStorage + ?Sized>(
+    storage: &S,
+    encryption: &StorageEncryption,
+    keys: Vec<String>,
+    options: MigrationOptions,
+) -> Result<KvEncryptionMigrationReport> {
     let MigrationOptions {
         dry_run,
         accept_legacy_v0,
@@ -1243,7 +1264,6 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
         ..Default::default()
     };
 
-    let keys = storage.list_kv_keys(prefix).await?;
     report.scanned = keys.len() as u64;
 
     for key in keys {
@@ -1320,6 +1340,93 @@ pub async fn migrate_kv_to_encrypted<S: AuthStorage + ?Sized>(
         }
     }
 
+    Ok(report)
+}
+
+/// What [`rewrap_kv_keys`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KvRewrapReport {
+    /// Whether this run was a dry run (no writes performed).
+    pub dry_run: bool,
+    /// Keys examined.
+    pub scanned: u64,
+    /// Envelopes decrypted under an older key and re-encrypted (or, in a dry run, that would be)
+    /// under the current key.
+    pub rewrapped: u64,
+    /// Envelopes already under the current key: left untouched.
+    pub already_current: u64,
+    /// Values that are not envelopes at all (plaintext): left untouched. Encrypt them with
+    /// [`migrate_kv_keys_to_encrypted`] first.
+    pub plaintext_skipped: u64,
+    /// Envelopes in a legacy format (version below the current one): left untouched. Upgrade them with
+    /// [`migrate_kv_keys_to_encrypted`] and `accept_legacy_v0` first.
+    pub legacy_skipped: u64,
+    /// Keys deleted between the listing and the read: not an error.
+    pub vanished: u64,
+    /// Envelopes that no loaded key could decrypt (or whose binding to their key failed): a safe
+    /// identifier for each, never the raw key. They are left as they were.
+    pub failed: Vec<String>,
+}
+
+/// Re-encrypts, under the current key, every current-format envelope in `keys` that is under an
+/// older key id: the second half of a key rotation (the provider holds the old and the new key and
+/// names the new one current; run this; then remove the old key).
+///
+/// Idempotent and resumable, preserves each value's TTL, never aborts on one undecryptable value,
+/// and never touches plaintext or legacy-format values (see [`KvRewrapReport`]). A dry run decrypts
+/// every candidate, so its counts are what a real run would do, and writes nothing.
+pub async fn rewrap_kv_keys<S: AuthStorage + ?Sized>(
+    storage: &S,
+    encryption: &StorageEncryption,
+    keys: Vec<String>,
+    dry_run: bool,
+) -> Result<KvRewrapReport> {
+    let mut report = KvRewrapReport {
+        dry_run,
+        scanned: keys.len() as u64,
+        ..Default::default()
+    };
+    for key in keys {
+        // TTL before value, as in the migration: an entry that expires in between is a vanished
+        // one, never a value whose expiry was lost.
+        let ttl = storage.get_kv_ttl(&key).await?;
+        let Some(raw) = storage.get_kv(&key).await? else {
+            report.vanished += 1;
+            continue;
+        };
+        let Some(envelope) = StorageEncryption::parse_envelope(&raw) else {
+            report.plaintext_skipped += 1;
+            continue;
+        };
+        if envelope.v < CURRENT_FORMAT_VERSION {
+            report.legacy_skipped += 1;
+            continue;
+        }
+        if envelope.key_id == encryption.current_key_id() {
+            report.already_current += 1;
+            continue;
+        }
+        match encryption.decrypt(&envelope, key.as_bytes()) {
+            Err(_) => {
+                tracing::warn!(
+                    record = %safe_log_id(&key),
+                    "rewrap_kv_keys: could not decrypt an envelope with any loaded key -- \
+                     leaving it as it is"
+                );
+                report.failed.push(safe_log_id(&key));
+            }
+            Ok(mut plaintext) => {
+                if !dry_run {
+                    let encrypted = encryption.encrypt_for_storage(&plaintext, key.as_bytes());
+                    plaintext.zeroize();
+                    storage.store_kv(&key, &encrypted?, ttl).await?;
+                } else {
+                    plaintext.zeroize();
+                }
+                report.rewrapped += 1;
+            }
+        }
+    }
     Ok(report)
 }
 
