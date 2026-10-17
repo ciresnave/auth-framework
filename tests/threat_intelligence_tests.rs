@@ -18,6 +18,7 @@ fn test_config(temp_dir: &TempDir) -> ThreatIntelConfig {
         feeds_directory: temp_dir.path().to_path_buf(),
         feeds: HashMap::new(),
         download_timeout_seconds: 5,
+        extraction_limits: Default::default(),
     }
 }
 

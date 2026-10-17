@@ -60,7 +60,12 @@ async fn extract(
     let root = tempfile::tempdir().unwrap();
     let dest = root.path().join("feeds");
     std::fs::create_dir_all(&dest).unwrap();
-    let result = ThreatFeedManager::extract_tar_gz(content, &dest.join("feed.tar.gz")).await;
+    let result = ThreatFeedManager::extract_tar_gz(
+        content,
+        &dest.join("feed.tar.gz"),
+        &ExtractionLimits::default(),
+    )
+    .await;
     (root, dest, result)
 }
 
