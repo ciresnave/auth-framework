@@ -2,6 +2,10 @@
 
 use crate::errors::{AuthError, Result};
 use crate::storage::AuthStorage;
+use crate::storage::encryption::{
+    EncryptedStorage, KeyProvider, KvEncryptionMigrationReport, KvRewrapReport, MigrationOptions,
+    StorageEncryption, migrate_kv_keys_to_encrypted, rewrap_kv_keys,
+};
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tracing::{debug, info, warn};
@@ -12,9 +16,88 @@ pub struct TotpManager {
 }
 
 impl TotpManager {
-    /// Create a new TOTP manager
+    /// Create a TOTP manager over `storage`.
+    ///
+    /// Secrets are stored as `storage` stores any value. If `storage` does not encrypt at rest (see
+    /// [`AuthStorage::encrypts_kv_at_rest`]) this logs ONE warning, here at construction, saying so;
+    /// nothing else changes. To encrypt TOTP secrets with a key you supply use
+    /// [`Self::new_encrypted`]; to keep plain storage deliberately, without the warning, use
+    /// [`Self::new_plaintext`].
     pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
+        if !storage.encrypts_kv_at_rest() {
+            warn!(
+                "TotpManager is storing TOTP secrets without encryption at rest: anyone who can read \
+                 the backing store can generate valid codes. Use TotpManager::new_encrypted with a \
+                 KeyProvider, or TotpManager::new_plaintext to acknowledge plain storage."
+            );
+        }
         Self { storage }
+    }
+
+    /// Create a TOTP manager that stores secrets as `storage` stores any value, deliberately and
+    /// without the warning [`Self::new`] logs for storage that does not encrypt at rest.
+    pub fn new_plaintext(storage: Arc<dyn AuthStorage>) -> Self {
+        Self { storage }
+    }
+
+    /// Create a TOTP manager whose secrets are AES-256-GCM encrypted at rest under keys from
+    /// `provider` (the caller supplies and owns the key).
+    ///
+    /// `inner` is wrapped in [`EncryptedStorage`] with plaintext and legacy reads OFF: a stored value
+    /// that is not a valid envelope for its own key is refused, not read as a secret. Everything
+    /// this manager stores goes through the wrapper, so a row copied onto another user's key does
+    /// not decrypt. Existing plain secrets must be encrypted first with
+    /// [`Self::migrate_plain_secrets`]; to rotate keys put the old and the new key in the provider,
+    /// make the new one current, and run [`Self::rewrap_secrets`].
+    ///
+    /// # Errors
+    /// If `provider` cannot supply a usable current key (there is no fallback to plain storage).
+    pub fn new_encrypted(inner: Arc<dyn AuthStorage>, provider: &dyn KeyProvider) -> Result<Self> {
+        let encryption = StorageEncryption::new(provider)?;
+        Ok(Self {
+            storage: Arc::new(EncryptedStorage::new(inner, encryption, false, false)),
+        })
+    }
+
+    /// The storage keys under which TOTP secrets live: `mfa_secret:{id}` (the `/mfa/setup` API route)
+    /// and `user:{id}:totp_secret` (the modular `generate_secret` path), and only those.
+    async fn secret_keys<S: AuthStorage + ?Sized>(storage: &S) -> Result<Vec<String>> {
+        let mut keys = storage.list_kv_keys("mfa_secret:").await?;
+        keys.extend(
+            storage
+                .list_kv_keys("user:")
+                .await?
+                .into_iter()
+                .filter(|key| key.ends_with(":totp_secret")),
+        );
+        Ok(keys)
+    }
+
+    /// Encrypt, in place, the TOTP secrets that are still stored in the clear in `inner`.
+    ///
+    /// Touches exactly the two TOTP key shapes (see [`Self::new_encrypted`]), not the rest of a
+    /// prefix such as `user:`. Idempotent and resumable; each row's TTL is kept. `inner` is the
+    /// storage underneath any `EncryptedStorage` wrapper, and `encryption` is built from the same
+    /// provider [`Self::new_encrypted`] will use.
+    pub async fn migrate_plain_secrets<S: AuthStorage + ?Sized>(
+        inner: &S,
+        encryption: &StorageEncryption,
+        options: MigrationOptions,
+    ) -> Result<KvEncryptionMigrationReport> {
+        let keys = Self::secret_keys(inner).await?;
+        migrate_kv_keys_to_encrypted(inner, encryption, keys, options).await
+    }
+
+    /// Re-encrypt, under the current key of `encryption`, the TOTP secrets still under an older
+    /// key id: the step after making a new key current. See [`rewrap_kv_keys`] for what is and is
+    /// not touched. `inner` is the storage underneath any `EncryptedStorage` wrapper.
+    pub async fn rewrap_secrets<S: AuthStorage + ?Sized>(
+        inner: &S,
+        encryption: &StorageEncryption,
+        dry_run: bool,
+    ) -> Result<KvRewrapReport> {
+        let keys = Self::secret_keys(inner).await?;
+        rewrap_kv_keys(inner, encryption, keys, dry_run).await
     }
 
     /// Generate TOTP secret for a user
