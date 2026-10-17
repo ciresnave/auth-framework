@@ -62,14 +62,15 @@ fn manifest_version() -> String {
     panic!("control: no version line in Cargo.toml");
 }
 
-/// Versions that follow `auth-framework = "`, `auth-framework = { version = "` and the
-/// `ghcr.io/ciresnave/auth-framework:` image reference.
+/// Versions that follow `auth-framework = "`, `auth-framework = { version = "`, `cargo add
+/// auth-framework@` and the `ghcr.io/ciresnave/auth-framework:` image reference.
 fn install_pins(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for l in text.lines() {
         for lead in [
             "auth-framework = \"",
             "auth-framework = { version = \"",
+            "cargo add auth-framework@",
             "ghcr.io/ciresnave/auth-framework:",
         ] {
             if let Some(i) = l.find(lead) {
@@ -184,4 +185,64 @@ fn developer_integration_guide_pins_are_on_the_current_line() {
         stale.is_empty(),
         "developer-integration.md tells readers to install {stale:?}, but this tree is on the {line} line"
     );
+}
+
+/// The first release, on the 0.6 line, that is outside every published advisory
+/// (GHSA-9r7g-3hh2-8x65 and GHSA-jr9j-g3xj-q9x8, both fixed in `0.6.0-rc85`). Raise it when a
+/// later advisory is published.
+const FIRST_UNAFFECTED_RC_ON_0_6: u32 = 85;
+
+/// `73` from `0.6.0-rc73`, `None` for a pin that is not a 0.6 release candidate.
+fn rc_number_on_0_6(version: &str) -> Option<u32> {
+    version.strip_prefix("0.6.0-rc")?.parse().ok()
+}
+
+#[test]
+fn install_pins_are_not_inside_a_published_advisory_range() {
+    let mut stale = Vec::new();
+    for (name, text) in [
+        ("README.md", README),
+        ("docs/guides/developer-integration.md", DEV_INTEGRATION),
+        ("docs/guides/custom-storage-implementation.md", CUSTOM_GUIDE),
+        (
+            "docs/guides/third-party-storage-usage.md",
+            THIRD_PARTY_GUIDE,
+        ),
+    ] {
+        for pin in install_pins(text) {
+            if rc_number_on_0_6(&pin).is_some_and(|rc| rc < FIRST_UNAFFECTED_RC_ON_0_6) {
+                stale.push(format!("{name}: {pin}"));
+            }
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "docs tell readers to install a version older than 0.6.0-rc{FIRST_UNAFFECTED_RC_ON_0_6},          which falls inside a published security advisory (see SECURITY.md): {stale:?}"
+    );
+}
+
+#[test]
+fn the_rc_floor_check_can_tell_a_vulnerable_pin() {
+    // Control for the test above: it must flag an old pin and accept a new one.
+    assert_eq!(rc_number_on_0_6("0.6.0-rc50"), Some(50));
+    assert!(rc_number_on_0_6("0.6.0-rc50").is_some_and(|rc| rc < FIRST_UNAFFECTED_RC_ON_0_6));
+    assert!(rc_number_on_0_6("0.6.0-rc73").is_some_and(|rc| rc < FIRST_UNAFFECTED_RC_ON_0_6));
+    assert!(!rc_number_on_0_6("0.6.0-rc85").is_some_and(|rc| rc < FIRST_UNAFFECTED_RC_ON_0_6));
+    assert_eq!(rc_number_on_0_6("0.4.28"), None);
+    assert_eq!(rc_number_on_0_6("<tag>"), None);
+}
+
+#[test]
+fn security_md_lists_every_active_line_as_supported() {
+    const SECURITY: &str = include_str!("../SECURITY.md");
+    for line in ["0.6.x", "0.5.x", "0.4.x"] {
+        let row = SECURITY
+            .lines()
+            .find(|l| l.starts_with('|') && l.contains(line))
+            .unwrap_or_else(|| panic!("SECURITY.md has no supported-versions row for {line}"));
+        assert!(
+            row.contains(":white_check_mark:"),
+            "SECURITY.md does not mark {line} as supported: {row}"
+        );
+    }
 }
