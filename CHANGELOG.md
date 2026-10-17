@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.26] - Unreleased
+
+### Changed
+
+- CI hardening only, no library change. The four `postgres:15` / `redis:7` service containers in
+  `ci-cd.yml` are pinned by image digest, and every `cargo build|test|check|clippy|bench` in the
+  workflows (plus `cargo install` of `cargo-audit`) now passes `--locked`.
+
 ## [0.4.19] - 2026-10-16
 
 ### Fixed
