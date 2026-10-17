@@ -602,9 +602,20 @@ impl AuthMethod for SamlAuthMethod {
 }
 
 impl Default for SamlAuthMethod {
+    /// A SAML method whose tokens are signed with a random secret generated for this instance.
+    ///
+    /// The secret is not shared with any other instance or deployment, so tokens it issues verify only
+    /// through this method's `token_manager`. Build the method with [`SamlAuthMethod::new`] and your own
+    /// `TokenManager` when tokens must verify elsewhere.
     fn default() -> Self {
+        // Two random v4 UUIDs from the operating system's CSPRNG: 64 hex digits.
+        let secret = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
         Self::new(
-            TokenManager::new_hmac(b"default-saml-secret", "saml-issuer", "saml-audience"),
+            TokenManager::new_hmac(secret.as_bytes(), "saml-issuer", "saml-audience"),
             SamlConfig::default(),
         )
     }
