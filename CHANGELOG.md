@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.27] - Unreleased
+
+### Changed
+
+- CI hardening only, no library change. Every third-party action in `ci-cd.yml` is pinned to a commit SHA
+  (the same pins `main` runs) and the workflow defaults to `contents: read`.
+
 ## [0.4.26] - Unreleased
 
 ### Changed
