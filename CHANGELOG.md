@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc70 -- CI hardening only, no library change. The eight `postgres:15` / `redis:7` service
+  containers in `ci-cd.yml` are pinned by image digest, and every `cargo build|test|check|clippy|bench`
+  in `ci-cd.yml` and `release.yml` (plus `cargo install` of `cargo-audit`/`cross` and `cargo llvm-cov`)
+  now passes `--locked`, so CI builds the dependency set `Cargo.lock` describes. The `cargo tree`
+  calls of the rsa-absence gate are left unlocked on purpose: its self-test crates have no lockfile.
 - 0.6.0-rc69 -- **Extracting a downloaded `.tar.gz` feed is now size-limited.** New
   `ThreatIntelConfig::extraction_limits` (`ExtractionLimits`: `max_entries` 10 000, `max_entry_bytes`
   512 MiB, `max_total_bytes` 1 GiB; absent in older configs, which get the defaults). The limits are
