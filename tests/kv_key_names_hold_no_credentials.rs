@@ -6,10 +6,10 @@
 //! one-way digest, that keys written under the legacy name still work (and are
 //! migrated with their TTL), and that revoke/delete remove both names.
 //!
-//! The in-memory tests run everywhere. The Redis tests need a server and are
-//! `#[ignore]`d like `tests/storage_redis.rs`:
+//! The in-memory tests run everywhere. The Redis tests need a server (`REDIS_URL`; CI's test job
+//! provides one) and are not `#[ignore]`d, so a missing server fails them instead of hiding them:
 //! `REDIS_URL=redis://127.0.0.1:6379 cargo test --test kv_key_names_hold_no_credentials \
-//!  --features redis-storage -- --ignored`.
+//!  --features redis-storage`.
 
 use auth_framework::auth_modular::UserManager;
 use auth_framework::config::PasswordHashAlgorithm;
@@ -195,7 +195,6 @@ mod redis_key_names {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn core_redis_key_names_hold_no_raw_access_token_or_session_id() {
         let prefix = "kvkn_core:";
         clear(prefix).await;
@@ -247,7 +246,6 @@ mod redis_key_names {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn core_redis_migrates_legacy_names_with_ttl_and_delete_removes_both() {
         let prefix = "kvkn_core_legacy:";
         clear(prefix).await;
@@ -294,7 +292,6 @@ mod redis_key_names {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn module_redis_key_names_hold_no_raw_access_token_or_session_id() {
         let prefix = "kvkn_mod:";
         clear(prefix).await;
@@ -350,7 +347,6 @@ mod redis_key_names {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn core_redis_migrates_legacy_access_token_mapping_and_delete_removes_it() {
         let prefix = "kvkn_core_map:";
         clear(prefix).await;
@@ -393,7 +389,6 @@ mod redis_key_names {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn module_redis_migrates_legacy_names_and_lists_a_session_once() {
         let prefix = "kvkn_mod_legacy:";
         clear(prefix).await;
@@ -456,7 +451,6 @@ mod redis_key_names {
     /// A legacy session that is only ever *listed* (never fetched by id) must
     /// not keep its raw id in key names after the upgrade: listing migrates it.
     #[tokio::test]
-    #[ignore]
     async fn listing_migrates_a_legacy_session_and_keeps_its_ttl() {
         for module in [false, true] {
             let prefix = if module {
@@ -512,7 +506,6 @@ mod redis_key_names {
     /// A record under both names (an interrupted write) is one session, and
     /// reading it by id drops the legacy twin that still holds the raw id.
     #[tokio::test]
-    #[ignore]
     async fn session_under_both_names_counts_once_and_a_read_drops_the_twin() {
         let prefix = "kvkn_twin:";
         clear(prefix).await;
@@ -545,7 +538,6 @@ mod redis_key_names {
     /// Under an ACL that denies scripting, a digest-named row reads normally
     /// and a legacy row is still served (unmigrated) instead of failing.
     #[tokio::test]
-    #[ignore]
     async fn reads_work_when_the_acl_denies_scripting() {
         let prefix = "kvkn_acl:";
         clear(prefix).await;
@@ -600,7 +592,6 @@ mod redis_key_names {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn session_count_ignores_keys_that_only_start_with_session() {
         let prefix = "kvkn_count:";
         clear(prefix).await;

@@ -175,15 +175,15 @@ async fn mock_storage_lists_prefix() {
     assert_lists_prefix(&storage, "MockStorage").await;
 }
 
-/// `storage::redis::RedisStorage`: needs a server, so `#[ignore]`d like the other Redis tests:
-/// `REDIS_URL=redis://127.0.0.1:6379 cargo test --test storage_list_kv_keys --features redis-storage -- --ignored`.
+/// `storage::redis::RedisStorage`: needs a server (`REDIS_URL`; CI's test job provides one), so it
+/// fails rather than skips without one:
+/// `REDIS_URL=redis://127.0.0.1:6379 cargo test --test storage_list_kv_keys --features redis-storage`.
 #[cfg(feature = "redis-storage")]
 mod redis_backend {
     use super::*;
     use auth_framework::storage::redis::RedisStorage;
 
     #[tokio::test]
-    #[ignore]
     async fn module_redis_storage_lists_prefix_and_not_expired() {
         let url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
         let prefix = format!("kvlist_{}:", std::process::id());

@@ -1,11 +1,12 @@
 //! Integration tests for the Redis storage backend.
 //!
-//! These tests require a running Redis server. Set the `REDIS_URL`
+//! These tests require a running Redis server (CI's test job provides one) and are not
+//! `#[ignore]`d: a missing server fails them instead of hiding them. Set the `REDIS_URL`
 //! environment variable before running:
 //!
 //! ```sh
 //! export REDIS_URL="redis://127.0.0.1:6379"
-//! cargo test --test storage_redis --features redis-storage -- --ignored
+//! cargo test --test storage_redis --features redis-storage
 //! ```
 
 #![cfg(feature = "redis-storage")]
@@ -30,7 +31,6 @@ async fn setup() -> RedisStorage {
 }
 
 #[tokio::test]
-#[ignore]
 async fn redis_token_crud() {
     let storage = setup().await;
     let token = AuthToken::new("rd_user1", "rd_access1", Duration::from_secs(3600), "test");
@@ -57,7 +57,6 @@ async fn redis_token_crud() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn redis_session_crud() {
     let storage = setup().await;
     let session = SessionData::new("rd_sess1", "rd_user_s", Duration::from_secs(3600))
@@ -76,7 +75,6 @@ async fn redis_session_crud() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn redis_kv_crud() {
     let storage = setup().await;
 
@@ -92,7 +90,6 @@ async fn redis_kv_crud() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn redis_kv_no_ttl() {
     let storage = setup().await;
     storage
@@ -105,7 +102,6 @@ async fn redis_kv_no_ttl() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn redis_kv_sub_second_ttl_is_accepted() {
     let storage = setup().await;
     assert!(storage.tracks_kv_ttl());
@@ -121,7 +117,6 @@ async fn redis_kv_sub_second_ttl_is_accepted() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn redis_health_check() {
     let storage = setup().await;
     storage.health_check().await.unwrap();
