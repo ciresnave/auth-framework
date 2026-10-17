@@ -14,6 +14,9 @@ pub struct PostgresStorage {
     pool: PgPool,
 }
 
+/// Advisory-lock key serialising `PostgresStorage::migrate` across connections ("authfmwk" as ASCII).
+const MIGRATION_LOCK_KEY: i64 = 0x6175_7468_666d_776b;
+
 impl PostgresStorage {
     /// Create a new PostgreSQL storage instance.
     ///
@@ -35,6 +38,27 @@ impl PostgresStorage {
     /// # Errors
     /// Returns an error if any DDL statement fails (e.g. insufficient privileges).
     pub async fn migrate(&self) -> Result<()> {
+        // `CREATE TABLE IF NOT EXISTS` is not safe under concurrency: two connections can both pass
+        // the existence check and then collide on Postgres's own `pg_type` catalog (every table
+        // creates a composite row type there). Run the whole migration in one transaction behind a
+        // transaction-scoped advisory lock, so concurrent callers (several instances starting at
+        // once) take turns and the later ones see the finished schema. The lock is released by the
+        // commit or rollback; there is no unlock to forget.
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                "Migration failed (begin): {e}"
+            )))
+        })?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(MIGRATION_LOCK_KEY)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                    "Migration failed (lock): {e}"
+                )))
+            })?;
+
         // Each statement is executed separately because sqlx::query() accepts
         // exactly one SQL statement per call.
 
@@ -59,7 +83,7 @@ impl PostgresStorage {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
@@ -73,7 +97,7 @@ impl PostgresStorage {
             "CREATE INDEX IF NOT EXISTS idx_auth_tokens_access_token ON auth_tokens (access_token)",
             "CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON auth_tokens (expires_at)",
         ] {
-            sqlx::query(stmt).execute(&self.pool).await.map_err(|e| {
+            sqlx::query(stmt).execute(&mut *tx).await.map_err(|e| {
                 AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
                     "Migration failed (index): {e}"
                 )))
@@ -92,7 +116,7 @@ impl PostgresStorage {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
@@ -104,7 +128,7 @@ impl PostgresStorage {
             "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id)",
             "CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at)",
         ] {
-            sqlx::query(stmt).execute(&self.pool).await.map_err(|e| {
+            sqlx::query(stmt).execute(&mut *tx).await.map_err(|e| {
                 AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
                     "Migration failed (index): {e}"
                 )))
@@ -122,7 +146,7 @@ impl PostgresStorage {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
@@ -131,13 +155,19 @@ impl PostgresStorage {
         })?;
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_kv_store_expires_at ON kv_store (expires_at)")
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
                     "Migration failed (index idx_kv_store_expires_at): {e}"
                 )))
             })?;
+
+        tx.commit().await.map_err(|e| {
+            AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                "Migration failed (commit): {e}"
+            )))
+        })?;
 
         Ok(())
     }
