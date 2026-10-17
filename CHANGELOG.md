@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc66 -- **`zip` 2 -> 9.0.4: a fresh resolve of the published rc releases failed.** Every `zip` 2.x
+  release is yanked on crates.io, and `zip = "2"` was a non-optional dependency, so a project without a
+  lockfile entry could not add this crate. The `zip` project yanked the 2.x line with its security
+  advisories (all rated high):
+  GHSA-4684-h2q9-2vcp (`ZipStreamReader::extract()` / `ZipArchive::extract()` apply Unix permissions
+  through symlinks without confining the target; fixed in 9.0.1), GHSA-4v9h-p7m9-rh26 (`extract()`
+  creates symlinks whose targets lie outside the destination; fixed in 9.0.0), GHSA-vv5m-jxxh-4627
+  (SUID/SGID bits preserved on extraction; fixed in 9.0.0) and CVE-2025-29787 / GHSA-94vh-gphv-8pm8
+  (path canonicalization during extraction allows arbitrary file writes; fixed in 2.3.0, and our lockfile
+  already had 2.4.2). Exposure, **by reading the code**: `ThreatFeedManager::extract_zip` never calls
+  `ZipArchive::extract`, writes entries as regular files, creates no symlinks and sets no permissions,
+  so the symlink and SUID advisories do not reach it; 9.0.4 also makes `enclosed_name` reject a
+  separator inside one verbatim path component, which matters on Windows. Code change: `zip` 9 returns an
+  entry's name as a `Result` (names need not be UTF-8), and it strips the root from an absolute name
+  instead of refusing it, so `extract_zip` now refuses rooted names explicitly (`/x`, a backslash root,
+  `C:`), as it did under `zip` 2. New `zip_extraction_tests` pin the Zip Slip paths (`..`, absolute,
+  rooted spellings, symlink entries, a backslash inside a component); removing the `enclosed_name`
+  guard turns two of them red, and an entry using a method this build cannot decode fails with an error
+  naming the entry (`Zip entry feed.csv (#0) cannot be read: compression method not supported: 12`),
+  leaving no partial file.
+  **Breaking for feeds:** `zip` is now built with `default-features = false, features = ["deflate"]`:
+  an extractor of untrusted archives should carry the least code. Archives whose entries use bzip2,
+  zstd, lzma/xz, ppmd, deflate64 or AES encryption no longer extract (stored and deflate still do);
+  the C-backed `bzip2-sys`, `lzma-sys`, `xz2` and `zstd-sys` leave the
+  dependency tree with 9 other crates, and only `typed-path` arrives. No `deny.toml` change. Not in this
+  release: size limits on extracted archives (a separate change).
 - 0.6.0-rc65 -- Archive extraction hardened: entry types and destination confinement. The threat-feed
   downloader now extracts only regular files and directories from a `.tar.gz` feed, confines every
   write to the feeds directory, and refuses any other entry type with an error naming the entry.
