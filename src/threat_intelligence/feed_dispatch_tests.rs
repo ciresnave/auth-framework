@@ -5,7 +5,9 @@ use super::*;
 async fn dispatch(name: &str, content: &[u8]) -> (tempfile::TempDir, PathBuf, String) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(name);
-    let outcome = ThreatFeedManager::extract_compressed_feed(content, &path).await;
+    let outcome =
+        ThreatFeedManager::extract_compressed_feed(content, &path, &ExtractionLimits::default())
+            .await;
     let message = outcome.err().map(|e| e.to_string()).unwrap_or_default();
     (dir, path, message)
 }

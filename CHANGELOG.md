@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc69 -- **Extracting a downloaded `.tar.gz` feed is now size-limited.** New
+  `ThreatIntelConfig::extraction_limits` (`ExtractionLimits`: `max_entries` 10 000, `max_entry_bytes`
+  512 MiB, `max_total_bytes` 1 GiB; absent in older configs, which get the defaults). The limits are
+  checked against the sizes the archive declares, before an entry is written, so a few kilobytes of gzip
+  can no longer expand to fill the disk; a refused archive removes the files it had already written and
+  the error names the entry and the limit. **Breaking for code that builds `ThreatIntelConfig` with a
+  struct literal:** add `extraction_limits: Default::default()`.
 - 0.6.0-rc68 -- Comparison helpers hardened: `SecureComparison::secure_string_compare`,
   `constant_time_eq`, `constant_time_eq_bytes` and `verify_token` now examine the full length of both
   inputs. The wall-clock `test_timing_attack_resistance` is replaced by deterministic comparison tests.

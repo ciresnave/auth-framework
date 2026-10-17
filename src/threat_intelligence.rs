@@ -18,6 +18,8 @@ use tokio_cron_scheduler::Job;
 use tracing::{debug, error, info, warn};
 
 #[cfg(test)]
+mod extraction_cap_tests;
+#[cfg(test)]
 mod tar_extraction_tests;
 
 /// Configuration for automated threat intelligence feeds
@@ -37,6 +39,36 @@ pub struct ThreatIntelConfig {
 
     /// Global HTTP timeout for downloads
     pub download_timeout_seconds: u64,
+
+    /// Limits on what extracting a downloaded archive may write. Absent in older configs, in which
+    /// case the defaults apply.
+    #[serde(default)]
+    pub extraction_limits: ExtractionLimits,
+}
+
+/// Limits on what extracting one downloaded archive may write. They are checked against the sizes the
+/// archive declares, before anything is written, so a small archive cannot expand to fill the disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtractionLimits {
+    /// Most entries (files and directories) one archive may hold
+    pub max_entries: usize,
+
+    /// Most bytes any single entry may declare
+    pub max_entry_bytes: u64,
+
+    /// Most bytes all entries of one archive may declare together
+    pub max_total_bytes: u64,
+}
+
+impl Default for ExtractionLimits {
+    /// Generous for real feeds (a full GeoIP city database is well under 200 MiB), finite for hostile ones.
+    fn default() -> Self {
+        Self {
+            max_entries: 10_000,
+            max_entry_bytes: 512 << 20,
+            max_total_bytes: 1 << 30,
+        }
+    }
 }
 
 /// Configuration for a specific threat intelligence feed
@@ -204,6 +236,7 @@ impl Default for ThreatIntelConfig {
             feeds_directory: PathBuf::from("threat-feeds"),
             feeds,
             download_timeout_seconds: 30,
+            extraction_limits: ExtractionLimits::default(),
         }
     }
 }
@@ -225,6 +258,7 @@ impl ThreatIntelConfig {
             feeds_directory: PathBuf::from("./threat-feeds"),
             feeds: HashMap::new(),
             download_timeout_seconds: 30,
+            extraction_limits: ExtractionLimits::default(),
         }
     }
 
@@ -242,6 +276,7 @@ impl ThreatIntelConfig {
             auto_update_enabled: true,
             update_interval_seconds: 300, // 5 minutes
             download_timeout_seconds: 10,
+            extraction_limits: ExtractionLimits::default(),
             ..Default::default()
         };
         // Enable all pre-configured feeds
@@ -375,6 +410,7 @@ impl ThreatIntelConfig {
             update_interval_seconds: update_interval,
             feeds_directory: std::path::PathBuf::from(feeds_dir),
             download_timeout_seconds: timeout,
+            extraction_limits: ExtractionLimits::default(),
             feeds,
         }
     }
@@ -670,7 +706,7 @@ impl ThreatFeedManager {
         // Handle compressed feeds (like MaxMind)
         if feed_config.filename.ends_with(".tar.gz") {
             // Extract tar.gz if needed
-            Self::extract_compressed_feed(&content, &file_path).await?;
+            Self::extract_compressed_feed(&content, &file_path, &config.extraction_limits).await?;
         } else {
             fs::write(&file_path, &content).await?;
         }
@@ -687,6 +723,7 @@ impl ThreatFeedManager {
     async fn extract_compressed_feed(
         content: &[u8],
         output_path: &Path,
+        limits: &ExtractionLimits,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Production implementation: Detect archive type and extract properly
         let extension = output_path
@@ -695,7 +732,7 @@ impl ThreatFeedManager {
             .unwrap_or("");
 
         match extension.to_lowercase().as_str() {
-            "gz" | "tar" => Self::extract_tar_gz(content, output_path).await,
+            "gz" | "tar" => Self::extract_tar_gz(content, output_path, limits).await,
             "zip" => Err(format!(
                 "zip extraction is not supported: {} was not extracted",
                 output_path.display()
@@ -720,10 +757,12 @@ impl ThreatFeedManager {
     async fn extract_tar_gz(
         content: &[u8],
         output_path: &Path,
+        limits: &ExtractionLimits,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("Extracting tar.gz archive to: {}", output_path.display());
 
         let content = content.to_vec();
+        let limits = limits.clone();
         let dest = output_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -734,53 +773,92 @@ impl ThreatFeedManager {
             let mut archive = tar::Archive::new(decoder);
             let canonical_dest = dest.canonicalize().map_err(|e| e.to_string())?;
 
-            for entry in archive.entries().map_err(|e| e.to_string())? {
-                let mut entry = entry.map_err(|e| e.to_string())?;
-                let path = entry.path().map_err(|e| e.to_string())?.into_owned();
+            let mut entries_seen: usize = 0;
+            let mut total_bytes: u64 = 0;
+            let mut written: Vec<PathBuf> = Vec::new();
+            let outcome = (|| -> Result<(), String> {
+                for entry in archive.entries().map_err(|e| e.to_string())? {
+                    let mut entry = entry.map_err(|e| e.to_string())?;
+                    let path = entry.path().map_err(|e| e.to_string())?.into_owned();
+                    entries_seen += 1;
+                    if entries_seen > limits.max_entries {
+                        return Err(format!(
+                            "Archive has more than {} entries; refused at {}",
+                            limits.max_entries,
+                            path.display()
+                        ));
+                    }
+                    let size = entry.size();
+                    if size > limits.max_entry_bytes {
+                        return Err(format!(
+                            "Archive entry {} is {size} bytes, over the per-entry limit of {} bytes",
+                            path.display(),
+                            limits.max_entry_bytes
+                        ));
+                    }
+                    total_bytes = total_bytes.saturating_add(size);
+                    if total_bytes > limits.max_total_bytes {
+                        return Err(format!(
+                            "Archive entry {} brings the total to {total_bytes} bytes, over the total limit of {} bytes",
+                            path.display(),
+                            limits.max_total_bytes
+                        ));
+                    }
 
-                // A feed is data: extract regular files and directories only.
-                let kind = entry.header().entry_type();
-                if !(kind.is_file() || kind.is_dir()) {
-                    return Err(format!(
-                        "Archive entry {} has unsupported type {:?}: only files and directories are extracted",
-                        path.display(),
-                        kind
-                    ));
+                    // A feed is data: extract regular files and directories only.
+                    let kind = entry.header().entry_type();
+                    if !(kind.is_file() || kind.is_dir()) {
+                        return Err(format!(
+                            "Archive entry {} has unsupported type {:?}: only files and directories are extracted",
+                            path.display(),
+                            kind
+                        ));
+                    }
+
+                    // Reject absolute paths and path traversal sequences
+                    if path.is_absolute()
+                        || path
+                            .components()
+                            .any(|c| matches!(c, std::path::Component::ParentDir))
+                    {
+                        return Err(format!(
+                            "Zip Slip: archive entry has unsafe path: {}",
+                            path.display()
+                        ));
+                    }
+
+                    let target = canonical_dest.join(&path);
+                    // Verify the resolved path stays within the destination
+                    if !target.starts_with(&canonical_dest) {
+                        return Err(format!(
+                            "Zip Slip: entry escapes destination: {}",
+                            path.display()
+                        ));
+                    }
+
+                    // `unpack_in` confines each write to `dest`.
+                    let unpacked = entry
+                        .unpack_in(&canonical_dest)
+                        .map_err(|e| e.to_string())?;
+                    if !unpacked {
+                        return Err(format!(
+                            "Zip Slip: entry escapes destination: {}",
+                            path.display()
+                        ));
+                    }
+                    if kind.is_file() {
+                        written.push(canonical_dest.join(&path));
+                    }
                 }
-
-                // Reject absolute paths and path traversal sequences
-                if path.is_absolute()
-                    || path
-                        .components()
-                        .any(|c| matches!(c, std::path::Component::ParentDir))
-                {
-                    return Err(format!(
-                        "Zip Slip: archive entry has unsafe path: {}",
-                        path.display()
-                    ));
-                }
-
-                let target = canonical_dest.join(&path);
-                // Verify the resolved path stays within the destination
-                if !target.starts_with(&canonical_dest) {
-                    return Err(format!(
-                        "Zip Slip: entry escapes destination: {}",
-                        path.display()
-                    ));
-                }
-
-                // `unpack_in` confines each write to `dest`.
-                let unpacked = entry
-                    .unpack_in(&canonical_dest)
-                    .map_err(|e| e.to_string())?;
-                if !unpacked {
-                    return Err(format!(
-                        "Zip Slip: entry escapes destination: {}",
-                        path.display()
-                    ));
+                Ok(())
+            })();
+            // A refused archive must not leave its earlier entries behind for a later read to trust.
+            if outcome.is_err() {
+                for file in &written {
+                    let _ = std::fs::remove_file(file);
                 }
             }
-            Ok(())
+            outcome
         })
         .await
         .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?
