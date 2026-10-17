@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc74 -- **The JARM manager no longer signs with a fixed development key.** `AdvancedJarmManager::new` fell back to
+  a key spelled out in the source when no RSA key was configured, and also when configured keys failed to parse, so
+  responses could be signed (and accepted by `validate_jarm_response`) with a value that is the same in every deployment.
+  With no key configured it now generates a random symmetric key for the instance (still warned about: its responses verify
+  only inside that process); keys that are configured but do not parse are an error.
+  **Breaking:** `AdvancedJarmManager::new` returns `Result<Self>` (it also no longer panics when the internal validator or
+  HTTP client cannot be created).
 - 0.6.0-rc73 -- **The default configuration generates a per-process signing secret.** `AppConfig::default()` used a
   fixed placeholder as its JWT signing secret, so a configuration built from the defaults signed with a value that
   was the same in every deployment. It now generates a random 64-hex-digit secret once per process (all defaults in
