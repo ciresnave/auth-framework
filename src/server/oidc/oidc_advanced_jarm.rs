@@ -147,20 +147,12 @@ pub struct AdvancedJarmManager {
 impl AdvancedJarmManager {
     /// Create new Advanced JARM manager
     pub fn new(config: AdvancedJarmConfig) -> Self {
-        // In a real implementation, these would come from configuration
-        let encoding_key = EncodingKey::from_rsa_pem(
-            b"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKB..."
-        ).unwrap_or_else(|_| {
-            // Fallback to a test key for development
-            EncodingKey::from_secret(b"test_key_for_development_only")
-        });
-
-        let decoding_key = DecodingKey::from_rsa_pem(
-            b"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1SU1L7VLPHCgQf7..."
-        ).unwrap_or_else(|_| {
-            // Fallback to a test key for development
-            DecodingKey::from_secret(b"test_key_for_development_only")
-        });
+        // This release has no way to configure keys. The manager signs and verifies with a random
+        // symmetric key generated for this instance: its responses verify only inside this process, and
+        // the key is shared with no other instance or deployment.
+        let signing_secret = Self::random_secret();
+        let encoding_key = EncodingKey::from_secret(signing_secret.as_bytes());
+        let decoding_key = DecodingKey::from_secret(signing_secret.as_bytes());
 
         let mut required_issuers = std::collections::HashSet::new();
         required_issuers.insert(config.jarm_issuer.clone());
@@ -181,7 +173,7 @@ impl AdvancedJarmManager {
                 types
             },
             require_secure_transport: true,
-            jwt_secret: "CHANGE_THIS_JARM_SECRET_IN_PRODUCTION".to_string(),
+            jwt_secret: Self::random_secret(),
         };
 
         Self {
@@ -195,6 +187,15 @@ impl AdvancedJarmManager {
                 crate::server::core::common_http::HttpClient::new(endpoint_config).unwrap()
             },
         }
+    }
+
+    /// A random 64-hex-digit secret from the operating system's CSPRNG (two v4 UUIDs).
+    fn random_secret() -> String {
+        format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        )
     }
 
     /// Create JARM response token

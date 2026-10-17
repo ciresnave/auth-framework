@@ -153,18 +153,45 @@ pub struct JwtIntrospectionManager {
 }
 
 impl JwtIntrospectionManager {
-    /// Create a new JWT introspection manager
-    pub fn new(config: JwtIntrospectionConfig) -> Result<Self> {
-        // Generate a default key pair for demonstration
-        // In production, use proper key management
-        let key_bytes = b"introspection_jwt_secret_key_change_in_production";
-        let private_key = EncodingKey::from_secret(key_bytes);
-        let public_key = DecodingKey::from_secret(key_bytes);
+    /// The shortest HMAC secret [`Self::with_hmac_secret`] accepts, in bytes.
+    pub const MIN_HMAC_SECRET_LEN: usize = 32;
 
+    /// Create a new JWT introspection manager that signs with a random key generated for this
+    /// instance.
+    ///
+    /// The key is not shared with any other instance or deployment, so responses verify only through
+    /// this manager. A resource server that verifies responses issued by another process needs both
+    /// ends to use the same secret: use [`Self::with_hmac_secret`].
+    ///
+    /// # Errors
+    /// If the operating system cannot provide randomness.
+    pub fn new(config: JwtIntrospectionConfig) -> Result<Self> {
+        use ring::rand::{SecureRandom, SystemRandom};
+        let mut key_bytes = [0u8; 32];
+        SystemRandom::new().fill(&mut key_bytes).map_err(|_| {
+            AuthError::crypto("System CSPRNG unavailable; cannot create an introspection key")
+        })?;
+        Self::with_hmac_secret(config, &key_bytes)
+    }
+
+    /// Create a manager that signs and verifies with the HMAC secret `secret`.
+    ///
+    /// Use this when the issuer and the verifier are different processes. The secret must be at least
+    /// [`Self::MIN_HMAC_SECRET_LEN`] bytes of random data; shorter secrets are refused.
+    ///
+    /// # Errors
+    /// If `secret` is shorter than [`Self::MIN_HMAC_SECRET_LEN`].
+    pub fn with_hmac_secret(config: JwtIntrospectionConfig, secret: &[u8]) -> Result<Self> {
+        if secret.len() < Self::MIN_HMAC_SECRET_LEN {
+            return Err(AuthError::config(format!(
+                "the introspection HMAC secret must be at least {} bytes",
+                Self::MIN_HMAC_SECRET_LEN
+            )));
+        }
         Ok(Self {
             config,
-            private_key,
-            public_key,
+            private_key: EncodingKey::from_secret(secret),
+            public_key: DecodingKey::from_secret(secret),
         })
     }
 
