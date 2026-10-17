@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc81 -- **The JWT introspection manager no longer signs with a fixed key.** `JwtIntrospectionManager::new` signed
+  and verified introspection responses with a key spelled out in the source, so a response claiming a token is active
+  (with any scope) could be forged by anyone and accepted by `verify_jwt_response`. `new` now generates a random key per
+  instance (responses verify only through that manager). New `JwtIntrospectionManager::with_hmac_secret(config, secret)`
+  takes a shared secret of at least 32 bytes for deployments where issuer and verifier are different processes.
 - 0.6.0-rc74 -- **The JARM manager no longer signs with a fixed development key.** `AdvancedJarmManager::new` fell back to
   a key spelled out in the source when no RSA key was configured, and also when configured keys failed to parse, so
   responses could be signed (and accepted by `validate_jarm_response`) with a value that is the same in every deployment.
