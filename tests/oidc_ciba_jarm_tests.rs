@@ -239,7 +239,7 @@ fn jarm_manager() -> AdvancedJarmManager {
         supported_algorithms: vec![jsonwebtoken::Algorithm::HS256],
         ..Default::default()
     };
-    AdvancedJarmManager::new(config)
+    AdvancedJarmManager::new(config).expect("jarm manager")
 }
 
 fn sample_auth_response() -> AuthorizationResponse {
@@ -333,7 +333,7 @@ async fn jarm_too_many_custom_claims_rejected() {
         supported_algorithms: vec![jsonwebtoken::Algorithm::HS256],
         ..Default::default()
     };
-    let mgr = AdvancedJarmManager::new(config);
+    let mgr = AdvancedJarmManager::new(config).expect("jarm manager");
     let auth_resp = sample_auth_response();
 
     let mut custom = std::collections::HashMap::new();
@@ -360,7 +360,7 @@ async fn jarm_custom_claims_disabled_rejects() {
         supported_algorithms: vec![jsonwebtoken::Algorithm::HS256],
         ..Default::default()
     };
-    let mgr = AdvancedJarmManager::new(config);
+    let mgr = AdvancedJarmManager::new(config).expect("jarm manager");
     let auth_resp = sample_auth_response();
 
     let mut custom = std::collections::HashMap::new();
