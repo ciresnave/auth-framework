@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc84 -- Code health, no behaviour change. Every `allow(dead_code)` now states why (`reason = "..."`) and an audit test
+  fails on one that does not. Removed the unused helpers behind five of them: the `common_jwt::utils` module (functions that
+  read JWT claims without verifying the signature, used only by their own tests), `KerberosManager::generate_response_token` (private),
+  the never-read `created_at` of the CIBA pending request and `code`/`code_challenge_method` of the IndieAuth stored code.
+  Five allows that hid nothing were deleted, and the remaining ones (AwsSns configuration fields, an RFC 8628 response field,
+  three Kerberos wire-layout structs, a Unix-only helper) carry their reason. `key_names::without_shadowed_legacy` is now
+  compiled only with `redis-storage`, its only user, so a default build has no dead-code warning.
 - 0.6.0-rc83 -- Test only. The two crude code-quality audits are replaced by ones that can be asserted on, and are no
   longer `#[ignore]`d. The panic audit scans production code only: items under `#[cfg(test)]`, `#[cfg(all(test, ..))]`
   and `#[test]` are skipped by a scanner that understands strings, raw strings, character literals and comments (and

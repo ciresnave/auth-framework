@@ -334,7 +334,13 @@ const STRICT_KEY_FILE_PERMISSIONS_ENV: &str = "AUTH_STORAGE_ENCRYPTION_STRICT_KE
 
 /// `true` when a file mode lets group or other read (or write) the file.
 /// (Only the Unix permission check calls it outside tests.)
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(
+    not(unix),
+    allow(
+        dead_code,
+        reason = "only the Unix permission check calls it outside tests"
+    )
+)]
 fn keys_file_mode_too_open(mode: u32) -> bool {
     mode & 0o077 != 0
 }
