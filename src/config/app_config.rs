@@ -440,6 +440,23 @@ impl ConfigBuilder {
     }
 }
 
+/// The signing secret `AppConfig::default()` uses: random, generated once per process.
+///
+/// Every default configuration in a process agrees (a token signed under one verifies under another),
+/// and no two processes share it, so it is not a value anyone can know in advance. Tokens signed with it
+/// do not survive a restart; set `JWT_SECRET` (or `ConfigBuilder::with_jwt_secret`) for a stable key.
+fn process_signing_secret() -> &'static str {
+    static SECRET: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SECRET.get_or_init(|| {
+        // Two random v4 UUIDs from the operating system's CSPRNG: 64 hex digits.
+        format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        )
+    })
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -451,9 +468,7 @@ impl Default for AppConfig {
             },
             redis: None,
             jwt: JwtConfig {
-                secret_key: "development-only-secret-change-in-production"
-                    .to_string()
-                    .into(),
+                secret_key: process_signing_secret().to_string().into(),
                 issuer: "auth-framework".to_string(),
                 audience: "api".to_string(),
                 access_token_ttl_seconds: 3600,

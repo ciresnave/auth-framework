@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - Unreleased
 
+### Fixed
+
+- 0.6.0-rc73 -- **The default configuration generates a per-process signing secret.** `AppConfig::default()` used a
+  fixed placeholder as its JWT signing secret, so a configuration built from the defaults signed with a value that
+  was the same in every deployment. It now generates a random 64-hex-digit secret once per process (all defaults in
+  a process agree; no two processes share it). Tokens signed with it do not survive a restart: set `JWT_SECRET` or
+  `ConfigBuilder::with_jwt_secret` for a stable key.
+
 ### Changed
 
 - 0.6.0-rc72 -- **`DistributedRateLimiter::with_clock`**, a testing seam like `RateLimiter::with_clock`: the
