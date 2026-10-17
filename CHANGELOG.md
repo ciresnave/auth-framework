@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc46] - Unreleased
+
+### Fixed
+
+- The migration unit tests no longer rewrite the tracked `migration/` state files: seven tests that
+  used `MigrationConfig::default()` (the crate's own `./migration` directory) now use a temporary
+  directory, the run-state files `migration/migration_manifest.jsonl` and
+  `migration/test_plan_status.json` are untracked, and `migration/backups/` is ignored. The default
+  working directory itself is unchanged.
+
 ## [0.5.0-rc45] - Unreleased
 
 ### Removed
