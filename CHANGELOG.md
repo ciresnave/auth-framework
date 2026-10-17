@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc72 -- **`DistributedRateLimiter::with_clock`**, a testing seam like `RateLimiter::with_clock`: the
+  in-memory windows and penalties read the supplied clock instead of the system one (`new` is unchanged;
+  the Redis path keeps the server's clock). The rate-limiting tests that slept past a window
+  (`sliding_window`, `with_penalty`, `window_reset`, `cleanup`, `token_bucket`) now advance a fake clock:
+  under load the real sleeps let the first request age out or the bucket refill early (4 of 24 loaded runs
+  failed in a Linux container, 6 of 20 on Windows; 0 of 24 after).
 - 0.6.0-rc71 -- Test only. `oidc_session_management::tests::test_session_validity` no longer depends on the
   wall-clock second: it used a 1 s timeout and a real sleep, and failed whenever the second ticked over
   during `create_session` (19 of 60 runs in a Linux container; 0 of 60 after). No library change.
