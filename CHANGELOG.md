@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc83 -- Test only. The two crude code-quality audits are replaced by ones that can be asserted on, and are no
+  longer `#[ignore]`d. The panic audit scans production code only: items under `#[cfg(test)]`, `#[cfg(all(test, ..))]`
+  and `#[test]` are skipped by a scanner that understands strings, raw strings, character literals and comments (and
+  fails loudly if it loses track of an item). The hard-coded-secret audit matches the shapes a fixed credential has
+  taken in this crate (secret-named literals, key constructors given a literal, "change me" markers, byte-string key
+  constants) and lists each harmless hit with its reason; an unexplained hit, or a listed entry that no longer
+  matches, fails the test. No library change.
 - 0.6.0-rc74 -- Test and CI only. The 16 Redis tests (`storage_redis` 6, `kv_key_names_hold_no_credentials` 9,
   `storage_list_kv_keys` 1) are no longer `#[ignore]`d. CI's `--ignored` step ran only `storage_redis`, so the
   key-name migration tests (a security property) and the `list_kv_keys` test never ran in CI; all passed when run
