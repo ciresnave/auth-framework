@@ -720,6 +720,29 @@ impl Default for RuntimeConfig {
     }
 }
 
+/// Fragments that mark a signing secret as a template or placeholder rather than a generated value.
+const PLACEHOLDER_SECRET_MARKERS: &[&str] = &[
+    "change-in-production",
+    "change_in_production",
+    "change-me",
+    "change_me",
+    "changeme",
+    "your-secret",
+    "your_secret",
+    "yoursecret",
+    "development-only",
+    "replace-with",
+    "replace_with",
+];
+
+/// Whether `secret` is (or contains) a known placeholder, compared case-insensitively.
+fn is_placeholder_secret(secret: &str) -> bool {
+    let lowered = secret.trim().to_ascii_lowercase();
+    PLACEHOLDER_SECRET_MARKERS
+        .iter()
+        .any(|marker| lowered.contains(marker))
+}
+
 impl AuthConfig {
     /// Create a new configuration with default values.
     ///
@@ -1347,6 +1370,14 @@ impl AuthConfig {
             .or(env_secret.as_deref());
 
         if let Some(secret) = jwt_secret {
+            // A placeholder is a value that is the same in every deployment that copied it, so it
+            // is no secret at all. Production refuses it however long and varied it looks.
+            if self.is_production_environment() && is_placeholder_secret(secret) {
+                return Err(AuthError::config(
+                    "JWT secret is a known placeholder value, the same in every deployment that                      copied it. Generate your own with: openssl rand -base64 32",
+                ));
+            }
+
             // Enforce minimum length only outside test environments.
             // In tests, short secrets are acceptable for convenience.
             if !self.is_test_environment() && secret.len() < 32 {
