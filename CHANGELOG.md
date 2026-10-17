@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc68 -- Comparison helpers hardened: `SecureComparison::secure_string_compare`,
+  `constant_time_eq`, `constant_time_eq_bytes` and `verify_token` now examine the full length of both
+  inputs. The wall-clock `test_timing_attack_resistance` is replaced by deterministic comparison tests.
 - 0.6.0-rc67 -- **Removed the ZIP extraction path and the `zip` dependency.** Nothing reached it: the
   threat-feed downloader extracts only a feed whose filename ends in `.tar.gz`, so a `.zip` feed was
   never selected, yet the dependency was non-optional and (in the 2.x line) unresolvable. A `.zip` path
