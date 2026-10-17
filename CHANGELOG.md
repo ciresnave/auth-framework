@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc47] - Unreleased
+
+### Changed
+
+- CI hardening only, no library change. The eight `postgres:15` / `redis:7` service containers in
+  `ci-cd.yml` are pinned by image digest, and every `cargo build|test|check|clippy|bench` in `ci-cd.yml`
+  and `release.yml` (plus `cargo install` of `cargo-audit`/`cross` and `cargo llvm-cov`) now passes
+  `--locked`. The `cargo tree` calls of the rsa-absence gate stay unlocked on purpose: its self-test
+  crates have no lockfile.
+
 ## [0.5.0-rc46] - Unreleased
 
 ### Fixed

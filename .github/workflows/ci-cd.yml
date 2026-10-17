@@ -25,7 +25,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:c961aa287d8698297cb26cdfadfbe9fd2cbaf77e53cfffe9636e8d8a1e4d842c
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
@@ -39,7 +39,7 @@ jobs:
           - 5432:5432
 
       redis:
-        image: redis:7
+        image: redis:7@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -75,28 +75,28 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration -- -D warnings
+        run: cargo clippy --locked --all-targets --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration -- -D warnings
 
       - name: Run unit tests
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration --workspace
+        run: cargo test --locked --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration --workspace
 
       - name: Verify examples compile
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --examples --no-run --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration
+        run: cargo test --locked --examples --no-run --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration
 
       - name: Run benchmarks
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo bench --no-run
+        run: cargo bench --locked --no-run
 
   msrv:
     name: MSRV Verification
@@ -104,7 +104,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:c961aa287d8698297cb26cdfadfbe9fd2cbaf77e53cfffe9636e8d8a1e4d842c
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
@@ -118,7 +118,7 @@ jobs:
           - 5432:5432
 
       redis:
-        image: redis:7
+        image: redis:7@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -145,7 +145,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --lib --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration
+        run: cargo test --locked --lib --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration
 
   minimal-profile:
     name: Minimal Profile
@@ -169,7 +169,7 @@ jobs:
           key: ${{ runner.os }}-cargo-minimal-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check minimal profile
-        run: cargo check --lib --no-default-features
+        run: cargo check --locked --lib --no-default-features
 
   coverage:
     name: Coverage
@@ -177,7 +177,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:c961aa287d8698297cb26cdfadfbe9fd2cbaf77e53cfffe9636e8d8a1e4d842c
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
@@ -191,7 +191,7 @@ jobs:
           - 5432:5432
 
       redis:
-        image: redis:7
+        image: redis:7@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -221,7 +221,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov --locked --workspace --all-features --lcov --output-path lcov.info
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -276,7 +276,7 @@ jobs:
       - name: Compile feature group
         shell: bash
         run: |
-          cargo check --lib --tests --bins --examples --no-default-features --features "${{ matrix.features }}"
+          cargo check --locked --lib --tests --bins --examples --no-default-features --features "${{ matrix.features }}"
 
       # This matrix entry is the only one carrying `saml`, and until now
       # nothing in CI actually RAN the saml test suite (only compiled it
@@ -289,7 +289,7 @@ jobs:
         if: matrix.name == 'enterprise-auth'
         shell: bash
         run: |
-          cargo test --lib --no-default-features --features "${{ matrix.features }}" 'api::saml::tests::'
+          cargo test --locked --lib --no-default-features --features "${{ matrix.features }}" 'api::saml::tests::'
 
   security-audit:
     name: Security Audit
@@ -301,7 +301,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install --locked cargo-audit
 
       - name: Run security audit
         run: cargo audit
@@ -410,7 +410,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:c961aa287d8698297cb26cdfadfbe9fd2cbaf77e53cfffe9636e8d8a1e4d842c
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
@@ -424,7 +424,7 @@ jobs:
           - 5432:5432
 
       redis:
-        image: redis:7
+        image: redis:7@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -459,7 +459,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: |
-          cargo bench --bench auth_performance 2>&1 | tee benchmark_results.txt
+          cargo bench --locked --bench auth_performance 2>&1 | tee benchmark_results.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
