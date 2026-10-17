@@ -132,7 +132,42 @@ const SECRET_LITERAL_PATTERNS: [&str; 5] = [
 
 /// Known harmless hits: `(file suffix, text that must appear on the line, reason)`. An entry that
 /// no longer matches anything fails the test, so the list cannot go stale.
-const SECRET_LITERAL_ALLOWLIST: [(&str, &str, &str); 9] = [
+const SECRET_LITERAL_ALLOWLIST: [(&str, &str, &str); 16] = [
+    (
+        "src/config/mod.rs",
+        "\"change-in-production\",",
+        "refusal list in PLACEHOLDER_SECRET_MARKERS: a string production validation rejects, never used as a secret",
+    ),
+    (
+        "src/config/mod.rs",
+        "\"change_in_production\",",
+        "refusal list in PLACEHOLDER_SECRET_MARKERS: a string production validation rejects, never used as a secret",
+    ),
+    (
+        "src/config/mod.rs",
+        "\"change-me\",",
+        "refusal list in PLACEHOLDER_SECRET_MARKERS: a string production validation rejects, never used as a secret",
+    ),
+    (
+        "src/config/mod.rs",
+        "\"changeme\",",
+        "refusal list in PLACEHOLDER_SECRET_MARKERS: a string production validation rejects, never used as a secret",
+    ),
+    (
+        "src/config/mod.rs",
+        "\"your-secret\",",
+        "refusal list in PLACEHOLDER_SECRET_MARKERS: a string production validation rejects, never used as a secret",
+    ),
+    (
+        "src/config/mod.rs",
+        "\"development-only\",",
+        "refusal list in PLACEHOLDER_SECRET_MARKERS: a string production validation rejects, never used as a secret",
+    ),
+    (
+        "src/config/mod.rs",
+        "\"replace-with\",",
+        "refusal list in PLACEHOLDER_SECRET_MARKERS: a string production validation rejects, never used as a secret",
+    ),
     (
         "src/bin/oauth2_test_server.rs",
         "test_oauth2_secret_key_that_is_long_enough",

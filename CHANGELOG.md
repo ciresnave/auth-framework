@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc85 -- **Production validation refuses a placeholder signing secret.** `AuthConfig::validate()` in production
+  mode now returns an error when the JWT secret is, or contains, a known template value (`change-in-production`,
+  `change-me`, `changeme`, `your-secret`, `development-only`, `replace-with`; compared case-insensitively), however long and varied
+  it looks: such a value is the same in every deployment that copied it. Other modes are unchanged.
 - 0.6.0-rc82 -- **`SamlAuthMethod::default()` no longer signs tokens with a fixed secret.** The default method used a secret
   spelled out in the source for its token manager, so a token signed with that value validated through any default
   `SamlAuthMethod`. It now generates a random secret per instance (its tokens verify only through that method's
