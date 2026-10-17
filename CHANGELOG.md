@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc94 -- **`PostgresStorage` stores and reads back a token's `user_profile`, `permissions` and `roles` (#93).**
+  `AuthToken` derives `FromRow`, so every field needs a column, but `auth_tokens` had none for these three: any
+  token read failed with `no column found for name: user_profile`, and the values were never written. `migrate()`
+  now adds the columns (`ADD COLUMN IF NOT EXISTS`, so existing tables upgrade in place; permissions and roles
+  default to empty) and `store_token` / `update_token` write them. The test
+  `pg_token_round_trips_profile_roles_and_permissions` failed 3 of 3 before and passes after, also on a table
+  created with the old schema. All nine `storage_postgres` tests are no longer `#[ignore]`d and the `--ignored`
+  Postgres CI step is removed; they run in the normal test step against CI's postgres service.
 - 0.6.0-rc93 -- **`PostgresStorage::migrate()` is safe to call concurrently (#89).** It ran its `CREATE TABLE IF NOT EXISTS`
   statements on separate pool connections, so two instances starting at once could both pass the existence
   check and collide on Postgres's own `pg_type` catalog (`duplicate key value violates unique constraint
