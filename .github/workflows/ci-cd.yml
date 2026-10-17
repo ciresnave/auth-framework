@@ -24,7 +24,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:c961aa287d8698297cb26cdfadfbe9fd2cbaf77e53cfffe9636e8d8a1e4d842c
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
@@ -38,7 +38,7 @@ jobs:
           - 5432:5432
 
       redis:
-        image: redis:7
+        image: redis:7@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -74,21 +74,21 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Run unit tests
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo test --all-features --workspace
+        run: cargo test --locked --all-features --workspace
 
       - name: Run benchmarks
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
-        run: cargo bench --no-run
+        run: cargo bench --locked --no-run
 
   security-audit:
     name: Security Audit
@@ -100,7 +100,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install --locked cargo-audit
 
       - name: Run security audit
         run: cargo audit
@@ -158,7 +158,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:c961aa287d8698297cb26cdfadfbe9fd2cbaf77e53cfffe9636e8d8a1e4d842c
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
@@ -172,7 +172,7 @@ jobs:
           - 5432:5432
 
       redis:
-        image: redis:7
+        image: redis:7@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -207,7 +207,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test_jwt_secret_that_is_longer_than_32_characters_for_security
         run: |
-          cargo bench --bench auth_performance 2>&1 | tee benchmark_results.txt
+          cargo bench --locked --bench auth_performance 2>&1 | tee benchmark_results.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
