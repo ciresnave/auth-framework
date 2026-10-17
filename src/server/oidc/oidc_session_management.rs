@@ -400,8 +400,12 @@ mod tests {
 
     #[test]
     fn test_session_validity() {
+        // Whole-second clock: the timeout is checked as `now - last_activity < timeout` on integer
+        // seconds, so a short timeout and a real sleep make the first assertion fail whenever the
+        // second ticks over during `create_session`. Use a long timeout and move the activity time.
+        let timeout = 60;
         let mut manager = SessionManager::new(SessionManagementConfig {
-            session_timeout: 1, // 1 second timeout for testing
+            session_timeout: timeout,
             ..SessionManagementConfig::default()
         });
 
@@ -415,10 +419,24 @@ mod tests {
 
         assert!(manager.is_session_valid(&session.session_id));
 
-        // Wait for timeout
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        // Activity `timeout - 5` seconds ago: still valid. (The margin absorbs the second boundary.)
+        manager
+            .sessions
+            .get_mut(&session.session_id)
+            .unwrap()
+            .last_activity = session.last_activity - (timeout - 5);
+        assert!(manager.is_session_valid(&session.session_id));
 
+        // Activity `timeout + 1` seconds ago: expired.
+        manager
+            .sessions
+            .get_mut(&session.session_id)
+            .unwrap()
+            .last_activity = session.last_activity - (timeout + 1);
         assert!(!manager.is_session_valid(&session.session_id));
+
+        // An unknown session is never valid.
+        assert!(!manager.is_session_valid("no-such-session"));
     }
 
     #[test]

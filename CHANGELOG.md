@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc71 -- Test only. `oidc_session_management::tests::test_session_validity` no longer depends on the
+  wall-clock second: it used a 1 s timeout and a real sleep, and failed whenever the second ticked over
+  during `create_session` (19 of 60 runs in a Linux container; 0 of 60 after). No library change.
 - 0.6.0-rc70 -- CI hardening only, no library change. The eight `postgres:15` / `redis:7` service
   containers in `ci-cd.yml` are pinned by image digest, and every `cargo build|test|check|clippy|bench`
   in `ci-cd.yml` and `release.yml` (plus `cargo install` of `cargo-audit`/`cross` and `cargo llvm-cov`)
