@@ -385,6 +385,10 @@ impl UserManager {
             let key_info: serde_json::Value = serde_json::from_slice(&key_data)?;
 
             if let Some(user_id) = key_info["user_id"].as_str() {
+                // A row a rotation has stored but not yet made live authenticates nobody.
+                if key_info["pending"].as_bool() == Some(true) {
+                    return Err(AuthError::token("Invalid API key"));
+                }
                 // Check expiration
                 if let Some(expires_at_str) = key_info["expires_at"].as_str() {
                     let expires_at: chrono::DateTime<chrono::Utc> = expires_at_str
@@ -449,6 +453,211 @@ impl UserManager {
         } else {
             Err(AuthError::token("API key not found"))
         }
+    }
+
+    /// Replace an API key with a new one that has the same user and role.
+    ///
+    /// Returns the new raw key, once; the old key stops validating. The new key's lifetime is as long
+    /// as the old key's was (a key that never expired still never expires), counted from now. Use
+    /// [`Self::rotate_api_key_with_expiry`] to choose the lifetime.
+    ///
+    /// # Semantics
+    ///
+    /// A revoked, expired, unknown, or role-no-longer-permitted key is refused and nothing is created.
+    /// Otherwise the steps are: (1) claim the rotation with an atomic `store_kv_if_absent` (so
+    /// of several simultaneous rotations of one key exactly one proceeds and the rest get an
+    /// error); (2) store the new key INERT (it authenticates nobody); (3) delete the old key; (4)
+    /// make the new key live; (5) release the claim.
+    ///
+    /// * If step 3 fails, the new key is deleted again and an error is returned, so on every returned
+    ///   result exactly one of the two keys is valid: the old key on `Err`, the new key on `Ok`.
+    /// * Two keys are never live at once, also across a crash. A process that dies before step 3
+    ///   completes leaves the old key as the only live one (the claim expires after 60 seconds, so a
+    ///   retry is possible); one that dies after step 3 and before step 4 leaves NO live key, the
+    ///   caller never having received the new one, and the user creates another. An inert row is
+    ///   removed by its TTL on backends that track one.
+    /// * "Never both and never neither" would need a storage-level transaction; this is not one.
+    /// * The storage backend must implement `store_kv_if_absent` atomically; one that does not makes
+    ///   this method fail rather than rotate without the single-winner guarantee.
+    ///
+    /// Who may rotate a key is the caller's authorization decision.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let new_key = um.rotate_api_key("ak_abc123").await?;
+    /// ```
+    pub async fn rotate_api_key(&self, old_key: &str) -> Result<String> {
+        self.rotate_api_key_inner(old_key, None).await
+    }
+
+    /// Like [`Self::rotate_api_key`], but the new key lives for `expires_in` (`None`: no expiry)
+    /// instead of the old key's lifetime.
+    pub async fn rotate_api_key_with_expiry(
+        &self,
+        old_key: &str,
+        expires_in: Option<std::time::Duration>,
+    ) -> Result<String> {
+        self.rotate_api_key_inner(old_key, Some(expires_in)).await
+    }
+
+    /// How long a rotation claim lives if its owner dies before releasing it.
+    const ROTATION_CLAIM_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+    /// How long an inert (not yet live) rotation row is kept if the rotation dies before it is
+    /// made live or removed. Backends that do not track TTLs keep such a row until it is removed;
+    /// it never authenticates.
+    const PENDING_KEY_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+    async fn rotate_api_key_inner(
+        &self,
+        old_key: &str,
+        expires_in: Option<Option<std::time::Duration>>,
+    ) -> Result<String> {
+        debug!("Rotating API key");
+        let old_storage_key = Self::api_key_storage_key(old_key);
+
+        // Refuse anything that could not be used: unknown, revoked, expired, or a role that is no
+        // longer permitted. Nothing is written until this passes.
+        self.live_api_key_row(old_key, &old_storage_key)
+            .await?
+            .ok_or_else(|| AuthError::token("Invalid API key"))?;
+
+        // Of several simultaneous rotations of this key, exactly one wins the claim.
+        let claim_key = format!(
+            "api_key_rot:{}",
+            crate::storage::key_names::digest("api_key_rotation", old_key)
+        );
+        let claimed = self
+            .storage
+            .store_kv_if_absent(&claim_key, b"1", Some(Self::ROTATION_CLAIM_TTL))
+            .await?;
+        if !claimed {
+            return Err(AuthError::token("API key is being rotated"));
+        }
+
+        let outcome = self
+            .rotate_claimed(old_key, &old_storage_key, expires_in)
+            .await;
+        // Release the claim whatever happened; if this fails it expires on its own.
+        if let Err(e) = self.storage.delete_kv(&claim_key).await {
+            warn!("Failed to release API key rotation claim: {e}");
+        }
+        outcome
+    }
+
+    /// The row of `api_key` if it can be used now, `None` if it does not exist; an error if it has
+    /// expired or carries a role that is no longer permitted.
+    async fn live_api_key_row(
+        &self,
+        api_key: &str,
+        storage_key: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(bytes) = self.get_api_key_row(api_key, storage_key).await? else {
+            return Ok(None);
+        };
+        let row: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if row["user_id"].as_str().is_none() {
+            return Err(AuthError::token("Invalid API key format"));
+        }
+        if row["pending"].as_bool() == Some(true) {
+            return Ok(None);
+        }
+        if let Some(expires_at) = row["expires_at"].as_str() {
+            let expires_at: chrono::DateTime<chrono::Utc> = expires_at
+                .parse()
+                .map_err(|_| AuthError::token("Invalid API key expiration"))?;
+            if chrono::Utc::now() > expires_at {
+                return Err(AuthError::token("API key expired"));
+            }
+        }
+        let role = row["role"].as_str().unwrap_or(DEFAULT_API_KEY_ROLE);
+        if !self.api_key_roles.iter().any(|allowed| allowed == role) {
+            return Err(AuthError::token("API key role is not permitted"));
+        }
+        Ok(Some(row))
+    }
+
+    /// Steps 2 and 3 of a rotation, with the claim held.
+    async fn rotate_claimed(
+        &self,
+        old_key: &str,
+        old_storage_key: &str,
+        expires_in: Option<Option<std::time::Duration>>,
+    ) -> Result<String> {
+        // Re-read under the claim: a rotation or revoke that finished between our first read and
+        // winning the claim has already removed the key, and then there is nothing to rotate.
+        let row = self
+            .live_api_key_row(old_key, old_storage_key)
+            .await?
+            .ok_or_else(|| AuthError::token("Invalid API key"))?;
+
+        let user_id = row["user_id"].as_str().unwrap_or_default();
+        let role = row["role"].as_str().unwrap_or(DEFAULT_API_KEY_ROLE);
+        let lifetime = match expires_in {
+            Some(chosen) => chosen,
+            None => Self::original_lifetime(&row),
+        };
+
+        let now = chrono::Utc::now();
+        let new_key = format!("ak_{}", crate::utils::crypto::generate_token(32));
+        let new_storage_key = Self::api_key_storage_key(&new_key);
+        let mut new_row = serde_json::json!({
+            "user_id": user_id,
+            "role": role,
+            "created_at": now,
+            "expires_at": lifetime.map(|d| {
+                now + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::days(365 * 10))
+            }),
+            "pending": true,
+        });
+        // The new key is stored inert first and made live only after the old key is gone, so a
+        // process that dies between the steps leaves at most one live key (worst case none).
+        let pending_ttl = lifetime.map_or(Self::PENDING_KEY_TTL, |d| d.min(Self::PENDING_KEY_TTL));
+        let stored = self
+            .storage
+            .store_kv_if_absent(
+                &new_storage_key,
+                new_row.to_string().as_bytes(),
+                Some(pending_ttl),
+            )
+            .await?;
+        if !stored {
+            return Err(AuthError::internal(
+                "generated API key already exists".to_string(),
+            ));
+        }
+
+        // Retire the old key, legacy name first as revoke does. If that fails, take the new key
+        // back out so the old key stays the only valid one.
+        let legacy_key = Self::legacy_api_key_storage_key(old_key);
+        let retired = match self.storage.delete_kv(&legacy_key).await {
+            Ok(()) => self.storage.delete_kv(old_storage_key).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = retired {
+            if let Err(undo) = self.storage.delete_kv(&new_storage_key).await {
+                warn!("Failed to remove the new API key after a failed rotation: {undo}");
+            }
+            return Err(e);
+        }
+
+        // Make the new key live. If this fails the old key is already gone: no key is live (the
+        // fail-safe direction) and the caller, who never receives the new key, creates another.
+        new_row["pending"] = serde_json::Value::Bool(false);
+        self.storage
+            .store_kv(&new_storage_key, new_row.to_string().as_bytes(), lifetime)
+            .await?;
+
+        info!("API key rotated for user '{}'", user_id);
+        Ok(new_key)
+    }
+
+    /// The lifetime a key was created with, from its row: `expires_at - created_at`, or `None` for
+    /// a key that never expires (or whose row does not say).
+    fn original_lifetime(row: &serde_json::Value) -> Option<std::time::Duration> {
+        let created: chrono::DateTime<chrono::Utc> = row["created_at"].as_str()?.parse().ok()?;
+        let expires: chrono::DateTime<chrono::Utc> = row["expires_at"].as_str()?.parse().ok()?;
+        (expires - created).to_std().ok().filter(|d| !d.is_zero())
     }
 
     /// Validate username format.

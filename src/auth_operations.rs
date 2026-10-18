@@ -1025,6 +1025,23 @@ impl TokenOperations<'_> {
             .await
     }
 
+    /// Replace an API key with a new one; see [`AuthFramework::rotate_api_key`].
+    pub async fn rotate_api_key(&self, old_key: &str) -> Result<String> {
+        self.framework.rotate_api_key(old_key).await
+    }
+
+    /// Replace an API key, choosing the new key's lifetime; see
+    /// [`AuthFramework::rotate_api_key_with_expiry`].
+    pub async fn rotate_api_key_with_expiry(
+        &self,
+        old_key: &str,
+        expires_in: Option<Duration>,
+    ) -> Result<String> {
+        self.framework
+            .rotate_api_key_with_expiry(old_key, expires_in)
+            .await
+    }
+
     /// Validate an API key and return the associated user info.
     pub async fn validate_api_key(&self, api_key: &str) -> Result<UserInfo> {
         self.framework.validate_api_key(api_key).await
