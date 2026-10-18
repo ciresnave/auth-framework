@@ -132,7 +132,12 @@ const SECRET_LITERAL_PATTERNS: [&str; 5] = [
 
 /// Known harmless hits: `(file suffix, text that must appear on the line, reason)`. An entry that
 /// no longer matches anything fails the test, so the list cannot go stale.
-const SECRET_LITERAL_ALLOWLIST: [(&str, &str, &str); 16] = [
+const SECRET_LITERAL_ALLOWLIST: [(&str, &str, &str); 17] = [
+    (
+        "src/auth_modular/user_manager.rs",
+        "DEFAULT_API_KEY_ROLE: &str",
+        "the role name a key gets when none is chosen (a role, not a credential)",
+    ),
     (
         "src/config/mod.rs",
         "\"change-in-production\",",

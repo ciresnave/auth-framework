@@ -1013,6 +1013,18 @@ impl TokenOperations<'_> {
         self.framework.create_api_key(user_id, expires_in).await
     }
 
+    /// Create an API key that carries `role`; see [`AuthFramework::create_api_key_with_role`].
+    pub async fn create_api_key_with_role(
+        &self,
+        user_id: &str,
+        role: &str,
+        expires_in: Option<Duration>,
+    ) -> Result<String> {
+        self.framework
+            .create_api_key_with_role(user_id, role, expires_in)
+            .await
+    }
+
     /// Validate an API key and return the associated user info.
     pub async fn validate_api_key(&self, api_key: &str) -> Result<UserInfo> {
         self.framework.validate_api_key(api_key).await

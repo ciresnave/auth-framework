@@ -143,7 +143,16 @@ pub struct UserManager {
     /// path degrades to doing no dummy work at all in that case, which is
     /// a known, narrow limitation rather than a silent regression.
     dummy_password_hash: Option<String>,
+    /// Roles an API key may carry. A key is created with one of these, and a stored key whose role is
+    /// no longer in the set stops validating (see [`Self::validate_api_key`]).
+    api_key_roles: Vec<String>,
 }
+
+/// The role of an API key created without choosing one, and of keys stored before roles existed.
+pub const DEFAULT_API_KEY_ROLE: &str = "api_user";
+
+/// The roles an API key may carry unless [`UserManager::with_api_key_roles`] says otherwise.
+pub const DEFAULT_API_KEY_ROLES: [&str; 3] = ["admin", "user", DEFAULT_API_KEY_ROLE];
 
 impl UserManager {
     /// Create a new user manager that hashes new/changed passwords with
@@ -173,7 +182,24 @@ impl UserManager {
             storage,
             password_hash_algorithm,
             dummy_password_hash,
+            api_key_roles: DEFAULT_API_KEY_ROLES
+                .iter()
+                .map(|r| r.to_string())
+                .collect(),
         }
+    }
+
+    /// Set the roles an API key may carry (default: `admin`, `user`, `api_user`).
+    ///
+    /// Role names are compared exactly (case and whitespace included). Narrowing the set makes existing
+    /// keys whose role left it fail validation, and keys created without a role carry `api_user`, so
+    /// leave that in the set unless no such key exists.
+    ///
+    /// Minting a key with a privileged role is an authorization decision for the caller of
+    /// [`Self::create_api_key_with_role`]; this type does not know who is asking.
+    pub fn with_api_key_roles(mut self, roles: Vec<String>) -> Self {
+        self.api_key_roles = roles;
+        self
     }
 
     /// Hash `password` using the configured algorithm.
@@ -293,7 +319,34 @@ impl UserManager {
         user_id: &str,
         expires_in: Option<std::time::Duration>,
     ) -> Result<String> {
-        debug!("Creating API key for user '{}'", user_id);
+        self.create_api_key_with_role(user_id, DEFAULT_API_KEY_ROLE, expires_in)
+            .await
+    }
+
+    /// Create an API key that carries `role`, which [`Self::validate_api_key`] returns for it.
+    ///
+    /// `role` must be one of the allowed roles (see [`Self::with_api_key_roles`]); anything else,
+    /// including a different case or surrounding whitespace, is an error and nothing is stored.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let key = um.create_api_key_with_role("user-1", "admin", None).await?;
+    /// ```
+    pub async fn create_api_key_with_role(
+        &self,
+        user_id: &str,
+        role: &str,
+        expires_in: Option<std::time::Duration>,
+    ) -> Result<String> {
+        if !self.api_key_roles.iter().any(|allowed| allowed == role) {
+            return Err(AuthError::validation(format!(
+                "API key role {role:?} is not one of the allowed roles"
+            )));
+        }
+        debug!(
+            "Creating API key for user '{}' with role '{}'",
+            user_id, role
+        );
 
         // Generate a secure API key
         let api_key = format!("ak_{}", crate::utils::crypto::generate_token(32));
@@ -301,6 +354,7 @@ impl UserManager {
         // Store API key metadata
         let key_data = serde_json::json!({
             "user_id": user_id,
+            "role": role,
             "created_at": chrono::Utc::now(),
             "expires_at": expires_in.map(|d| chrono::Utc::now() + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::days(365 * 10)))
         });
@@ -342,13 +396,21 @@ impl UserManager {
                     }
                 }
 
+                // The key's role: rows stored before roles existed have none and read as `api_user`.
+                // A role that has left the allowed set fails closed -- it is neither kept nor
+                // replaced by another role.
+                let role = key_info["role"].as_str().unwrap_or(DEFAULT_API_KEY_ROLE);
+                if !self.api_key_roles.iter().any(|allowed| allowed == role) {
+                    return Err(AuthError::token("API key role is not permitted"));
+                }
+
                 // Return user information
                 Ok(UserInfo {
                     id: user_id.to_string(),
                     username: format!("api_user_{}", user_id),
                     email: None,
                     name: None,
-                    roles: vec!["api_user".to_string()].into(),
+                    roles: vec![role.to_string()].into(),
                     active: true,
                     email_verified: false,
                     attributes: crate::types::UserAttributes::empty(),

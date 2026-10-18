@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 0.6.0-rc89 -- **API keys carry a role.** `UserManager::create_api_key_with_role(user_id, role, expires_in)` stores the
+  role with the key and `validate_api_key` returns it (`UserInfo.roles`). The allowed roles are `admin`, `user` and
+  `api_user` by default and configurable with `UserManager::with_api_key_roles`; a role outside the set is an error at
+  creation (nothing is stored; names are compared exactly). A stored key whose role has since left the set fails
+  validation rather than keeping it or being re-labelled. `create_api_key` is unchanged and creates `api_user` keys, and
+  keys stored before roles existed read as `api_user`, so no migration is needed. `AuthFramework::create_api_key_with_role` (and
+  `tokens().create_api_key_with_role`) expose it. Authenticating with an API key copies its roles into the token's roles
+  and scopes: an `admin` key yields exactly the scope and role `admin` (what the crate's admin checks look for), a
+  `user` key does not, and no other role name equals a scope name the crate checks (`read`, `write`); tests pin all
+  three. Who may mint an `admin` key is the caller's authorization decision.
 - 0.6.0-rc86 -- **TOTP secrets can be encrypted at rest under a key you supply.** `TotpManager::new_encrypted(inner, &key_provider)` wraps
   the storage in the existing AES-256-GCM `EncryptedStorage` (plaintext and legacy reads off), so the row in the backing store is an
   envelope bound to its own storage key: a row copied onto another user's key, or read with a different key, does not verify, and a
