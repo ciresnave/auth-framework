@@ -1,13 +1,19 @@
 //! OAuth 2.0 API Endpoints
 //!
-//! Handles OAuth 2.0 authorization, token exchange, and related operations
+//! **These endpoints are not implemented on this release line.** Earlier releases answered them with
+//! placeholder data (an introspection said `active: true` for any string, the token endpoint issued
+//! made-up tokens without checking the client, the authorization endpoint redirected with a made-up
+//! code). Every handler here now answers `501 Not Implemented` whatever the request says, so
+//! nothing that depends on them can be told that something is valid when it was never checked.
+//! The working OAuth 2.0 server is `server::oauth` (library API), and the 0.5 and 0.6 lines
+//! implement these endpoints in `api::oauth2`.
 
 use crate::api::{ApiResponse, ApiState};
 use axum::{
     Json,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 
@@ -71,163 +77,40 @@ pub struct ClientInfo {
     pub scopes: Vec<String>,
 }
 
+const NOT_IMPLEMENTED_DESCRIPTION: &str =
+    "this OAuth endpoint is not implemented in this release line";
+
+fn not_implemented_response() -> Response {
+    let error = OAuthError {
+        error: "not_implemented".to_string(),
+        error_description: Some(NOT_IMPLEMENTED_DESCRIPTION.to_string()),
+        error_uri: None,
+        state: None,
+    };
+    (StatusCode::NOT_IMPLEMENTED, Json(error)).into_response()
+}
+
+fn not_implemented<T: Serialize>() -> ApiResponse<T> {
+    ApiResponse::<T>::error_typed("NOT_IMPLEMENTED", NOT_IMPLEMENTED_DESCRIPTION)
+}
+
 /// GET /oauth/authorize
-/// OAuth 2.0 authorization endpoint
+/// Not implemented: answers `501` and never redirects.
 pub async fn authorize(
     State(_state): State<ApiState>,
-    Query(params): Query<AuthorizeRequest>,
+    Query(_params): Query<AuthorizeRequest>,
 ) -> impl IntoResponse {
-    // Validate required parameters
-    if params.response_type != "code" {
-        let error = OAuthError {
-            error: "unsupported_response_type".to_string(),
-            error_description: Some("Only 'code' response type is supported".to_string()),
-            error_uri: None,
-            state: params.state,
-        };
-        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
-    }
-
-    if params.client_id.is_empty() {
-        let error = OAuthError {
-            error: "invalid_request".to_string(),
-            error_description: Some("client_id is required".to_string()),
-            error_uri: None,
-            state: params.state,
-        };
-        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
-    }
-
-    if params.redirect_uri.is_empty() {
-        let error = OAuthError {
-            error: "invalid_request".to_string(),
-            error_description: Some("redirect_uri is required".to_string()),
-            error_uri: None,
-            state: params.state,
-        };
-        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
-    }
-
-    // In a real implementation:
-    // 1. Validate client_id exists
-    // 2. Validate redirect_uri is registered for client
-    // 3. Check if user is authenticated
-    // 4. Show consent screen if needed
-    // 5. Generate authorization code
-    // 6. Redirect with code
-
-    // For now, simulate successful authorization
-    let auth_code = format!("auth_code_{}", chrono::Utc::now().timestamp());
-    let mut redirect_url = params.redirect_uri;
-
-    redirect_url.push_str(&format!("?code={}", auth_code));
-    if let Some(state) = params.state {
-        redirect_url.push_str(&format!("&state={}", state));
-    }
-
-    tracing::info!("OAuth authorization for client: {}", params.client_id);
-    Redirect::to(&redirect_url).into_response()
+    not_implemented_response()
 }
 
 /// POST /oauth/token
-/// OAuth 2.0 token endpoint
+/// Not implemented: answers `501` for every grant type and issues nothing.
 pub async fn token(
-    State(state): State<ApiState>,
+    State(_state): State<ApiState>,
     _headers: HeaderMap,
-    Json(req): Json<TokenRequest>,
+    Json(_req): Json<TokenRequest>,
 ) -> ApiResponse<TokenResponse> {
-    // Validate grant type
-    match req.grant_type.as_str() {
-        "authorization_code" => handle_authorization_code_grant(state, req).await,
-        "refresh_token" => handle_refresh_token_grant(state, req).await,
-        "client_credentials" => handle_client_credentials_grant(state, req).await,
-        _ => ApiResponse::error_typed(
-            "unsupported_grant_type",
-            format!("Unsupported grant type: {}", req.grant_type),
-        ),
-    }
-}
-
-async fn handle_authorization_code_grant(
-    _state: ApiState,
-    req: TokenRequest,
-) -> ApiResponse<TokenResponse> {
-    // Validate required parameters
-    if req.code.is_none() {
-        return ApiResponse::error_typed("invalid_request", "authorization code is required");
-    }
-
-    if req.redirect_uri.is_none() {
-        return ApiResponse::error_typed("invalid_request", "redirect_uri is required");
-    }
-
-    // In a real implementation:
-    // 1. Validate authorization code
-    // 2. Verify client credentials
-    // 3. Validate redirect_uri matches
-    // 4. Validate PKCE if used
-    // 5. Generate access token and refresh token
-
-    let response = TokenResponse {
-        access_token: format!("access_token_{}", chrono::Utc::now().timestamp()),
-        token_type: "Bearer".to_string(),
-        expires_in: 3600,
-        refresh_token: Some(format!("refresh_token_{}", chrono::Utc::now().timestamp())),
-        scope: Some("read write".to_string()),
-        id_token: None,
-    };
-
-    tracing::info!("Authorization code exchanged for client: {}", req.client_id);
-    ApiResponse::<TokenResponse>::success(response)
-}
-
-async fn handle_refresh_token_grant(
-    _state: ApiState,
-    req: TokenRequest,
-) -> ApiResponse<TokenResponse> {
-    if req.refresh_token.is_none() {
-        return ApiResponse::error_typed("invalid_request", "refresh_token is required");
-    }
-
-    // In a real implementation:
-    // 1. Validate refresh token
-    // 2. Verify client credentials
-    // 3. Generate new access token
-    // 4. Optionally rotate refresh token
-
-    let response = TokenResponse {
-        access_token: format!("new_access_token_{}", chrono::Utc::now().timestamp()),
-        token_type: "Bearer".to_string(),
-        expires_in: 3600,
-        refresh_token: req.refresh_token, // Reuse existing refresh token
-        scope: Some("read write".to_string()),
-        id_token: None,
-    };
-
-    tracing::info!("Refresh token used for client: {}", req.client_id);
-    ApiResponse::<TokenResponse>::success(response)
-}
-
-async fn handle_client_credentials_grant(
-    _state: ApiState,
-    req: TokenRequest,
-) -> ApiResponse<TokenResponse> {
-    // In a real implementation:
-    // 1. Validate client credentials
-    // 2. Check client is authorized for client_credentials grant
-    // 3. Generate access token (no refresh token for client credentials)
-
-    let response = TokenResponse {
-        access_token: format!("client_access_token_{}", chrono::Utc::now().timestamp()),
-        token_type: "Bearer".to_string(),
-        expires_in: 7200,    // 2 hours for client credentials
-        refresh_token: None, // No refresh token for client credentials
-        scope: Some("api:read api:write".to_string()),
-        id_token: None,
-    };
-
-    tracing::info!("Client credentials grant for client: {}", req.client_id);
-    ApiResponse::<TokenResponse>::success(response)
+    not_implemented()
 }
 
 /// POST /oauth/revoke
@@ -238,22 +121,12 @@ pub struct RevokeRequest {
     pub token_type_hint: Option<String>,
 }
 
+/// Not implemented: answers `501`; nothing is revoked.
 pub async fn revoke_token(
     State(_state): State<ApiState>,
-    Json(req): Json<RevokeRequest>,
+    Json(_req): Json<RevokeRequest>,
 ) -> ApiResponse<()> {
-    if req.token.is_empty() {
-        return ApiResponse::validation_error_typed("token is required");
-    }
-
-    // In a real implementation:
-    // 1. Validate client credentials
-    // 2. Identify token type (access or refresh)
-    // 3. Revoke the token
-    // 4. If refresh token, revoke associated access tokens
-
-    tracing::info!("Token revoked: {}", &req.token[..10]);
-    ApiResponse::<()>::ok_with_message("Token revoked successfully")
+    not_implemented()
 }
 
 /// POST /oauth/introspect
@@ -283,56 +156,19 @@ pub struct IntrospectResponse {
     pub sub: Option<String>,
 }
 
+/// Not implemented: answers `501`; never reports a token as active.
 pub async fn introspect_token(
     State(_state): State<ApiState>,
-    Json(req): Json<IntrospectRequest>,
+    Json(_req): Json<IntrospectRequest>,
 ) -> ApiResponse<IntrospectResponse> {
-    if req.token.is_empty() {
-        return ApiResponse::validation_error_typed("token is required");
-    }
-
-    // In a real implementation:
-    // 1. Validate client credentials
-    // 2. Look up token in storage
-    // 3. Check if token is active and not expired
-    // 4. Return token metadata
-
-    let response = IntrospectResponse {
-        active: true, // Placeholder
-        scope: Some("read write".to_string()),
-        client_id: Some("example_client".to_string()),
-        username: Some("user@example.com".to_string()),
-        token_type: Some("Bearer".to_string()),
-        exp: Some(chrono::Utc::now().timestamp() as u64 + 3600),
-        iat: Some(chrono::Utc::now().timestamp() as u64),
-        sub: Some("user_123".to_string()),
-    };
-
-    tracing::info!("Token introspected: {}", &req.token[..10]);
-    ApiResponse::<IntrospectResponse>::success(response)
+    not_implemented()
 }
 
 /// GET /oauth/clients/{client_id}
-/// Get OAuth client information
+/// Not implemented: answers `501`; no client information is made up.
 pub async fn get_client_info(
     State(_state): State<ApiState>,
-    axum::extract::Path(client_id): axum::extract::Path<String>,
+    axum::extract::Path(_client_id): axum::extract::Path<String>,
 ) -> ApiResponse<ClientInfo> {
-    // In a real implementation, fetch client from storage
-    let client = ClientInfo {
-        client_id: client_id.clone(),
-        name: format!("Client {}", client_id),
-        description: "OAuth 2.0 client application".to_string(),
-        redirect_uris: vec![
-            "https://example.com/callback".to_string(),
-            "https://app.example.com/auth/callback".to_string(),
-        ],
-        scopes: vec![
-            "read".to_string(),
-            "write".to_string(),
-            "profile".to_string(),
-        ],
-    };
-
-    ApiResponse::<ClientInfo>::success(client)
+    not_implemented()
 }
