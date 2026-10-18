@@ -72,7 +72,6 @@ use crate::{
 };
 use std::time::Duration;
 #[cfg(not(feature = "redis-storage"))]
-use tracing::warn;
 use zeroize::Zeroizing;
 
 /// Main builder for constructing an [`AuthFramework`] instance.
@@ -840,11 +839,10 @@ impl QuickStartBuilder {
                 }
                 #[cfg(not(feature = "postgres-storage"))]
                 {
-                    warn!(
-                        "PostgreSQL storage requested but the `postgres-storage` feature is not enabled; \
-                         falling back to in-memory storage"
-                    );
-                    builder = builder.with_storage().memory().done();
+                    return Err(AuthError::config(
+                        "PostgreSQL storage was requested but the `postgres-storage` feature is not enabled; \
+                         refusing to fall back to in-memory storage, which would lose all data on restart",
+                    ));
                 }
             }
             Some(QuickStartStorage::PostgresFromEnv) => {
@@ -857,11 +855,10 @@ impl QuickStartBuilder {
                 }
                 #[cfg(not(feature = "postgres-storage"))]
                 {
-                    warn!(
-                        "PostgreSQL storage requested but the `postgres-storage` feature is not enabled; \
-                         falling back to in-memory storage"
-                    );
-                    builder = builder.with_storage().memory().done();
+                    return Err(AuthError::config(
+                        "PostgreSQL storage was requested but the `postgres-storage` feature is not enabled; \
+                         refusing to fall back to in-memory storage, which would lose all data on restart",
+                    ));
                 }
             }
             Some(QuickStartStorage::Redis(_conn_str)) => {
@@ -871,11 +868,10 @@ impl QuickStartBuilder {
                 }
                 #[cfg(not(feature = "redis-storage"))]
                 {
-                    warn!(
-                        "Redis storage requested but the `redis-storage` feature is not enabled; \
-                         falling back to in-memory storage"
-                    );
-                    builder = builder.with_storage().memory().done();
+                    return Err(AuthError::config(
+                        "Redis storage was requested but the `redis-storage` feature is not enabled; \
+                         refusing to fall back to in-memory storage, which would lose all data on restart",
+                    ));
                 }
             }
             Some(QuickStartStorage::RedisFromEnv) => {
@@ -885,11 +881,10 @@ impl QuickStartBuilder {
                 }
                 #[cfg(not(feature = "redis-storage"))]
                 {
-                    warn!(
-                        "Redis storage requested but the `redis-storage` feature is not enabled; \
-                         falling back to in-memory storage"
-                    );
-                    builder = builder.with_storage().memory().done();
+                    return Err(AuthError::config(
+                        "Redis storage was requested but the `redis-storage` feature is not enabled; \
+                         refusing to fall back to in-memory storage, which would lose all data on restart",
+                    ));
                 }
             }
             None => {

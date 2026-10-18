@@ -98,6 +98,8 @@ pub enum StorageConfig {
     #[cfg(feature = "postgres-storage")]
     Postgres {
         connection_string: String,
+        /// Reserved: the backend's table names are fixed, so only the default `"auth_"` is
+        /// accepted and any other value is a configuration error at initialisation.
         table_prefix: String,
     },
 
