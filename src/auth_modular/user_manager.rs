@@ -464,6 +464,15 @@ impl UserManager {
     /// # Semantics
     ///
     /// A revoked, expired, unknown, or role-no-longer-permitted key is refused and nothing is created.
+    ///
+    /// On a backend whose [`AuthStorage::supports_atomic_swap`] is true (memory, SQLite, PostgreSQL,
+    /// Redis, and the encrypted wrapper over them) the old key's rows are replaced by the new key's
+    /// row in ONE `swap_kv`: the old key or the new key is live, never both and never neither,
+    /// whatever dies or races (the in-process memory backends are atomic with respect to other
+    /// rotations, not to a concurrent reader). Of several simultaneous rotations exactly one succeeds
+    /// and the others get `Invalid API key`. The rest of this section describes the fallback for
+    /// backends without a swap.
+    ///
     /// Otherwise the steps are: (1) claim the rotation with an atomic `store_kv_if_absent` (so
     /// of several simultaneous rotations of one key exactly one proceeds and the rest get an
     /// error); (2) store the new key INERT (it authenticates nobody); (3) delete the old key; (4)
@@ -518,9 +527,18 @@ impl UserManager {
 
         // Refuse anything that could not be used: unknown, revoked, expired, or a role that is no
         // longer permitted. Nothing is written until this passes.
-        self.live_api_key_row(old_key, &old_storage_key)
+        let row = self
+            .live_api_key_row(old_key, &old_storage_key)
             .await?
             .ok_or_else(|| AuthError::token("Invalid API key"))?;
+
+        // A backend with an atomic swap replaces the key in ONE step: the old key or the new key
+        // is live, never both and never neither, whatever dies or races.
+        if self.storage.supports_atomic_swap() {
+            return self
+                .rotate_by_swap(old_key, &old_storage_key, &row, expires_in)
+                .await;
+        }
 
         // Of several simultaneous rotations of this key, exactly one wins the claim.
         let claim_key = format!(
@@ -543,6 +561,53 @@ impl UserManager {
             warn!("Failed to release API key rotation claim: {e}");
         }
         outcome
+    }
+
+    /// A rotation as one `swap_kv`: the old key's rows are removed and the new key's row stored
+    /// together. Of several simultaneous rotations exactly one succeeds; the others (and a rotation
+    /// of a key revoked in the meantime) get `Invalid API key`.
+    async fn rotate_by_swap(
+        &self,
+        old_key: &str,
+        old_storage_key: &str,
+        row: &serde_json::Value,
+        expires_in: Option<Option<std::time::Duration>>,
+    ) -> Result<String> {
+        let user_id = row["user_id"].as_str().unwrap_or_default();
+        let role = row["role"].as_str().unwrap_or(DEFAULT_API_KEY_ROLE);
+        let lifetime = match expires_in {
+            Some(chosen) => chosen,
+            None => Self::original_lifetime(row),
+        };
+        let now = chrono::Utc::now();
+        let new_key = format!("ak_{}", crate::utils::crypto::generate_token(32));
+        let new_storage_key = Self::api_key_storage_key(&new_key);
+        let new_row = serde_json::json!({
+            "user_id": user_id,
+            "role": role,
+            "created_at": now,
+            "expires_at": lifetime.map(|d| {
+                now + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::days(365 * 10))
+            }),
+        });
+        let remove = [
+            Self::legacy_api_key_storage_key(old_key),
+            old_storage_key.to_string(),
+        ];
+        let swapped = self
+            .storage
+            .swap_kv(
+                &remove,
+                &new_storage_key,
+                new_row.to_string().as_bytes(),
+                lifetime,
+            )
+            .await?;
+        if !swapped {
+            return Err(AuthError::token("Invalid API key"));
+        }
+        info!("API key rotated for user '{}'", user_id);
+        Ok(new_key)
     }
 
     /// The row of `api_key` if it can be used now, `None` if it does not exist; an error if it has
