@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AuthFramework Static OpenAPI Note (Modular)
-  version: 0.6.0-rc96
+  version: 0.6.0-rc97
   description: |
     This file is a repository-level pointer rather than a second source of truth for the live API.
 

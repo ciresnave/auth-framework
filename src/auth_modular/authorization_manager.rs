@@ -354,6 +354,10 @@ impl AuthorizationManager {
     /// ```rust,ignore
     /// let allowed = am.check_token_permission(&token, "read", "users").await?;
     /// ```
+    #[deprecated(
+        since = "0.6.0",
+        note = "does not validate the token; use `check_validated_permission` with a `ValidatedToken`"
+    )]
     pub async fn check_token_permission(
         &self,
         token: &AuthToken,
@@ -362,7 +366,20 @@ impl AuthorizationManager {
     ) -> Result<bool> {
         let permission = Permission::new(action, resource);
         let mut c = self.checker.write().await;
+        #[allow(deprecated)]
         c.check_token_permission(token, &permission)
+    }
+
+    /// Check whether a token the framework has validated holds a permission.
+    pub async fn check_validated_permission(
+        &self,
+        token: &crate::tokens::ValidatedToken,
+        action: &str,
+        resource: &str,
+    ) -> Result<bool> {
+        let permission = Permission::new(action, resource);
+        let mut c = self.checker.write().await;
+        c.check_validated_permission(token, &permission)
     }
 
     /// Check if a user (by ID) has a specific permission (ABAC/RBAC evaluation).

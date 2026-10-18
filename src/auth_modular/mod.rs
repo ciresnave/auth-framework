@@ -866,7 +866,8 @@ impl AuthFramework {
 
         let permission = Permission::new(action, resource);
         let mut checker = self.permission_checker.write().await;
-        checker.check_token_permission(token, &permission)
+        let proof = crate::tokens::ValidatedToken::new(token.clone());
+        checker.check_validated_permission(&proof, &permission)
     }
 
     /// Get the token manager.

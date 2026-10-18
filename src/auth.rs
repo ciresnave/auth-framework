@@ -1439,11 +1439,33 @@ impl AuthFramework {
         action: &str,
         resource: &str,
     ) -> Result<bool> {
-        if !self.validate_token(token).await? {
+        let Some(proof) = self.validated_token(token).await? else {
             return Ok(false);
-        }
+        };
+        self.check_validated_permission(&proof, action, resource)
+            .await
+    }
+
+    /// Validate `token` and, if it passes, return proof of that. `None` means the token is not valid.
+    pub async fn validated_token(
+        &self,
+        token: &AuthToken,
+    ) -> Result<Option<crate::tokens::ValidatedToken>> {
+        Ok(self
+            .validate_token(token)
+            .await?
+            .then(|| crate::tokens::ValidatedToken::new(token.clone())))
+    }
+
+    /// Check a permission for a token that [`validated_token`](Self::validated_token) vouched for.
+    pub async fn check_validated_permission(
+        &self,
+        proof: &crate::tokens::ValidatedToken,
+        action: &str,
+        resource: &str,
+    ) -> Result<bool> {
         self.authorization_manager
-            .check_token_permission(token, action, resource)
+            .check_validated_permission(proof, action, resource)
             .await
     }
 

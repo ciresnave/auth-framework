@@ -15,6 +15,35 @@ use std::time::Duration;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+/// Proof that the framework validated an [`AuthToken`] (signature, expiry, revocation, stored copy).
+///
+/// Only [`AuthFramework::validated_token`](crate::auth::AuthFramework::validated_token) can build
+/// one, so a function that takes a `&ValidatedToken` cannot be handed a hand-built token.
+///
+/// ```compile_fail
+/// use auth_framework::tokens::{AuthToken, ValidatedToken};
+/// let t = AuthToken::new("u", "x", std::time::Duration::from_secs(1), "jwt");
+/// let _ = ValidatedToken::new(t);
+/// ```
+#[derive(Debug, Clone)]
+pub struct ValidatedToken(AuthToken);
+
+impl ValidatedToken {
+    pub(crate) fn new(token: AuthToken) -> Self {
+        Self(token)
+    }
+
+    /// The validated token.
+    pub fn token(&self) -> &AuthToken {
+        &self.0
+    }
+
+    /// Give up the proof and take the token back.
+    pub fn into_token(self) -> AuthToken {
+        self.0
+    }
+}
+
 /// An issued authentication token with all associated metadata.
 ///
 /// Created by [`TokenManager`] and returned from
