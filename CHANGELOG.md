@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc93 -- **`PostgresStorage::migrate()` is safe to call concurrently (#89).** It ran its `CREATE TABLE IF NOT EXISTS`
+  statements on separate pool connections, so two instances starting at once could both pass the existence
+  check and collide on Postgres's own `pg_type` catalog (`duplicate key value violates unique constraint
+  "pg_type_typname_nsp_index"`). The whole migration now runs in one transaction behind a transaction-scoped
+  advisory lock. The regression test `pg_concurrent_migrate_is_safe` (8 concurrent callers on a fresh schema) failed
+  12 of 12 runs before and passes 20 of 20 after, and is no longer `#[ignore]`d; the CI step no longer needs
+  `--test-threads=1`.
 - 0.6.0-rc85 -- **Production validation refuses a placeholder signing secret.** `AuthConfig::validate()` in production
   mode now returns an error when the JWT secret is, or contains, a known template value (`change-in-production`,
   `change-me`, `changeme`, `your-secret`, `development-only`, `replace-with`; compared case-insensitively), however long and varied

@@ -194,14 +194,11 @@ async fn pg_cleanup_expired() {
 /// `duplicate key value violates unique constraint "pg_type_typname_nsp_index"`.
 /// This is a real product bug (two app instances migrating at startup at
 /// the same time), not just a test artifact -- CI currently works around
-/// it with `--test-threads=1` on this file rather than fixing it (see the
-/// comment at that step in `.github/workflows/ci-cd.yml`).
+/// it with `--test-threads=1` on this file rather than fixing it; the fix has landed.
 ///
-/// `#[ignore]`d pending the real fix (an advisory lock around `migrate()`,
-/// or catching and tolerating this specific duplicate-key error) -- lift
-/// the ignore once that lands; this test should then pass.
+/// Fixed by taking a transaction-scoped advisory lock around the whole migration; this runs in
+/// the normal test step (it needs `DATABASE_URL`, which CI's test job provides).
 #[tokio::test]
-#[ignore = "documents issue #89 (PostgresStorage::migrate() is not concurrency-safe); run manually once a fix lands"]
 async fn pg_concurrent_migrate_is_safe() {
     let url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set to run PostgreSQL integration tests");
