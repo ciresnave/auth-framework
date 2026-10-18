@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - Unreleased
 
+### Added
+
+- 0.6.0-rc86 -- **TOTP secrets can be encrypted at rest under a key you supply.** `TotpManager::new_encrypted(inner, &key_provider)` wraps
+  the storage in the existing AES-256-GCM `EncryptedStorage` (plaintext and legacy reads off), so the row in the backing store is an
+  envelope bound to its own storage key: a row copied onto another user's key, or read with a different key, does not verify, and a
+  row that is still plain is refused. Existing plain secrets are encrypted in place by `TotpManager::migrate_plain_secrets`, which
+  touches exactly `mfa_secret:*` and `user:*:totp_secret` (not the rest of `user:`), and a key rotation is finished by
+  `TotpManager::rewrap_secrets` (rows under an older key id are re-encrypted under the current one); both are idempotent, keep each row's
+  TTL, and have dry runs. Plain storage is unchanged: `TotpManager::new` behaves as before and logs ONE warning at construction when the
+  storage does not encrypt at rest; `TotpManager::new_plaintext` is the silent, explicit opt-in. New in `storage::encryption`:
+  `migrate_kv_keys_to_encrypted` (the migration for an explicit key list), `rewrap_kv_keys`, `KvRewrapReport`,
+  `StorageEncryption::current_key_id`. Tested on the memory, SQLite, Redis and PostgreSQL backends.
+
 ### Fixed
 
 - 0.6.0-rc85 -- **Production validation refuses a placeholder signing secret.** `AuthConfig::validate()` in production
