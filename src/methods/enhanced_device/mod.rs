@@ -47,7 +47,6 @@ pub struct DeviceFlowInstructions {
 
 /// Enhanced device flow method using oauth-device-flows crate
 #[cfg(feature = "enhanced-device-flow")]
-#[derive(Debug)]
 pub struct EnhancedDeviceFlowMethod {
     /// OAuth client ID
     pub client_id: String,
@@ -65,6 +64,25 @@ pub struct EnhancedDeviceFlowMethod {
     pub _polling_interval: Option<std::time::Duration>,
     /// Enable QR code generation
     pub enable_qr_code: bool,
+}
+
+#[cfg(feature = "enhanced-device-flow")]
+impl std::fmt::Debug for EnhancedDeviceFlowMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnhancedDeviceFlowMethod");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("auth_url", &self.auth_url);
+        d.field("token_url", &self.token_url);
+        d.field("device_auth_url", &self.device_auth_url);
+        d.field("scopes", &self.scopes);
+        d.field("_polling_interval", &self._polling_interval);
+        d.field("enable_qr_code", &self.enable_qr_code);
+        d.finish()
+    }
 }
 
 #[cfg(feature = "enhanced-device-flow")]
@@ -252,7 +270,6 @@ impl AuthMethod for EnhancedDeviceFlowMethod {
 
 // Proper implementation when feature is disabled - captures configuration for error reporting
 #[cfg(not(feature = "enhanced-device-flow"))]
-#[derive(Debug)]
 pub struct EnhancedDeviceFlowMethod {
     /// Client configuration (stored for error reporting)
     client_id: String,
@@ -260,6 +277,22 @@ pub struct EnhancedDeviceFlowMethod {
     auth_url: String,
     token_url: String,
     device_auth_url: String,
+}
+
+#[cfg(not(feature = "enhanced-device-flow"))]
+impl std::fmt::Debug for EnhancedDeviceFlowMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnhancedDeviceFlowMethod");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("auth_url", &self.auth_url);
+        d.field("token_url", &self.token_url);
+        d.field("device_auth_url", &self.device_auth_url);
+        d.finish()
+    }
 }
 
 #[cfg(not(feature = "enhanced-device-flow"))]

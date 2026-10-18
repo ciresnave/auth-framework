@@ -169,7 +169,7 @@ impl Default for TokenIntrospectionConfig {
 }
 
 /// Token introspection client credentials
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IntrospectionClientCredentials {
     /// Client identifier
     pub client_id: String,
@@ -182,6 +182,20 @@ pub struct IntrospectionClientCredentials {
 
     /// Client authentication method
     pub auth_method: ClientAuthMethod,
+}
+
+impl std::fmt::Debug for IntrospectionClientCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IntrospectionClientCredentials");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("client_assertion", &self.client_assertion);
+        d.field("auth_method", &self.auth_method);
+        d.finish()
+    }
 }
 
 /// Client authentication methods for introspection

@@ -774,3 +774,150 @@ fn test_examples_are_complete() {
          either examples/ lost all its examples, or this check's directory/pattern is wrong"
     );
 }
+
+/// Types allowed to derive `Debug` although a field looks like a secret: `(file suffix, type, why)`.
+const DERIVED_DEBUG_SECRET_ALLOWLIST: [(&str, &str, &str); 1] = [(
+    "src/admin/mod.rs",
+    "UserAction",
+    "clap subcommand arguments parsed from the operator's own command line; never stored or sent",
+)];
+
+/// `(type name, line number, field)` for each type in `content` that derives `Debug` and has a
+/// plain `String` / `Vec<u8>` (or `Option` of one) field named like a secret. Such a field is
+/// printed by `{:?}`, so any log line or panic message that formats the value leaks it; the type
+/// needs a hand-written `Debug` that redacts the field (see `src/utils/redact.rs`).
+fn derived_debug_secret_fields(file: &str, content: &str) -> Vec<(String, usize, String)> {
+    let item = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+(\w+)").unwrap();
+    let field = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*(.+?),?\s*(?://.*)?$")
+        .unwrap();
+    let secret_name = regex::Regex::new(
+        r"(?i)(secret|password|passwd|api_key|private_key|signing_key|encryption_key|master_key|jwt_key|shared_key|access_key|passphrase|_pem|totp_code|(?:^|_)auth_token|bearer_token)",
+    )
+    .unwrap();
+    let not_secret = regex::Regex::new(
+        r"(?i)(hash|policy|min_|require|length|expir|_at$|_id$|disallow|allowed|banned|strength|type$|public)",
+    )
+    .unwrap();
+    let plain = regex::Regex::new(r"^(?:Option<)?(?:String|Vec<u8>)>?$").unwrap();
+
+    let lines = production_lines(file, content);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let Some(m) = item.captures(lines[i].1) else {
+            i += 1;
+            continue;
+        };
+        let name = m[1].to_string();
+        // Attributes directly above the item.
+        let mut derives_debug = false;
+        let mut j = i;
+        while j > 0 {
+            let above = lines[j - 1].1.trim();
+            if above.starts_with("#[") || above.starts_with("///") {
+                if above.starts_with("#[derive(") && above.contains("Debug") {
+                    derives_debug = true;
+                }
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+        // Body: until the braces opened on the item line (or after it) balance again.
+        let (mut depth, mut opened) = (0i32, false);
+        let mut k = i;
+        while k < lines.len() {
+            let l = lines[k].1;
+            depth += l.matches('{').count() as i32 - l.matches('}').count() as i32;
+            opened |= l.contains('{');
+            if k > i && derives_debug {
+                if let Some(f) = field.captures(l) {
+                    let (fname, ftype) = (&f[1], f[2].trim());
+                    if secret_name.is_match(fname)
+                        && !not_secret.is_match(fname)
+                        && plain.is_match(ftype)
+                    {
+                        out.push((name.clone(), lines[k].0, fname.to_string()));
+                    }
+                }
+            }
+            if (opened && depth <= 0) || (!opened && l.trim_end().ends_with(';')) {
+                break;
+            }
+            k += 1;
+        }
+        i = k + 1;
+    }
+    out
+}
+
+/// A type with a plain-text secret field must not derive `Debug` (it would print the secret). The
+/// positive control is the scanner's own fixtures below, which flag a derived type and pass a
+/// hand-written one.
+#[test]
+fn test_secret_fields_are_not_derived_debug() {
+    let mut files = Vec::new();
+    rust_files_under("src", &mut files);
+    files.sort();
+
+    let mut unexplained = Vec::new();
+    let mut used = [false; DERIVED_DEBUG_SECRET_ALLOWLIST.len()];
+    for file in &files {
+        let Ok(content) = fs::read_to_string(file) else {
+            continue;
+        };
+        for (ty, line, field) in derived_debug_secret_fields(file, &content) {
+            match DERIVED_DEBUG_SECRET_ALLOWLIST
+                .iter()
+                .position(|(suffix, t, _)| file.ends_with(suffix) && *t == ty)
+            {
+                Some(i) => used[i] = true,
+                None => unexplained.push(format!("  {file}:{line} - {ty}.{field}")),
+            }
+        }
+    }
+    let stale: Vec<String> = DERIVED_DEBUG_SECRET_ALLOWLIST
+        .iter()
+        .zip(used)
+        .filter(|(_, used)| !used)
+        .map(|((suffix, ty, _), _)| format!("  {suffix}: {ty}"))
+        .collect();
+    assert!(
+        unexplained.is_empty() && stale.is_empty(),
+        "types deriving Debug with a plain secret field (give them a redacting Debug, or list \
+         them with a reason in DERIVED_DEBUG_SECRET_ALLOWLIST):\n{}\nStale allowlist entries:\n{}",
+        unexplained.join("\n"),
+        stale.join("\n")
+    );
+}
+
+#[cfg(test)]
+mod derived_debug_scanner_tests {
+    use super::derived_debug_secret_fields;
+
+    #[test]
+    fn flags_a_derived_type_and_passes_a_hand_written_one() {
+        let derived = "#[derive(Debug, Clone)]\npub struct A {\n    pub id: u32,\n    pub client_secret: Option<String>,\n}\n";
+        let hits = derived_debug_secret_fields("fixture.rs", derived);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(
+            (hits[0].0.as_str(), hits[0].2.as_str()),
+            ("A", "client_secret")
+        );
+
+        let by_hand = "#[derive(Clone)]\npub struct A {\n    pub client_secret: Option<String>,\n}\nimpl std::fmt::Debug for A {}\n";
+        assert!(derived_debug_secret_fields("fixture.rs", by_hand).is_empty());
+    }
+
+    #[test]
+    fn ignores_non_secret_names_and_zeroizing_fields() {
+        let src = "#[derive(Debug)]\npub struct B {\n    pub password_hash: String,\n    pub min_password_length: usize,\n    pub secret_key: Zeroizing<String>,\n    pub client_id: String,\n}\n";
+        assert!(derived_debug_secret_fields("fixture.rs", src).is_empty());
+    }
+
+    #[test]
+    fn flags_enum_variant_fields() {
+        let src = "#[derive(Debug)]\npub enum C {\n    Create {\n        password: Option<String>,\n    },\n}\n";
+        assert_eq!(derived_debug_secret_fields("fixture.rs", src).len(), 1);
+    }
+}

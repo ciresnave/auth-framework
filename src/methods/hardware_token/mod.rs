@@ -21,7 +21,7 @@ use crate::errors::Result;
 ///
 /// By default, the Yubico API URL points to the official Yubico validation
 /// service. Override `yubico_validation_url` in tests to point at a mock server.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HardwareOtpTokenConfig {
     /// Yubico client ID — required to call the Yubico OTP validation API.
     pub yubico_client_id: Option<String>,
@@ -30,6 +30,19 @@ pub struct HardwareOtpTokenConfig {
     /// Base URL of the Yubico OTP validation endpoint.
     /// Defaults to `https://api.yubico.com/wsapi/2.0/verify`.
     pub yubico_validation_url: String,
+}
+
+impl std::fmt::Debug for HardwareOtpTokenConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("HardwareOtpTokenConfig");
+        d.field("yubico_client_id", &self.yubico_client_id);
+        d.field(
+            "yubico_secret_key",
+            &crate::utils::redact::redacted(&self.yubico_secret_key),
+        );
+        d.field("yubico_validation_url", &self.yubico_validation_url);
+        d.finish()
+    }
 }
 
 impl Default for HardwareOtpTokenConfig {

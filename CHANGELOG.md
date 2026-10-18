@@ -57,6 +57,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc96 -- **`{:?}` of a config or credential value no longer prints its secret.** Thirty-odd types derived `Debug`
+  over a plain `String` / `Vec<u8>` secret field, so a `tracing` call, `dbg!` or panic message that formatted one printed the
+  secret: `AuthConfig` (`secret`), `ClientConfig` and its builder, the OAuth `TokenRequest` (client secret, password, code,
+  refresh token, PKCE verifier, device code), `ClientRegistrationResponse`, `IntrospectionClientCredentials`,
+  `IntrospectRequest`, the login, registration, create-user, change-password and MFA request bodies, `CreateApiKeyResponse`,
+  the database and Basic-auth deployment settings, HTTP / OPA / SCIM client tokens, SMS provider credentials, the LDAP bind
+  password, SAML, JARM, back-channel logout, token-exchange and WS-Security signing keys, threat-feed and Yubico keys, and
+  stored certificates' private keys. Each now has a hand-written `Debug` that prints `<redacted>` for the secret (an unset
+  optional secret still prints `None`). Fields held as `Zeroizing<String>` were already redacted. `Serialize` is unchanged:
+  these values are still written out when a caller asks to save them. A new audit fails the build for any type that derives
+  `Debug` with a plain secret-named field (its own fixtures show it flags a derived type, passes a hand-written one and
+  ignores `Zeroizing` and hash fields), and a test prints each buildable type with a marker secret and checks it is absent,
+  `<redacted>` is present and a non-secret field is still shown. Response bodies that carry issued tokens (`TokenResponse`
+  and similar) still derive `Debug`.
 - 0.6.0-rc95 -- **Storage settings that cannot be honoured are now refused instead of silently changed.** `AuthFramework::quick_start()`
   with `with_postgres`, `with_postgres_from_env`, `with_redis` or `with_redis_from_env` used to log a warning and run on
   in-memory storage when the matching `postgres-storage` / `redis-storage` feature was off, so every key, session and token

@@ -85,7 +85,7 @@ pub struct FailedNotification {
 }
 
 /// Back-channel logout configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BackChannelLogoutConfig {
     /// Enable back-channel logout
     pub enabled: bool,
@@ -115,6 +115,34 @@ pub struct BackChannelLogoutConfig {
     /// When set, JWTs use `"alg": "RS256"` and are signed with this key.
     /// Falls back to `signing_key` HMAC if `None`.
     pub rsa_private_key_pem: Option<String>,
+}
+
+impl std::fmt::Debug for BackChannelLogoutConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BackChannelLogoutConfig");
+        d.field("enabled", &self.enabled);
+        d.field("base_url", &self.base_url);
+        d.field("request_timeout_secs", &self.request_timeout_secs);
+        d.field("max_retry_attempts", &self.max_retry_attempts);
+        d.field("retry_delay_ms", &self.retry_delay_ms);
+        d.field(
+            "max_concurrent_notifications",
+            &self.max_concurrent_notifications,
+        );
+        d.field("logout_token_exp_secs", &self.logout_token_exp_secs);
+        d.field("include_session_claims", &self.include_session_claims);
+        d.field("user_agent", &self.user_agent);
+        d.field("enable_http_logging", &self.enable_http_logging);
+        d.field(
+            "signing_key",
+            &crate::utils::redact::redacted(&self.signing_key),
+        );
+        d.field(
+            "rsa_private_key_pem",
+            &crate::utils::redact::redacted(&self.rsa_private_key_pem),
+        );
+        d.finish()
+    }
 }
 
 impl Default for BackChannelLogoutConfig {
@@ -189,7 +217,6 @@ pub struct LogoutEvents {
 }
 
 /// Back-channel logout manager
-#[derive(Debug)]
 pub struct BackChannelLogoutManager {
     /// Configuration
     config: BackChannelLogoutConfig,
@@ -205,6 +232,23 @@ pub struct BackChannelLogoutManager {
     signing_key: Vec<u8>,
     /// RSA signing key for RS256 logout tokens (preferred)
     rsa_signing_key: Option<ring::signature::RsaKeyPair>,
+}
+
+impl std::fmt::Debug for BackChannelLogoutManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BackChannelLogoutManager");
+        d.field("config", &self.config);
+        d.field("session_manager", &self.session_manager);
+        d.field("http_client", &self.http_client);
+        d.field("rp_configs", &self.rp_configs);
+        d.field("active_logouts", &self.active_logouts);
+        d.field(
+            "signing_key",
+            &crate::utils::redact::redacted(&self.signing_key),
+        );
+        d.field("rsa_signing_key", &self.rsa_signing_key);
+        d.finish()
+    }
 }
 
 impl BackChannelLogoutManager {

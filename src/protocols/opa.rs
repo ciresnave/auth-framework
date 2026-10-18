@@ -30,7 +30,7 @@ use url::Url;
 // ── Configuration ───────────────────────────────────────────────────
 
 /// OPA client configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OpaConfig {
     /// Base URL of the OPA server (e.g., `http://localhost:8181`).
     pub base_url: String,
@@ -44,6 +44,22 @@ pub struct OpaConfig {
     pub enable_cache: bool,
     /// Cache TTL in seconds (0 = no expiry).
     pub cache_ttl_secs: u64,
+}
+
+impl std::fmt::Debug for OpaConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OpaConfig");
+        d.field("base_url", &self.base_url);
+        d.field("default_policy_path", &self.default_policy_path);
+        d.field("timeout_secs", &self.timeout_secs);
+        d.field(
+            "auth_token",
+            &crate::utils::redact::redacted(&self.auth_token),
+        );
+        d.field("enable_cache", &self.enable_cache);
+        d.field("cache_ttl_secs", &self.cache_ttl_secs);
+        d.finish()
+    }
 }
 
 impl Default for OpaConfig {

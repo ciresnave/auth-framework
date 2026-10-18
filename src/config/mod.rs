@@ -17,7 +17,7 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 
 /// Main configuration for the authentication framework.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AuthConfig {
     /// Default token lifetime
@@ -82,6 +82,31 @@ pub struct AuthConfig {
     /// Used in tests that explicitly verify production-mode error handling.
     #[serde(default)]
     pub force_production_mode: bool,
+}
+
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthConfig");
+        d.field("token_lifetime", &self.token_lifetime);
+        d.field("refresh_token_lifetime", &self.refresh_token_lifetime);
+        d.field("enable_multi_factor", &self.enable_multi_factor);
+        d.field("issuer", &self.issuer);
+        d.field("audience", &self.audience);
+        d.field("secret", &crate::utils::redact::redacted(&self.secret));
+        d.field("storage", &self.storage);
+        d.field("storage_encryption", &self.storage_encryption);
+        d.field("rate_limiting", &self.rate_limiting);
+        d.field("security", &self.security);
+        d.field("cors", &self.cors);
+        d.field("audit", &self.audit);
+        d.field("enable_caching", &self.enable_caching);
+        d.field("max_failed_attempts", &self.max_failed_attempts);
+        d.field("enable_rbac", &self.enable_rbac);
+        d.field("enable_middleware", &self.enable_middleware);
+        d.field("method_configs", &self.method_configs);
+        d.field("force_production_mode", &self.force_production_mode);
+        d.finish()
+    }
 }
 
 /// Storage configuration options.
