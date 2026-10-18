@@ -727,6 +727,20 @@ impl AuthStorage for DashMapMemoryStorage {
         })
     }
 
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        crate::storage::core::swap_kv_in_process(self, remove, key, value, ttl).await
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        true
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         // SAFE: Immediate value extraction
         if let Some(timestamped) = self.kv_store.get(key) {

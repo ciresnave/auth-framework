@@ -579,6 +579,20 @@ impl AuthStorage for UnifiedStorage {
         Ok(stored)
     }
 
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        crate::storage::core::swap_kv_in_process(self, remove, key, value, ttl).await
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        true
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         if let Some(value) = self.get_internal(&StorageKey::KeyValue(key.to_string())) {
             match value.data {

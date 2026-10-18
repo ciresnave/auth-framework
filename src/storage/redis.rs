@@ -230,6 +230,27 @@ impl RedisStorage {
     }
 }
 
+/// Removes the live keys among `KEYS[1..n-1]` and sets `KEYS[n]` to `ARGV[1]` (expiring after
+/// `ARGV[2]` ms when that is above zero), but only if one of them was live and `KEYS[n]` is
+/// absent. A script runs atomically on the server. Returns 1 when it swapped, 0 otherwise.
+pub(crate) const SWAP_KV_SCRIPT: &str = r#"
+local last = #KEYS
+local live = false
+for i = 1, last - 1 do
+  if redis.call('EXISTS', KEYS[i]) == 1 then live = true end
+end
+if not live then return 0 end
+if redis.call('EXISTS', KEYS[last]) == 1 then return 0 end
+for i = 1, last - 1 do redis.call('DEL', KEYS[i]) end
+local ttl = tonumber(ARGV[2])
+if ttl > 0 then
+  redis.call('SET', KEYS[last], ARGV[1], 'PX', ttl)
+else
+  redis.call('SET', KEYS[last], ARGV[1])
+end
+return 1
+"#;
+
 #[async_trait]
 impl AuthStorage for RedisStorage {
     async fn update_token(&self, token: &AuthToken) -> Result<()> {
@@ -341,6 +362,39 @@ impl AuthStorage for RedisStorage {
             .await
             .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
         Ok(reply.is_some())
+    }
+
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        if remove.is_empty() {
+            return Ok(false);
+        }
+        let mut conn = self.get_connection().await?;
+        let script = redis::Script::new(SWAP_KV_SCRIPT);
+        let mut invocation = script.prepare_invoke();
+        for name in remove {
+            invocation.key(self.kv_key(name));
+        }
+        invocation.key(self.kv_key(key));
+        let millis = ttl.map_or(0, |d| {
+            u64::try_from(d.as_millis()).unwrap_or(u64::MAX).max(1)
+        });
+        let swapped: i64 = invocation
+            .arg(value)
+            .arg(millis)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
+        Ok(swapped == 1)
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        true
     }
 
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {

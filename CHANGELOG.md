@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 0.6.0-rc91 -- **`AuthStorage::swap_kv`: remove keys and store another in one atomic step.** `swap_kv(remove, key, value, ttl)`
+  succeeds only if at least one of the `remove` keys is live and `key` is absent: it then deletes every `remove` key and
+  stores `value` under `key` (returns `true`); otherwise it changes nothing and returns `false`. Of several simultaneous
+  swaps of one key exactly one succeeds. `supports_atomic_swap()` says whether a backend implements it; the default
+  implementation fails with an error and `supports_atomic_swap()` is `false`, so existing custom backends are unaffected.
+  SQLite and PostgreSQL do it in one transaction (a refused insert rolls the delete back), Redis in one server-side
+  script, the encrypted wrapper encrypts the stored value under the new key's own binding, and the in-process backends
+  (memory, DashMap, unified) take one lock shared by all swaps: they are atomic with respect to other swaps, but a
+  concurrent reader can see both keys in the instant between the store and the deletes. Tested against all of these
+  (SQLite in process; Redis 7 and PostgreSQL 15 with servers; the refused-swap, expired-key, lifetime and 8-way race cases;
+  seven mutations of the guards each fail the suite).
 - 0.6.0-rc90 -- **API key rotation.** `UserManager::rotate_api_key(old_key)` (also on `AuthFramework` and
   `tokens()`, plus `rotate_api_key_with_expiry`) replaces a key with a new one for the same user and role and returns the
   new key once; the old key stops validating. The new key lives as long as the old one was meant to (a key that never
