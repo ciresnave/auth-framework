@@ -71,7 +71,6 @@ use crate::{
     security::SecurityPreset,
 };
 use std::time::Duration;
-#[cfg(not(feature = "redis-storage"))]
 use zeroize::Zeroizing;
 
 /// Main builder for constructing an [`AuthFramework`] instance.
