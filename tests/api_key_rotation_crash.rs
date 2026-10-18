@@ -32,6 +32,8 @@ struct Crashy {
     /// Writes still allowed to succeed; negative means no limit.
     budget: AtomicI64,
     dead: AtomicBool,
+    /// Whether to advertise the inner backend's atomic `swap_kv` (a swap is ONE write).
+    expose_swap: AtomicBool,
 }
 
 impl Crashy {
@@ -40,12 +42,18 @@ impl Crashy {
             inner,
             budget: AtomicI64::new(-1),
             dead: AtomicBool::new(false),
+            expose_swap: AtomicBool::new(false),
         })
     }
 
     fn die_after(&self, writes: i64) {
         self.dead.store(false, Ordering::SeqCst);
         self.budget.store(writes, Ordering::SeqCst);
+    }
+
+    /// The process is already dead: no further write happens.
+    fn die_now(&self) {
+        self.dead.store(true, Ordering::SeqCst);
     }
 
     fn revive(&self) {
@@ -116,6 +124,21 @@ impl AuthStorage for Crashy {
         let stored = self.inner.store_kv_if_absent(k, v, ttl).await?;
         self.wrote();
         Ok(stored)
+    }
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        k: &str,
+        v: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        self.gate()?;
+        let swapped = self.inner.swap_kv(remove, k, v, ttl).await?;
+        self.wrote();
+        Ok(swapped)
+    }
+    fn supports_atomic_swap(&self) -> bool {
+        self.expose_swap.load(Ordering::SeqCst) && self.inner.supports_atomic_swap()
     }
     async fn get_kv(&self, k: &str) -> Result<Option<Vec<u8>>> {
         self.inner.get_kv(k).await
@@ -251,9 +274,63 @@ async fn crash_contract(inner: Arc<dyn AuthStorage>) {
     }
 }
 
+/// A backend with an atomic `swap_kv` replaces the key in one write, so the guarantee is the strong
+/// one: after a crash before the swap the OLD key is the only live key, after it the NEW key is,
+/// and never zero or two.
+async fn swap_crash_contract(inner: Arc<dyn AuthStorage>) {
+    let storage = Crashy::new(inner);
+    storage.expose_swap.store(true, Ordering::SeqCst);
+    assert!(
+        storage.supports_atomic_swap(),
+        "the backend under test must support swap_kv"
+    );
+
+    for crash in ["before the swap", "after the swap"] {
+        let user = format!("swap_{}_{}", crash.len(), uuid::Uuid::new_v4().simple());
+        let um = manager(&storage);
+        let old = um.create_api_key(&user, None).await.unwrap();
+        assert_eq!(live_keys(&storage, &user).await, 1);
+
+        let result = if crash == "before the swap" {
+            storage.die_now();
+            um.rotate_api_key(&old).await
+        } else {
+            storage.die_after(1);
+            um.rotate_api_key(&old).await
+        };
+        storage.revive();
+        expire_claims(&storage).await;
+
+        // Never zero, never two.
+        assert_eq!(
+            live_keys(&storage, &user).await,
+            1,
+            "crash {crash}: not exactly one live key"
+        );
+        let um = manager(&storage);
+        if crash == "before the swap" {
+            assert!(result.is_err());
+            assert!(um.validate_api_key(&old).await.is_ok());
+            let new = um.rotate_api_key(&old).await.unwrap();
+            assert!(um.validate_api_key(&old).await.is_err());
+            assert!(um.validate_api_key(&new).await.is_ok());
+            assert_eq!(live_keys(&storage, &user).await, 1);
+        } else {
+            let new = result.expect("the swap completed, so the call returns the new key");
+            assert!(um.validate_api_key(&old).await.is_err());
+            assert!(um.validate_api_key(&new).await.is_ok());
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn memory_rotation_survives_a_crash_at_every_step() {
     crash_contract(Arc::new(MemoryStorage::new())).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn memory_swap_rotation_is_never_both_and_never_neither() {
+    swap_crash_contract(Arc::new(MemoryStorage::new())).await;
 }
 
 #[cfg(feature = "sqlite-storage")]
@@ -267,7 +344,9 @@ async fn sqlite_rotation_survives_a_crash_at_every_step() {
         .unwrap();
     let storage = SqliteStorage::new(pool);
     storage.migrate().await.unwrap();
-    crash_contract(Arc::new(storage)).await;
+    let storage = Arc::new(storage);
+    crash_contract(storage.clone()).await;
+    swap_crash_contract(storage).await;
 }
 
 #[cfg(feature = "redis-storage")]
@@ -279,7 +358,9 @@ async fn redis_rotation_survives_a_crash_at_every_step() {
     let storage = RedisStorage::with_config(&url, prefix, Duration::from_secs(600))
         .await
         .unwrap();
-    crash_contract(Arc::new(storage)).await;
+    let storage = Arc::new(storage);
+    crash_contract(storage.clone()).await;
+    swap_crash_contract(storage).await;
 }
 
 #[cfg(feature = "postgres-storage")]
@@ -290,7 +371,9 @@ async fn postgres_rotation_survives_a_crash_at_every_step() {
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     let storage = PostgresStorage::new(pool);
     storage.migrate().await.unwrap();
-    crash_contract(Arc::new(storage)).await;
+    let storage = Arc::new(storage);
+    crash_contract(storage.clone()).await;
+    swap_crash_contract(storage).await;
 }
 
 /// A row marked pending is inert: it neither validates nor can be rotated. (The crash test counts

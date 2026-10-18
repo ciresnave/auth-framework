@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc92 -- **API key rotation is one atomic swap where the backend has one.** On a backend with `supports_atomic_swap()`
+  (memory, SQLite, PostgreSQL, Redis and the encrypted wrapper over them) `rotate_api_key` replaces the old key's rows by the
+  new key's row in a single `swap_kv`, so after a crash or a race the old key or the new key is live, never both and never
+  neither; of simultaneous rotations exactly one succeeds. Other backends keep the claim, inert-row and activate steps of the
+  previous release (at most one live key, possibly none after a crash). The in-process memory backends are atomic with
+  respect to other rotations but not to a reader running at the same instant. Tested with a crash before and after the swap
+  on memory, SQLite, Redis 7 and PostgreSQL 15 (exactly one live key each time), and the eight-way race on all four;
+  ignoring the swap result and disabling the swap path each fail the suites.
 - 0.6.0-rc88 -- Documentation. `SECURITY.md` listed 0.5.x as the only supported line and 0.4.x as unsupported, although 0.4.x is
   the newest stable line and receives the security fixes; it now lists 0.6.x, 0.5.x and 0.4.x as supported, says to use the newest
   release of your line, and names the releases that fixed the latest advisories (`0.4.29`, `0.5.0-rc51`, `0.6.0-rc85`). The README
