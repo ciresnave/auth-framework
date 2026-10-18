@@ -430,6 +430,75 @@ impl AuthStorage for PostgresStorage {
         Ok(result.rows_affected() == 1)
     }
 
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<std::time::Duration>,
+    ) -> Result<bool> {
+        if remove.is_empty() {
+            return Ok(false);
+        }
+        let expires_at = ttl.map(|d| {
+            chrono::Utc::now()
+                + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::seconds(0))
+        });
+        let fail = |what: &str, e: sqlx::Error| {
+            AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                "Failed to swap kv ({what}): {e}"
+            )))
+        };
+        let mut tx = self.pool.begin().await.map_err(|e| fail("begin", e))?;
+
+        // Deleting takes the row locks: a competing swap of the same key waits here, then finds
+        // the row gone and loses.
+        let removed = sqlx::query(
+            r#"
+            DELETE FROM kv_store
+            WHERE key = ANY($1) AND (expires_at IS NULL OR expires_at > NOW())
+            "#,
+        )
+        .bind(remove)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| fail("remove", e))?
+        .rows_affected();
+        if removed == 0 {
+            tx.rollback().await.map_err(|e| fail("rollback", e))?;
+            return Ok(false);
+        }
+
+        // Insert, or take over an EXPIRED row; a live row refuses and rolls the delete back.
+        let inserted = sqlx::query(
+            r#"
+            INSERT INTO kv_store (key, value, expires_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (key) DO UPDATE SET
+                value = EXCLUDED.value,
+                expires_at = EXCLUDED.expires_at
+            WHERE kv_store.expires_at IS NOT NULL AND kv_store.expires_at <= NOW()
+            "#,
+        )
+        .bind(key)
+        .bind(value)
+        .bind(expires_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| fail("store", e))?
+        .rows_affected();
+        if inserted != 1 {
+            tx.rollback().await.map_err(|e| fail("rollback", e))?;
+            return Ok(false);
+        }
+        tx.commit().await.map_err(|e| fail("commit", e))?;
+        Ok(true)
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        true
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let row = sqlx::query(
             r#"SELECT value FROM kv_store WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())"#

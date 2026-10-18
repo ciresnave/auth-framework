@@ -295,6 +295,69 @@ impl AuthStorage for SqliteStorage {
         Ok(result.rows_affected() == 1)
     }
 
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        if remove.is_empty() {
+            return Ok(false);
+        }
+        let now = Utc::now().timestamp();
+        let expires_at = ttl.map(expires_at_secs);
+        let mut tx = self.pool.begin().await.map_err(storage_err)?;
+
+        // The first statement is a write, so the transaction holds SQLite's write lock from the
+        // start and a competing swap waits for it instead of reading the same live row.
+        let names =
+            serde_json::to_string(remove).map_err(|e| AuthError::internal(e.to_string()))?;
+        let removed = sqlx::query(
+            "DELETE FROM kv_store
+             WHERE key IN (SELECT value FROM json_each(?))
+             AND (expires_at IS NULL OR expires_at >= ?)",
+        )
+        .bind(names)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(storage_err)?
+        .rows_affected();
+        if removed == 0 {
+            tx.rollback().await.map_err(storage_err)?;
+            return Ok(false);
+        }
+
+        // Insert, or take over an EXPIRED row; a live row refuses and rolls the deletes back.
+        let inserted = sqlx::query(
+            "INSERT INTO kv_store (key, value, expires_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET
+             value=excluded.value,
+             expires_at=excluded.expires_at
+             WHERE kv_store.expires_at IS NOT NULL AND kv_store.expires_at < ?",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(expires_at)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(storage_err)?
+        .rows_affected();
+        if inserted != 1 {
+            tx.rollback().await.map_err(storage_err)?;
+            return Ok(false);
+        }
+        tx.commit().await.map_err(storage_err)?;
+        Ok(true)
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        true
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let now = Utc::now().timestamp();
         let row = sqlx::query("SELECT value, expires_at FROM kv_store WHERE key = ?")

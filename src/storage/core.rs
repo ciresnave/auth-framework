@@ -166,6 +166,42 @@ pub trait AuthStorage: Send + Sync {
         ))
     }
 
+    /// Remove keys and store another in ONE atomic step.
+    ///
+    /// Succeeds only if at least one of the `remove` keys is live AND `key` is absent: it then
+    /// deletes every key in `remove`, stores `value` under `key` (with `ttl`) and returns
+    /// `true`. Otherwise it changes nothing and returns `false`. Of several simultaneous swaps
+    /// of one key exactly one succeeds. Key rotation uses it so that an interrupted or racing
+    /// rotation leaves the old key or the new key, never both and never neither.
+    ///
+    /// "Atomic" is the backend's transaction: SQL backends do it in one transaction and Redis in
+    /// one script, so no reader sees a half-done swap. The in-process memory backends are atomic
+    /// with respect to other swaps (and to the claims made with
+    /// [`store_kv_if_absent`](Self::store_kv_if_absent)) but a concurrent reader can observe the
+    /// instant between the removal and the insert.
+    ///
+    /// A backend that implements it must also return `true` from
+    /// [`supports_atomic_swap`](Self::supports_atomic_swap). The default fails with an error;
+    /// callers that can do without check `supports_atomic_swap` first.
+    async fn swap_kv(
+        &self,
+        _remove: &[String],
+        _key: &str,
+        _value: &[u8],
+        _ttl: Option<Duration>,
+    ) -> Result<bool> {
+        Err(crate::errors::AuthError::Storage(
+            crate::errors::StorageError::operation_failed(
+                "this storage backend does not implement swap_kv".to_string(),
+            ),
+        ))
+    }
+
+    /// Whether [`swap_kv`](Self::swap_kv) is implemented (atomically). `false` by default.
+    fn supports_atomic_swap(&self) -> bool {
+        false
+    }
+
     /// Retrieve arbitrary key-value data.
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>>;
 
@@ -317,6 +353,20 @@ impl AuthStorage for Arc<dyn AuthStorage> {
         (**self).store_kv_if_absent(key, value, ttl).await
     }
 
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        (**self).swap_kv(remove, key, value, ttl).await
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        (**self).supports_atomic_swap()
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         (**self).get_kv(key).await
     }
@@ -419,6 +469,39 @@ pub struct MemoryStorage {
     // RBAC storage still uses RwLock for compatibility (lower concurrency requirements)
     roles: Arc<RwLock<HashMap<String, crate::authorization::AbacRole>>>,
     user_roles: Arc<RwLock<Vec<crate::authorization::UserRole>>>,
+}
+
+/// Serialises the in-process swaps below (all instances: swaps are rare, so one lock is enough).
+static IN_PROCESS_SWAP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// [`AuthStorage::swap_kv`] for the in-process backends, which have no transaction: under one lock
+/// shared by every swap it checks that a `remove` key is live, stores the new key if absent (a
+/// refusal or an error leaves the removed keys untouched), then deletes the removed keys.
+///
+/// Atomic with respect to other swaps and to claims made with `store_kv_if_absent`; a concurrent
+/// reader may see both keys in the instant between the store and the deletes.
+pub(crate) async fn swap_kv_in_process<S: AuthStorage + ?Sized>(
+    storage: &S,
+    remove: &[String],
+    key: &str,
+    value: &[u8],
+    ttl: Option<Duration>,
+) -> Result<bool> {
+    let _guard = IN_PROCESS_SWAP_LOCK.lock().await;
+    let mut any_live = false;
+    for name in remove {
+        if storage.get_kv(name).await?.is_some() {
+            any_live = true;
+            break;
+        }
+    }
+    if !any_live || !storage.store_kv_if_absent(key, value, ttl).await? {
+        return Ok(false);
+    }
+    for name in remove {
+        storage.delete_kv(name).await?;
+    }
+    Ok(true)
 }
 
 /// Redis storage implementation.
@@ -627,6 +710,20 @@ impl AuthStorage for MemoryStorage {
         ttl: Option<Duration>,
     ) -> Result<bool> {
         self.inner.store_kv_if_absent(key, value, ttl).await
+    }
+
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        self.inner.swap_kv(remove, key, value, ttl).await
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        self.inner.supports_atomic_swap()
     }
 
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
@@ -1102,6 +1199,39 @@ impl AuthStorage for RedisStorage {
             StorageError::operation_failed(format!("Failed to store KV if absent: {e}"))
         })?;
         Ok(reply.is_some())
+    }
+
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        if remove.is_empty() {
+            return Ok(false);
+        }
+        let mut conn = self.get_connection().await?;
+        let script = redis::Script::new(crate::storage::redis::SWAP_KV_SCRIPT);
+        let mut invocation = script.prepare_invoke();
+        for name in remove {
+            invocation.key(self.key(&format!("kv:{name}")));
+        }
+        invocation.key(self.key(&format!("kv:{key}")));
+        let millis = ttl.map_or(0, |d| {
+            u64::try_from(d.as_millis()).unwrap_or(u64::MAX).max(1)
+        });
+        let swapped: i64 = invocation
+            .arg(value)
+            .arg(millis)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| StorageError::operation_failed(format!("Failed to swap KV: {e}")))?;
+        Ok(swapped == 1)
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        true
     }
 
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {

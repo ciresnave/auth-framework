@@ -973,6 +973,21 @@ where
             .await
     }
 
+    async fn swap_kv(
+        &self,
+        remove: &[String],
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        let encrypted_value = self.encryption.encrypt_for_storage(value, key.as_bytes())?;
+        self.inner.swap_kv(remove, key, &encrypted_value, ttl).await
+    }
+
+    fn supports_atomic_swap(&self) -> bool {
+        self.inner.supports_atomic_swap()
+    }
+
     /// Reads back a value stored by [`Self::store_kv`], decrypting it.
     ///
     /// A value that **parses as one of this module's envelopes**
