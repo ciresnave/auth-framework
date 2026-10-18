@@ -32,13 +32,23 @@ were relying on MySQL support.
 
 ## Supported Versions
 
-Currently supported versions of the Auth Framework with security updates:
+Security fixes are released on all three active lines, so use the newest release of the line you are on:
 
-| Version    | Supported          |
-| ---------- | ------------------ |
-| 0.5.x (rc) | :white_check_mark: |
-| 0.4.x      | :x:                |
-| < 0.4      | :x:                |
+| Line                      | Supported          | Notes                                              |
+| ------------------------- | ------------------ | -------------------------------------------------- |
+| 0.6.x (release candidates) | :white_check_mark: | development line (`main`); fixes land here first   |
+| 0.5.x (release candidates) | :white_check_mark: | `release/0.5.x`                                    |
+| 0.4.x                      | :white_check_mark: | the newest stable line (`release/0.4.x`)           |
+| < 0.4                      | :x:                | not maintained; yanked from crates.io              |
+
+Versions that fall inside a published advisory are yanked from crates.io. Do not pin a yanked
+version, and do not pin one older than the first fixed release listed in the advisory that applies
+to your line. The advisories are listed at
+<https://github.com/ciresnave/auth-framework/security/advisories>; the releases that fixed the
+most recent ones are `0.4.29`, `0.5.0-rc51` and `0.6.0-rc85` (GHSA-jr9j-g3xj-q9x8: fixed signing
+keys in the JARM, JWT introspection and default SAML components; it covers `>=0.4.0,<0.4.29`,
+`>=0.5.0-rc1,<0.5.0-rc51` and `>=0.6.0-rc41,<0.6.0-rc85`). The one before it, GHSA-9r7g-3hh2-8x65
+(default signing secret), is fixed in the same releases. The next fixes are in `CHANGELOG.md`.
 
 ## Security Considerations
 

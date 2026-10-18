@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc88 -- Documentation. `SECURITY.md` listed 0.5.x as the only supported line and 0.4.x as unsupported, although 0.4.x is
+  the newest stable line and receives the security fixes; it now lists 0.6.x, 0.5.x and 0.4.x as supported, says to use the newest
+  release of your line, and names the releases that fixed the latest advisories (`0.4.29`, `0.5.0-rc51`, `0.6.0-rc85`). The README
+  quickstart no longer tells readers to install `0.6.0-rc50`, nor to run the `0.6.0-rc41` image: both fall inside a published
+  advisory. It pins the current version, and the Docker line takes a `<tag>` to be filled from the package page, with a floor of
+  `0.6.0-rc85`. New tests keep it so: README install pins may not be older than the first unaffected release, and `SECURITY.md`
+  must mark every active line supported.
 - 0.6.0-rc87 -- Documentation. Installation references that could not work are fixed and guarded by a test. `docs/web-frameworks.md`
   depended on `auth-framework` 0.1.0 (yanked) with features `actix-web`, `warp` and `rocket`, none of which is a feature of this
   crate: it now names `actix-integration` and `warp-integration`, takes the newest release of your line, and says plainly that

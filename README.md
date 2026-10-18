@@ -27,11 +27,11 @@ iwr -useb https://raw.githubusercontent.com/ciresnave/auth-framework/main/script
 # Docker - Instant deployment
 # No `:latest` tag is published (every release so far has been a pre-release,
 # which the image-tagging workflow doesn't tag `latest`), and an image is not
-# published for every crate release. 0.6.0-rc41 was the newest image tag when
-# this was written; check
+# published for every crate release. Replace <tag> with the newest tag listed at
 # https://github.com/ciresnave/auth-framework/pkgs/container/auth-framework
-# for the current one, and the published advisories before you pin an older tag.
-docker run -p 8080:8080 ghcr.io/ciresnave/auth-framework:0.6.0-rc41
+# and never use a tag older than 0.6.0-rc85: earlier ones fall inside published
+# security advisories (see SECURITY.md).
+docker run -p 8080:8080 ghcr.io/ciresnave/auth-framework:<tag>
 ```
 
 **That's it!** Server running at `http://localhost:8080` 🎉
@@ -329,7 +329,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-auth-framework = "0.6.0-rc50"
+auth-framework = "0.6.0-rc85"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -1032,7 +1032,7 @@ The framework provides comprehensive testing utilities to make testing your auth
 
 ```toml
 [dev-dependencies]
-auth-framework = "0.6.0-rc50"
+auth-framework = "0.6.0-rc85"
 ```
 
 ```rust
@@ -1291,7 +1291,7 @@ Helper utilities for integrating with CLI frameworks:
 
 ```toml
 [dependencies]
-auth-framework = "0.6.0-rc50"
+auth-framework = "0.6.0-rc85"
 clap = "4.0"
 tokio = { version = "1.0", features = ["full"] }
 ```

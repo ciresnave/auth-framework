@@ -4,7 +4,7 @@
 > guide uses (including `new_with_storage`) are absent from every 0.4.x release --
 > `cargo add auth-framework` installs the newest 0.4.x by default, since Cargo doesn't select
 > pre-releases automatically. If `new_with_storage` doesn't resolve, that's why: depend on a
-> pre-release explicitly (`cargo add auth-framework@0.6.0-rc50` was the newest when this was
+> pre-release explicitly (`cargo add auth-framework@0.6.0-rc85` was the first release outside the published advisories when this was
 > written; check crates.io), or stay on 0.4.x and its own storage API. Read the published
 > security advisories before pinning an older pre-release.
 
@@ -563,7 +563,7 @@ surrealdb-storage = ["surrealdb", "serde_json"]
 [dependencies]
 surrealdb = { version = "1.0", optional = true }
 serde_json = { version = "1.0", optional = true }
-auth-framework = "0.6.0-rc50"  # see the version notice at the top of this guide
+auth-framework = "0.6.0-rc85"  # see the version notice at the top of this guide
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
