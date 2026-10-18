@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.30] - Unreleased
+
+### Changed
+
+- **The OAuth endpoints of the API server answer `501 Not Implemented`.** `api::oauth` (`authorize`, `token`, `revoke_token`,
+  `introspect_token`, `get_client_info`) held placeholder logic that reported success for any input: an introspection said
+  `active: true` for every token, the token endpoint returned made-up tokens without checking the client, the authorization
+  endpoint redirected with a made-up code, and revocation and client lookup were no-ops. A caller that relied on them was told
+  that things were valid that were never checked. They now answer `501` with an OAuth error body and do nothing else. The
+  working OAuth 2.0 server on this line is `server::oauth` (library API); the 0.5 and 0.6 lines implement these endpoints in
+  `api::oauth2`. `ApiServer::build_router` itself does not build on this line (it registers `/oauth/clients/:client_id` with
+  axum 0.8, which requires `{client_id}`), so the handlers were reachable only where an application mounted them.
+
 ## [0.4.29] - Unreleased
 
 ### Fixed

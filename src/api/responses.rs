@@ -227,6 +227,7 @@ where
                 Some("NOT_FOUND") => StatusCode::NOT_FOUND,
                 Some("VALIDATION_ERROR") => StatusCode::BAD_REQUEST,
                 Some("RATE_LIMITED") => StatusCode::TOO_MANY_REQUESTS,
+                Some("NOT_IMPLEMENTED") => StatusCode::NOT_IMPLEMENTED,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             }
         };
