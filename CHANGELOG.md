@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc87 -- Documentation. Installation references that could not work are fixed and guarded by a test. `docs/web-frameworks.md`
+  depended on `auth-framework` 0.1.0 (yanked) with features `actix-web`, `warp` and `rocket`, none of which is a feature of this
+  crate: it now names `actix-integration` and `warp-integration`, takes the newest release of your line, and says plainly that
+  there is no Rocket integration. `docs/guides/administrator-setup.md` named the image `authframework/auth-framework:0.4.0`
+  (a namespace this project does not publish to, at a yanked version): it now uses `ghcr.io/ciresnave/auth-framework:<tag>`.
+  The README's development example no longer asks for a `testing` feature that does not exist.
 - 0.6.0-rc84 -- Code health, no behaviour change. Every `allow(dead_code)` now states why (`reason = "..."`) and an audit test
   fails on one that does not. Removed the unused helpers behind five of them: the `common_jwt::utils` module (functions that
   read JWT claims without verifying the signature, used only by their own tests), `KerberosManager::generate_response_token` (private),

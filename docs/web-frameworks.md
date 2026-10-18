@@ -1,5 +1,7 @@
 # Web Framework Integration Guide
 
+> **Read this first.** The `Cargo.toml` snippets below use the integration features this crate defines (`actix-integration`, `warp-integration`) and say `<newest release of your line>` where a version goes: take the newest release of your line from crates.io, never a yanked one (see [SECURITY.md](../SECURITY.md)). The Rust samples were first written for an early API and may need adjusting to current releases.
+
 This guide covers how to integrate auth-framework with popular Rust web frameworks.
 
 ## Actix-web Integration
@@ -12,7 +14,7 @@ Add the actix-web feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-auth-framework = { version = "0.1.0", features = ["actix-web"] }
+auth-framework = { version = "<newest release of your line>", features = ["actix-integration"] }
 actix-web = "4.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
@@ -202,7 +204,7 @@ Warp is a super-easy, composable, web server framework for building HTTP APIs.
 
 ```toml
 [dependencies]
-auth-framework = { version = "0.1.0", features = ["warp"] }
+auth-framework = { version = "<newest release of your line>", features = ["warp-integration"] }
 warp = "0.3"
 tokio = { version = "1.0", features = ["full"] }
 ```
@@ -319,13 +321,15 @@ async fn handle_rejection(err: warp::Rejection) -> Result<impl warp::Reply, std:
 
 ## Rocket Integration
 
+> **Not available.** This crate has no Rocket integration and no `rocket` feature; this section is kept as a sketch of what one could look like, and none of it compiles against the crate. The maintained web integrations are `actix-integration`, `axum-integration` and `warp-integration`.
+
 Rocket is a web framework for Rust that makes it simple to write fast, secure web applications.
 
 ### Setup
 
 ```toml
 [dependencies]
-auth-framework = { version = "0.1.0", features = ["rocket"] }
+auth-framework = "<newest release of your line>"  # there is no Rocket integration: see the notice above
 rocket = { version = "0.5", features = ["json"] }
 tokio = { version = "1.0", features = ["full"] }
 ```

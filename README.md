@@ -1032,7 +1032,7 @@ The framework provides comprehensive testing utilities to make testing your auth
 
 ```toml
 [dev-dependencies]
-auth-framework = { version = "0.6.0-rc50", features = ["testing"] }
+auth-framework = "0.6.0-rc50"
 ```
 
 ```rust

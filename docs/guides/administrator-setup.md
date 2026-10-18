@@ -35,14 +35,14 @@ This guide provides system administrators with comprehensive instructions for de
 
 #### Docker Deployment (Recommended)
 
-Create a `docker-compose.yml` file:
+Create a `docker-compose.yml` file. Replace `<tag>` with the newest tag listed at <https://github.com/ciresnave/auth-framework/pkgs/container/auth-framework>; images are published to `ghcr.io/ciresnave/auth-framework` only, not for every crate release, and a tag inside a published security advisory must not be used (see [SECURITY.md](../../SECURITY.md)):
 
 ```yaml
 version: '3.8'
 
 services:
   auth-framework:
-    image: authframework/auth-framework:0.4.0
+    image: ghcr.io/ciresnave/auth-framework:<tag>
     ports:
       - "8080:8080"
       - "8443:8443"
@@ -192,7 +192,7 @@ spec:
     spec:
       containers:
       - name: auth-framework
-        image: authframework/auth-framework:0.4.0
+        image: ghcr.io/ciresnave/auth-framework:<tag>
         ports:
         - containerPort: 8080
         - containerPort: 8443
