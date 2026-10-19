@@ -173,9 +173,17 @@ async fn build_storage_backend_inner(
         #[cfg(feature = "postgres-storage")]
         StorageConfig::Postgres {
             connection_string,
-            table_prefix: _,
+            table_prefix,
         } => {
             use sqlx::postgres::PgPoolOptions;
+
+            // The backend's table names are fixed; a different prefix would be accepted and
+            // then ignored, so two deployments that chose different prefixes would share tables.
+            if table_prefix != "auth_" {
+                return Err(AuthError::configuration(format!(
+                    "PostgreSQL table_prefix {table_prefix:?} is not supported: the backend uses fixed                      table names, so only the default \"auth_\" is accepted"
+                )));
+            }
 
             let pool = PgPoolOptions::new()
                 .max_connections(_pool_size.unwrap_or(10))

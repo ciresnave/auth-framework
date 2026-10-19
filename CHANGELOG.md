@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc95 -- **Storage settings that cannot be honoured are now refused instead of silently changed.** `AuthFramework::quick_start()`
+  with `with_postgres`, `with_postgres_from_env`, `with_redis` or `with_redis_from_env` used to log a warning and run on
+  in-memory storage when the matching `postgres-storage` / `redis-storage` feature was off, so every key, session and token
+  was lost on restart; `build()` now returns a configuration error. `StorageConfig::Postgres { table_prefix }` was accepted
+  and ignored (the backend's table names are fixed), so two deployments given different prefixes shared tables;
+  initialisation now returns a configuration error for any prefix other than the default `"auth_"`. Each is a test that
+  failed before and passes now (the Redis case with the feature off, the prefix case against PostgreSQL 15), each with a
+  control that the supported setting still works.
 - 0.6.0-rc94 -- **`PostgresStorage` stores and reads back a token's `user_profile`, `permissions` and `roles` (#93).**
   `AuthToken` derives `FromRow`, so every field needs a column, but `auth_tokens` had none for these three: any
   token read failed with `no column found for name: user_profile`, and the values were never written. `migrate()`
