@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc97"
+  version       = "0.6.0-rc98"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -296,8 +296,8 @@
   flate2 = "1"
   tar    = "0.4.45"
 
-  # Email delivery for alert notifications
-  lettre = { version = "0.11", default-features = false, features = [
+  # SMTP delivery for alert and MFA email (opt-in: the `smtp` feature)
+  lettre = { version = "0.11", default-features = false, optional = true, features = [
     "builder",
     "hostname",
     "pool",
@@ -440,6 +440,9 @@ pasetors = "0.7.7"
   openid-connect = []
   postgres-storage = ["dep:sqlx", "sqlx/postgres", "tokio-postgres"]
   redis-storage = ["redis"]
+  # SMTP delivery (alert emails, MFA email over SMTP). Off by default so a consumer that only needs
+  # tokens or TOTP does not compile lettre and its TLS stack.
+  smtp = ["dep:lettre"]
   # Enhanced cryptography features
   distributed-rate-limiting = ["redis"]
   # Reserved for future enhanced cryptographic operations — currently a no-op

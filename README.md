@@ -71,6 +71,8 @@ This split exists to support both simple app integration and advanced compositio
 
 > 🔐 **Security Notice**: This framework requires a JWT secret to be configured before use. See [`SECURITY_GUIDE.md`](docs/guides/SECURITY_GUIDE.md) for critical security requirements and best practices.
 >
+> 📧 **SMTP is opt-in**: alert emails and SMTP-delivered MFA email need the `smtp` feature (`features = ["smtp"]`). Without it `lettre` is not compiled, and the SMTP paths return an error (MFA) or log that the alert was not sent.
+
 > ⚠️ **MySQL storage removed**: `mysql-storage` has been removed entirely (it was the last path to the RUSTSEC-2023-0071 RSA timing sidechannel in this crate). Use `postgres-storage`, `sqlite-storage`, or `redis-storage` instead. See [`SECURITY.md`](SECURITY.md) for details.
 
 ## 🆕 What's New in Latest Version

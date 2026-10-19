@@ -129,6 +129,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc98 -- **BREAKING: SMTP delivery is now behind an off-by-default `smtp` feature.** `lettre` (with its pool, hostname
+  and ring-based rustls TLS) was a mandatory dependency, so even a consumer that only needs tokens or TOTP compiled an SMTP
+  stack. It is now optional; enable `smtp` to keep SMTP alert emails and SMTP-delivered MFA email. Without the feature the
+  MFA SMTP provider returns a configuration error instead of sending, and an email alert channel logs that the alert was not
+  sent (other channels are unaffected). The CI feature matrix builds with `smtp`.
 - 0.6.0-rc92 -- **API key rotation is one atomic swap where the backend has one.** On a backend with `supports_atomic_swap()`
   (memory, SQLite, PostgreSQL, Redis and the encrypted wrapper over them) `rotate_api_key` replaces the old key's rows by the
   new key's row in a single `swap_kv`, so after a crash or a race the old key or the new key is live, never both and never

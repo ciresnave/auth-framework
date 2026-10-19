@@ -315,106 +315,7 @@ impl AlertManager {
     async fn send_to_channel(&self, alert: &Alert, channel: &NotificationChannel) -> Result<()> {
         match channel {
             NotificationChannel::Email { recipients } => {
-                use lettre::{
-                    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::Mailbox,
-                    transport::smtp::authentication::Credentials,
-                };
-
-                // SMTP is configured via environment variables so no credentials are
-                // embedded in the AlertConfig serialisation:
-                //   AUTH_SMTP_HOST     — required; disables email channel if unset
-                //   AUTH_SMTP_PORT     — optional (default 587, STARTTLS)
-                //   AUTH_SMTP_FROM     — optional (default "alerts@<host>")
-                //   AUTH_SMTP_USERNAME — optional
-                //   AUTH_SMTP_PASSWORD — optional
-                let smtp_host = match std::env::var("AUTH_SMTP_HOST") {
-                    Ok(h) => h,
-                    Err(_) => {
-                        tracing::warn!(
-                            recipients = ?recipients,
-                            title = %alert.title,
-                            severity = ?alert.severity,
-                            "EMAIL ALERT: set AUTH_SMTP_HOST to enable SMTP delivery"
-                        );
-                        return Ok(());
-                    }
-                };
-                let smtp_port: u16 = std::env::var("AUTH_SMTP_PORT")
-                    .ok()
-                    .and_then(|p| p.parse().ok())
-                    .unwrap_or(587);
-                let from_addr = std::env::var("AUTH_SMTP_FROM")
-                    .unwrap_or_else(|_| format!("alerts@{}", smtp_host));
-
-                let from_mailbox: Mailbox = match from_addr.parse() {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::error!(from = %from_addr, error = %e, "Invalid AUTH_SMTP_FROM address");
-                        return Ok(());
-                    }
-                };
-
-                let mut builder = match AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(
-                    &smtp_host,
-                ) {
-                    Ok(b) => b.port(smtp_port),
-                    Err(e) => {
-                        tracing::error!(host = %smtp_host, error = %e, "Failed to create SMTP transport");
-                        return Ok(());
-                    }
-                };
-                if let (Ok(user), Ok(pass)) = (
-                    std::env::var("AUTH_SMTP_USERNAME"),
-                    std::env::var("AUTH_SMTP_PASSWORD"),
-                ) {
-                    builder = builder.credentials(Credentials::new(user, pass));
-                }
-                let mailer = builder.build();
-
-                let subject = format!("[{:?}] {}", alert.severity, alert.title);
-                let body = format!(
-                    "Alert: {}\nSeverity: {:?}\nSource: {}\nMessage: {}\nTimestamp: {}",
-                    alert.title, alert.severity, alert.source, alert.message, alert.timestamp
-                );
-
-                for recipient in recipients {
-                    let to_mailbox: Mailbox = match recipient.parse() {
-                        Ok(m) => m,
-                        Err(e) => {
-                            tracing::error!(
-                                recipient = %recipient, error = %e,
-                                "Invalid recipient address — skipping"
-                            );
-                            continue;
-                        }
-                    };
-                    match Message::builder()
-                        .from(from_mailbox.clone())
-                        .to(to_mailbox)
-                        .subject(&subject)
-                        .body(body.clone())
-                    {
-                        Ok(email) => {
-                            if let Err(e) = mailer.send(email).await {
-                                tracing::error!(
-                                    recipient = %recipient, error = %e,
-                                    "Failed to send email alert"
-                                );
-                            } else {
-                                tracing::info!(
-                                    recipient = %recipient,
-                                    "Email alert sent: {}", alert.title
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                recipient = %recipient, error = %e,
-                                "Failed to build email message"
-                            );
-                        }
-                    }
-                }
+                self.send_email_alert(alert, recipients).await;
             }
             NotificationChannel::Slack { webhook_url } => {
                 let payload = serde_json::json!({
@@ -494,6 +395,120 @@ impl AlertManager {
         }
 
         Ok(())
+    }
+
+    /// Deliver an alert by SMTP (configured through `AUTH_SMTP_*` environment variables).
+    #[cfg(feature = "smtp")]
+    async fn send_email_alert(&self, alert: &Alert, recipients: &[String]) {
+        use lettre::{
+            AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::Mailbox,
+            transport::smtp::authentication::Credentials,
+        };
+
+        // SMTP is configured via environment variables so no credentials are
+        // embedded in the AlertConfig serialisation:
+        //   AUTH_SMTP_HOST     — required; disables email channel if unset
+        //   AUTH_SMTP_PORT     — optional (default 587, STARTTLS)
+        //   AUTH_SMTP_FROM     — optional (default "alerts@<host>")
+        //   AUTH_SMTP_USERNAME — optional
+        //   AUTH_SMTP_PASSWORD — optional
+        let smtp_host = match std::env::var("AUTH_SMTP_HOST") {
+            Ok(h) => h,
+            Err(_) => {
+                tracing::warn!(
+                    recipients = ?recipients,
+                    title = %alert.title,
+                    severity = ?alert.severity,
+                    "EMAIL ALERT: set AUTH_SMTP_HOST to enable SMTP delivery"
+                );
+                return;
+            }
+        };
+        let smtp_port: u16 = std::env::var("AUTH_SMTP_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(587);
+        let from_addr =
+            std::env::var("AUTH_SMTP_FROM").unwrap_or_else(|_| format!("alerts@{}", smtp_host));
+
+        let from_mailbox: Mailbox = match from_addr.parse() {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(from = %from_addr, error = %e, "Invalid AUTH_SMTP_FROM address");
+                return;
+            }
+        };
+
+        let mut builder = match AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_host) {
+            Ok(b) => b.port(smtp_port),
+            Err(e) => {
+                tracing::error!(host = %smtp_host, error = %e, "Failed to create SMTP transport");
+                return;
+            }
+        };
+        if let (Ok(user), Ok(pass)) = (
+            std::env::var("AUTH_SMTP_USERNAME"),
+            std::env::var("AUTH_SMTP_PASSWORD"),
+        ) {
+            builder = builder.credentials(Credentials::new(user, pass));
+        }
+        let mailer = builder.build();
+
+        let subject = format!("[{:?}] {}", alert.severity, alert.title);
+        let body = format!(
+            "Alert: {}\nSeverity: {:?}\nSource: {}\nMessage: {}\nTimestamp: {}",
+            alert.title, alert.severity, alert.source, alert.message, alert.timestamp
+        );
+
+        for recipient in recipients {
+            let to_mailbox: Mailbox = match recipient.parse() {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::error!(
+                        recipient = %recipient, error = %e,
+                        "Invalid recipient address — skipping"
+                    );
+                    continue;
+                }
+            };
+            match Message::builder()
+                .from(from_mailbox.clone())
+                .to(to_mailbox)
+                .subject(&subject)
+                .body(body.clone())
+            {
+                Ok(email) => {
+                    if let Err(e) = mailer.send(email).await {
+                        tracing::error!(
+                            recipient = %recipient, error = %e,
+                            "Failed to send email alert"
+                        );
+                    } else {
+                        tracing::info!(
+                            recipient = %recipient,
+                            "Email alert sent: {}", alert.title
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        recipient = %recipient, error = %e,
+                        "Failed to build email message"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Without the `smtp` feature there is no SMTP stack: say so loudly instead of dropping the alert.
+    #[cfg(not(feature = "smtp"))]
+    async fn send_email_alert(&self, alert: &Alert, recipients: &[String]) {
+        tracing::error!(
+            recipients = ?recipients,
+            title = %alert.title,
+            severity = ?alert.severity,
+            "EMAIL ALERT NOT SENT: this build has no SMTP support; enable the `smtp` feature"
+        );
     }
 
     /// Clean up old alert tracking data
