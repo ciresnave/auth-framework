@@ -38,6 +38,7 @@ async fn framework_check_permission_refuses_a_forged_token() {
 fn the_low_level_checker_accepts_the_same_forged_token() {
     let mut checker = PermissionChecker::new();
     checker.add_user_permission("alice", Permission::new("read", "docs"));
+    #[allow(deprecated)]
     let allowed = checker
         .check_token_permission(&forged(), &Permission::new("read", "docs"))
         .unwrap();

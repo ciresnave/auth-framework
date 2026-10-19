@@ -843,8 +843,33 @@ impl PermissionChecker {
         self.check_permission(user_id, &permission)
     }
 
+    /// Check permission from a token the framework has validated.
+    ///
+    /// The token must carry the scope (or a wildcard) AND the user must hold the permission.
+    pub fn check_validated_permission(
+        &mut self,
+        token: &crate::tokens::ValidatedToken,
+        permission: &Permission,
+    ) -> Result<bool> {
+        self.check_token_permission_inner(token.token(), permission)
+    }
+
     /// Check permission from an auth token.
+    ///
+    /// Does not validate the token: a hand-built `AuthToken` with the right scope passes.
+    #[deprecated(
+        since = "0.6.0",
+        note = "does not validate the token; use `check_validated_permission` with a `ValidatedToken`"
+    )]
     pub fn check_token_permission(
+        &mut self,
+        token: &AuthToken,
+        permission: &Permission,
+    ) -> Result<bool> {
+        self.check_token_permission_inner(token, permission)
+    }
+
+    fn check_token_permission_inner(
         &mut self,
         token: &AuthToken,
         permission: &Permission,

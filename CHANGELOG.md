@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 0.6.0-rc97 -- **A permission check can now require proof that the token was validated.** `AuthFramework::validated_token`
+  validates a token (signature, expiry, revocation, stored copy) and returns a `ValidatedToken`, which only the framework can
+  construct; `check_validated_permission` on `AuthFramework`, `AuthorizationManager` and `PermissionChecker` takes that proof,
+  so a hand-built `AuthToken` cannot reach it. `AuthFramework::check_permission` behaves as before and now goes through the
+  same path. `PermissionChecker::check_token_permission` and `AuthorizationManager::check_token_permission`, which never
+  validated the token they were given, are deprecated in favour of the new methods; they still work.
 - 0.6.0-rc91 -- **`AuthStorage::swap_kv`: remove keys and store another in one atomic step.** `swap_kv(remove, key, value, ttl)`
   succeeds only if at least one of the `remove` keys is live and `key` is absent: it then deletes every `remove` key and
   stores `value` under `key` (returns `true`); otherwise it changes nothing and returns `false`. Of several simultaneous
