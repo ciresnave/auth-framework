@@ -830,15 +830,16 @@ fn derived_debug_secret_fields(file: &str, content: &str) -> Vec<(String, usize,
             let l = lines[k].1;
             depth += l.matches('{').count() as i32 - l.matches('}').count() as i32;
             opened |= l.contains('{');
-            if k > i && derives_debug {
-                if let Some(f) = field.captures(l) {
-                    let (fname, ftype) = (&f[1], f[2].trim());
-                    if secret_name.is_match(fname)
-                        && !not_secret.is_match(fname)
-                        && plain.is_match(ftype)
-                    {
-                        out.push((name.clone(), lines[k].0, fname.to_string()));
-                    }
+            if k > i
+                && derives_debug
+                && let Some(f) = field.captures(l)
+            {
+                let (fname, ftype) = (&f[1], f[2].trim());
+                if secret_name.is_match(fname)
+                    && !not_secret.is_match(fname)
+                    && plain.is_match(ftype)
+                {
+                    out.push((name.clone(), lines[k].0, fname.to_string()));
                 }
             }
             if (opened && depth <= 0) || (!opened && l.trim_end().ends_with(';')) {

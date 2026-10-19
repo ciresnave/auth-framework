@@ -108,8 +108,10 @@ fn config_and_credential_types_do_not_print_secrets() {
         "yubico-visible",
     );
 
-    let mut o = OpaConfig::default();
-    o.auth_token = Some(S.into());
+    let o = OpaConfig {
+        auth_token: Some(S.into()),
+        ..Default::default()
+    };
     redacts("OpaConfig", format!("{o:?}"), "localhost:8181");
 
     redacts(
