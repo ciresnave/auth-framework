@@ -263,7 +263,7 @@ impl ClientRegistrationRequestBuilder {
 }
 
 /// Client registration response as defined in RFC 7591
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ClientRegistrationResponse {
     /// OAuth 2.0 client identifier
     pub client_id: String,
@@ -331,6 +331,41 @@ pub struct ClientRegistrationResponse {
     /// Additional metadata
     #[serde(flatten)]
     pub additional_metadata: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for ClientRegistrationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ClientRegistrationResponse");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("registration_access_token", &self.registration_access_token);
+        d.field("registration_client_uri", &self.registration_client_uri);
+        d.field("client_id_issued_at", &self.client_id_issued_at);
+        d.field("client_secret_expires_at", &self.client_secret_expires_at);
+        d.field("redirect_uris", &self.redirect_uris);
+        d.field(
+            "token_endpoint_auth_method",
+            &self.token_endpoint_auth_method,
+        );
+        d.field("grant_types", &self.grant_types);
+        d.field("response_types", &self.response_types);
+        d.field("client_name", &self.client_name);
+        d.field("client_uri", &self.client_uri);
+        d.field("logo_uri", &self.logo_uri);
+        d.field("scope", &self.scope);
+        d.field("contacts", &self.contacts);
+        d.field("tos_uri", &self.tos_uri);
+        d.field("policy_uri", &self.policy_uri);
+        d.field("jwks_uri", &self.jwks_uri);
+        d.field("jwks", &self.jwks);
+        d.field("software_id", &self.software_id);
+        d.field("software_version", &self.software_version);
+        d.field("additional_metadata", &self.additional_metadata);
+        d.finish()
+    }
 }
 
 /// Registered client information

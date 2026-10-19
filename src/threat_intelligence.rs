@@ -72,7 +72,7 @@ impl Default for ExtractionLimits {
 }
 
 /// Configuration for a specific threat intelligence feed
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FeedConfig {
     /// Enable this specific feed
     pub enabled: bool,
@@ -97,6 +97,21 @@ pub struct FeedConfig {
 
     /// Update interval override (if different from global)
     pub custom_interval_seconds: Option<u64>,
+}
+
+impl std::fmt::Debug for FeedConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FeedConfig");
+        d.field("enabled", &self.enabled);
+        d.field("feed_type", &self.feed_type);
+        d.field("url", &self.url);
+        d.field("api_key", &crate::utils::redact::redacted(&self.api_key));
+        d.field("headers", &self.headers);
+        d.field("filename", &self.filename);
+        d.field("format", &self.format);
+        d.field("custom_interval_seconds", &self.custom_interval_seconds);
+        d.finish()
+    }
 }
 
 /// Types of threat intelligence feeds

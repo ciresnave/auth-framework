@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// in-progress MFA challenge instead of performing a fresh password check.
 /// The two fields must appear together — providing one without the other is
 /// rejected with a validation error.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
@@ -25,6 +25,18 @@ pub struct LoginRequest {
     /// When `true`, the session lifetime is extended (e.g. "remember me" cookie).
     #[serde(default)]
     pub remember_me: bool,
+}
+
+impl std::fmt::Debug for LoginRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LoginRequest");
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field("challenge_id", &self.challenge_id);
+        d.field("mfa_code", &self.mfa_code);
+        d.field("remember_me", &self.remember_me);
+        d.finish()
+    }
 }
 
 /// Successful login response.
@@ -725,7 +737,7 @@ pub struct ProviderInfo {
 }
 
 /// User registration request.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct RegisterRequest {
     /// Desired username (validated for length, characters, must start with a letter).
     pub username: String,
@@ -733,6 +745,16 @@ pub struct RegisterRequest {
     pub email: String,
     /// Password (validated against minimum complexity rules).
     pub password: String,
+}
+
+impl std::fmt::Debug for RegisterRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RegisterRequest");
+        d.field("username", &self.username);
+        d.field("email", &self.email);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.finish()
+    }
 }
 
 /// User registration response.
@@ -971,12 +993,21 @@ pub async fn register(
 }
 
 /// Response returned when an API key is successfully created.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct CreateApiKeyResponse {
     /// The new API key – treat as a secret and display only once.
     pub api_key: String,
     /// Always `"ApiKey"`.
     pub token_type: String,
+}
+
+impl std::fmt::Debug for CreateApiKeyResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CreateApiKeyResponse");
+        d.field("api_key", &crate::utils::redact::redacted(&self.api_key));
+        d.field("token_type", &self.token_type);
+        d.finish()
+    }
 }
 
 /// POST /api-keys – create an API key (requires authentication)

@@ -143,7 +143,7 @@ impl std::fmt::Display for AuthLevel {
 }
 
 /// Configuration for Advanced Token Exchange
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AdvancedTokenExchangeConfig {
     /// Enable multi-party token chains
     pub enable_multi_party_chains: bool,
@@ -180,6 +180,37 @@ pub struct AdvancedTokenExchangeConfig {
 
     /// Trusted token issuers for enhanced validation
     pub trusted_issuers: Vec<String>,
+}
+
+impl std::fmt::Debug for AdvancedTokenExchangeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AdvancedTokenExchangeConfig");
+        d.field("enable_multi_party_chains", &self.enable_multi_party_chains);
+        d.field("max_delegation_depth", &self.max_delegation_depth);
+        d.field("require_audit_trail", &self.require_audit_trail);
+        d.field(
+            "enable_context_preservation",
+            &self.enable_context_preservation,
+        );
+        d.field("default_token_lifetime", &self.default_token_lifetime);
+        d.field(
+            "supported_subject_token_types",
+            &self.supported_subject_token_types,
+        );
+        d.field(
+            "supported_requested_token_types",
+            &self.supported_requested_token_types,
+        );
+        d.field("exchange_policies", &self.exchange_policies);
+        d.field("cross_domain_settings", &self.cross_domain_settings);
+        d.field(
+            "jwt_signing_key",
+            &crate::utils::redact::redacted(&self.jwt_signing_key),
+        );
+        d.field("jwt_verification_key", &self.jwt_verification_key);
+        d.field("trusted_issuers", &self.trusted_issuers);
+        d.finish()
+    }
 }
 
 impl Default for AdvancedTokenExchangeConfig {

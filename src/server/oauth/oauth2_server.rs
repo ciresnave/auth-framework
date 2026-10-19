@@ -251,7 +251,7 @@ impl OAuth2ConfigBuilder {
 /// // Client credentials grant
 /// let req = TokenRequest::client_credentials("client123", "secret");
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct TokenRequest {
     pub grant_type: String,
     /// Client identifier. Optional here because HTTP clients may use HTTP Basic auth
@@ -270,6 +270,37 @@ pub struct TokenRequest {
     /// RFC 8707 Resource Indicators — target resource URI(s).
     #[serde(default)]
     pub resource: Option<Vec<String>>,
+}
+
+impl std::fmt::Debug for TokenRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenRequest");
+        d.field("grant_type", &self.grant_type);
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("scope", &self.scope);
+        d.field(
+            "code_verifier",
+            &crate::utils::redact::redacted(&self.code_verifier),
+        );
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field(
+            "device_code",
+            &crate::utils::redact::redacted(&self.device_code),
+        );
+        d.field("resource", &self.resource);
+        d.finish()
+    }
 }
 
 impl TokenRequest {

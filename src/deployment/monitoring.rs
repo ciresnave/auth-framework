@@ -216,17 +216,39 @@ pub struct SlackConfig {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HttpConfig {
     pub basic_auth: Option<BasicAuth>,
     pub bearer_token: Option<String>,
     pub tls_config: Option<TlsConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for HttpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("HttpConfig");
+        d.field("basic_auth", &self.basic_auth);
+        d.field(
+            "bearer_token",
+            &crate::utils::redact::redacted(&self.bearer_token),
+        );
+        d.field("tls_config", &self.tls_config);
+        d.finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BasicAuth {
     pub username: String,
     pub password: String,
+}
+
+impl std::fmt::Debug for BasicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BasicAuth");
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

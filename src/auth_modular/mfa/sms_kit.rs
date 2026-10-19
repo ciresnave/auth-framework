@@ -84,7 +84,7 @@ impl<'de> Deserialize<'de> for SmsKitProvider {
 }
 
 /// Provider-specific configuration
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 pub enum SmsKitProviderConfig {
     Twilio {
         account_sid: String,
@@ -99,6 +99,38 @@ pub enum SmsKitProviderConfig {
         webhook_url: Option<String>,
     },
     Development,
+}
+
+impl std::fmt::Debug for SmsKitProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Twilio {
+                account_sid,
+                auth_token,
+                from_number,
+                webhook_url,
+            } => f
+                .debug_struct("Twilio")
+                .field("account_sid", account_sid)
+                .field("auth_token", &crate::utils::redact::redacted(auth_token))
+                .field("from_number", from_number)
+                .field("webhook_url", webhook_url)
+                .finish(),
+            Self::Plivo {
+                auth_id,
+                auth_token,
+                from_number,
+                webhook_url,
+            } => f
+                .debug_struct("Plivo")
+                .field("auth_id", auth_id)
+                .field("auth_token", &crate::utils::redact::redacted(auth_token))
+                .field("from_number", from_number)
+                .field("webhook_url", webhook_url)
+                .finish(),
+            Self::Development => f.write_str("Development"),
+        }
+    }
 }
 
 /// Manual `Deserialize`: same reasoning as `SmsKitProvider` above -- a

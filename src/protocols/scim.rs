@@ -359,7 +359,7 @@ pub struct AuthenticationScheme {
 // ─── SCIM Client ─────────────────────────────────────────────────────────────
 
 /// Configuration for the SCIM 2.0 client.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ScimClientConfig {
     /// Base URL of the SCIM service (e.g. `https://idp.example.com/scim/v2`).
     pub base_url: String,
@@ -369,6 +369,19 @@ pub struct ScimClientConfig {
 
     /// Request timeout in seconds.
     pub timeout_secs: u64,
+}
+
+impl std::fmt::Debug for ScimClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ScimClientConfig");
+        d.field("base_url", &self.base_url);
+        d.field(
+            "bearer_token",
+            &crate::utils::redact::redacted(&self.bearer_token),
+        );
+        d.field("timeout_secs", &self.timeout_secs);
+        d.finish()
+    }
 }
 
 /// SCIM 2.0 client for provisioning users and groups.

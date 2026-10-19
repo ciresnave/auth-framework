@@ -50,10 +50,25 @@ pub struct UpdateProfileRequest {
 /// Both fields are required.  The server will verify `current_password` before
 /// applying the change, and will validate `new_password` against the same
 /// complexity rules used during registration.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
+}
+
+impl std::fmt::Debug for ChangePasswordRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ChangePasswordRequest");
+        d.field(
+            "current_password",
+            &crate::utils::redact::redacted(&self.current_password),
+        );
+        d.field(
+            "new_password",
+            &crate::utils::redact::redacted(&self.new_password),
+        );
+        d.finish()
+    }
 }
 
 /// `GET /users/profile` — fetch the authenticated user's own profile.

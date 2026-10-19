@@ -48,7 +48,7 @@ pub struct EnvironmentConfig {
 }
 
 /// Database configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub host: String,
     pub port: u16,
@@ -58,6 +58,21 @@ pub struct DatabaseConfig {
     pub ssl_mode: String,
     pub pool_size: u32,
     pub timeout: u64,
+}
+
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DatabaseConfig");
+        d.field("host", &self.host);
+        d.field("port", &self.port);
+        d.field("database", &self.database);
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field("ssl_mode", &self.ssl_mode);
+        d.field("pool_size", &self.pool_size);
+        d.field("timeout", &self.timeout);
+        d.finish()
+    }
 }
 
 /// Server configuration

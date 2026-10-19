@@ -33,19 +33,42 @@ pub struct MfaSetupResponse {
 }
 
 /// Request payload for the TOTP verification step.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct MfaVerifyRequest {
     /// Six-digit TOTP code from the authenticator app.
     pub totp_code: String,
 }
 
+impl std::fmt::Debug for MfaVerifyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaVerifyRequest");
+        d.field(
+            "totp_code",
+            &crate::utils::redact::redacted(&self.totp_code),
+        );
+        d.finish()
+    }
+}
+
 /// Request payload to disable MFA (requires proof of identity).
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct MfaDisableRequest {
     /// Account password for re-authentication.
     pub password: String,
     /// A valid TOTP code confirming the user still controls the authenticator.
     pub totp_code: String,
+}
+
+impl std::fmt::Debug for MfaDisableRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaDisableRequest");
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field(
+            "totp_code",
+            &crate::utils::redact::redacted(&self.totp_code),
+        );
+        d.finish()
+    }
 }
 
 /// Current MFA enrollment status for the authenticated user.

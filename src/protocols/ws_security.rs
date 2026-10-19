@@ -175,7 +175,7 @@ pub struct KeyInfo {
 }
 
 /// WS-Security configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WsSecurityConfig {
     /// Whether to include timestamp
     pub include_timestamp: bool,
@@ -203,6 +203,25 @@ pub struct WsSecurityConfig {
 
     /// Actor value for delegation scenarios
     pub actor: Option<String>,
+}
+
+impl std::fmt::Debug for WsSecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WsSecurityConfig");
+        d.field("include_timestamp", &self.include_timestamp);
+        d.field("timestamp_ttl", &self.timestamp_ttl);
+        d.field("sign_message", &self.sign_message);
+        d.field("elements_to_sign", &self.elements_to_sign);
+        d.field("signing_certificate", &self.signing_certificate);
+        d.field(
+            "signing_private_key",
+            &crate::utils::redact::redacted(&self.signing_private_key),
+        );
+        d.field("include_certificate", &self.include_certificate);
+        d.field("saml_token_endpoint", &self.saml_token_endpoint);
+        d.field("actor", &self.actor);
+        d.finish()
+    }
 }
 
 /// WS-Security client for generating secure SOAP headers
