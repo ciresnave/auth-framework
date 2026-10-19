@@ -422,7 +422,16 @@ impl EmailManager {
         }
     }
 
+    /// Send email via SMTP; this build has no SMTP stack, so refuse rather than drop the message.
+    #[cfg(not(feature = "smtp"))]
+    async fn send_via_smtp(&self, _to_email: &str, _subject: &str, _body: &str) -> Result<()> {
+        Err(AuthError::config(
+            "SMTP delivery was requested but the `smtp` feature is not enabled",
+        ))
+    }
+
     /// Send email via SMTP using lettre
+    #[cfg(feature = "smtp")]
     async fn send_via_smtp(&self, to_email: &str, subject: &str, body: &str) -> Result<()> {
         if let ProviderConfig::Smtp {
             host,

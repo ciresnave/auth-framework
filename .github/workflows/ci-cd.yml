@@ -268,7 +268,7 @@ jobs:
           - name: admin-surfaces
             features: api-server,postgres-storage,redis-storage,cli,tui,web-gui,admin-binary
           - name: enterprise-auth
-            features: api-server,postgres-storage,redis-storage,enhanced-rbac,enhanced-device-flow,ldap-auth,otp-auth,passkeys,saml,unicode-support
+            features: api-server,postgres-storage,redis-storage,enhanced-rbac,enhanced-device-flow,ldap-auth,otp-auth,passkeys,saml,smtp,unicode-support
           - name: observability-performance
             features: api-server,postgres-storage,redis-storage,config-hot-reload,enhanced-observability,event-sourcing,performance-optimization
           - name: crypto-sms-test
