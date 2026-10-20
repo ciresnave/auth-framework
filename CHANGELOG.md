@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.33] - Unreleased
+
+### Fixed
+
+- **`ApiServer::build_router` no longer panics.** The routes with a path parameter (`/oauth/clients/:client_id`,
+  `/users/sessions/:session_id`, `/users/:user_id/profile`, `/admin/users/:user_id[/roles|/activate]`) were registered in the axum
+  0.7 `:param` form, which axum 0.8 (this crate's version) rejects while the router is being built, so no application could start
+  the API server. They now use `{param}`. A test builds the router and checks each parameter route matches.
+
 ## [0.4.32] - Unreleased
 
 ### Changed
