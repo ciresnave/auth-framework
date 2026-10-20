@@ -16,7 +16,7 @@ use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
 /// Token introspection request (RFC 7662)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenIntrospectionRequest {
     /// The string value of the token
     pub token: String,
@@ -28,6 +28,16 @@ pub struct TokenIntrospectionRequest {
     /// Additional parameters for extension specifications
     #[serde(flatten)]
     pub additional_params: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for TokenIntrospectionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenIntrospectionRequest");
+        d.field("token", &crate::utils::redact::redacted(&self.token));
+        d.field("token_type_hint", &self.token_type_hint);
+        d.field("additional_params", &self.additional_params);
+        d.finish()
+    }
 }
 
 /// Token introspection response (RFC 7662)

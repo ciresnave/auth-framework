@@ -144,11 +144,20 @@ pub struct ClientInfo {
 /// assert_eq!(req.token, "abc");
 /// assert!(req.token_type_hint.is_none());
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct RevokeRequest {
     pub token: String,
     #[serde(default)]
     pub token_type_hint: Option<String>, // "access_token" or "refresh_token"
+}
+
+impl std::fmt::Debug for RevokeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RevokeRequest");
+        d.field("token", &crate::utils::redact::redacted(&self.token));
+        d.field("token_type_hint", &self.token_type_hint);
+        d.finish()
+    }
 }
 
 /// OpenID Connect UserInfo response.

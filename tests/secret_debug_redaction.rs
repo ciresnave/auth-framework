@@ -193,3 +193,56 @@ fn an_absent_secret_still_reads_as_none() {
     let shown = format!("{c:?}");
     assert!(shown.contains("client_secret: None"), "{shown}");
 }
+
+/// Bodies that carry issued tokens: a `tracing` call or panic that formats one must not print them.
+#[test]
+fn token_carrying_bodies_do_not_print_tokens() {
+    use auth_framework::api::auth::{LogoutRequest, RefreshRequest};
+    use auth_framework::api::oauth2::RevokeRequest;
+    use auth_framework::providers::OAuthTokenResponse;
+    use auth_framework::server::oauth::device::DeviceTokenRequest;
+    use auth_framework::server::oauth::oauth2_server::TokenResponse;
+    use auth_framework::server::token_exchange::token_introspection::TokenIntrospectionRequest;
+
+    let t: TokenResponse = from_json(json!({
+        "access_token": S, "token_type": "type-visible", "expires_in": 60,
+        "refresh_token": S, "scope": null, "id_token": S
+    }));
+    redacts("TokenResponse", format!("{t:?}"), "type-visible");
+
+    let t: OAuthTokenResponse = from_json(json!({
+        "access_token": S, "token_type": "type-visible", "expires_in": 60,
+        "refresh_token": S, "scope": null, "id_token": null
+    }));
+    redacts("OAuthTokenResponse", format!("{t:?}"), "type-visible");
+
+    let r: RefreshRequest = from_json(json!({"refresh_token": S}));
+    let shown = format!("{r:?}");
+    assert!(
+        !shown.contains(S) && shown.contains("<redacted>"),
+        "{shown}"
+    );
+
+    let r: LogoutRequest = from_json(json!({"refresh_token": S}));
+    let shown = format!("{r:?}");
+    assert!(
+        !shown.contains(S) && shown.contains("<redacted>"),
+        "{shown}"
+    );
+
+    let r: RevokeRequest = from_json(json!({"token": S, "token_type_hint": "hint-visible"}));
+    redacts("RevokeRequest", format!("{r:?}"), "hint-visible");
+
+    let r: TokenIntrospectionRequest =
+        from_json(json!({"token": S, "token_type_hint": "hint-visible"}));
+    redacts(
+        "TokenIntrospectionRequest",
+        format!("{r:?}"),
+        "hint-visible",
+    );
+
+    let r: DeviceTokenRequest = from_json(json!({
+        "grant_type": "grant-visible", "device_code": S, "client_id": "c"
+    }));
+    redacts("DeviceTokenRequest", format!("{r:?}"), "grant-visible");
+}

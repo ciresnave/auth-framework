@@ -62,7 +62,7 @@ pub struct IndieAuthCallback {
 }
 
 /// IndieAuth token response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IndieAuthTokenResponse {
     /// The canonical profile URL.
     pub me: String,
@@ -74,6 +74,21 @@ pub struct IndieAuthTokenResponse {
     pub scope: Option<String>,
     /// Profile information.
     pub profile: Option<IndieAuthProfile>,
+}
+
+impl std::fmt::Debug for IndieAuthTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IndieAuthTokenResponse");
+        d.field("me", &self.me);
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("scope", &self.scope);
+        d.field("profile", &self.profile);
+        d.finish()
+    }
 }
 
 /// Profile information returned by IndieAuth.

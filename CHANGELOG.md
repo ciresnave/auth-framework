@@ -63,6 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc99 -- **`{:?}` of a value that carries an issued token no longer prints the token.** rc96 redacted configuration and
+  credential types; the request and response bodies that carry tokens still derived `Debug` over plain `String` fields, so a
+  `tracing` call or panic that formatted one printed the token. Now redacted: the access, refresh and ID tokens of the OAuth
+  `TokenResponse`, the CIBA, FAPI, token-exchange (both), JARM authorization, provider `OAuthTokenResponse`, IndieAuth and UMA
+  responses and the API and Axum `LoginResponse` / `RefreshResponse`; the refresh, revoke, logout, introspection and
+  verify-email request tokens; device codes in the device-authorization responses, token request and stored record; the step-up
+  session token; `RefreshRedemption`'s new refresh token; and `AuthTokenBuilder`. Each prints `<redacted>` (an unset optional
+  token still prints `None`); `Serialize` is unchanged. The audit that fails the build for a derived `Debug` over a plain
+  secret-named field now also matches these token names; the ACME challenge token (published by design) and the OAuth 1.0a
+  token identifier are allowlisted with reasons.
 - 0.6.0-rc96 -- **`{:?}` of a config or credential value no longer prints its secret.** Thirty-odd types derived `Debug`
   over a plain `String` / `Vec<u8>` secret field, so a `tracing` call, `dbg!` or panic message that formatted one printed the
   secret: `AuthConfig` (`secret`), `ClientConfig` and its builder, the OAuth `TokenRequest` (client secret, password, code,

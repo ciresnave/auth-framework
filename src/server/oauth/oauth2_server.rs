@@ -373,7 +373,7 @@ impl TokenRequest {
 }
 
 /// Token response structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub token_type: String,
@@ -381,6 +381,25 @@ pub struct TokenResponse {
     pub refresh_token: Option<String>,
     pub scope: Option<String>,
     pub id_token: Option<String>,
+}
+
+impl std::fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("scope", &self.scope);
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.finish()
+    }
 }
 
 /// Authorization request structure

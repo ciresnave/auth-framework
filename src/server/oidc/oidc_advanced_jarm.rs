@@ -1325,7 +1325,7 @@ impl AdvancedJarmManager {
 }
 
 /// Authorization response data to be included in JARM
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthorizationResponse {
     /// Authorization code
     pub code: Option<String>,
@@ -1345,6 +1345,25 @@ pub struct AuthorizationResponse {
     pub error: Option<String>,
     /// Error description
     pub error_description: Option<String>,
+}
+
+impl std::fmt::Debug for AuthorizationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthorizationResponse");
+        d.field("code", &self.code);
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.field("state", &self.state);
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field("scope", &self.scope);
+        d.field("error", &self.error);
+        d.field("error_description", &self.error_description);
+        d.finish()
+    }
 }
 
 /// JARM response structure

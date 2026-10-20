@@ -1448,7 +1448,7 @@ struct IdTokenHintClaims {
 }
 
 /// CIBA token response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CibaTokenResponse {
     /// Access token
     pub access_token: String,
@@ -1462,6 +1462,25 @@ pub struct CibaTokenResponse {
     pub id_token: Option<String>,
     /// Granted scopes
     pub scope: Option<String>,
+}
+
+impl std::fmt::Debug for CibaTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CibaTokenResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("expires_in", &self.expires_in);
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.field("scope", &self.scope);
+        d.finish()
+    }
 }
 
 #[cfg(test)]

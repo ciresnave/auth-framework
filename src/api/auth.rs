@@ -44,7 +44,7 @@ impl std::fmt::Debug for LoginRequest {
 /// Contains access and refresh tokens plus user metadata and adaptive risk
 /// information.  Clients should inspect `login_risk_level` and
 /// `security_warnings` to decide whether to prompt for additional verification.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: String,
@@ -57,6 +57,26 @@ pub struct LoginResponse {
     /// Non-blocking security advisories for the authenticated session.
     /// Empty in the common case; populated when adaptive risk policy detects elevated risk.
     pub security_warnings: Vec<String>,
+}
+
+impl std::fmt::Debug for LoginResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LoginResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field("user", &self.user);
+        d.field("login_risk_level", &self.login_risk_level);
+        d.field("security_warnings", &self.security_warnings);
+        d.finish()
+    }
 }
 
 /// User information embedded in login and validation responses.
@@ -142,14 +162,25 @@ async fn build_login_response(
 }
 
 /// Token refresh request.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct RefreshRequest {
     /// The refresh token issued during a previous login.
     pub refresh_token: String,
 }
 
+impl std::fmt::Debug for RefreshRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RefreshRequest");
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.finish()
+    }
+}
+
 /// Token refresh response.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct RefreshResponse {
     /// The newly issued access token.
     pub access_token: String,
@@ -161,12 +192,40 @@ pub struct RefreshResponse {
     pub refresh_token: String,
 }
 
+impl std::fmt::Debug for RefreshResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RefreshResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.finish()
+    }
+}
+
 /// Logout request.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct LogoutRequest {
     /// Optional refresh token to revoke alongside the access token.
     #[serde(default)]
     pub refresh_token: Option<String>,
+}
+
+impl std::fmt::Debug for LogoutRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LogoutRequest");
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.finish()
+    }
 }
 
 /// Compute a login risk level string from request headers.
