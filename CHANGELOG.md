@@ -63,6 +63,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc101 -- **`{:?}` of MFA enrolment material no longer prints backup codes or the TOTP URI.** Lists of codes and
+  QR / `otpauth://` payloads (which embed the TOTP secret) were plain `String` / `Vec<String>` fields that the earlier
+  redaction audit's name match and `String`-only type match missed. Now redacted: `MfaSetupResponse` (`qr_code`,
+  `backup_codes`), `BackupCodeVerifyRequest`, `UserBackupCodes` (`codes`, `used_codes`), `MfaMethodData` (the TOTP QR URL and
+  the backup-code list; its other variants print as before) and `EnvironmentConfig.secrets`. The audit now matches
+  `Vec<String>` fields and the names `backup_codes`, `recovery_codes`, `seed`, `mnemonic`, `qr_code`, `otpauth` and
+  `*_codes`; the device-flow QR code (public verification URI and user code, shown on screen) is allowlisted with a reason.
+  `Serialize` is unchanged.
 - 0.6.0-rc99 -- **`{:?}` of a value that carries an issued token no longer prints the token.** rc96 redacted configuration and
   credential types; the request and response bodies that carry tokens still derived `Debug` over plain `String` fields, so a
   `tracing` call or panic that formatted one printed the token. Now redacted: the access, refresh and ID tokens of the OAuth

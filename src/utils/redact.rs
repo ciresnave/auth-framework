@@ -32,6 +32,12 @@ impl Secret for String {
     }
 }
 
+impl Secret for Vec<String> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
 impl Secret for Vec<u8> {
     fn redacted(&self) -> Redacted {
         Redacted::Present

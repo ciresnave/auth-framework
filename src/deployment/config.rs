@@ -38,13 +38,25 @@ pub enum ConfigFormat {
 }
 
 /// Environment-specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EnvironmentConfig {
     pub name: String,
     pub variables: HashMap<String, String>,
     pub overrides: HashMap<String, serde_json::Value>,
     pub secrets: Vec<String>,
     pub required_vars: Vec<String>,
+}
+
+impl std::fmt::Debug for EnvironmentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnvironmentConfig");
+        d.field("name", &self.name);
+        d.field("variables", &self.variables);
+        d.field("overrides", &self.overrides);
+        d.field("secrets", &crate::utils::redact::redacted(&self.secrets));
+        d.field("required_vars", &self.required_vars);
+        d.finish()
+    }
 }
 
 /// Database configuration
