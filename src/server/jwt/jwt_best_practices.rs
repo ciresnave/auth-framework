@@ -168,6 +168,8 @@ pub fn get_algorithm_crypto_strength(algorithm: &Algorithm) -> CryptoStrength {
         Algorithm::PS256 => CryptoStrength::Strong,
         Algorithm::PS384 => CryptoStrength::High,
         Algorithm::PS512 => CryptoStrength::High,
+        // `Algorithm` is `#[non_exhaustive]`: an algorithm this crate has not classified is not trusted.
+        _ => CryptoStrength::Weak,
     }
 }
 
@@ -427,6 +429,32 @@ impl JwtBestPracticesValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every algorithm this crate knows has an explicit strength, and symmetric/asymmetric agree.
+    #[test]
+    fn strength_is_defined_for_every_known_algorithm() {
+        use CryptoStrength::*;
+        for (alg, want) in [
+            (Algorithm::HS256, Acceptable),
+            (Algorithm::HS384, Strong),
+            (Algorithm::HS512, Strong),
+            (Algorithm::RS256, Acceptable),
+            (Algorithm::RS384, Strong),
+            (Algorithm::RS512, Strong),
+            (Algorithm::ES256, Strong),
+            (Algorithm::ES384, High),
+            (Algorithm::EdDSA, High),
+            (Algorithm::PS256, Strong),
+            (Algorithm::PS384, High),
+            (Algorithm::PS512, High),
+        ] {
+            assert_eq!(get_algorithm_crypto_strength(&alg), want, "{alg:?}");
+            assert_eq!(
+                is_algorithm_symmetric(&alg),
+                matches!(alg, Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512)
+            );
+        }
+    }
 
     #[test]
     fn test_algorithm_strength_classification() {

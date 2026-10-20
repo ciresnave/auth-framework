@@ -1386,6 +1386,8 @@ fn algorithm_to_string(alg: &Algorithm) -> String {
         Algorithm::PS384 => "PS384".to_string(),
         Algorithm::PS512 => "PS512".to_string(),
         Algorithm::EdDSA => "EdDSA".to_string(),
+        // `Algorithm` is `#[non_exhaustive]`; fall back to its `Debug` name for one added later.
+        other => format!("{other:?}"),
     }
 }
 
@@ -1393,6 +1395,27 @@ fn algorithm_to_string(alg: &Algorithm) -> String {
 mod tests {
     use super::*;
     use crate::storage::MemoryStorage;
+
+    /// The JOSE name of every algorithm this crate knows, as it appears in discovery documents.
+    #[test]
+    fn algorithm_names_are_the_jose_names() {
+        for (alg, want) in [
+            (Algorithm::HS256, "HS256"),
+            (Algorithm::HS384, "HS384"),
+            (Algorithm::HS512, "HS512"),
+            (Algorithm::ES256, "ES256"),
+            (Algorithm::ES384, "ES384"),
+            (Algorithm::RS256, "RS256"),
+            (Algorithm::RS384, "RS384"),
+            (Algorithm::RS512, "RS512"),
+            (Algorithm::PS256, "PS256"),
+            (Algorithm::PS384, "PS384"),
+            (Algorithm::PS512, "PS512"),
+            (Algorithm::EdDSA, "EdDSA"),
+        ] {
+            assert_eq!(algorithm_to_string(&alg), want);
+        }
+    }
 
     #[tokio::test]
     async fn userinfo_refuses_a_deactivated_or_unknown_account() {
