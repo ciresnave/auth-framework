@@ -23,6 +23,11 @@
         # this release line does not take.
         "RUSTSEC-2024-0436",
         "RUSTSEC-2025-0123",
+        # `basic-toml` unmaintained (RUSTSEC-2026-0374, no safe upgrade): a build-time proc-macro
+        # dependency of askama_derive, which only the `web-gui` feature enables. The newest askama
+        # (0.16.1) still depends on it, so bumping this line's askama 0.14 would not remove it. Nothing
+        # is linked into a built artifact. Remove when askama drops it.
+        "RUSTSEC-2026-0374",
     ]
 
 [licenses]
