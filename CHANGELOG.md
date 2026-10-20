@@ -147,6 +147,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc102 -- **Dependencies: semver-compatible lockfile refresh (`cargo update`).** 32 locked packages moved to their newest
+  compatible release, among them `tokio` 1.54.0, `actix-web` 4.17.0 (with `actix-http` 3.19 and `actix-server` 2.10),
+  `role-system` 1.3.0, `rustls-webpki` 0.103.16, `crc32fast` 1.5.3 and `unicode-normalization` 0.1.26. No manifest change and no
+  source change.
 - 0.6.0-rc100 -- **CI: `cargo deny` ignores RUSTSEC-2026-0374 (`basic-toml` unmaintained).** The advisory (published 2026-09-26, no
   safe upgrade) turned the "Security Audit (deny)" job red. `basic-toml` is a build-time proc-macro dependency of `askama_derive`,
   and askama 0.16.1 -- the newest release -- still depends on it; only the `web-gui` feature enables askama, and nothing is linked

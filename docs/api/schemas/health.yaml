@@ -25,7 +25,7 @@ HealthStatus:
                 memory: "healthy"
         version:
             type: string
-            example: "0.6.0-rc101"
+            example: "0.6.0-rc102"
         uptime:
             type: string
             example: "3h 12m 4s"
@@ -68,7 +68,7 @@ DetailedHealthStatus:
             $ref: "#/SystemHealth"
         version:
             type: string
-            example: "0.6.0-rc101"
+            example: "0.6.0-rc102"
         uptime:
             type: string
             example: "3h 12m 4s"
