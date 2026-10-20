@@ -147,6 +147,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc103 -- **BREAKING (dependency in the public API): `jsonwebtoken` 10.4 -> 11.1.** Public items that take or return
+  `jsonwebtoken` types (`jsonwebtoken::Algorithm`, `DecodingKey`, `EncodingKey` in `security::secure_jwt` and the JWT helpers)
+  now use 11.1's, so a downstream crate that names them must move to `jsonwebtoken` 11 as well. Wire formats are unchanged:
+  tokens signed under 10.4 verify under 11.1 (a hand-signed HS256 known-answer token is verified, and a one-character-tampered
+  copy refused, on both versions) and the `aws_lc_rs` backend is kept, so `rsa` is still absent from the dependency graph.
+  `jsonwebtoken::Algorithm` is now `#[non_exhaustive]`, so the three matches over it each gained a fail-closed arm: key
+  selection refuses an algorithm it does not know (`AuthError::Configuration`), the algorithm-strength classification rates it
+  `Weak`, and the OIDC algorithm-name helper falls back to its `Debug` name. Tests added before the upgrade pin all twelve known
+  algorithms in each of the three places.
 - 0.6.0-rc102 -- **Dependencies: semver-compatible lockfile refresh (`cargo update`).** 32 locked packages moved to their newest
   compatible release, among them `tokio` 1.54.0, `actix-web` 4.17.0 (with `actix-http` 3.19 and `actix-server` 2.10),
   `role-system` 1.3.0, `rustls-webpki` 0.103.16, `crc32fast` 1.5.3 and `unicode-normalization` 0.1.26. No manifest change and no

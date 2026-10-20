@@ -421,6 +421,14 @@ impl SecureJwtValidator {
                     suggested_fix: None,
                 })
             }
+            // `Algorithm` is `#[non_exhaustive]`: an algorithm added later is refused, never defaulted.
+            other => Err(AuthError::Configuration {
+                message: format!("Unsupported JWT algorithm {other:?}"),
+                help: None,
+                docs_url: None,
+                source: None,
+                suggested_fix: None,
+            }),
         }
     }
 
@@ -724,6 +732,59 @@ mod tests {
             sid: None,
             client_id: None,
             auth_ctx_hash: None,
+        }
+    }
+
+    /// Known answer: an HS256 token produced outside this crate (HMAC-SHA256 by hand, so by no
+    /// version of jsonwebtoken) still verifies, and the same token with a flipped signature does not.
+    /// It must pass on every jsonwebtoken major this crate supports, so tokens issued before an
+    /// upgrade keep verifying after it.
+    #[test]
+    fn a_token_signed_by_hand_verifies_and_a_tampered_one_does_not() {
+        #[derive(serde::Deserialize)]
+        struct C {
+            sub: String,
+        }
+        const TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIiwiZXhwIjo0MTAyNDQ0ODAwfQ.ZZuykscIyOZdHswIzwjQd0kMJUt86iOkkW7Y-uoQPz4";
+        let key = DecodingKey::from_secret(b"known-answer-secret-for-compat-test-32b!");
+        let mut v = jsonwebtoken::Validation::new(Algorithm::HS256);
+        v.validate_exp = true;
+        v.required_spec_claims.clear();
+        let ok = jsonwebtoken::decode::<C>(TOKEN, &key, &v).expect("hand-signed token verifies");
+        assert_eq!(ok.claims.sub, "user123");
+
+        let (head, sig) = TOKEN.rsplit_once('.').unwrap();
+        let flipped = if sig.starts_with('A') { "B" } else { "A" };
+        let tampered = format!("{head}.{flipped}{}", &sig[1..]);
+        assert!(jsonwebtoken::decode::<C>(&tampered, &key, &v).is_err());
+    }
+
+    /// Key selection per algorithm: HMAC uses the configured secret; every asymmetric algorithm needs
+    /// its public key configured and is refused (not defaulted) without one.
+    #[test]
+    fn decoding_key_selection_covers_every_known_algorithm() {
+        let v = SecureJwtValidator::new(test_config()).unwrap();
+        for alg in [Algorithm::HS256, Algorithm::HS384, Algorithm::HS512] {
+            assert!(v.decoding_key_for_algorithm(alg).is_ok(), "{alg:?}");
+        }
+        for alg in [
+            Algorithm::RS256,
+            Algorithm::RS384,
+            Algorithm::RS512,
+            Algorithm::PS256,
+            Algorithm::PS384,
+            Algorithm::PS512,
+            Algorithm::ES256,
+            Algorithm::ES384,
+            Algorithm::EdDSA,
+        ] {
+            assert!(
+                matches!(
+                    v.decoding_key_for_algorithm(alg),
+                    Err(AuthError::Configuration { .. })
+                ),
+                "{alg:?} without a configured public key must be refused"
+            );
         }
     }
 

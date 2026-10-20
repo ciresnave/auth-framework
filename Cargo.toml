@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc102"
+  version       = "0.6.0-rc103"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -94,7 +94,7 @@
   # crate (RUSTSEC-2023-0071, an open, unpatched RSA timing sidechannel --
   # see deny.toml's prior disposition of it). "aws_lc_rs" covers the exact
   # same Algorithm set (RS*/PS*/ES*/EdDSA/HS*, confirmed against
-  # jsonwebtoken 10.4.0's src/crypto/aws_lc/*.rs match arms) through AWS-LC
+  # jsonwebtoken 10.4.0's and again 11.1.0's src/crypto/aws_lc/*.rs match arms) through AWS-LC
   # (a BoringSSL-derived C/assembly implementation), which is not the `rsa`
   # crate and is not subject to this advisory.
   #
@@ -105,7 +105,7 @@
   # cleanly but PANICS AT RUNTIME on the very first JWT sign or verify
   # call, of any algorithm. Caught by reading jsonwebtoken's own source,
   # not by trusting the build -- do the same before changing this again.
-  jsonwebtoken = { version = "10.3", features = ["aws_lc_rs"] }
+  jsonwebtoken = { version = "11.1", features = ["aws_lc_rs"] }
 
   # HTTP client for OAuth flows
   reqwest = { version = "0.13.2", features = ["json", "form"] }
