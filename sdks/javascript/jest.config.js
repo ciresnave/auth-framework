@@ -1,14 +1,12 @@
 export default {
   preset: 'ts-jest',
   testEnvironment: 'jsdom',
-  extensionsToTreatAsEsm: ['.ts'],
-  moduleNameMapping: {
-    '^(\\.{1,2}/.*)\\.js$': '$1',
+  moduleNameMapper: {
+    '^(\.{1,2}/.*)\.js$': '$1',
   },
   transform: {
-    '^.+\\.tsx?$': ['ts-jest', {
-      useESM: true,
-    }],
+    // The package builds ES modules (rollup); the tests run as CommonJS.
+    '^.+\.tsx?$': ['ts-jest', { tsconfig: { module: 'commonjs', exactOptionalPropertyTypes: true } }],
   },
   testMatch: [
     '**/__tests__/**/*.test.ts',

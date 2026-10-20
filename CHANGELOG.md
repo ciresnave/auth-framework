@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc108 -- **The JavaScript SDK (`sdks/javascript`) typechecks, builds and tests again, and CI now runs it.** It had no CI and had
+  rotted: `tsc` reported three `exactOptionalPropertyTypes` errors (`AuthFrameworkError.statusCode`, `RateLimitError.retryAfter`
+  and the request config in `base-client.ts`), `npm run build` failed because `tslib` (required by `@rollup/plugin-typescript`)
+  was not a dependency, and `npm test` could not start (`jest-environment-jsdom` was not installed, `jest.config.js` spelled
+  `moduleNameMapper` as `moduleNameMapping`, and `jest.setup.ts` imported the environment package). Fixed, with twelve tests added
+  (error mapping and retry rules, and the client's request headers through axios' real pipeline with a stubbed adapter).
+  `package.json`'s `main` pointed at `dist/index.js`, which the build never produces; it is now `dist/index.cjs.js`. A new
+  "JavaScript SDK" CI job runs install, typecheck, test, build, a check that `main`/`module`/`types` exist and load, and
+  `npm audit --omit=dev`. The package is not published to npm, so nothing needs republishing; its version follows the crate.
 - 0.6.0-rc107 -- **`zeroize` 1.9.1 or later is now required, because earlier versions print `Zeroizing` secrets in `{:?}`.** `Zeroizing<T>`
   hides its value from `Debug` only from zeroize 1.9.1 (2026-10-06); 1.9.0 and earlier derive `Debug` and print
   `Zeroizing("<the secret>")`. The manifest allowed 1.8.2, so a build whose lock resolved an older zeroize printed every

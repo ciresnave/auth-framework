@@ -1,8 +1,8 @@
 {
   "name": "@authframework/js-sdk",
-  "version": "0.6.0-rc105",
+  "version": "0.6.0-rc108",
   "description": "Official JavaScript/TypeScript SDK for AuthFramework REST API",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs.js",
   "types": "dist/index.d.ts",
   "module": "dist/index.esm.js",
   "files": [
@@ -47,19 +47,21 @@
   },
   "homepage": "https://github.com/cires/AuthFramework#readme",
   "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-typescript": "^11.1.5",
     "@types/jest": "^29.5.8",
     "@types/node": "^20.9.0",
     "@typescript-eslint/eslint-plugin": "^6.12.0",
     "@typescript-eslint/parser": "^6.12.0",
     "eslint": "^8.54.0",
     "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
     "rimraf": "^5.0.5",
     "rollup": "^4.5.0",
-    "@rollup/plugin-typescript": "^11.1.5",
-    "@rollup/plugin-node-resolve": "^15.2.3",
-    "@rollup/plugin-commonjs": "^25.0.7",
     "rollup-plugin-dts": "^6.1.0",
     "ts-jest": "^29.1.1",
+    "tslib": "^2.8.1",
     "typescript": "^5.2.2"
   },
   "dependencies": {
