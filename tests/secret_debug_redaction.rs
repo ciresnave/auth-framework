@@ -246,3 +246,53 @@ fn token_carrying_bodies_do_not_print_tokens() {
     }));
     redacts("DeviceTokenRequest", format!("{r:?}"), "grant-visible");
 }
+
+/// MFA enrolment material: backup codes, the `otpauth://` URI / QR payload (it embeds the TOTP secret).
+#[test]
+fn mfa_enrolment_material_is_not_printed() {
+    use auth_framework::api::mfa::{BackupCodeVerifyRequest, MfaSetupResponse};
+    use auth_framework::authentication::mfa::MfaMethodData;
+    use zeroize::Zeroizing;
+
+    let r = MfaSetupResponse {
+        qr_code: format!("otpauth://totp/x?secret={S}"),
+        secret: Zeroizing::new("zeroized".into()),
+        backup_codes: vec![S.into(), S.into()],
+    };
+    let shown = format!("{r:?}");
+    assert!(
+        !shown.contains(S) && shown.contains("<redacted>"),
+        "{shown}"
+    );
+
+    let r: BackupCodeVerifyRequest = from_json(json!({"backup_code": S}));
+    let shown = format!("{r:?}");
+    assert!(
+        !shown.contains(S) && shown.contains("<redacted>"),
+        "{shown}"
+    );
+
+    let m = MfaMethodData::Totp {
+        secret_key: Zeroizing::new("zeroized".into()),
+        qr_code_url: format!("otpauth://totp/x?secret={S}"),
+    };
+    let shown = format!("{m:?}");
+    assert!(!shown.contains(S) && shown.contains("Totp"), "{shown}");
+
+    let m = MfaMethodData::BackupCodes {
+        codes: vec![S.into()],
+        used_count: 7,
+    };
+    let shown = format!("{m:?}");
+    assert!(
+        !shown.contains(S) && shown.contains("used_count: 7"),
+        "{shown}"
+    );
+
+    // Control: a variant with no secret still prints its data.
+    let m = MfaMethodData::Email {
+        email: "visible@example.com".into(),
+        is_verified: true,
+    };
+    assert!(format!("{m:?}").contains("visible@example.com"));
+}

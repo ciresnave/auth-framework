@@ -776,7 +776,7 @@ fn test_examples_are_complete() {
 }
 
 /// Types allowed to derive `Debug` although a field looks like a secret: `(file suffix, type, why)`.
-const DERIVED_DEBUG_SECRET_ALLOWLIST: [(&str, &str, &str); 3] = [
+const DERIVED_DEBUG_SECRET_ALLOWLIST: [(&str, &str, &str); 4] = [
     (
         "src/admin/mod.rs",
         "UserAction",
@@ -786,6 +786,11 @@ const DERIVED_DEBUG_SECRET_ALLOWLIST: [(&str, &str, &str); 3] = [
         "src/protocols/acme.rs",
         "AcmeChallenge",
         "the ACME challenge token is published at /.well-known/acme-challenge/<token> by design",
+    ),
+    (
+        "src/methods/enhanced_device/mod.rs",
+        "DeviceFlowInstructions",
+        "the QR code encodes the public verification URI and the user code, which the flow shows on screen by design",
     ),
     (
         "src/protocols/oauth1.rs",
@@ -803,14 +808,14 @@ fn derived_debug_secret_fields(file: &str, content: &str) -> Vec<(String, usize,
     let field = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*(.+?),?\s*(?://.*)?$")
         .unwrap();
     let secret_name = regex::Regex::new(
-        r"(?i)(secret|password|passwd|api_key|private_key|signing_key|encryption_key|master_key|jwt_key|shared_key|access_key|passphrase|_pem|totp_code|(?:^|_)auth_token|bearer_token|(?:^|_)(?:access|refresh|id|session|api)_token$|^token$|device_code|authorization_code)",
+        r"(?i)(secret|password|passwd|api_key|private_key|signing_key|encryption_key|master_key|jwt_key|shared_key|access_key|passphrase|_pem|totp_code|(?:^|_)auth_token|bearer_token|(?:^|_)(?:access|refresh|id|session|api)_token$|^token$|device_code|authorization_code|backup_codes?|recovery_codes?|(?:^|_)seed|mnemonic|(?:^|_)pin$|(?:^|_)otp$|_codes$|^codes$|qr_code|otpauth|provisioning_uri)",
     )
     .unwrap();
     let not_secret = regex::Regex::new(
         r"(?i)(hash|policy|min_|require|length|expir|_at$|_id$|disallow|allowed|banned|strength|type$|public)",
     )
     .unwrap();
-    let plain = regex::Regex::new(r"^(?:Option<)?(?:String|Vec<u8>)>?$").unwrap();
+    let plain = regex::Regex::new(r"^(?:Option<)?(?:String|Vec<u8>|Vec<String>)>?$").unwrap();
 
     let lines = production_lines(file, content);
     let mut out = Vec::new();
@@ -920,6 +925,20 @@ mod derived_debug_scanner_tests {
 
         let by_hand = "#[derive(Clone)]\npub struct A {\n    pub client_secret: Option<String>,\n}\nimpl std::fmt::Debug for A {}\n";
         assert!(derived_debug_secret_fields("fixture.rs", by_hand).is_empty());
+    }
+
+    #[test]
+    fn flags_a_list_of_codes_and_a_qr_payload() {
+        let src = "#[derive(Debug)]
+pub struct C {
+    pub backup_codes: Vec<String>,
+    pub qr_code_url: String,
+    pub label: String,
+}
+";
+        let hits = derived_debug_secret_fields("fixture.rs", src);
+        let fields: Vec<&str> = hits.iter().map(|(_, _, f)| f.as_str()).collect();
+        assert_eq!(fields, ["backup_codes", "qr_code_url"], "{hits:?}");
     }
 
     #[test]

@@ -99,7 +99,7 @@ pub struct UserMfaMethod {
 }
 
 /// Method-specific configuration data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum MfaMethodData {
     Totp {
         /// Base32-encoded secret key
@@ -133,6 +133,50 @@ pub enum MfaMethodData {
         /// Number of codes used
         used_count: u32,
     },
+}
+
+impl std::fmt::Debug for MfaMethodData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Totp {
+                secret_key,
+                qr_code_url,
+            } => f
+                .debug_struct("Totp")
+                .field("secret_key", secret_key)
+                .field("qr_code_url", &redacted(qr_code_url))
+                .finish(),
+            Self::Sms {
+                phone_number,
+                is_verified,
+            } => f
+                .debug_struct("Sms")
+                .field("phone_number", phone_number)
+                .field("is_verified", is_verified)
+                .finish(),
+            Self::Email { email, is_verified } => f
+                .debug_struct("Email")
+                .field("email", email)
+                .field("is_verified", is_verified)
+                .finish(),
+            Self::WebAuthn {
+                credential_id,
+                public_key,
+                counter,
+            } => f
+                .debug_struct("WebAuthn")
+                .field("credential_id", credential_id)
+                .field("public_key", public_key)
+                .field("counter", counter)
+                .finish(),
+            Self::BackupCodes { codes, used_count } => f
+                .debug_struct("BackupCodes")
+                .field("codes", &redacted(codes))
+                .field("used_count", used_count)
+                .finish(),
+        }
+    }
 }
 
 /// MFA verification result

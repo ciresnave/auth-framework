@@ -65,7 +65,7 @@ pub struct BackupCodeConfig {
     pub rotate_on_use: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UserBackupCodes {
     pub user_id: String,
     pub codes: Vec<String>,
@@ -73,6 +73,22 @@ pub struct UserBackupCodes {
     pub generated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub config: BackupCodeConfig,
+}
+
+impl std::fmt::Debug for UserBackupCodes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("UserBackupCodes");
+        d.field("user_id", &self.user_id);
+        d.field("codes", &crate::utils::redact::redacted(&self.codes));
+        d.field(
+            "used_codes",
+            &crate::utils::redact::redacted(&self.used_codes),
+        );
+        d.field("generated_at", &self.generated_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("config", &self.config);
+        d.finish()
+    }
 }
 
 // Traits for storage and management

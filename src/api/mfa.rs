@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 ///
 /// The client must render the `qr_code` (or display `secret`) to the user and
 /// prompt for a TOTP code to complete enrollment via the verify endpoint.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct MfaSetupResponse {
     /// `otpauth://` URI suitable for a QR code.
     pub qr_code: String,
@@ -30,6 +30,19 @@ pub struct MfaSetupResponse {
     pub secret: Zeroizing<String>,
     /// One-time recovery codes — store securely; shown only once.
     pub backup_codes: Vec<String>,
+}
+
+impl std::fmt::Debug for MfaSetupResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaSetupResponse");
+        d.field("qr_code", &crate::utils::redact::redacted(&self.qr_code));
+        d.field("secret", &self.secret);
+        d.field(
+            "backup_codes",
+            &crate::utils::redact::redacted(&self.backup_codes),
+        );
+        d.finish()
+    }
 }
 
 /// Request payload for the TOTP verification step.
@@ -522,10 +535,21 @@ pub async fn regenerate_backup_codes(
 /// Verifies a backup code for the authenticated user and consumes it (one-time
 /// use).  This can be used in lieu of a TOTP code when the user has lost
 /// access to their authenticator app.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct BackupCodeVerifyRequest {
     /// The plaintext backup code to verify.
     pub backup_code: String,
+}
+
+impl std::fmt::Debug for BackupCodeVerifyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BackupCodeVerifyRequest");
+        d.field(
+            "backup_code",
+            &crate::utils::redact::redacted(&self.backup_code),
+        );
+        d.finish()
+    }
 }
 
 /// Handler for `POST /mfa/verify-backup-code`.
