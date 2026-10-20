@@ -30,6 +30,12 @@
         # empty DATA frames) are not listed: serde_yaml was replaced by serde-saphyr, and
         # actix-web is used without its default `http2` feature, so neither crate is in
         # Cargo.lock any more. The ban below keeps a vulnerable h2 from coming back.
+        # RUSTSEC-2026-0374 (basic-toml unmaintained, no safe upgrade): it is a build-time dependency of
+        # askama_derive 0.16.1 -- the newest askama -- which only the `web-gui` feature (the admin web UI's
+        # templates) enables. It is a proc-macro dependency: it parses template config at compile time and
+        # is not linked into any built artifact. Nothing in this crate calls it; remove this entry when
+        # askama stops depending on it.
+        { id = "RUSTSEC-2026-0374", reason = "build-time proc-macro dependency of the newest askama; web-gui only; not linked into artifacts" },
     ]
 
 [licenses]

@@ -139,6 +139,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc100 -- **CI: `cargo deny` ignores RUSTSEC-2026-0374 (`basic-toml` unmaintained).** The advisory (published 2026-09-26, no
+  safe upgrade) turned the "Security Audit (deny)" job red. `basic-toml` is a build-time proc-macro dependency of `askama_derive`,
+  and askama 0.16.1 -- the newest release -- still depends on it; only the `web-gui` feature enables askama, and nothing is linked
+  into a built artifact. `deny.toml` now lists the advisory with that reason and a removal condition (askama dropping it). No code
+  change.
 - 0.6.0-rc98 -- **BREAKING: SMTP delivery is now behind an off-by-default `smtp` feature.** `lettre` (with its pool, hostname
   and ring-based rustls TLS) was a mandatory dependency, so even a consumer that only needs tokens or TOTP compiled an SMTP
   stack. It is now optional; enable `smtp` to keep SMTP alert emails and SMTP-delivered MFA email. Without the feature the
