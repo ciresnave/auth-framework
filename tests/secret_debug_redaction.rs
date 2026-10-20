@@ -264,6 +264,9 @@ fn mfa_enrolment_material_is_not_printed() {
         !shown.contains(S) && shown.contains("<redacted>"),
         "{shown}"
     );
+    // The TOTP secret is a `Zeroizing<String>`: pin that its Debug hides the value too, so a
+    // change in the zeroize crate (Cargo.toml allows >= 1.8.2) cannot expose it unnoticed.
+    assert!(!shown.contains("zeroized"), "TOTP secret printed: {shown}");
 
     let r: BackupCodeVerifyRequest = from_json(json!({"backup_code": S}));
     let shown = format!("{r:?}");
@@ -278,6 +281,7 @@ fn mfa_enrolment_material_is_not_printed() {
     };
     let shown = format!("{m:?}");
     assert!(!shown.contains(S) && shown.contains("Totp"), "{shown}");
+    assert!(!shown.contains("zeroized"), "TOTP secret printed: {shown}");
 
     let m = MfaMethodData::BackupCodes {
         codes: vec![S.into()],
@@ -295,4 +299,100 @@ fn mfa_enrolment_material_is_not_printed() {
         is_verified: true,
     };
     assert!(format!("{m:?}").contains("visible@example.com"));
+}
+
+/// Types the name-based audit missed: a password in a field called `value`, and OAuth codes and
+/// refresh-token ids, which are also the keys of the storage maps (so formatting the store printed
+/// every live code and token id twice).
+#[tokio::test]
+async fn ws_security_password_and_oauth_codes_are_not_printed() {
+    use auth_framework::protocols::ws_security::{PasswordType, UsernamePassword};
+    use auth_framework::server::oauth::oauth2_enhanced_storage::{
+        EnhancedAuthorizationCode, EnhancedTokenStorage, RefreshToken, UserCredentials,
+    };
+    use std::time::Duration;
+
+    let p = UsernamePassword {
+        value: S.into(),
+        password_type: PasswordType::PasswordText,
+    };
+    let shown = format!("{p:?}");
+    assert!(
+        !shown.contains(S) && shown.contains("<redacted>"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("PasswordText"),
+        "non-secret field lost: {shown}"
+    );
+
+    let code = EnhancedAuthorizationCode::new(
+        "client-visible".into(),
+        "user".into(),
+        "https://rp.example/cb".into(),
+        vec!["read".into()],
+        None,
+        None,
+        Duration::from_secs(60),
+    );
+    let refresh = RefreshToken::new(
+        "client-visible".into(),
+        "user".into(),
+        vec!["read".into()],
+        Duration::from_secs(60),
+    );
+    let shown = format!("{code:?}");
+    assert!(
+        !shown.contains(&code.code),
+        "authorization code printed: {shown}"
+    );
+    assert!(
+        shown.contains("client-visible"),
+        "non-secret field lost: {shown}"
+    );
+    let shown = format!("{refresh:?}");
+    assert!(
+        !shown.contains(&refresh.token_id),
+        "refresh token id printed: {shown}"
+    );
+    assert!(
+        shown.contains("client-visible"),
+        "non-secret field lost: {shown}"
+    );
+
+    let creds = UserCredentials {
+        username: "name-visible".into(),
+        password_hash: S.into(),
+        scopes: vec![],
+        is_active: true,
+        email: None,
+    };
+    let shown = format!("{creds:?}");
+    assert!(
+        !shown.contains(S) && shown.contains("name-visible"),
+        "{shown}"
+    );
+
+    // The store: its maps are keyed by the code / token id.
+    let (code_value, refresh_value) = (code.code.clone(), refresh.token_id.clone());
+    let mut store = EnhancedTokenStorage::new();
+    store.store_authorization_code(code).await.unwrap();
+    store.store_refresh_token(refresh).await.unwrap();
+    let shown = format!("{store:?}");
+    assert!(
+        !shown.contains(&code_value),
+        "store prints an authorization code: {shown}"
+    );
+    assert!(
+        !shown.contains(&refresh_value),
+        "store prints a refresh token id: {shown}"
+    );
+    // Control: the store really holds them (so the absence above is not an empty store).
+    assert!(
+        store
+            .get_authorization_code(&code_value)
+            .await
+            .unwrap()
+            .is_some()
+    );
 }

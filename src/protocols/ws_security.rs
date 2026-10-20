@@ -68,13 +68,22 @@ pub struct UsernameToken {
 }
 
 /// Password element with type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UsernamePassword {
     /// Password value
     pub value: String,
 
     /// Password type (PasswordText or PasswordDigest)
     pub password_type: PasswordType,
+}
+
+impl std::fmt::Debug for UsernamePassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("UsernamePassword");
+        d.field("value", &crate::utils::redact::redacted(&self.value));
+        d.field("password_type", &self.password_type);
+        d.finish()
+    }
 }
 
 /// Password types for UsernameToken
