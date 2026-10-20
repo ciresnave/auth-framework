@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc103"
+  version       = "0.6.0-rc104"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -192,16 +192,16 @@
   hex = "0.4.3"
 
   # SHA-2 hashing (for OAuth 2.0 PKCE and other server features)
-  sha2 = "0.10.9"
+  sha2 = "0.11"
 
   # MD5 hashing (for RADIUS RFC 2865 wire compatibility)
-  md5 = { package = "md-5", version = "0.10" }
+  md5 = { package = "md-5", version = "0.11" }
 
   # SHA-1 hashing (for WS-Security password digest)
-  sha1 = "0.10"
+  sha1 = "0.11"
 
   # HMAC for TOTP and other authentication schemes
-  hmac = "0.12"
+  hmac = "0.13"
 
   # AES block cipher (for Kerberos AES-CTS-HMAC-SHA1-96)
   aes = "0.8"

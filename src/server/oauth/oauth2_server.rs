@@ -1184,7 +1184,7 @@ impl OAuth2Server {
         // In production, this would be the user's UUID from the database
         // For now, create a deterministic but unique ID
         let hash = Sha256::digest(format!("user_id_{}", username).as_bytes());
-        let hash_str = format!("{:x}", hash);
+        let hash_str = hex::encode(hash);
         Ok(format!("user_{}", &hash_str[0..16]))
     }
 

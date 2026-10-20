@@ -594,7 +594,7 @@ fn compute_message_authenticator(packet: &RadiusPacket, secret: &[u8]) -> Result
 
 /// Compute HMAC-MD5 for Message-Authenticator (RFC 3579 §3.2).
 fn hmac_md5_truncated(key: &[u8], data: &[u8]) -> [u8; 16] {
-    use hmac::Mac;
+    use hmac::{KeyInit, Mac};
     type HmacMd5 = hmac::Hmac<md5::Md5>;
     let mut mac = HmacMd5::new_from_slice(key).expect("HMAC key length");
     mac.update(data);
@@ -646,6 +646,43 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Known answers for the MD5 / HMAC-MD5 primitives behind the RADIUS authenticators, so a change
+    /// of digest crate cannot silently change what goes on the wire.
+    #[test]
+    fn digest_known_answers() {
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        // MD5("abc") (RFC 1321 test suite)
+        assert_eq!(
+            hex(&md5_hash(b"a", b"bc")),
+            "900150983cd24fb0d6963f7d28e17f72"
+        );
+        // HMAC-MD5 test case 1 (RFC 2202)
+        assert_eq!(
+            hex(&hmac_md5_truncated(&[0x0b; 16], b"Hi There")),
+            "9294727a3638bb1c13f48ef8158bfc9d"
+        );
+        let secret = b"testing123";
+        let mut response = vec![2u8, 1, 0, 24];
+        response.extend_from_slice(&[0u8; 16]);
+        response.extend_from_slice(&[0x12, 0x04, 0xAA, 0xBB]);
+        let request_auth: [u8; AUTHENTICATOR_LEN] = core::array::from_fn(|i| i as u8);
+        assert_eq!(
+            hex(&compute_response_authenticator(
+                &response,
+                &request_auth,
+                secret
+            )),
+            "a66b6244b8360d8b2763b82d84b435d1"
+        );
+        let mut accounting = vec![4u8, 1, 0, 24];
+        accounting.extend((16u8..32).collect::<Vec<_>>());
+        accounting.extend_from_slice(&[0x12, 0x04, 0xAA, 0xBB]);
+        assert_eq!(
+            hex(&compute_accounting_authenticator(&accounting, secret)),
+            "e4864f7f59f85599ece0fa0ab2d3ec9c"
+        );
+    }
 
     #[test]
     fn test_config_defaults() {

@@ -778,6 +778,20 @@ impl WsSecurityConfigBuilder {
 mod tests {
     use super::*;
 
+    /// WS-Security password digest = Base64(SHA-1(nonce || created || password)); fixed inputs give a
+    /// fixed value on every version of the digest crate.
+    #[test]
+    fn password_digest_known_answer() {
+        let client = WsSecurityClient::new(WsSecurityConfig::default());
+        let created = DateTime::parse_from_rfc3339("2023-01-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let digest = client
+            .compute_password_digest("secret", "MTIzNDU2Nzg5MDEyMzQ1Ng==", &created)
+            .unwrap();
+        assert_eq!(digest, "Vt9uL71zN4npXMrjEzF3B/v5Yis=");
+    }
+
     #[test]
     fn test_username_token_creation() {
         let config = WsSecurityConfig::default();

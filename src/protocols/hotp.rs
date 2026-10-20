@@ -12,7 +12,7 @@
 //! - Secrets should be stored encrypted at rest
 
 use crate::errors::{AuthError, Result};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use ring::rand::SecureRandom;
 use sha1::Sha1;
 

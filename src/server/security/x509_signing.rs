@@ -3253,7 +3253,7 @@ impl<'a> AwsSigV4Request<'a> {
     ///
     /// Implements [AWS Signature Version 4](https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html).
     fn sign(&self) -> String {
-        use hmac::{Mac, SimpleHmac};
+        use hmac::{KeyInit, Mac, SimpleHmac};
         use sha2::{Digest, Sha256};
 
         fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {

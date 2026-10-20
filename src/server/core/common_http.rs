@@ -430,7 +430,7 @@ pub mod webhooks {
     /// `X-Webhook-Signature` header, compatible with GitHub-style webhook
     /// verification.
     fn calculate_webhook_signature(payload: &str, key: &str) -> Result<String> {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
 
         let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
@@ -439,5 +439,20 @@ pub mod webhooks {
         let result = mac.finalize().into_bytes();
 
         Ok(format!("sha256={}", hex::encode(result)))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Webhook signature = `sha256=` + HMAC-SHA256 hex (RFC 4231 test case 2: key "Jefe").
+        #[test]
+        fn webhook_signature_known_answer() {
+            let sig = calculate_webhook_signature("what do ya want for nothing?", "Jefe").unwrap();
+            assert_eq!(
+                sig,
+                "sha256=5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+            );
+        }
     }
 }

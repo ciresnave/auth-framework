@@ -147,6 +147,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc104 -- **Dependencies: the RustCrypto digest family moves to its 0.11 / 0.13 generation** (`sha2` 0.10 -> 0.11, `sha1` 0.10 ->
+  0.11, `md-5` 0.10 -> 0.11, `hmac` 0.12 -> 0.13). No public item names these crates' types, and no wire or stored format changes:
+  six known-answer tests were written first and pass on both generations (HMAC-SHA1 and HMAC-MD5 per RFC 2202, HMAC-SHA256 per
+  RFC 4231 for the webhook signature and the emergency-bypass signature, the RADIUS MD5 response / accounting authenticators and
+  Message-Authenticator HMAC, the WS-Security SHA-1 password digest, and the client-secret SHA-256 hash). Code changes are the new
+  `KeyInit` import where an HMAC is built from a key and `hex::encode` in place of `{:x}` on a digest, which 0.11 no longer
+  formats.
 - 0.6.0-rc103 -- **BREAKING (dependency in the public API): `jsonwebtoken` 10.4 -> 11.1.** Public items that take or return
   `jsonwebtoken` types (`jsonwebtoken::Algorithm`, `DecodingKey`, `EncodingKey` in `security::secure_jwt` and the JWT helpers)
   now use 11.1's, so a downstream crate that names them must move to `jsonwebtoken` 11 as well. Wire formats are unchanged:

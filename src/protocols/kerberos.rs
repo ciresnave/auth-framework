@@ -805,10 +805,11 @@ fn aes_cts_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
 
 /// Compute HMAC-SHA1 over the given data, returning the full 20-byte output.
 fn hmac_sha1(key: &[u8], data: &[u8]) -> Vec<u8> {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     type HmacSha1 = Hmac<sha1::Sha1>;
 
-    let mut mac = <HmacSha1 as Mac>::new_from_slice(key).expect("HMAC-SHA1 accepts any key length");
+    let mut mac =
+        <HmacSha1 as KeyInit>::new_from_slice(key).expect("HMAC-SHA1 accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().to_vec()
 }
@@ -1621,6 +1622,14 @@ fn parse_keytab_entry(data: &[u8], _version: u16) -> Result<KeytabEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HMAC-SHA1 test case 1 (RFC 2202): key 0x0b * 20, data "Hi There".
+    #[test]
+    fn hmac_sha1_known_answer() {
+        let mac = hmac_sha1(&[0x0b; 20], b"Hi There");
+        let hex: String = mac.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, "b617318655057264e28bc0b6fb378c8ef146be00");
+    }
 
     #[test]
     fn test_config_defaults() {
