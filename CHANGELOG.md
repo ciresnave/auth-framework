@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.32] - Unreleased
+
+### Changed
+
+- **CI: `cargo deny` ignores RUSTSEC-2026-0374 (`basic-toml` unmaintained).** The advisory (published 2026-09-26, no safe upgrade)
+  turned the "Security Audit (deny)" job red. `basic-toml` is a build-time proc-macro dependency of `askama_derive`, which only the
+  `web-gui` feature enables; the newest askama still depends on it, and nothing is linked into a built artifact. `deny.toml` lists
+  the advisory with that reason and a removal condition. No code change.
+
 ## [0.4.31] - Unreleased
 
 ### Fixed
