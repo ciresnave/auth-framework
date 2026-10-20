@@ -24,6 +24,11 @@
         # Impact: none known; it is an unmaintained notice, not a vulnerability. Main replaced
         # serde_yaml with serde-saphyr, a source change not made on this release line.
         "RUSTSEC-2024-0449",
+        # `basic-toml` unmaintained (RUSTSEC-2026-0374, no safe upgrade): a build-time proc-macro
+        # dependency of askama_derive, which only the `web-gui` feature enables. The newest askama
+        # (0.16.1) still depends on it, so bumping this line's askama 0.15 would not remove it. Nothing
+        # is linked into a built artifact. Remove when askama drops it.
+        "RUSTSEC-2026-0374",
     ]
 
 [licenses]
