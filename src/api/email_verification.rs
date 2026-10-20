@@ -112,10 +112,18 @@ async fn issue_and_deliver(
 }
 
 /// Request body for `POST /auth/verify-email`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct VerifyEmailRequest {
     /// The verification token received via email or API.
     pub token: String,
+}
+
+impl std::fmt::Debug for VerifyEmailRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("VerifyEmailRequest");
+        d.field("token", &crate::utils::redact::redacted(&self.token));
+        d.finish()
+    }
 }
 
 /// Request body for `POST /auth/resend-verification`.

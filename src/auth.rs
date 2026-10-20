@@ -236,12 +236,23 @@ fn resolve_jwt_secret_bytes(config: &AuthConfig) -> Result<Vec<u8>> {
 }
 
 /// What [`AuthFramework::redeem_refresh_jwt`] hands back.
-#[derive(Debug)]
 pub struct RefreshRedemption {
     /// Claims of the refresh token that was just spent (subject, chain, ...).
     pub claims: crate::tokens::JwtClaims,
     /// The next refresh token of the chain; the spent one no longer works.
     pub new_refresh_token: String,
+}
+
+impl std::fmt::Debug for RefreshRedemption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RefreshRedemption");
+        d.field("claims", &self.claims);
+        d.field(
+            "new_refresh_token",
+            &crate::utils::redact::redacted(&self.new_refresh_token),
+        );
+        d.finish()
+    }
 }
 
 /// Shared implementation of [`AuthFramework::validate_access_jwt`] (also used by the

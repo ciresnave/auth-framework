@@ -370,7 +370,7 @@ impl UmaService {
 ///
 /// PATs are OAuth 2.0 access tokens with the `uma_protection` scope that
 /// resource servers use to access the UMA protection API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Pat {
     /// The PAT access token value.
     pub access_token: String,
@@ -380,6 +380,20 @@ pub struct Pat {
     pub issued_at: u64,
     /// When the PAT expires (UNIX timestamp).
     pub expires_at: u64,
+}
+
+impl std::fmt::Debug for Pat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("Pat");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("client_id", &self.client_id);
+        d.field("issued_at", &self.issued_at);
+        d.field("expires_at", &self.expires_at);
+        d.finish()
+    }
 }
 
 impl Pat {

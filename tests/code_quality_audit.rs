@@ -776,11 +776,23 @@ fn test_examples_are_complete() {
 }
 
 /// Types allowed to derive `Debug` although a field looks like a secret: `(file suffix, type, why)`.
-const DERIVED_DEBUG_SECRET_ALLOWLIST: [(&str, &str, &str); 1] = [(
-    "src/admin/mod.rs",
-    "UserAction",
-    "clap subcommand arguments parsed from the operator's own command line; never stored or sent",
-)];
+const DERIVED_DEBUG_SECRET_ALLOWLIST: [(&str, &str, &str); 3] = [
+    (
+        "src/admin/mod.rs",
+        "UserAction",
+        "clap subcommand arguments parsed from the operator's own command line; never stored or sent",
+    ),
+    (
+        "src/protocols/acme.rs",
+        "AcmeChallenge",
+        "the ACME challenge token is published at /.well-known/acme-challenge/<token> by design",
+    ),
+    (
+        "src/protocols/oauth1.rs",
+        "OAuthToken",
+        "`token` is the public OAuth 1.0a token identifier; the secret half is a Zeroizing field",
+    ),
+];
 
 /// `(type name, line number, field)` for each type in `content` that derives `Debug` and has a
 /// plain `String` / `Vec<u8>` (or `Option` of one) field named like a secret. Such a field is
@@ -791,7 +803,7 @@ fn derived_debug_secret_fields(file: &str, content: &str) -> Vec<(String, usize,
     let field = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*(.+?),?\s*(?://.*)?$")
         .unwrap();
     let secret_name = regex::Regex::new(
-        r"(?i)(secret|password|passwd|api_key|private_key|signing_key|encryption_key|master_key|jwt_key|shared_key|access_key|passphrase|_pem|totp_code|(?:^|_)auth_token|bearer_token)",
+        r"(?i)(secret|password|passwd|api_key|private_key|signing_key|encryption_key|master_key|jwt_key|shared_key|access_key|passphrase|_pem|totp_code|(?:^|_)auth_token|bearer_token|(?:^|_)(?:access|refresh|id|session|api)_token$|^token$|device_code|authorization_code)",
     )
     .unwrap();
     let not_secret = regex::Regex::new(

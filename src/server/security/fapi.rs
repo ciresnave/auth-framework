@@ -469,7 +469,7 @@ pub struct FapiAuthorizationResponse {
 }
 
 /// FAPI 2.0 Token Response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FapiTokenResponse {
     /// Access token
     pub access_token: String,
@@ -491,6 +491,26 @@ pub struct FapiTokenResponse {
 
     /// Certificate thumbprint confirmation
     pub cnf: Option<Value>,
+}
+
+impl std::fmt::Debug for FapiTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FapiTokenResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("scope", &self.scope);
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.field("cnf", &self.cnf);
+        d.finish()
+    }
 }
 
 impl FapiManager {

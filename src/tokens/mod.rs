@@ -151,7 +151,7 @@ impl std::fmt::Debug for AuthToken {
 ///     .client_id("client123")
 ///     .build();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AuthTokenBuilder {
     token_id: String,
     user_id: String,
@@ -169,6 +169,35 @@ pub struct AuthTokenBuilder {
     permissions: crate::types::Permissions,
     roles: crate::types::Roles,
     metadata: TokenMetadata,
+}
+
+impl std::fmt::Debug for AuthTokenBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthTokenBuilder");
+        d.field("token_id", &self.token_id);
+        d.field("user_id", &self.user_id);
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("subject", &self.subject);
+        d.field("issuer", &self.issuer);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("issued_at", &self.issued_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("scopes", &self.scopes);
+        d.field("auth_method", &self.auth_method);
+        d.field("client_id", &self.client_id);
+        d.field("user_profile", &self.user_profile);
+        d.field("permissions", &self.permissions);
+        d.field("roles", &self.roles);
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
 }
 
 impl AuthTokenBuilder {

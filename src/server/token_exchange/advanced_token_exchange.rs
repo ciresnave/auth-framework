@@ -552,7 +552,7 @@ pub struct CrossDomainPolicy {
 }
 
 /// Token exchange response following enhanced RFC 8693
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AdvancedTokenExchangeResponse {
     /// The security token issued by the authorization server
     pub access_token: String,
@@ -580,6 +580,28 @@ pub struct AdvancedTokenExchangeResponse {
 
     /// Additional response parameters
     pub additional_parameters: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for AdvancedTokenExchangeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AdvancedTokenExchangeResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("issued_token_type", &self.issued_token_type);
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field("scope", &self.scope);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("exchange_audit", &self.exchange_audit);
+        d.field("preserved_context", &self.preserved_context);
+        d.field("additional_parameters", &self.additional_parameters);
+        d.finish()
+    }
 }
 
 /// Exchange audit information

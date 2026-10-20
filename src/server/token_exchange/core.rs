@@ -107,7 +107,7 @@ pub struct TokenExchangeRequest {
 }
 
 /// Token Exchange Response (RFC 8693)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenExchangeResponse {
     /// The security token issued by the authorization server
     pub access_token: String,
@@ -126,6 +126,25 @@ pub struct TokenExchangeResponse {
 
     /// Type of the issued token
     pub issued_token_type: Option<String>,
+}
+
+impl std::fmt::Debug for TokenExchangeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenExchangeResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("scope", &self.scope);
+        d.field("issued_token_type", &self.issued_token_type);
+        d.finish()
+    }
 }
 
 /// Token types defined in RFC 8693

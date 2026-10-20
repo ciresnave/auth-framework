@@ -124,7 +124,7 @@ pub enum CibaRequestStatus {
 }
 
 /// Token response after successful authentication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CibaTokenResponse {
     pub access_token: String,
     pub token_type: String,
@@ -133,6 +133,24 @@ pub struct CibaTokenResponse {
     pub expires_in: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
+}
+
+impl std::fmt::Debug for CibaTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CibaTokenResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("expires_in", &self.expires_in);
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.finish()
+    }
 }
 
 /// Error response per CIBA spec.

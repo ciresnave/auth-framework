@@ -23,7 +23,7 @@ pub struct DeviceAuthorizationRequest {
 }
 
 /// Device authorization response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DeviceAuthorizationResponse {
     /// Device verification code (for storage)
     pub device_code: String,
@@ -44,8 +44,24 @@ pub struct DeviceAuthorizationResponse {
     pub expires_in: u64,
 }
 
+impl std::fmt::Debug for DeviceAuthorizationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DeviceAuthorizationResponse");
+        d.field(
+            "device_code",
+            &crate::utils::redact::redacted(&self.device_code),
+        );
+        d.field("user_code", &self.user_code);
+        d.field("verification_uri", &self.verification_uri);
+        d.field("verification_uri_complete", &self.verification_uri_complete);
+        d.field("interval", &self.interval);
+        d.field("expires_in", &self.expires_in);
+        d.finish()
+    }
+}
+
 /// Token request for device code grant
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct DeviceTokenRequest {
     /// Grant type (must be "urn:ietf:params:oauth:grant-type:device_code")
     pub grant_type: String,
@@ -57,8 +73,21 @@ pub struct DeviceTokenRequest {
     pub client_id: String,
 }
 
+impl std::fmt::Debug for DeviceTokenRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DeviceTokenRequest");
+        d.field("grant_type", &self.grant_type);
+        d.field(
+            "device_code",
+            &crate::utils::redact::redacted(&self.device_code),
+        );
+        d.field("client_id", &self.client_id);
+        d.finish()
+    }
+}
+
 /// Stored device authorization data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StoredDeviceAuthorization {
     /// Device code
     pub device_code: String,
@@ -91,6 +120,26 @@ pub struct StoredDeviceAuthorization {
     /// Each slow_down increases the required interval by 5 seconds.
     #[serde(default)]
     pub slow_down_count: u32,
+}
+
+impl std::fmt::Debug for StoredDeviceAuthorization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("StoredDeviceAuthorization");
+        d.field(
+            "device_code",
+            &crate::utils::redact::redacted(&self.device_code),
+        );
+        d.field("user_code", &self.user_code);
+        d.field("client_id", &self.client_id);
+        d.field("scope", &self.scope);
+        d.field("status", &self.status);
+        d.field("user_id", &self.user_id);
+        d.field("created_at", &self.created_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("last_poll", &self.last_poll);
+        d.field("slow_down_count", &self.slow_down_count);
+        d.finish()
+    }
 }
 
 /// Device authorization status
