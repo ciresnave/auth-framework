@@ -63,6 +63,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc105 -- **`distributed-rate-limiting` (and any feature that enables the `redis` dependency without `redis-storage`) builds again on
+  its own.** `storage::redis` calls `key_names::without_shadowed_legacy`, which was gated on `redis-storage` instead of on the
+  `redis` dependency that compiles the module, so `--no-default-features --features distributed-rate-limiting` failed with
+  E0425. The CI feature matrix always pairs features with the storage backends, so nothing built that combination. A new
+  "Feature Isolation" CI job runs `cargo check --lib --no-default-features --features <f>` for each explicitly declared
+  feature, listed from `cargo metadata` so new features are covered automatically (it fails if the list is short or lacks
+  `distributed-rate-limiting`). All 81 features, implicit ones included, were checked alone before this change and pass. Also:
+  the JavaScript SDK's lockfile is refreshed within its semver ranges (`follow-redirects` 1.16.0 -> 1.16.1, superseding the
+  Dependabot bump, and 40-odd other packages) and the SDK version follows the crate (0.6.0-rc105); `npm audit --omit=dev`
+  reports 0 vulnerabilities. The SDK's own typecheck, test and build steps fail identically before and after (3 TypeScript
+  errors, `tslib` and `jest-environment-jsdom` not installed): not changed here.
 - 0.6.0-rc101 -- **`{:?}` of MFA enrolment material no longer prints backup codes or the TOTP URI.** Lists of codes and
   QR / `otpauth://` payloads (which embed the TOTP secret) were plain `String` / `Vec<String>` fields that the earlier
   redaction audit's name match and `String`-only type match missed. Now redacted: `MfaSetupResponse` (`qr_code`,

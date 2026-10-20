@@ -192,6 +192,62 @@ jobs:
       - name: Check minimal profile
         run: cargo check --locked --lib --no-default-features
 
+  # Every feature on its own. The matrix above always pairs features with the storage backends, so a
+  # feature that only compiles alongside another one (distributed-rate-limiting reached
+  # `key_names::without_shadowed_legacy`, which was gated on `redis-storage` rather than on the
+  # `redis` dependency it enables) never failed anywhere. The list comes from `cargo metadata`, so a
+  # new feature is covered the day it is added; features that merely name an optional dependency
+  # (`foo = ["dep:foo"]`) are skipped.
+  feature-isolation:
+    name: Feature Isolation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-isolation-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev libssl-dev pkg-config
+
+      - name: Check each feature alone
+        shell: bash
+        run: |
+          features=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c '
+          import json, sys
+          meta = json.load(sys.stdin)
+          pkg = next(p for p in meta["packages"] if p["name"] == "auth-framework")
+          feats = pkg["features"]
+          print(" ".join(sorted(k for k, v in feats.items() if k != "default" and v != ["dep:" + k])))
+          ')
+          echo "features under test ($(echo $features | wc -w)): $features"
+          # Control: this must be a real list, or the loop below would pass vacuously.
+          test "$(echo $features | wc -w)" -ge 20 || { echo "feature list suspiciously short"; exit 1; }
+          echo "$features" | grep -qw distributed-rate-limiting || { echo "control feature missing from list"; exit 1; }
+          fail=0
+          for f in $features; do
+            if cargo check --locked --lib --no-default-features --features "$f" 2>"$RUNNER_TEMP/err.txt"; then
+              echo "ok   $f"
+            else
+              echo "FAIL $f"; head -20 "$RUNNER_TEMP/err.txt"; fail=1
+            fi
+          done
+          exit $fail
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
