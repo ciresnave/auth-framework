@@ -740,7 +740,7 @@ impl ClientRegistrationManager {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(secret.as_bytes());
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hex::encode(hasher.finalize()))
     }
 
     /// Verify registration access token
@@ -836,6 +836,20 @@ impl ClientRegistrationManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Client secrets are stored as lowercase-hex SHA-256: SHA-256("abc") (FIPS 180-2).
+    #[test]
+    fn secret_hash_known_answer() {
+        let manager = ClientRegistrationManager::new(
+            ClientRegistrationConfig::default(),
+            Arc::new(MemoryStorage::new()),
+        );
+        assert_eq!(
+            manager.hash_secret("abc").unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
     use crate::storage::MemoryStorage;
 
     #[tokio::test]

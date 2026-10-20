@@ -9,7 +9,7 @@ use crate::errors::Result;
 use crate::methods::MfaChallenge;
 use crate::storage::AuthStorage;
 use base64::Engine as _;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1026,6 +1026,19 @@ pub struct MethodFallbackResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The emergency-bypass signature is HMAC-SHA256 (RFC 4231 test case 2: key "Jefe").
+    #[test]
+    fn emergency_bypass_signature_known_answer() {
+        let sig =
+            MfaManager::sign_emergency_bypass_payload(b"Jefe", "what do ya want for nothing?")
+                .unwrap();
+        assert_eq!(
+            sig,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
     use crate::storage::MemoryStorage;
 
     fn make_mfa() -> MfaManager {

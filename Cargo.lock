@@ -551,7 +551,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "auth-framework"
-version = "0.6.0-rc103"
+version = "0.6.0-rc104"
 dependencies = [
  "actix-web",
  "aes",
@@ -592,7 +592,7 @@ dependencies = [
  "getrandom 0.4.3",
  "governor",
  "hex",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "html-escape",
  "indicatif",
  "ipnetwork",
@@ -602,7 +602,7 @@ dependencies = [
  "ldap3",
  "lettre",
  "maxminddb",
- "md-5 0.10.6",
+ "md-5",
  "metrics",
  "metrics-prometheus",
  "mockito",
@@ -632,8 +632,8 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "serde_urlencoded",
- "sha1 0.10.7",
- "sha2 0.10.9",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
  "sms-core",
  "sms-plivo",
  "sms-twilio",
@@ -3989,16 +3989,6 @@ dependencies = [
 
 [[package]]
 name = "md-5"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
-dependencies = [
- "cfg-if",
- "digest 0.10.7",
-]
-
-[[package]]
-name = "md-5"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
@@ -5106,7 +5096,7 @@ dependencies = [
  "bytes",
  "fallible-iterator",
  "hmac 0.13.0",
- "md-5 0.11.0",
+ "md-5",
  "memchr",
  "rand 0.10.3",
  "sha2 0.11.1",
@@ -6763,7 +6753,7 @@ dependencies = [
  "hmac 0.13.0",
  "itoa",
  "log",
- "md-5 0.11.0",
+ "md-5",
  "memchr",
  "rand 0.10.3",
  "serde",

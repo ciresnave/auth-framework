@@ -516,7 +516,7 @@ impl BackChannelLogoutManager {
             Ok(sig)
         } else {
             // Fallback: HS256
-            use hmac::{Hmac, Mac};
+            use hmac::{Hmac, KeyInit, Mac};
             use sha2::Sha256;
             type HmacSha256 = Hmac<Sha256>;
             let mut mac = HmacSha256::new_from_slice(&self.signing_key)
