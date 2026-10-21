@@ -161,7 +161,7 @@ impl Default for RarConfig {
 }
 
 /// Rich Authorization Request following RFC 9396
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct RarAuthorizationRequest {
     /// Client identifier
     pub client_id: String,
@@ -189,6 +189,25 @@ pub struct RarAuthorizationRequest {
 
     /// Additional custom parameters
     pub custom_parameters: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for RarAuthorizationRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RarAuthorizationRequest");
+        d.field("client_id", &self.client_id);
+        d.field("response_type", &self.response_type);
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field("authorization_details", &self.authorization_details);
+        d.field("scope", &self.scope);
+        d.field("state", &self.state);
+        d.field("code_challenge", &self.code_challenge);
+        d.field("code_challenge_method", &self.code_challenge_method);
+        d.field(
+            "custom_parameters",
+            &crate::utils::redact::redacted(&self.custom_parameters),
+        );
+        d.finish()
+    }
 }
 
 /// Authorization detail structure following RFC 9396
@@ -511,7 +530,7 @@ pub trait RarAuthorizationProcessor: Send + Sync {
 }
 
 /// RAR session context for authorization processing
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RarSessionContext {
     /// OIDC session ID
     pub session_id: String,
@@ -529,8 +548,26 @@ pub struct RarSessionContext {
     pub metadata: HashMap<String, String>,
 }
 
+impl std::fmt::Debug for RarSessionContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RarSessionContext");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("is_new_session", &self.is_new_session);
+        d.field("session_state", &self.session_state);
+        d.field(
+            "browser_session_id",
+            &crate::utils::redact::redacted(&self.browser_session_id),
+        );
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
+}
+
 /// RAR session authorization context
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RarSessionAuthorizationContext {
     /// Session ID
     pub session_id: String,
@@ -552,6 +589,23 @@ pub struct RarSessionAuthorizationContext {
 
     /// Last activity time
     pub last_activity: DateTime<Utc>,
+}
+
+impl std::fmt::Debug for RarSessionAuthorizationContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RarSessionAuthorizationContext");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("subject", &self.subject);
+        d.field("client_id", &self.client_id);
+        d.field("session_state", &self.session_state);
+        d.field("active_authorizations", &self.active_authorizations);
+        d.field("created_at", &self.created_at);
+        d.field("last_activity", &self.last_activity);
+        d.finish()
+    }
 }
 
 /// Main RAR manager

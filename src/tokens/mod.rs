@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 /// Represents an authentication token with all associated metadata.
 #[cfg_attr(feature = "postgres-storage", derive(FromRow))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthToken {
     /// Unique token identifier
     pub token_id: String,
@@ -63,8 +63,37 @@ pub struct AuthToken {
     pub metadata: TokenMetadata,
 }
 
+impl std::fmt::Debug for AuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthToken");
+        d.field("token_id", &self.token_id);
+        d.field("user_id", &self.user_id);
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("subject", &self.subject);
+        d.field("issuer", &self.issuer);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("issued_at", &self.issued_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("scopes", &self.scopes);
+        d.field("auth_method", &self.auth_method);
+        d.field("client_id", &self.client_id);
+        d.field("user_profile", &self.user_profile);
+        d.field("permissions", &self.permissions);
+        d.field("roles", &self.roles);
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
+}
+
 /// Additional metadata that can be attached to tokens.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct TokenMetadata {
     /// IP address where the token was issued
     pub issued_ip: Option<String>,
@@ -95,6 +124,26 @@ pub struct TokenMetadata {
 
     /// Custom metadata
     pub custom: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for TokenMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenMetadata");
+        d.field("issued_ip", &self.issued_ip);
+        d.field("user_agent", &self.user_agent);
+        d.field("device_id", &self.device_id);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("revoked", &self.revoked);
+        d.field("revoked_at", &self.revoked_at);
+        d.field("revoked_reason", &self.revoked_reason);
+        d.field("last_used", &self.last_used);
+        d.field("use_count", &self.use_count);
+        d.field("custom", &self.custom);
+        d.finish()
+    }
 }
 
 #[cfg(feature = "postgres-storage")]

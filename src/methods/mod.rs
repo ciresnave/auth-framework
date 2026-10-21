@@ -38,7 +38,7 @@ pub enum MethodResult {
 }
 
 /// Multi-factor authentication challenge.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MfaChallenge {
     /// Unique challenge ID
     pub id: String,
@@ -57,6 +57,19 @@ pub struct MfaChallenge {
 
     /// Additional challenge data
     pub data: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for MfaChallenge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaChallenge");
+        d.field("id", &self.id);
+        d.field("mfa_type", &self.mfa_type);
+        d.field("user_id", &self.user_id);
+        d.field("expires_at", &self.expires_at);
+        d.field("message", &self.message);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.finish()
+    }
 }
 
 /// Types of multi-factor authentication.

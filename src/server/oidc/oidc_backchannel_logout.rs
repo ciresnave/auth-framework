@@ -21,7 +21,7 @@ use tokio::time::Duration;
 use uuid::Uuid;
 
 /// Back-channel logout request parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BackChannelLogoutRequest {
     /// Session ID being logged out
     pub session_id: String,
@@ -35,6 +35,22 @@ pub struct BackChannelLogoutRequest {
     pub initiating_client_id: Option<String>,
     /// Additional events to include in logout token
     pub additional_events: Option<HashMap<String, serde_json::Value>>,
+}
+
+impl std::fmt::Debug for BackChannelLogoutRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BackChannelLogoutRequest");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("sub", &self.sub);
+        d.field("sid", &crate::utils::redact::redacted(&self.sid));
+        d.field("iss", &self.iss);
+        d.field("initiating_client_id", &self.initiating_client_id);
+        d.field("additional_events", &self.additional_events);
+        d.finish()
+    }
 }
 
 /// Back-channel logout response
@@ -144,7 +160,7 @@ pub struct RpBackChannelConfig {
 }
 
 /// Logout token claims
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LogoutTokenClaims {
     /// Issuer
     pub iss: String,
@@ -164,6 +180,21 @@ pub struct LogoutTokenClaims {
     pub exp: u64,
 }
 
+impl std::fmt::Debug for LogoutTokenClaims {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LogoutTokenClaims");
+        d.field("iss", &self.iss);
+        d.field("sub", &self.sub);
+        d.field("aud", &self.aud);
+        d.field("iat", &self.iat);
+        d.field("jti", &self.jti);
+        d.field("events", &self.events);
+        d.field("sid", &crate::utils::redact::redacted(&self.sid));
+        d.field("exp", &self.exp);
+        d.finish()
+    }
+}
+
 /// Logout events structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogoutEvents {
@@ -179,7 +210,6 @@ pub struct LogoutEvents {
 }
 
 /// Back-channel logout manager
-#[derive(Debug)]
 pub struct BackChannelLogoutManager {
     /// Configuration
     config: BackChannelLogoutConfig,
@@ -191,6 +221,21 @@ pub struct BackChannelLogoutManager {
     rp_configs: HashMap<String, RpBackChannelConfig>,
     /// Active logout requests tracking
     active_logouts: HashMap<String, SystemTime>,
+}
+
+impl std::fmt::Debug for BackChannelLogoutManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BackChannelLogoutManager");
+        d.field("config", &self.config);
+        d.field("session_manager", &self.session_manager);
+        d.field("http_client", &self.http_client);
+        d.field("rp_configs", &self.rp_configs);
+        d.field(
+            "active_logouts",
+            &crate::utils::redact::redacted(&self.active_logouts),
+        );
+        d.finish()
+    }
 }
 
 impl BackChannelLogoutManager {

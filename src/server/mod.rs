@@ -206,7 +206,7 @@ pub struct AuthRequest {
 }
 
 /// Generic authentication response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthResponse {
     /// Response type
     pub response_type: String,
@@ -222,6 +222,18 @@ pub struct AuthResponse {
 
     /// Response timestamp
     pub timestamp: SystemTime,
+}
+
+impl std::fmt::Debug for AuthResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthResponse");
+        d.field("response_type", &self.response_type);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.field("success", &self.success);
+        d.field("error", &self.error);
+        d.field("timestamp", &self.timestamp);
+        d.finish()
+    }
 }
 
 /// Validation result

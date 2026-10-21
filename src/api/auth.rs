@@ -7,7 +7,7 @@ use axum::{Json, extract::State, http::HeaderMap};
 use serde::{Deserialize, Serialize};
 
 /// Login request payload
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
@@ -17,14 +17,43 @@ pub struct LoginRequest {
     pub remember_me: bool,
 }
 
+impl std::fmt::Debug for LoginRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LoginRequest");
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field("mfa_code", &self.mfa_code);
+        d.field("remember_me", &self.remember_me);
+        d.finish()
+    }
+}
+
 /// Login response data
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: String,
     pub token_type: String,
     pub expires_in: u64,
     pub user: UserInfo,
+}
+
+impl std::fmt::Debug for LoginResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LoginResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field("user", &self.user);
+        d.finish()
+    }
 }
 
 /// User information in login response
@@ -37,24 +66,59 @@ pub struct UserInfo {
 }
 
 /// Token refresh request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct RefreshRequest {
     pub refresh_token: String,
 }
 
+impl std::fmt::Debug for RefreshRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RefreshRequest");
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.finish()
+    }
+}
+
 /// Token refresh response
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct RefreshResponse {
     pub access_token: String,
     pub token_type: String,
     pub expires_in: u64,
 }
 
+impl std::fmt::Debug for RefreshResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RefreshResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.finish()
+    }
+}
+
 /// Logout request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct LogoutRequest {
     #[serde(default)]
     pub refresh_token: Option<String>,
+}
+
+impl std::fmt::Debug for LogoutRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LogoutRequest");
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.finish()
+    }
 }
 
 /// POST /auth/login

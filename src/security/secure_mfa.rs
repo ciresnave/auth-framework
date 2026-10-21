@@ -13,7 +13,7 @@ use subtle::ConstantTimeEq;
 use zeroize::ZeroizeOnDrop;
 
 /// Secure MFA challenge with proper entropy and expiration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MfaChallenge {
     pub challenge_id: String,
     pub user_id: String,
@@ -25,6 +25,24 @@ pub struct MfaChallenge {
     pub max_attempts: u32,
 }
 
+impl std::fmt::Debug for MfaChallenge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaChallenge");
+        d.field("challenge_id", &self.challenge_id);
+        d.field("user_id", &self.user_id);
+        d.field("challenge_type", &self.challenge_type);
+        d.field(
+            "code_hash",
+            &crate::utils::redact::redacted(&self.code_hash),
+        );
+        d.field("created_at", &self.created_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("attempts", &self.attempts);
+        d.field("max_attempts", &self.max_attempts);
+        d.finish()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MfaChallengeType {
     Sms,
@@ -33,9 +51,17 @@ pub enum MfaChallengeType {
 }
 
 /// Secure MFA code that zeros itself when dropped
-#[derive(Debug, Clone, ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct SecureMfaCode {
     code: String,
+}
+
+impl std::fmt::Debug for SecureMfaCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureMfaCode");
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.finish()
+    }
 }
 
 impl SecureMfaCode {

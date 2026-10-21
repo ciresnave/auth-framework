@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Represents authenticated user context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UserContext {
     pub user_id: String,
     pub username: String,
@@ -14,6 +14,23 @@ pub struct UserContext {
     pub authenticated_at: std::time::SystemTime,
     pub session_id: String,
     pub attributes: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for UserContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("UserContext");
+        d.field("user_id", &self.user_id);
+        d.field("username", &self.username);
+        d.field("email", &self.email);
+        d.field("scopes", &self.scopes);
+        d.field("authenticated_at", &self.authenticated_at);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("attributes", &self.attributes);
+        d.finish()
+    }
 }
 
 impl UserContext {
@@ -44,9 +61,17 @@ impl UserContext {
 }
 
 /// Session store for managing user authentication state
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionStore {
     sessions: std::collections::HashMap<String, UserContext>,
+}
+
+impl std::fmt::Debug for SessionStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SessionStore");
+        d.field("sessions", &crate::utils::redact::redacted(&self.sessions));
+        d.finish()
+    }
 }
 
 impl SessionStore {

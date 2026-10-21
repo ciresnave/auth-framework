@@ -66,7 +66,7 @@ pub struct TrustRelationship {
 }
 
 /// Issued token information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IssuedToken {
     /// Token ID
     pub token_id: String,
@@ -93,8 +93,26 @@ pub struct IssuedToken {
     pub proof_token: Option<ProofToken>,
 }
 
+impl std::fmt::Debug for IssuedToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IssuedToken");
+        d.field("token_id", &crate::utils::redact::redacted(&self.token_id));
+        d.field("token_type", &self.token_type);
+        d.field(
+            "token_content",
+            &crate::utils::redact::redacted(&self.token_content),
+        );
+        d.field("issued_at", &self.issued_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("subject", &self.subject);
+        d.field("audience", &self.audience);
+        d.field("proof_token", &self.proof_token);
+        d.finish()
+    }
+}
+
 /// Proof token for holder-of-key scenarios
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProofToken {
     /// Proof token type (symmetric key, certificate, etc.)
     pub token_type: String,
@@ -106,8 +124,21 @@ pub struct ProofToken {
     pub key_identifier: String,
 }
 
+impl std::fmt::Debug for ProofToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ProofToken");
+        d.field("token_type", &self.token_type);
+        d.field(
+            "key_material",
+            &crate::utils::redact::redacted(&self.key_material),
+        );
+        d.field("key_identifier", &self.key_identifier);
+        d.finish()
+    }
+}
+
 /// WS-Trust Request Security Token (RST)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RequestSecurityToken {
     /// Request type (Issue, Renew, Cancel, Validate)
     pub request_type: String,
@@ -134,6 +165,24 @@ pub struct RequestSecurityToken {
     pub auth_context: Option<AuthenticationContext>,
 }
 
+impl std::fmt::Debug for RequestSecurityToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RequestSecurityToken");
+        d.field("request_type", &self.request_type);
+        d.field("token_type", &self.token_type);
+        d.field("applies_to", &self.applies_to);
+        d.field("lifetime", &self.lifetime);
+        d.field("key_type", &self.key_type);
+        d.field("key_size", &self.key_size);
+        d.field(
+            "existing_token",
+            &crate::utils::redact::redacted(&self.existing_token),
+        );
+        d.field("auth_context", &self.auth_context);
+        d.finish()
+    }
+}
+
 /// Token lifetime specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenLifetime {
@@ -158,7 +207,7 @@ pub struct AuthenticationContext {
 }
 
 /// WS-Trust Request Security Token Response (RSTR)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RequestSecurityTokenResponse {
     /// Request type being responded to
     pub request_type: String,
@@ -183,6 +232,30 @@ pub struct RequestSecurityTokenResponse {
 
     /// Token reference for external use
     pub requested_unattached_reference: Option<String>,
+}
+
+impl std::fmt::Debug for RequestSecurityTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RequestSecurityTokenResponse");
+        d.field("request_type", &self.request_type);
+        d.field("token_type", &self.token_type);
+        d.field("lifetime", &self.lifetime);
+        d.field("applies_to", &self.applies_to);
+        d.field(
+            "requested_security_token",
+            &crate::utils::redact::redacted(&self.requested_security_token),
+        );
+        d.field("requested_proof_token", &self.requested_proof_token);
+        d.field(
+            "requested_attached_reference",
+            &self.requested_attached_reference,
+        );
+        d.field(
+            "requested_unattached_reference",
+            &self.requested_unattached_reference,
+        );
+        d.finish()
+    }
 }
 
 impl SecurityTokenService {

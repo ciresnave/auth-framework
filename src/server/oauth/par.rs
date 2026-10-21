@@ -41,13 +41,25 @@ pub struct PushedAuthorizationRequest {
 }
 
 /// PAR response containing request URI
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PushedAuthorizationResponse {
     /// Request URI to be used in subsequent authorization request
     pub request_uri: String,
 
     /// Expiration time in seconds
     pub expires_in: u64,
+}
+
+impl std::fmt::Debug for PushedAuthorizationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PushedAuthorizationResponse");
+        d.field(
+            "request_uri",
+            &crate::utils::redact::redacted(&self.request_uri),
+        );
+        d.field("expires_in", &self.expires_in);
+        d.finish()
+    }
 }
 
 /// Stored PAR request with metadata

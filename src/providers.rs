@@ -83,7 +83,7 @@ pub struct OAuthProviderConfig {
 }
 
 /// Device flow authorization response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DeviceAuthorizationResponse {
     /// Device code
     pub device_code: String,
@@ -102,6 +102,22 @@ pub struct DeviceAuthorizationResponse {
 
     /// Device code expires in seconds
     pub expires_in: u64,
+}
+
+impl std::fmt::Debug for DeviceAuthorizationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DeviceAuthorizationResponse");
+        d.field(
+            "device_code",
+            &crate::utils::redact::redacted(&self.device_code),
+        );
+        d.field("user_code", &self.user_code);
+        d.field("verification_uri", &self.verification_uri);
+        d.field("verification_uri_complete", &self.verification_uri_complete);
+        d.field("interval", &self.interval);
+        d.field("expires_in", &self.expires_in);
+        d.finish()
+    }
 }
 
 /// Standardized user profile across all providers.
@@ -339,7 +355,7 @@ impl UserProfile {
 }
 
 /// OAuth token response from the provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthTokenResponse {
     /// Access token
     pub access_token: String,
@@ -359,6 +375,28 @@ pub struct OAuthTokenResponse {
     /// Additional provider-specific fields
     #[serde(flatten)]
     pub additional_fields: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for OAuthTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OAuthTokenResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("scope", &self.scope);
+        d.field(
+            "additional_fields",
+            &crate::utils::redact::redacted(&self.additional_fields),
+        );
+        d.finish()
+    }
 }
 
 /// User information from OAuth provider.

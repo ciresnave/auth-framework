@@ -290,7 +290,7 @@ impl Default for PasskeyConfig {
 }
 
 /// Stored passkey registration information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PasskeyRegistration {
     pub user_id: String,
     pub user_name: String,
@@ -299,6 +299,23 @@ pub struct PasskeyRegistration {
     pub passkey_data: String, // JSON-serialized Passkey
     pub created_at: SystemTime,
     pub last_used: Option<SystemTime>,
+}
+
+impl std::fmt::Debug for PasskeyRegistration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PasskeyRegistration");
+        d.field("user_id", &self.user_id);
+        d.field("user_name", &self.user_name);
+        d.field("user_display_name", &self.user_display_name);
+        d.field("credential_id", &self.credential_id);
+        d.field(
+            "passkey_data",
+            &crate::utils::redact::redacted(&self.passkey_data),
+        );
+        d.field("created_at", &self.created_at);
+        d.field("last_used", &self.last_used);
+        d.finish()
+    }
 }
 
 impl PasskeyAuthMethod {

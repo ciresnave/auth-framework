@@ -85,13 +85,22 @@ pub struct OidcExtensionsConfig {
 /// HEART (Health Entity Authentication and Authorization Transactions) Profile
 ///
 /// Healthcare-specific OpenID Connect profile for secure health information exchange
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HeartManager {
     /// HEART configuration
     config: HeartConfig,
 
     /// Active HEART sessions
     sessions: Arc<RwLock<HashMap<String, HeartSession>>>,
+}
+
+impl std::fmt::Debug for HeartManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("HeartManager");
+        d.field("config", &self.config);
+        d.field("sessions", &crate::utils::redact::redacted(&self.sessions));
+        d.finish()
+    }
 }
 
 /// HEART Profile Configuration
@@ -141,7 +150,7 @@ pub enum HeartAuditLevel {
 }
 
 /// HEART Session
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HeartSession {
     /// Session ID
     pub session_id: String,
@@ -160,6 +169,22 @@ pub struct HeartSession {
 
     /// Session metadata
     pub metadata: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for HeartSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("HeartSession");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("patient_id", &self.patient_id);
+        d.field("provider_id", &self.provider_id);
+        d.field("authorized_resources", &self.authorized_resources);
+        d.field("consent_status", &self.consent_status);
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
 }
 
 /// Patient consent status
@@ -282,7 +307,7 @@ impl SignalTransmitter {
 }
 
 /// Signal Authentication Method
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum SignalAuthMethod {
     /// HTTP Bearer token
     Bearer(String),
@@ -292,8 +317,21 @@ pub enum SignalAuthMethod {
     SignedJwt,
 }
 
+impl std::fmt::Debug for SignalAuthMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bearer(token) => f
+                .debug_tuple("Bearer")
+                .field(&crate::utils::redact::redacted(token))
+                .finish(),
+            Self::MutualTls => f.write_str("MutualTls"),
+            Self::SignedJwt => f.write_str("SignedJwt"),
+        }
+    }
+}
+
 /// Security Event
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityEvent {
     /// Event ID
     pub event_id: String,
@@ -312,6 +350,19 @@ pub struct SecurityEvent {
 
     /// Severity level
     pub severity: EventSeverity,
+}
+
+impl std::fmt::Debug for SecurityEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecurityEvent");
+        d.field("event_id", &self.event_id);
+        d.field("event_type", &self.event_type);
+        d.field("timestamp", &self.timestamp);
+        d.field("subject", &self.subject);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.field("severity", &self.severity);
+        d.finish()
+    }
 }
 
 /// Account disable request structure
@@ -343,13 +394,25 @@ pub enum EventSeverity {
 /// eKYC (Electronic Know Your Customer) Manager
 ///
 /// Implements identity verification and assurance for financial services
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EkycManager {
     /// Configuration
     config: EkycConfig,
 
     /// Identity verification sessions
     verification_sessions: Arc<RwLock<HashMap<String, EkycSession>>>,
+}
+
+impl std::fmt::Debug for EkycManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EkycManager");
+        d.field("config", &self.config);
+        d.field(
+            "verification_sessions",
+            &crate::utils::redact::redacted(&self.verification_sessions),
+        );
+        d.finish()
+    }
 }
 
 /// eKYC Configuration
@@ -396,7 +459,7 @@ pub enum VerificationMethod {
 }
 
 /// eKYC Session
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EkycSession {
     /// Session ID
     pub session_id: String,
@@ -412,6 +475,24 @@ pub struct EkycSession {
 
     /// Verification results
     pub verification_results: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for EkycSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EkycSession");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("user_id", &self.user_id);
+        d.field("verification_status", &self.verification_status);
+        d.field("achieved_ial", &self.achieved_ial);
+        d.field(
+            "verification_results",
+            &crate::utils::redact::redacted(&self.verification_results),
+        );
+        d.finish()
+    }
 }
 
 /// Verification status
@@ -461,7 +542,7 @@ pub struct FastFedConfig {
 }
 
 /// Federation Relationship
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FederationRelationship {
     /// Relationship ID
     pub relationship_id: String,
@@ -477,6 +558,18 @@ pub struct FederationRelationship {
 
     /// Created timestamp
     pub created_at: DateTime<Utc>,
+}
+
+impl std::fmt::Debug for FederationRelationship {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FederationRelationship");
+        d.field("relationship_id", &self.relationship_id);
+        d.field("partner_org", &self.partner_org);
+        d.field("status", &self.status);
+        d.field("config", &crate::utils::redact::redacted(&self.config));
+        d.field("created_at", &self.created_at);
+        d.finish()
+    }
 }
 
 /// Federation status
@@ -1679,7 +1772,7 @@ impl Default for SharedSignalsConfig {
 }
 
 // Additional required structures for eKYC functionality
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VerificationSession {
     pub session_id: String,
     pub user_id: String,
@@ -1688,6 +1781,23 @@ pub struct VerificationSession {
     pub required_methods: Vec<VerificationMethod>,
     pub completed_verifications: Vec<VerificationMethod>,
     pub created_at: SystemTime,
+}
+
+impl std::fmt::Debug for VerificationSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("VerificationSession");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("user_id", &self.user_id);
+        d.field("requested_ial", &self.requested_ial);
+        d.field("status", &self.status);
+        d.field("required_methods", &self.required_methods);
+        d.field("completed_verifications", &self.completed_verifications);
+        d.field("created_at", &self.created_at);
+        d.finish()
+    }
 }
 
 impl IdentityAssuranceLevel {

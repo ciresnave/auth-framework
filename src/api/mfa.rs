@@ -7,24 +7,60 @@ use axum::{Json, extract::State, http::HeaderMap};
 use serde::{Deserialize, Serialize};
 
 /// MFA setup response
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct MfaSetupResponse {
     pub qr_code: String,
     pub secret: String,
     pub backup_codes: Vec<String>,
 }
 
+impl std::fmt::Debug for MfaSetupResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaSetupResponse");
+        d.field("qr_code", &crate::utils::redact::redacted(&self.qr_code));
+        d.field("secret", &crate::utils::redact::redacted(&self.secret));
+        d.field(
+            "backup_codes",
+            &crate::utils::redact::redacted(&self.backup_codes),
+        );
+        d.finish()
+    }
+}
+
 /// MFA verify request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct MfaVerifyRequest {
     pub totp_code: String,
 }
 
+impl std::fmt::Debug for MfaVerifyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaVerifyRequest");
+        d.field(
+            "totp_code",
+            &crate::utils::redact::redacted(&self.totp_code),
+        );
+        d.finish()
+    }
+}
+
 /// MFA disable request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct MfaDisableRequest {
     pub password: String,
     pub totp_code: String,
+}
+
+impl std::fmt::Debug for MfaDisableRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaDisableRequest");
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field(
+            "totp_code",
+            &crate::utils::redact::redacted(&self.totp_code),
+        );
+        d.finish()
+    }
 }
 
 /// MFA status response
@@ -220,9 +256,20 @@ pub async fn regenerate_backup_codes(
 
 /// POST /mfa/verify-backup-code
 /// Verify backup code for emergency access
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct BackupCodeVerifyRequest {
     pub backup_code: String,
+}
+
+impl std::fmt::Debug for BackupCodeVerifyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BackupCodeVerifyRequest");
+        d.field(
+            "backup_code",
+            &crate::utils::redact::redacted(&self.backup_code),
+        );
+        d.finish()
+    }
 }
 
 pub async fn verify_backup_code(

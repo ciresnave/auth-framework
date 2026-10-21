@@ -34,7 +34,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// FAPI 2.0 Security Profile Manager
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FapiManager {
     /// DPoP manager for sender constraining
     dpop_manager: Arc<DpopManager>,
@@ -56,6 +56,20 @@ pub struct FapiManager {
 
     /// Active FAPI sessions
     sessions: Arc<RwLock<HashMap<String, FapiSession>>>,
+}
+
+impl std::fmt::Debug for FapiManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FapiManager");
+        d.field("dpop_manager", &self.dpop_manager);
+        d.field("mtls_manager", &self.mtls_manager);
+        d.field("par_manager", &self.par_manager);
+        d.field("private_key_jwt_manager", &self.private_key_jwt_manager);
+        d.field("jwt_validator", &self.jwt_validator);
+        d.field("config", &self.config);
+        d.field("sessions", &crate::utils::redact::redacted(&self.sessions));
+        d.finish()
+    }
 }
 
 /// FAPI 2.0 Configuration
@@ -117,7 +131,7 @@ impl std::fmt::Debug for FapiConfig {
 }
 
 /// FAPI 2.0 Session
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FapiSession {
     /// Session ID
     pub session_id: String,
@@ -148,6 +162,29 @@ pub struct FapiSession {
 
     /// Session metadata
     pub metadata: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for FapiSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FapiSession");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("client_id", &self.client_id);
+        d.field("user_id", &self.user_id);
+        d.field("created_at", &self.created_at);
+        d.field("expires_at", &self.expires_at);
+        d.field(
+            "dpop_proof",
+            &crate::utils::redact::redacted(&self.dpop_proof),
+        );
+        d.field("cert_thumbprint", &self.cert_thumbprint);
+        d.field("request_jti", &self.request_jti);
+        d.field("scopes", &self.scopes);
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
 }
 
 /// FAPI 2.0 Request Object Claims
@@ -201,7 +238,7 @@ pub struct FapiRequestObject {
 }
 
 /// FAPI 2.0 Authorization Response (JARM)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FapiAuthorizationResponse {
     /// Issuer (authorization server)
     pub iss: String,
@@ -232,8 +269,27 @@ pub struct FapiAuthorizationResponse {
     pub additional_params: HashMap<String, Value>,
 }
 
+impl std::fmt::Debug for FapiAuthorizationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FapiAuthorizationResponse");
+        d.field("iss", &self.iss);
+        d.field("aud", &self.aud);
+        d.field("iat", &self.iat);
+        d.field("exp", &self.exp);
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("state", &self.state);
+        d.field("error", &self.error);
+        d.field("error_description", &self.error_description);
+        d.field(
+            "additional_params",
+            &crate::utils::redact::redacted(&self.additional_params),
+        );
+        d.finish()
+    }
+}
+
 /// FAPI 2.0 Token Response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FapiTokenResponse {
     /// Access token
     pub access_token: String,
@@ -255,6 +311,26 @@ pub struct FapiTokenResponse {
 
     /// Certificate thumbprint confirmation
     pub cnf: Option<Value>,
+}
+
+impl std::fmt::Debug for FapiTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FapiTokenResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("scope", &self.scope);
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.field("cnf", &self.cnf);
+        d.finish()
+    }
 }
 
 impl FapiManager {

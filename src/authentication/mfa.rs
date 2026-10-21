@@ -43,7 +43,7 @@ pub struct MfaChallenge {
 }
 
 /// Challenge data specific to each MFA method
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum MfaChallengeData {
     Totp {
         /// Current time window
@@ -73,6 +73,40 @@ pub enum MfaChallengeData {
     },
 }
 
+impl std::fmt::Debug for MfaChallengeData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Totp { time_window } => f
+                .debug_struct("Totp")
+                .field("time_window", time_window)
+                .finish(),
+            Self::Sms { phone_number, code } => f
+                .debug_struct("Sms")
+                .field("phone_number", phone_number)
+                .field("code", &redacted(code))
+                .finish(),
+            Self::Email { email, code } => f
+                .debug_struct("Email")
+                .field("email", email)
+                .field("code", &redacted(code))
+                .finish(),
+            Self::WebAuthn {
+                challenge,
+                allowed_credentials,
+            } => f
+                .debug_struct("WebAuthn")
+                .field("challenge", &redacted(challenge))
+                .field("allowed_credentials", allowed_credentials)
+                .finish(),
+            Self::BackupCodes { remaining_codes } => f
+                .debug_struct("BackupCodes")
+                .field("remaining_codes", remaining_codes)
+                .finish(),
+        }
+    }
+}
+
 /// MFA method configuration for a user
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserMfaMethod {
@@ -97,7 +131,7 @@ pub struct UserMfaMethod {
 }
 
 /// Method-specific configuration data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum MfaMethodData {
     Totp {
         /// Base32-encoded secret key
@@ -131,6 +165,50 @@ pub enum MfaMethodData {
         /// Number of codes used
         used_count: u32,
     },
+}
+
+impl std::fmt::Debug for MfaMethodData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Totp {
+                secret_key,
+                qr_code_url,
+            } => f
+                .debug_struct("Totp")
+                .field("secret_key", &crate::utils::redact::redacted(secret_key))
+                .field("qr_code_url", &redacted(qr_code_url))
+                .finish(),
+            Self::Sms {
+                phone_number,
+                is_verified,
+            } => f
+                .debug_struct("Sms")
+                .field("phone_number", phone_number)
+                .field("is_verified", is_verified)
+                .finish(),
+            Self::Email { email, is_verified } => f
+                .debug_struct("Email")
+                .field("email", email)
+                .field("is_verified", is_verified)
+                .finish(),
+            Self::WebAuthn {
+                credential_id,
+                public_key,
+                counter,
+            } => f
+                .debug_struct("WebAuthn")
+                .field("credential_id", credential_id)
+                .field("public_key", public_key)
+                .field("counter", counter)
+                .finish(),
+            Self::BackupCodes { codes, used_count } => f
+                .debug_struct("BackupCodes")
+                .field("codes", &redacted(codes))
+                .field("used_count", used_count)
+                .finish(),
+        }
+    }
 }
 
 /// MFA verification result

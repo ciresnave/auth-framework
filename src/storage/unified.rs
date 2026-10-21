@@ -31,7 +31,7 @@ use object_pool::Pool;
 use bumpalo::Bump;
 
 /// Unified storage key for all data types
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 pub enum StorageKey {
     Token(String),
     AccessToken(String),
@@ -39,6 +39,22 @@ pub enum StorageKey {
     Session(String),
     UserSessions(String),
     KeyValue(String),
+}
+
+impl std::fmt::Debug for StorageKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, value) = match self {
+            Self::Token(v) => ("Token", v),
+            Self::AccessToken(v) => ("AccessToken", v),
+            Self::UserTokens(v) => ("UserTokens", v),
+            Self::Session(v) => ("Session", v),
+            Self::UserSessions(v) => ("UserSessions", v),
+            Self::KeyValue(v) => ("KeyValue", v),
+        };
+        f.debug_tuple(kind)
+            .field(&crate::utils::redact::redacted(value))
+            .finish()
+    }
 }
 
 /// Unified storage value with metadata
@@ -52,7 +68,7 @@ pub struct StorageValue {
 }
 
 /// Storage data variants
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)] // variant layout is public API; boxing would change it on a release line
 pub enum StorageData {
     Token(AuthToken),
@@ -61,6 +77,23 @@ pub enum StorageData {
     Session(SessionData),
     UserSessionList(Vec<String>), // List of session IDs for user
     KeyValue(Vec<u8>),
+}
+
+impl std::fmt::Debug for StorageData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Token(t) => f.debug_tuple("Token").field(t).finish(),
+            Self::TokenRef(v) => f.debug_tuple("TokenRef").field(&redacted(v)).finish(),
+            Self::UserTokenList(v) => f.debug_tuple("UserTokenList").field(&redacted(v)).finish(),
+            Self::Session(s) => f.debug_tuple("Session").field(s).finish(),
+            Self::UserSessionList(v) => f
+                .debug_tuple("UserSessionList")
+                .field(&redacted(v))
+                .finish(),
+            Self::KeyValue(v) => f.debug_tuple("KeyValue").field(&redacted(v)).finish(),
+        }
+    }
 }
 
 /// High-performance unified storage with optimizations

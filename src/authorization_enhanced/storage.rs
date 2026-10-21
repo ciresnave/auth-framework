@@ -66,12 +66,27 @@ pub struct Row {
 }
 
 /// Database column value
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum DatabaseColumnValue {
     String(String),
     Integer(i64),
     Boolean(bool),
     Null,
+}
+
+impl std::fmt::Debug for DatabaseColumnValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // A column can hold anything, including a credential.
+            Self::String(v) => f
+                .debug_tuple("String")
+                .field(&crate::utils::redact::redacted(v))
+                .finish(),
+            Self::Integer(v) => f.debug_tuple("Integer").field(v).finish(),
+            Self::Boolean(v) => f.debug_tuple("Boolean").field(v).finish(),
+            Self::Null => f.write_str("Null"),
+        }
+    }
 }
 
 /// Database error

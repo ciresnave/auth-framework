@@ -75,12 +75,24 @@ pub struct FormPostResponseMode {
 }
 
 /// JARM (JWT Response Mode) implementation
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct JarmResponseMode {
     /// JWT response token
     pub response_token: String,
     /// Response mode for JWT delivery
     pub delivery_mode: ResponseMode,
+}
+
+impl std::fmt::Debug for JarmResponseMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("JarmResponseMode");
+        d.field(
+            "response_token",
+            &crate::utils::redact::redacted(&self.response_token),
+        );
+        d.field("delivery_mode", &self.delivery_mode);
+        d.finish()
+    }
 }
 
 impl MultipleResponseTypesManager {

@@ -88,7 +88,7 @@ pub enum EventOutcome {
 }
 
 /// Comprehensive audit event
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     /// Unique event ID
     pub id: String,
@@ -116,6 +116,29 @@ pub struct AuditEvent {
     pub actor: ActorInfo,
     /// Correlation ID for tracking related events
     pub correlation_id: Option<String>,
+}
+
+impl std::fmt::Debug for AuditEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuditEvent");
+        d.field("id", &self.id);
+        d.field("event_type", &self.event_type);
+        d.field("timestamp", &self.timestamp);
+        d.field("user_id", &self.user_id);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("outcome", &self.outcome);
+        d.field("risk_level", &self.risk_level);
+        d.field("description", &self.description);
+        d.field("details", &self.details);
+        d.field("request_metadata", &self.request_metadata);
+        d.field("resource", &self.resource);
+        d.field("actor", &self.actor);
+        d.field("correlation_id", &self.correlation_id);
+        d.finish()
+    }
 }
 
 /// Request metadata for audit context

@@ -222,7 +222,7 @@ pub enum KeyType {
 }
 
 /// Stored Certificate
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StoredCertificate {
     /// Certificate ID
     pub cert_id: String,
@@ -264,6 +264,29 @@ pub struct StoredCertificate {
     pub metadata: HashMap<String, Value>,
 }
 
+impl std::fmt::Debug for StoredCertificate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("StoredCertificate");
+        d.field("cert_id", &self.cert_id);
+        d.field("certificate_pem", &self.certificate_pem);
+        d.field(
+            "private_key_pem",
+            &crate::utils::redact::redacted(&self.private_key_pem),
+        );
+        d.field("subject", &self.subject);
+        d.field("issuer", &self.issuer);
+        d.field("serial_number", &self.serial_number);
+        d.field("not_before", &self.not_before);
+        d.field("not_after", &self.not_after);
+        d.field("profile", &self.profile);
+        d.field("status", &self.status);
+        d.field("fingerprint", &self.fingerprint);
+        d.field("created_at", &self.created_at);
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
+}
+
 /// Certificate Status
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CertificateStatus {
@@ -278,7 +301,7 @@ pub enum CertificateStatus {
 }
 
 /// CA Certificate
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CACertificate {
     /// CA ID
     pub ca_id: String,
@@ -300,6 +323,23 @@ pub struct CACertificate {
 
     /// Next certificate serial number
     pub next_serial: u64,
+}
+
+impl std::fmt::Debug for CACertificate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CACertificate");
+        d.field("ca_id", &self.ca_id);
+        d.field("certificate", &self.certificate);
+        d.field("subject", &self.subject);
+        d.field(
+            "private_key",
+            &crate::utils::redact::redacted(&self.private_key),
+        );
+        d.field("ca_type", &self.ca_type);
+        d.field("issued_count", &self.issued_count);
+        d.field("next_serial", &self.next_serial);
+        d.finish()
+    }
 }
 
 /// CA Types

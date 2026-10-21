@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Represents different types of credentials that can be used for authentication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum Credential {
     /// Username and password credentials
@@ -95,6 +95,12 @@ pub enum Credential {
         credential_id: Vec<u8>,
         assertion_response: String, // JSON-serialized AuthenticatorAssertionResponse
     },
+}
+
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.safe_display())
+    }
 }
 
 impl Credential {
