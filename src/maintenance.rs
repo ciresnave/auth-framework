@@ -54,7 +54,7 @@ pub struct SnapshotUserSummary {
     pub active: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SnapshotKvEntry {
     pub key: String,
     pub value_base64: String,
@@ -63,6 +63,19 @@ pub struct SnapshotKvEntry {
     /// their checksums) written before this field existed stay valid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
+}
+
+impl std::fmt::Debug for SnapshotKvEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SnapshotKvEntry");
+        d.field("key", &crate::utils::redact::redacted(&self.key));
+        d.field(
+            "value_base64",
+            &crate::utils::redact::redacted(&self.value_base64),
+        );
+        d.field("expires_at", &self.expires_at);
+        d.finish()
+    }
 }
 
 /// What restore should do with a KV entry, given its recorded expiry.

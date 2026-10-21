@@ -100,12 +100,23 @@ pub struct UmaResourceSet {
 }
 
 /// A permission ticket issued when a resource server encounters an unauthorized request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct PermissionTicket {
     pub ticket: String,
     pub resource_id: String,
     pub requested_scopes: Vec<String>,
     pub created_at: u64,
+}
+
+impl std::fmt::Debug for PermissionTicket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PermissionTicket");
+        d.field("ticket", &crate::utils::redact::redacted(&self.ticket));
+        d.field("resource_id", &self.resource_id);
+        d.field("requested_scopes", &self.requested_scopes);
+        d.field("created_at", &self.created_at);
+        d.finish()
+    }
 }
 
 impl UmaService {

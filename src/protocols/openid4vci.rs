@@ -300,12 +300,24 @@ pub struct AuthorizationCodeGrant {
     pub issuer_state: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PreAuthorizedCodeGrant {
     #[serde(rename = "pre-authorized_code")]
     pub pre_authorized_code: String,
     #[serde(default)]
     pub user_pin_required: bool,
+}
+
+impl std::fmt::Debug for PreAuthorizedCodeGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PreAuthorizedCodeGrant");
+        d.field(
+            "pre_authorized_code",
+            &crate::utils::redact::redacted(&self.pre_authorized_code),
+        );
+        d.field("user_pin_required", &self.user_pin_required);
+        d.finish()
+    }
 }
 
 // ── Credential Request (§7.2) ───────────────────────────────────────
@@ -324,13 +336,22 @@ pub struct CredentialRequest {
 }
 
 /// Proof of possession in a credential request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CredentialProof {
     /// Proof type (e.g., "jwt").
     pub proof_type: String,
     /// The proof value (JWT or other).
     #[serde(default)]
     pub jwt: Option<String>,
+}
+
+impl std::fmt::Debug for CredentialProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CredentialProof");
+        d.field("proof_type", &self.proof_type);
+        d.field("jwt", &crate::utils::redact::redacted(&self.jwt));
+        d.finish()
+    }
 }
 
 // ── Credential Response (§7.3) ──────────────────────────────────────

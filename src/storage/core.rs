@@ -421,7 +421,7 @@ impl AuthStorage for Arc<dyn AuthStorage> {
 /// * `last_activity` is updated on every authenticated access.
 /// * `data` may contain arbitrary application-specific key/value pairs
 ///   — the framework never reads them.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SessionData {
     /// Session ID
     pub session_id: String,
@@ -446,6 +446,24 @@ pub struct SessionData {
 
     /// Custom session data
     pub data: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for SessionData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SessionData");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("user_id", &self.user_id);
+        d.field("created_at", &self.created_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("last_activity", &self.last_activity);
+        d.field("ip_address", &self.ip_address);
+        d.field("user_agent", &self.user_agent);
+        d.field("data", &self.data);
+        d.finish()
+    }
 }
 
 /// In-memory storage implementation (for development/testing only).

@@ -204,12 +204,26 @@ impl Default for EmailConfig {
 }
 
 /// Security context for authentication operations
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SecurityContext {
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub session_id: Option<String>,
     pub request_id: Option<String>,
+}
+
+impl std::fmt::Debug for SecurityContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecurityContext");
+        d.field("ip_address", &self.ip_address);
+        d.field("user_agent", &self.user_agent);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("request_id", &self.request_id);
+        d.finish()
+    }
 }
 
 /// Password validator

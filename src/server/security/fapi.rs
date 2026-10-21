@@ -257,7 +257,7 @@ impl FapiConfigBuilder {
 }
 
 /// FAPI 2.0 Session
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FapiSession {
     /// Session ID
     pub session_id: String,
@@ -288,6 +288,29 @@ pub struct FapiSession {
 
     /// Session metadata
     pub metadata: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for FapiSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FapiSession");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("client_id", &self.client_id);
+        d.field("user_id", &self.user_id);
+        d.field("created_at", &self.created_at);
+        d.field("expires_at", &self.expires_at);
+        d.field(
+            "dpop_proof",
+            &crate::utils::redact::redacted(&self.dpop_proof),
+        );
+        d.field("cert_thumbprint", &self.cert_thumbprint);
+        d.field("request_jti", &self.request_jti);
+        d.field("scopes", &self.scopes);
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
 }
 
 impl FapiSession {
@@ -437,7 +460,7 @@ pub struct FapiRequestObject {
 }
 
 /// FAPI 2.0 Authorization Response (JARM)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FapiAuthorizationResponse {
     /// Issuer (authorization server)
     pub iss: String,
@@ -466,6 +489,22 @@ pub struct FapiAuthorizationResponse {
     /// Additional response parameters
     #[serde(flatten)]
     pub additional_params: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for FapiAuthorizationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FapiAuthorizationResponse");
+        d.field("iss", &self.iss);
+        d.field("aud", &self.aud);
+        d.field("iat", &self.iat);
+        d.field("exp", &self.exp);
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("state", &self.state);
+        d.field("error", &self.error);
+        d.field("error_description", &self.error_description);
+        d.field("additional_params", &self.additional_params);
+        d.finish()
+    }
 }
 
 /// FAPI 2.0 Token Response

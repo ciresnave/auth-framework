@@ -88,7 +88,7 @@ impl std::fmt::Debug for DatabaseConfig {
 }
 
 /// Server configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -97,6 +97,20 @@ pub struct ServerConfig {
     pub timeout: u64,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ServerConfig");
+        d.field("host", &self.host);
+        d.field("port", &self.port);
+        d.field("workers", &self.workers);
+        d.field("max_connections", &self.max_connections);
+        d.field("timeout", &self.timeout);
+        d.field("tls_cert", &self.tls_cert);
+        d.field("tls_key", &crate::utils::redact::redacted(&self.tls_key));
+        d.finish()
+    }
 }
 
 /// Logging configuration

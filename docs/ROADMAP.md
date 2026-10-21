@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc108`
+- Current crate version: `0.6.0-rc109`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -189,6 +189,20 @@ This phase begins once the release-readiness and DX stabilization work above is 
 - [x] HSM and signing-key integration hardening
 - [x] Expanded audit-log querying and operator workflows
 - [x] Production-grade admin dashboard configuration editing and safer live-reload flows
+- [ ] `Secret<String>` newtype whose `Debug` redacts, so that secrecy lives in the type and not in a field name. The derived-`Debug`
+      audit (`tests/debug_field_review.txt`) is a reviewed-field-name list: it makes a human decide for every plain `String` field
+      of a `Debug`-deriving type, but it still depends on names; a wrapper type removes the decision.
+- [ ] Verify what `Debug` prints for the third-party types our structs hold: `reqwest::Client`, `sqlx` pools and connect options,
+      `tokio_postgres::Config`, and `redis` versions before 1.7.1 (1.7.1 redacts the password). Only `jsonwebtoken` 9.3 / 10.x / 11.1
+      and `redis` 1.7.1 have been read so far.
+- [ ] Scheduled `cargo deny` / `cargo audit` on every maintained release branch (weekly and on push): a new advisory reached
+      `release/0.4.x` and `release/0.5.x` only when an unrelated PR ran CI, because lockfile refreshes land on `main` alone.
+- [ ] Error-message variants (`AuthError`, `StorageError`, `DatabaseError`, `ConfigError`, ...) are allowed in the derived-`Debug` audit as
+      "diagnostic text", but an error is only as clean as the code that builds it: grep every construction site of the allowed variants
+      for interpolated secret-typed values (`format!("...{token}")`, a database error that carries a connection string) and fix or
+      justify each one.
+- [ ] The derived-`Debug` audit scans `String`, `Vec<u8>`, `Vec<String>`, `Option` of those, `Box<str>` and `Arc<str>` fields; values inside
+      `HashMap<String, String>` fields (user attributes, headers) are not scanned.
 
 ### Dependency Freshness (item 63e)
 

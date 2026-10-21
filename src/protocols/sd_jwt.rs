@@ -92,7 +92,7 @@ impl Default for SdJwtConfig {
 }
 
 /// A single disclosure: the base64url-encoded `[salt, claim_name, claim_value]` array.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Disclosure {
     /// The base64url-encoded disclosure string.
     pub encoded: String,
@@ -104,9 +104,20 @@ pub struct Disclosure {
     pub digest: String,
 }
 
+impl std::fmt::Debug for Disclosure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("Disclosure");
+        d.field("encoded", &crate::utils::redact::redacted(&self.encoded));
+        d.field("claim_name", &self.claim_name);
+        d.field("claim_value", &self.claim_value);
+        d.field("digest", &self.digest);
+        d.finish()
+    }
+}
+
 /// The issued SD-JWT: a compact JWT, the tilde-separated disclosures, and
 /// an optional key-binding JWT.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SdJwt {
     /// The signed JWT containing `_sd` digests.
     pub jwt: String,
@@ -114,6 +125,19 @@ pub struct SdJwt {
     pub disclosures: Vec<Disclosure>,
     /// Optional holder key-binding JWT.
     pub key_binding_jwt: Option<String>,
+}
+
+impl std::fmt::Debug for SdJwt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SdJwt");
+        d.field("jwt", &crate::utils::redact::redacted(&self.jwt));
+        d.field("disclosures", &self.disclosures);
+        d.field(
+            "key_binding_jwt",
+            &crate::utils::redact::redacted(&self.key_binding_jwt),
+        );
+        d.finish()
+    }
 }
 
 impl SdJwt {
@@ -380,7 +404,7 @@ impl SdJwtVerifier {
 }
 
 /// Result of verifying an SD-JWT.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VerifiedSdJwt {
     /// Claims that were in the JWT payload in the clear.
     pub plaintext_claims: serde_json::Map<String, serde_json::Value>,
@@ -388,6 +412,19 @@ pub struct VerifiedSdJwt {
     pub disclosed_claims: HashMap<String, serde_json::Value>,
     /// The optional key-binding JWT, if present.
     pub key_binding_jwt: Option<String>,
+}
+
+impl std::fmt::Debug for VerifiedSdJwt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("VerifiedSdJwt");
+        d.field("plaintext_claims", &self.plaintext_claims);
+        d.field("disclosed_claims", &self.disclosed_claims);
+        d.field(
+            "key_binding_jwt",
+            &crate::utils::redact::redacted(&self.key_binding_jwt),
+        );
+        d.finish()
+    }
 }
 
 impl VerifiedSdJwt {

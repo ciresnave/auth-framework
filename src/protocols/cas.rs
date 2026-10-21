@@ -74,7 +74,7 @@ impl Default for CasConfig {
 // ─── Data Types ──────────────────────────────────────────────────────────────
 
 /// Result of CAS ticket validation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CasValidationResult {
     /// Whether the ticket was valid.
     pub valid: bool,
@@ -98,8 +98,25 @@ pub struct CasValidationResult {
     pub error_message: Option<String>,
 }
 
+impl std::fmt::Debug for CasValidationResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CasValidationResult");
+        d.field("valid", &self.valid);
+        d.field("user", &self.user);
+        d.field("attributes", &self.attributes);
+        d.field(
+            "proxy_granting_ticket",
+            &crate::utils::redact::redacted(&self.proxy_granting_ticket),
+        );
+        d.field("proxies", &self.proxies);
+        d.field("error_code", &self.error_code);
+        d.field("error_message", &self.error_message);
+        d.finish()
+    }
+}
+
 /// CAS single-logout request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CasSloRequest {
     /// Service ticket being logged out.
     pub ticket: String,
@@ -109,6 +126,19 @@ pub struct CasSloRequest {
 
     /// Timestamp of the logout request.
     pub timestamp: String,
+}
+
+impl std::fmt::Debug for CasSloRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CasSloRequest");
+        d.field("ticket", &crate::utils::redact::redacted(&self.ticket));
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("timestamp", &self.timestamp);
+        d.finish()
+    }
 }
 
 // ─── Client ──────────────────────────────────────────────────────────────────

@@ -158,7 +158,7 @@ impl TacacsHeader {
 }
 
 /// TACACS+ authentication START body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthenStartBody {
     pub action: AuthenAction,
     pub authen_type: AuthenType,
@@ -167,6 +167,20 @@ pub struct AuthenStartBody {
     pub port: String,
     pub remote_address: String,
     pub data: Vec<u8>,
+}
+
+impl std::fmt::Debug for AuthenStartBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthenStartBody");
+        d.field("action", &self.action);
+        d.field("authen_type", &self.authen_type);
+        d.field("authen_service", &self.authen_service);
+        d.field("user", &self.user);
+        d.field("port", &self.port);
+        d.field("remote_address", &self.remote_address);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.finish()
+    }
 }
 
 impl AuthenStartBody {
