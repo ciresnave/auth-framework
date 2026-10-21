@@ -216,6 +216,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc115 -- **Dependencies: `passkey` and `passkey-client` 0.5 -> 0.6.** The new release asks the caller for a crypto backend (`Authenticator::new(.., RustCryptoBackend)`)
+  and no longer exports `passkey::types::rand`; the passkey method now passes `RustCryptoBackend` and draws its 32-byte challenge from `ring`'s system
+  generator. The lock also moves the RustCrypto elliptic-curve stack that `passkey` uses (`p256` 0.14, `ecdsa` 0.17, `elliptic-curve` 0.14, `crypto-bigint`
+  0.7, `sec1`, `base16ct` 1.0) and adds `ed25519-dalek` 3 and `ml-dsa`. No public item of this crate changes and no stored or wire format moves: a credential
+  and an assertion recorded with `passkey` 0.5.0 (`tests/fixtures/passkey_wire_format.json`) are checked against the same shape and verified with `ring` alone,
+  and the test passes on 0.5.0 and on 0.6.0. Known issue, not caused by this change: `register_passkey` reads the public key from a JSON path
+  that the serialized credential does not have (`authenticatorData` is bytes), so the stored key is `null` on both releases; tracked separately.
 - 0.6.0-rc110 -- **CI: a weekly `cargo audit` + `cargo deny` run on every maintained branch.** A new RustSec advisory reaches a release branch's
   lockfile the day it is published, but lockfile refreshes land on `main` alone, so `release/0.4.x` and `release/0.5.x` went red
   (RUSTSEC-2026-0381/-0382/-0383) only when an unrelated PR ran CI there. The new workflow `security-audit-branches.yml` lists `main`
