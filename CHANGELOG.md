@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc53] - Unreleased
+
+### Fixed
+
+- **`zeroize` 1.9.1 or later is now required, because earlier versions print `Zeroizing` secrets in `{:?}`.** `Zeroizing<T>` hides its
+  value from `Debug` only from zeroize 1.9.1 (2026-10-06); 1.9.0 and earlier derive `Debug` and print `Zeroizing("<the secret>")`. The
+  manifest allowed 1.8.2 and this line's lockfile pinned it, so a build on this line printed every `Zeroizing<String>` field of a type
+  that derives or forwards `Debug` (configuration secrets, API keys and passwords, hashed client secrets, TOTP secrets). The requirement
+  is now `zeroize = "1.9.1"` and the lock moves to 1.9.1; a test formats a `Zeroizing` holding a marker and another parses `Cargo.toml`
+  and fails below 1.9.1.
+
 ## [0.5.0-rc52] - Unreleased
 
 ### Changed
