@@ -111,12 +111,21 @@ impl Default for SessionManagementConfig {
 }
 
 /// Session Management provider
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionManager {
     /// Configuration
     config: SessionManagementConfig,
     /// Active sessions storage
     sessions: HashMap<String, OidcSession>,
+}
+
+impl std::fmt::Debug for SessionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SessionManager");
+        d.field("config", &self.config);
+        d.field("sessions", &crate::utils::redact::redacted(&self.sessions));
+        d.finish()
+    }
 }
 
 /// Session check request parameters

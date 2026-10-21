@@ -357,7 +357,7 @@ impl std::fmt::Debug for CredentialProof {
 // ── Credential Response (§7.3) ──────────────────────────────────────
 
 /// Credential issuance response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CredentialResponse {
     /// The issued credential (format-specific).
     #[serde(default)]
@@ -371,6 +371,20 @@ pub struct CredentialResponse {
     /// Nonce lifetime in seconds.
     #[serde(default)]
     pub c_nonce_expires_in: Option<u64>,
+}
+
+impl std::fmt::Debug for CredentialResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CredentialResponse");
+        d.field(
+            "credential",
+            &crate::utils::redact::redacted(&self.credential),
+        );
+        d.field("transaction_id", &self.transaction_id);
+        d.field("c_nonce", &self.c_nonce);
+        d.field("c_nonce_expires_in", &self.c_nonce_expires_in);
+        d.finish()
+    }
 }
 
 impl CredentialResponse {

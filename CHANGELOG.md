@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc55] - Unreleased
+
+### Fixed
+
+- **Maps, sets and JSON values no longer print their keys and contents in `{:?}`; more types redact credentials (backport of 0.6.0-rc111 and -rc112).** The
+  derived-`Debug` audit read one field per line and looked at plain-text fields only, so a variant written
+  `External { endpoint: String, api_key: String },` and a field such as `DashMap<String, AuthToken>` (keyed by token or session id) were
+  never checked. The audit now parses one-line variants and structs, `cfg_attr` derives, multi-line attributes and more byte and text
+  shapes, and reads container field types for derived and hand-written `Debug` impls; a further test fails if a macro defines a type.
+  Redacted: `AuditStorage`, `DeviceAuthState`, `CaepRuleAction`, the in-memory stores and the session, CIBA, HEART, eKYC, FAPI and step-up
+  managers, parameter bags that can carry credentials (request parameters, token-response extras, outbound headers, SCIM bulk data), RADIUS
+  reply attributes and State, and the `sid` claim, session `id`, MFA `code_hash` and hashed client secret and registration token. No wire or
+  stored format changes.
+
 ## [0.5.0-rc54] - Unreleased
 
 ### Fixed

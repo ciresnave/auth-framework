@@ -45,7 +45,7 @@ impl std::fmt::Debug for BackChannelLogoutRequest {
             &crate::utils::redact::redacted(&self.session_id),
         );
         d.field("sub", &self.sub);
-        d.field("sid", &self.sid);
+        d.field("sid", &crate::utils::redact::redacted(&self.sid));
         d.field("iss", &self.iss);
         d.field("initiating_client_id", &self.initiating_client_id);
         d.field("additional_events", &self.additional_events);
@@ -198,7 +198,7 @@ pub struct RpBackChannelConfig {
 }
 
 /// Logout token claims
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LogoutTokenClaims {
     /// Issuer
     pub iss: String,
@@ -216,6 +216,21 @@ pub struct LogoutTokenClaims {
     pub sid: Option<String>,
     /// Expiration time
     pub exp: u64,
+}
+
+impl std::fmt::Debug for LogoutTokenClaims {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LogoutTokenClaims");
+        d.field("iss", &self.iss);
+        d.field("sub", &self.sub);
+        d.field("aud", &self.aud);
+        d.field("iat", &self.iat);
+        d.field("jti", &self.jti);
+        d.field("events", &self.events);
+        d.field("sid", &crate::utils::redact::redacted(&self.sid));
+        d.field("exp", &self.exp);
+        d.finish()
+    }
 }
 
 /// Logout events structure
@@ -257,7 +272,10 @@ impl std::fmt::Debug for BackChannelLogoutManager {
         d.field("session_manager", &self.session_manager);
         d.field("http_client", &self.http_client);
         d.field("rp_configs", &self.rp_configs);
-        d.field("active_logouts", &self.active_logouts);
+        d.field(
+            "active_logouts",
+            &crate::utils::redact::redacted(&self.active_logouts),
+        );
         d.field(
             "signing_key",
             &crate::utils::redact::redacted(&self.signing_key),

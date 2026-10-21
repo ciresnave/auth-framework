@@ -507,7 +507,10 @@ impl std::fmt::Debug for OAuthTokenResponse {
             &crate::utils::redact::redacted(&self.refresh_token),
         );
         d.field("scope", &self.scope);
-        d.field("additional_fields", &self.additional_fields);
+        d.field(
+            "additional_fields",
+            &crate::utils::redact::redacted(&self.additional_fields),
+        );
         d.finish()
     }
 }

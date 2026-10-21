@@ -453,7 +453,7 @@ pub struct EventSourcingManager {
 }
 
 /// Domain event for event sourcing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DomainEvent {
     pub event_id: String,
     pub aggregate_id: String,
@@ -464,13 +464,38 @@ pub struct DomainEvent {
     pub metadata: HashMap<String, String>,
 }
 
+impl std::fmt::Debug for DomainEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DomainEvent");
+        d.field("event_id", &self.event_id);
+        d.field("aggregate_id", &self.aggregate_id);
+        d.field("event_type", &self.event_type);
+        d.field("event_version", &self.event_version);
+        d.field("timestamp", &self.timestamp);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
+}
+
 /// Event snapshot for performance optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EventSnapshot {
     pub aggregate_id: String,
     pub version: u64,
     pub timestamp: SystemTime,
     pub data: serde_json::Value,
+}
+
+impl std::fmt::Debug for EventSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EventSnapshot");
+        d.field("aggregate_id", &self.aggregate_id);
+        d.field("version", &self.version);
+        d.field("timestamp", &self.timestamp);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.finish()
+    }
 }
 
 /// Event sourcing configuration

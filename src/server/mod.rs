@@ -179,7 +179,7 @@ pub trait AuthenticationProvider {
 }
 
 /// Generic authentication request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
     /// Request type
     pub request_type: String,
@@ -197,8 +197,23 @@ pub struct AuthRequest {
     pub timestamp: SystemTime,
 }
 
+impl std::fmt::Debug for AuthRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthRequest");
+        d.field("request_type", &self.request_type);
+        d.field(
+            "parameters",
+            &crate::utils::redact::redacted(&self.parameters),
+        );
+        d.field("client_id", &self.client_id);
+        d.field("user_id", &self.user_id);
+        d.field("timestamp", &self.timestamp);
+        d.finish()
+    }
+}
+
 /// Generic authentication response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthResponse {
     /// Response type
     pub response_type: String,
@@ -214,6 +229,18 @@ pub struct AuthResponse {
 
     /// Response timestamp
     pub timestamp: SystemTime,
+}
+
+impl std::fmt::Debug for AuthResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthResponse");
+        d.field("response_type", &self.response_type);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.field("success", &self.success);
+        d.field("error", &self.error);
+        d.field("timestamp", &self.timestamp);
+        d.finish()
+    }
 }
 
 /// Validation result

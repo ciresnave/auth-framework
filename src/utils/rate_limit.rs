@@ -14,11 +14,21 @@ use std::time::{Duration, Instant};
 /// let limiter = RateLimiter::new(5, Duration::from_secs(60));
 /// assert!(limiter.is_allowed("client-1"));
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RateLimiter {
     max_requests: u32,
     window: Duration,
     requests: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+}
+
+impl std::fmt::Debug for RateLimiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RateLimiter")
+            .field("max_requests", &self.max_requests)
+            .field("window", &self.window)
+            .field("requests", &crate::utils::redact::redacted(&self.requests))
+            .finish()
+    }
 }
 
 impl RateLimiter {

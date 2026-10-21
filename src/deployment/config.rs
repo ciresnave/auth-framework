@@ -50,8 +50,14 @@ impl std::fmt::Debug for EnvironmentConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("EnvironmentConfig");
         d.field("name", &self.name);
-        d.field("variables", &self.variables);
-        d.field("overrides", &self.overrides);
+        d.field(
+            "variables",
+            &crate::utils::redact::redacted(&self.variables),
+        );
+        d.field(
+            "overrides",
+            &crate::utils::redact::redacted(&self.overrides),
+        );
         d.field("secrets", &crate::utils::redact::redacted(&self.secrets));
         d.field("required_vars", &self.required_vars);
         d.finish()
@@ -172,7 +178,7 @@ pub struct CorsConfig {
 }
 
 /// Complete application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub environment: String,
     pub debug: bool,
@@ -182,6 +188,21 @@ pub struct AppConfig {
     pub security: SecurityConfig,
     pub features: HashMap<String, bool>,
     pub custom: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for AppConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AppConfig");
+        d.field("environment", &self.environment);
+        d.field("debug", &self.debug);
+        d.field("server", &self.server);
+        d.field("database", &self.database);
+        d.field("logging", &self.logging);
+        d.field("security", &self.security);
+        d.field("features", &self.features);
+        d.field("custom", &crate::utils::redact::redacted(&self.custom));
+        d.finish()
+    }
 }
 
 /// Configuration manager with hot-reload support

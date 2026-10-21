@@ -87,7 +87,7 @@ impl Default for RpInitiatedLogoutConfig {
 }
 
 /// Notification target for downstream front-channel or back-channel logout.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LogoutNotificationTarget {
     /// Client that should receive the logout notification.
     pub client_id: String,
@@ -97,6 +97,17 @@ pub struct LogoutNotificationTarget {
     pub frontchannel_logout_uri: Option<String>,
     /// Optional back-channel logout URI.
     pub backchannel_logout_uri: Option<String>,
+}
+
+impl std::fmt::Debug for LogoutNotificationTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LogoutNotificationTarget");
+        d.field("client_id", &self.client_id);
+        d.field("sid", &crate::utils::redact::redacted(&self.sid));
+        d.field("frontchannel_logout_uri", &self.frontchannel_logout_uri);
+        d.field("backchannel_logout_uri", &self.backchannel_logout_uri);
+        d.finish()
+    }
 }
 
 /// RP-initiated logout result.

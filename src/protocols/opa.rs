@@ -78,10 +78,18 @@ impl Default for OpaConfig {
 // ── OPA request / response ──────────────────────────────────────────
 
 /// Input payload sent to OPA for policy evaluation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OpaInput {
     /// The input object passed to the Rego policy.
     pub input: serde_json::Value,
+}
+
+impl std::fmt::Debug for OpaInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OpaInput");
+        d.field("input", &crate::utils::redact::redacted(&self.input));
+        d.finish()
+    }
 }
 
 /// Response from an OPA policy query.

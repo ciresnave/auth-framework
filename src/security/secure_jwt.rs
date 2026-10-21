@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecureJwtClaims {
     pub sub: String,
     pub iss: String,
@@ -18,6 +18,25 @@ pub struct SecureJwtClaims {
     pub sid: Option<String>,
     pub client_id: Option<String>,
     pub auth_ctx_hash: Option<String>,
+}
+
+impl std::fmt::Debug for SecureJwtClaims {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureJwtClaims");
+        d.field("sub", &self.sub);
+        d.field("iss", &self.iss);
+        d.field("aud", &self.aud);
+        d.field("exp", &self.exp);
+        d.field("nbf", &self.nbf);
+        d.field("iat", &self.iat);
+        d.field("jti", &self.jti);
+        d.field("scope", &self.scope);
+        d.field("typ", &self.typ);
+        d.field("sid", &crate::utils::redact::redacted(&self.sid));
+        d.field("client_id", &self.client_id);
+        d.field("auth_ctx_hash", &self.auth_ctx_hash);
+        d.finish()
+    }
 }
 
 #[derive(Clone)]
@@ -228,7 +247,10 @@ impl std::fmt::Debug for SecureJwtValidator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SecureJwtValidator")
             .field("config", &self.config)
-            .field("revoked_tokens", &self.revoked_tokens)
+            .field(
+                "revoked_tokens",
+                &crate::utils::redact::redacted(&self.revoked_tokens),
+            )
             .field(
                 "on_revoke",
                 &self.on_revoke.lock().ok().map(|g| g.is_some()),

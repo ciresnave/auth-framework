@@ -251,16 +251,6 @@ fn test_examples_are_complete() {
     }
 }
 
-/// What the scanner found in one file: every struct / enum that derives `Debug`, and the plain-text
-/// fields (`String`, `Vec<u8>`, `Vec<String>`, `Option` of those, `Box<str>`, `Arc<str>`) of those types
-/// that `{:?}` would print verbatim.
-struct DebugScan {
-    /// Types that derive `Debug`, with or without plain-text fields.
-    derived_types: usize,
-    /// `(type, line, field)`; a tuple struct / tuple variant payload is reported as the field `<tuple>`.
-    plain_fields: Vec<(String, usize, String)>,
-}
-
 fn rust_files_under(dir: &str, out: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -461,6 +451,17 @@ fn production_lines<'a>(file: &str, content: &'a str) -> Vec<(usize, &'a str)> {
     kept
 }
 
+/// What the scanner found in one file: every struct / enum that derives `Debug`, and the plain-text
+/// fields (`String`, `Vec<u8>`, `Vec<String>`, `Option` of those, `Box<str>`, `Arc<str>`) of those types
+/// that `{:?}` would print verbatim.
+struct DebugScan {
+    /// Types that derive `Debug`, with or without plain-text fields.
+    derived_types: usize,
+    /// `(type, line, field, container)`; a tuple struct / tuple variant payload is reported as the
+    /// field `<tuple>`. `container` is true for a map, set or JSON value (see [`is_container`]).
+    plain_fields: Vec<(String, usize, String, bool)>,
+}
+
 /// Splits a tuple payload such as `String, HashMap<String, String>` on the commas that are not
 /// inside angle brackets.
 fn split_top_level(list: &str) -> Vec<&str> {
@@ -480,24 +481,134 @@ fn split_top_level(list: &str) -> Vec<&str> {
     parts
 }
 
+/// `Option<`, `Arc<`, locks and the like around the type that matters.
+fn strip_wrappers(mut ty: &str) -> &str {
+    const WRAPPERS: &[&str] = &[
+        "Option<",
+        "Arc<",
+        "std::sync::Arc<",
+        "Box<",
+        "Rc<",
+        "RwLock<",
+        "Mutex<",
+        "tokio::sync::RwLock<",
+        "tokio::sync::Mutex<",
+        "std::sync::RwLock<",
+        "std::sync::Mutex<",
+        "parking_lot::RwLock<",
+        "parking_lot::Mutex<",
+    ];
+    'again: loop {
+        ty = ty.trim();
+        for w in WRAPPERS {
+            if let Some(inner) = ty.strip_prefix(w).and_then(|r| r.strip_suffix('>')) {
+                ty = inner;
+                continue 'again;
+            }
+        }
+        return ty;
+    }
+}
+
+/// A map, set or JSON value whose keys or contents are free text: `DashMap<String, _>`,
+/// `HashMap<_, String>`, `HashSet<String>`, `serde_json::Value`, each possibly wrapped in `Option`,
+/// `Arc` or a lock. Its `Debug` prints every entry, so a map keyed by a token or session id prints it.
+fn is_container(ty: &str, plain: &regex::Regex) -> bool {
+    let s = strip_wrappers(ty);
+    if s == "Value" || s == "serde_json::Value" {
+        return true;
+    }
+    let Some((head, rest)) = s.split_once('<') else {
+        return false;
+    };
+    let head = head.rsplit("::").next().unwrap_or(head);
+    if !matches!(
+        head,
+        "DashMap" | "HashMap" | "BTreeMap" | "HashSet" | "BTreeSet" | "DashSet"
+    ) {
+        return false;
+    }
+    let Some(args) = rest.strip_suffix('>') else {
+        return false;
+    };
+    split_top_level(args).iter().any(|a| {
+        let a = a.trim();
+        plain.is_match(a) || a == "Value" || a == "serde_json::Value"
+    })
+}
+
+/// Joins an attribute that spans several lines (a multi-line `#[derive(..)]`) into one entry, so the
+/// derive scan sees `Debug` in it. The entry keeps the line number of the attribute's first line.
+fn join_multiline_attributes(lines: Vec<(usize, &str)>) -> Vec<(usize, String)> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let (no, line) = lines[i];
+        let open = line.matches('[').count() as i32 - line.matches(']').count() as i32;
+        if line.trim_start().starts_with("#[") && open > 0 {
+            let mut joined = line.to_string();
+            let mut depth = open;
+            while depth > 0 && i + 1 < lines.len() {
+                i += 1;
+                let next = lines[i].1;
+                depth += next.matches('[').count() as i32 - next.matches(']').count() as i32;
+                joined.push(' ');
+                joined.push_str(next.trim());
+            }
+            out.push((no, joined));
+        } else {
+            out.push((no, line.to_string()));
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The `name: type` pairs written between the braces of a single line, for a struct declared on one
+/// line (`struct A { a: String }`, `from_item`) or an enum variant on one line
+/// (`Variant { a: String, b: u32 },`, `variant`). Empty when the line has no complete brace pair or is
+/// not one of those shapes.
+fn inline_fields(code: &str, from_item: bool, variant: bool) -> Vec<(String, String)> {
+    if !from_item && !variant {
+        return Vec::new();
+    }
+    let (Some(open), Some(close)) = (code.find('{'), code.rfind('}')) else {
+        return Vec::new();
+    };
+    if open >= close {
+        return Vec::new();
+    }
+    split_top_level(&code[open + 1..close])
+        .iter()
+        .filter_map(|part| {
+            let (name, ty) = part.split_once(':')?;
+            let name = name.trim().trim_start_matches("pub").trim();
+            let name = name.trim_start_matches(|c: char| c == '(' || c == ')' || c.is_whitespace());
+            let name = name.rsplit(' ').next().unwrap_or(name);
+            (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                .then(|| (name.to_string(), ty.trim().to_string()))
+        })
+        .collect()
+}
+
 fn scan_derived_debug(file: &str, content: &str) -> DebugScan {
     let item = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(struct|enum)\s+(\w+)").unwrap();
     let field = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*(.+?),?\s*(?://.*)?$")
         .unwrap();
     let tuple = regex::Regex::new(r"(?:^|[^\w])(\w*)\(([^()]*)\)").unwrap();
     let plain = regex::Regex::new(
-        r"^(?:pub(?:\([^)]*\))?\s+)?(?:Option<)?(?:String|Vec<u8>|Vec<String>|Box<str>|Arc<str>)>?$",
+        r"^(?:pub(?:\([^)]*\))?\s+)?(?:Option<)?(?:String|Vec<u8>|Vec<String>|Vec<Vec<u8>>|Box<str>|Box<\[u8\]>|Arc<str>|Cow<'\w+, ?str>|Bytes|\[u8; ?\w+\])>?$",
     )
     .unwrap();
 
-    let lines = production_lines(file, content);
+    let lines = join_multiline_attributes(production_lines(file, content));
     let mut scan = DebugScan {
         derived_types: 0,
         plain_fields: Vec::new(),
     };
     let mut i = 0;
     while i < lines.len() {
-        let Some(m) = item.captures(lines[i].1) else {
+        let Some(m) = item.captures(lines[i].1.as_str()) else {
             i += 1;
             continue;
         };
@@ -508,7 +619,10 @@ fn scan_derived_debug(file: &str, content: &str) -> DebugScan {
         while j > 0 {
             let above = lines[j - 1].1.trim();
             if above.starts_with("#[") || above.starts_with("///") {
-                if above.starts_with("#[derive(") && above.contains("Debug") {
+                if (above.starts_with("#[derive(") || above.starts_with("#[cfg_attr("))
+                    && above.contains("derive(")
+                    && above.contains("Debug")
+                {
                     derives_debug = true;
                 }
                 j -= 1;
@@ -523,18 +637,33 @@ fn scan_derived_debug(file: &str, content: &str) -> DebugScan {
         let (mut depth, mut opened) = (0i32, false);
         let mut k = i;
         while k < lines.len() {
-            let l = lines[k].1;
+            let l = lines[k].1.as_str();
             depth += l.matches('{').count() as i32 - l.matches('}').count() as i32;
             opened |= l.contains('{');
             if derives_debug {
                 let code = l.split("//").next().unwrap_or(l);
                 let trimmed = code.trim_start();
-                if k > i
+                let inline = inline_fields(code, k == i && kind == "struct", k > i);
+                if !inline.is_empty() {
+                    // `Variant { a: String, b: String },` or `struct A { a: String }` on one line.
+                    for (fname, fty) in inline {
+                        if plain.is_match(fty.trim()) {
+                            scan.plain_fields
+                                .push((name.clone(), lines[k].0, fname, false));
+                        } else if is_container(fty.trim(), &plain) {
+                            scan.plain_fields
+                                .push((name.clone(), lines[k].0, fname, true));
+                        }
+                    }
+                } else if k > i
                     && let Some(f) = field.captures(l)
                 {
                     if plain.is_match(f[2].trim()) {
                         scan.plain_fields
-                            .push((name.clone(), lines[k].0, f[1].to_string()));
+                            .push((name.clone(), lines[k].0, f[1].to_string(), false));
+                    } else if is_container(f[2].trim(), &plain) {
+                        scan.plain_fields
+                            .push((name.clone(), lines[k].0, f[1].to_string(), true));
                     }
                 } else if (k > i && !trimmed.starts_with('#') && !trimmed.starts_with('}'))
                     || (kind == "struct" && k == i)
@@ -554,6 +683,7 @@ fn scan_derived_debug(file: &str, content: &str) -> DebugScan {
                                 name.clone(),
                                 lines[k].0,
                                 "<tuple>".to_string(),
+                                false,
                             ));
                             break;
                         }
@@ -575,6 +705,8 @@ struct DebugFieldReview {
     public: std::collections::HashSet<String>,
     secret_capable: std::collections::HashSet<String>,
     ambiguous: std::collections::HashSet<String>,
+    /// Field names whose maps, sets or JSON values hold no credential and are keyed by no credential.
+    container_ok: std::collections::HashSet<String>,
     /// `(file suffix, type, field, reason)`.
     allow: Vec<(String, String, String, String)>,
 }
@@ -584,6 +716,7 @@ fn parse_debug_field_review(text: &str) -> DebugFieldReview {
         public: Default::default(),
         secret_capable: Default::default(),
         ambiguous: Default::default(),
+        container_ok: Default::default(),
         allow: Vec::new(),
     };
     let mut section = "";
@@ -597,6 +730,7 @@ fn parse_debug_field_review(text: &str) -> DebugFieldReview {
                 "public" => "public",
                 "secret_capable" => "secret_capable",
                 "ambiguous" => "ambiguous",
+                "container_ok" => "container_ok",
                 "allow" => "allow",
                 other => panic!(
                     "debug_field_review.txt:{}: unknown section [{other}]",
@@ -609,6 +743,7 @@ fn parse_debug_field_review(text: &str) -> DebugFieldReview {
             "public" => drop(r.public.insert(line.to_string())),
             "secret_capable" => drop(r.secret_capable.insert(line.to_string())),
             "ambiguous" => drop(r.ambiguous.insert(line.to_string())),
+            "container_ok" => drop(r.container_ok.insert(line.to_string())),
             "allow" => {
                 let (spec, reason) = line.split_once(" | ").unwrap_or_else(|| {
                     panic!(
@@ -654,6 +789,7 @@ fn review_debug_field(
     file: &str,
     ty: &str,
     field: &str,
+    container: bool,
 ) -> Option<&'static str> {
     if let Some(i) = review
         .allow
@@ -663,7 +799,15 @@ fn review_debug_field(
         used[i] = true;
         return None;
     }
-    if field == "<tuple>" {
+    if container {
+        if review.container_ok.contains(field) {
+            None
+        } else {
+            Some(
+                "a map, set or JSON value keyed by or holding free text: redact it (hand-written Debug), list the name under [container_ok], or [allow] it with a reason",
+            )
+        }
+    } else if field == "<tuple>" {
         Some("a tuple payload holds a plain string: redact it or [allow] it with a reason")
     } else if review.public.contains(field) {
         None
@@ -692,13 +836,13 @@ fn debug_review_problems(
         let mut types: Vec<&str> = scan
             .plain_fields
             .iter()
-            .map(|(t, _, _)| t.as_str())
+            .map(|(t, _, _, _)| t.as_str())
             .collect();
         types.sort_unstable();
         types.dedup();
         with_plain += types.len();
-        for (ty, line, field) in &scan.plain_fields {
-            if let Some(why) = review_debug_field(review, &mut used, file, ty, field) {
+        for (ty, line, field, container) in &scan.plain_fields {
+            if let Some(why) = review_debug_field(review, &mut used, file, ty, field, *container) {
                 problems.push(format!("  {file}:{line} - {ty}.{field}: {why}"));
             }
         }
@@ -761,13 +905,190 @@ fn test_derived_debug_plain_fields_are_reviewed() {
     );
 }
 
+/// The text between the braces that open at or after `from` in `content`, braces balanced.
+fn braced_block(content: &str, from: usize) -> Option<&str> {
+    let open = from + content[from..].find('{')?;
+    let mut depth = 0i32;
+    for (i, c) in content[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&content[open + 1..open + i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Fields that a hand-written `impl Debug for T` prints as they are (`.field("x", &self.x)`) although
+/// the field is a map, set or JSON value (see [`is_container`]): the impl redacts the plain-text
+/// fields, but a container's `Debug` prints every key and value. Returns `(type, field)` pairs and
+/// the number of hand-written impls looked at (the control that the scan reached any).
+fn handwritten_debug_containers(content: &str) -> (Vec<(String, String)>, usize) {
+    let impl_re =
+        regex::Regex::new(r"impl(?:<[^>]*>)?\s+(?:std::fmt::|fmt::)?Debug\s+for\s+(\w+)").unwrap();
+    let field_re =
+        regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*(.+?),?\s*(?://.*)?$")
+            .unwrap();
+    let printed = regex::Regex::new(r#"\.field\(\s*"(\w+)"\s*,\s*&self\.(\w+)\s*\)"#).unwrap();
+    let plain = regex::Regex::new(
+        r"^(?:pub(?:\([^)]*\))?\s+)?(?:Option<)?(?:String|Vec<u8>|Vec<String>|Box<str>|Arc<str>)>?$",
+    )
+    .unwrap();
+    let (mut found, mut impls) = (Vec::new(), 0);
+    for m in impl_re.captures_iter(content) {
+        let ty = &m[1];
+        let Some(body) = braced_block(content, m.get(0).unwrap().end()) else {
+            continue;
+        };
+        let item = regex::Regex::new(&format!(
+            r"(?:pub(?:\([^)]*\))?\s+)?struct\s+{ty}\b[^;{{]*\{{"
+        ))
+        .unwrap();
+        let Some(item_m) = item.find(content) else {
+            continue;
+        };
+        impls += 1;
+        let Some(fields) = braced_block(content, item_m.start()) else {
+            continue;
+        };
+        let mut depth = 0i32;
+        let mut types = std::collections::HashMap::new();
+        for line in fields.lines() {
+            if depth == 0
+                && let Some(f) = field_re.captures(line)
+            {
+                types.insert(f[1].to_string(), f[2].trim().to_string());
+            }
+            depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+        }
+        for p in printed.captures_iter(body) {
+            if p[1] == p[2]
+                && let Some(ft) = types.get(&p[2])
+                && is_container(ft, &plain)
+            {
+                found.push((ty.to_string(), p[2].to_string()));
+            }
+        }
+    }
+    (found, impls)
+}
+
+/// A hand-written `Debug` must not print a map, set or JSON value as it is either: its entries and
+/// keys can be tokens or session ids. Name-level and per-type decisions come from the same review file
+/// as the derived-`Debug` audit ([container_ok] and [allow]).
+#[test]
+fn test_handwritten_debug_does_not_print_containers() {
+    let mut paths = Vec::new();
+    rust_files_under("src", &mut paths);
+    paths.sort();
+    let review = parse_debug_field_review(include_str!("debug_field_review.txt"));
+    let mut used = vec![false; review.allow.len()];
+    let (mut problems, mut impls) = (Vec::new(), 0);
+    for path in &paths {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let (found, n) = handwritten_debug_containers(&content);
+        impls += n;
+        for (ty, field) in found {
+            if let Some(why) = review_debug_field(&review, &mut used, path, &ty, &field, true) {
+                problems.push(format!("  {path} - {ty}.{field}: {why}"));
+            }
+        }
+    }
+    // Control: the walk reached many hand-written impls, so an empty result is not vacuous.
+    assert!(
+        impls >= 150,
+        "only {impls} hand-written Debug impls scanned"
+    );
+    assert!(
+        problems.is_empty(),
+        "hand-written Debug impls that print a map, set or JSON value as it is:\n{}",
+        problems.join("\n")
+    );
+}
+
+/// Lines inside `macro_rules!` bodies that define a type or derive anything. A type generated by a
+/// macro is invisible to the derived-`Debug` scan, so none may exist until the scan learns them.
+fn macro_defined_types(file: &str, content: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].contains("macro_rules!") {
+            i += 1;
+            continue;
+        }
+        let (mut depth, mut opened) = (0i32, false);
+        let mut k = i;
+        while k < lines.len() {
+            let l = lines[k];
+            depth += l.matches('{').count() as i32 - l.matches('}').count() as i32;
+            opened |= l.contains('{');
+            let code = l.trim_start();
+            if !code.starts_with("//")
+                && (code.contains("#[derive(")
+                    || code.starts_with("struct ")
+                    || code.starts_with("pub struct ")
+                    || code.starts_with("enum ")
+                    || code.starts_with("pub enum "))
+            {
+                found.push(format!("{file}:{} - {}", k + 1, code));
+            }
+            if opened && depth <= 0 {
+                break;
+            }
+            k += 1;
+        }
+        i = k + 1;
+    }
+    found
+}
+
+/// No macro in `src/` defines a type (see [`macro_defined_types`]).
+#[test]
+fn test_no_types_are_defined_inside_macros() {
+    let mut paths = Vec::new();
+    rust_files_under("src", &mut paths);
+    paths.sort();
+    let macros_seen = paths
+        .iter()
+        .filter_map(|p| fs::read_to_string(p).ok())
+        .filter(|c| c.contains("macro_rules!"))
+        .count();
+    // Control: the walk reaches files that do contain macros.
+    assert!(
+        macros_seen > 0,
+        "no macro_rules! found under src/: the walk is broken"
+    );
+    let found: Vec<String> = paths
+        .iter()
+        .filter_map(|p| fs::read_to_string(p).ok().map(|c| (p, c)))
+        .flat_map(|(p, c)| macro_defined_types(p, &c))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "types defined inside macros:
+{}",
+        found.join(
+            "
+"
+        )
+    );
+}
+
 #[cfg(test)]
 mod debug_review_tests {
     use super::*;
 
     fn review() -> DebugFieldReview {
         parse_debug_field_review(
-            "[public]\nclient_id\nname\npassword_type\n[secret_capable]\nvalue\ncode\n[ambiguous]\nbody\n[allow]\nfixture.rs:Allowed:value | the fixture says this value is public\n",
+            "[public]\nclient_id\nname\npassword_type\n[secret_capable]\nvalue\ncode\n[ambiguous]\nbody\n[container_ok]\nlabels\n[allow]\nfixture.rs:Allowed:value | the fixture says this value is public\n",
         )
     }
 
@@ -834,5 +1155,170 @@ mod debug_review_tests {
     fn enum_variant_fields_are_seen() {
         let src = "#[derive(Debug)]\npub enum C {\n    Create {\n        value: Option<String>,\n    },\n}\n";
         assert_eq!(problems(src).len(), 1);
+    }
+
+    #[test]
+    fn one_line_struct_variants_and_structs_are_seen() {
+        let variant = "#[derive(Debug)]
+pub enum E {
+    Ext { name: String, value: String },
+    Unit,
+}
+";
+        let got = problems(variant);
+        assert!(got.iter().any(|p| p.contains("E.value")), "{got:?}");
+        let inline_struct = "#[derive(Debug)]
+pub struct A { pub value: String }
+";
+        let got = problems(inline_struct);
+        assert!(got.iter().any(|p| p.contains("A.value")), "{got:?}");
+        // Controls: a one-line variant with only public names, and a hand-written one, are fine.
+        assert!(
+            problems(
+                "#[derive(Debug)]
+pub enum E {
+    Ext { name: String, client_id: String },
+}
+"
+            )
+            .is_empty()
+        );
+        assert!(problems(&variant.replace("#[derive(Debug)]", "#[derive(Clone)]")).is_empty());
+    }
+
+    #[test]
+    fn a_derive_inside_cfg_attr_counts() {
+        let src = "#[cfg_attr(feature = \"x\", derive(Debug))]
+pub struct A {
+    pub value: String,
+}
+";
+        let got = problems(src);
+        assert!(got.iter().any(|p| p.contains("A.value")), "{got:?}");
+        // Control: a cfg_attr that derives something else is not a Debug derive.
+        assert!(problems(&src.replace("derive(Debug)", "derive(Clone)")).is_empty());
+    }
+
+    #[test]
+    fn generic_cfg_gated_and_multiline_derive_items_are_scanned() {
+        let generic = "#[cfg(feature = \"x\")]
+#[derive(Debug)]
+pub struct W<T>(pub String, T);
+";
+        let got = problems(generic);
+        assert!(got.iter().any(|p| p.contains("W.<tuple>")), "{got:?}");
+        let multi = "#[derive(
+    Debug,
+    Clone,
+)]
+pub struct M {
+    pub value: String,
+}
+";
+        let got = problems(multi);
+        assert!(got.iter().any(|p| p.contains("M.value")), "{got:?}");
+        // Control: the same multi-line attribute without `Debug` derives nothing to check.
+        assert!(
+            problems(&multi.replace(
+                "    Debug,
+",
+                ""
+            ))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn other_byte_and_string_shapes_count_as_plain_text() {
+        for ty in [
+            "Vec<Vec<u8>>",
+            "Box<[u8]>",
+            "Cow<'static, str>",
+            "Bytes",
+            "[u8; 32]",
+            "Option<Bytes>",
+        ] {
+            let src = format!(
+                "#[derive(Debug)]
+pub struct A {{
+    pub value: {ty},
+}}
+"
+            );
+            assert_eq!(problems(&src).len(), 1, "{ty}: {:?}", problems(&src));
+        }
+        // Control: a non-text shape is not scanned.
+        assert!(
+            problems(
+                "#[derive(Debug)]
+pub struct A {
+    pub value: u64,
+}
+"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn macro_bodies_that_define_types_are_found() {
+        let defining = "macro_rules! make {
+    ($n:ident) => {
+        #[derive(Debug)]
+        pub struct $n {
+            pub value: String,
+        }
+    };
+}
+";
+        assert!(!macro_defined_types("fixture.rs", defining).is_empty());
+        // Control: a macro that only expands to expressions is fine.
+        let plain = "macro_rules! twice {
+    ($e:expr) => {
+        $e + $e
+    };
+}
+";
+        assert!(macro_defined_types("fixture.rs", plain).is_empty());
+    }
+
+    #[test]
+    fn maps_sets_and_json_values_need_a_decision() {
+        // Keyed by a token: the map's Debug prints every key.
+        let keyed =
+            "#[derive(Debug)]\npub struct S {\n    tokens: DashMap<String, AuthToken>,\n}\n";
+        let got = problems(keyed);
+        assert!(got.iter().any(|p| p.contains("S.tokens")), "{got:?}");
+        // Wrappers are looked through.
+        let wrapped = "#[derive(Debug)]\npub struct S {\n    sessions: Arc<RwLock<HashMap<String, Session>>>,\n}\n";
+        assert!(problems(wrapped).iter().any(|p| p.contains("S.sessions")));
+        // JSON values and sets of strings.
+        let value = "#[derive(Debug)]\npub struct S {\n    pub challenge_data: Option<serde_json::Value>,\n    seen: HashSet<String>,\n}\n";
+        assert_eq!(problems(value).len(), 2, "{:?}", problems(value));
+        // Controls: a name listed under [container_ok], a map with no free-text key or value, and a
+        // hand-written Debug are not flagged.
+        assert!(
+            problems("#[derive(Debug)]\npub struct S {\n    labels: HashMap<String, String>,\n}\n")
+                .is_empty()
+        );
+        assert!(
+            problems("#[derive(Debug)]\npub struct S {\n    counts: HashMap<u64, u64>,\n}\n")
+                .is_empty()
+        );
+        assert!(problems(&keyed.replace("#[derive(Debug)]", "#[derive(Clone)]")).is_empty());
+    }
+
+    #[test]
+    fn handwritten_debug_printing_a_container_is_found() {
+        let leaky = "pub struct M {\n    pub name: String,\n    sessions: HashMap<String, Session>,\n}\nimpl std::fmt::Debug for M {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        f.debug_struct(\"M\")\n            .field(\"name\", &self.name)\n            .field(\"sessions\", &self.sessions)\n            .finish()\n    }\n}\n";
+        let (found, impls) = handwritten_debug_containers(leaky);
+        assert_eq!(impls, 1);
+        assert_eq!(found, vec![("M".to_string(), "sessions".to_string())]);
+        // Controls: the same field hidden behind `redacted(..)`, or a map with no free-text key or
+        // value, is not reported.
+        let hidden = leaky.replace("&self.sessions", "&redacted(&self.sessions)");
+        assert!(handwritten_debug_containers(&hidden).0.is_empty());
+        let numeric = leaky.replace("HashMap<String, Session>", "HashMap<u64, u64>");
+        assert!(handwritten_debug_containers(&numeric).0.is_empty());
     }
 }
