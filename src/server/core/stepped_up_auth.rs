@@ -522,7 +522,7 @@ pub struct StepUpEvaluationResult {
 }
 
 /// Step-up authentication request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StepUpRequest {
     /// Request identifier
     pub request_id: String,
@@ -546,6 +546,27 @@ pub struct StepUpRequest {
     pub resource: String,
     /// Challenge data (method-specific)
     pub challenge_data: Option<serde_json::Value>,
+}
+
+impl std::fmt::Debug for StepUpRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("StepUpRequest");
+        d.field("request_id", &self.request_id);
+        d.field("user_id", &self.user_id);
+        d.field("current_level", &self.current_level);
+        d.field("target_level", &self.target_level);
+        d.field("allowed_methods", &self.allowed_methods);
+        d.field("reason", &self.reason);
+        d.field("expires_at", &self.expires_at);
+        d.field("created_at", &self.created_at);
+        d.field("status", &self.status);
+        d.field("resource", &self.resource);
+        d.field(
+            "challenge_data",
+            &crate::utils::redact::redacted(&self.challenge_data),
+        );
+        d.finish()
+    }
 }
 
 /// Step-up authentication response
@@ -602,7 +623,6 @@ pub enum StepUpStatus {
 }
 
 /// Stepped-up authentication manager
-#[derive(Debug)]
 pub struct SteppedUpAuthManager {
     /// Configuration
     config: StepUpConfig,
@@ -612,6 +632,20 @@ pub struct SteppedUpAuthManager {
     session_manager: Arc<SessionManager>,
     /// CIBA manager for backchannel authentication
     ciba_manager: Option<Arc<EnhancedCibaManager>>,
+}
+
+impl std::fmt::Debug for SteppedUpAuthManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SteppedUpAuthManager");
+        d.field("config", &self.config);
+        d.field(
+            "active_requests",
+            &crate::utils::redact::redacted(&self.active_requests),
+        );
+        d.field("session_manager", &self.session_manager);
+        d.field("ciba_manager", &self.ciba_manager);
+        d.finish()
+    }
 }
 
 impl SteppedUpAuthManager {

@@ -633,12 +633,21 @@ impl WorkloadApiClient {
 // ── SPIRE Workload Attestation ──────────────────────────────────────
 
 /// Attestation evidence provided by a workload to prove its identity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AttestationEvidence {
     /// Attestor plugin name (e.g., "k8s", "unix", "docker", "aws_iid").
     pub attestor: String,
     /// Evidence payload — content depends on the attestor type.
     pub payload: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for AttestationEvidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AttestationEvidence");
+        d.field("attestor", &self.attestor);
+        d.field("payload", &crate::utils::redact::redacted(&self.payload));
+        d.finish()
+    }
 }
 
 /// The result of a successful workload attestation.

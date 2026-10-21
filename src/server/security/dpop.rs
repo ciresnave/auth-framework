@@ -73,7 +73,6 @@ pub struct DpopValidationResult {
 }
 
 /// DPoP manager for handling proof-of-possession
-#[derive(Debug)]
 pub struct DpopManager {
     /// Used nonces to prevent replay attacks
     used_nonces: tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>,
@@ -83,6 +82,19 @@ pub struct DpopManager {
 
     /// Maximum clock skew allowed (default: 30 seconds)
     clock_skew: Duration,
+}
+
+impl std::fmt::Debug for DpopManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DpopManager");
+        d.field(
+            "used_nonces",
+            &crate::utils::redact::redacted(&self.used_nonces),
+        );
+        d.field("proof_expiration", &self.proof_expiration);
+        d.field("clock_skew", &self.clock_skew);
+        d.finish()
+    }
 }
 
 impl DpopManager {

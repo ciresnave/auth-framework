@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use zeroize::ZeroizeOnDrop;
 
 /// Secure session with enhanced security properties
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecureSession {
     /// Cryptographically secure session ID
     pub id: String,
@@ -59,6 +59,29 @@ pub struct SecureSession {
 
     /// Session rotation count
     pub rotation_count: u32,
+}
+
+impl std::fmt::Debug for SecureSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureSession");
+        d.field("id", &crate::utils::redact::redacted(&self.id));
+        d.field("user_id", &self.user_id);
+        d.field("created_at", &self.created_at);
+        d.field("last_accessed", &self.last_accessed);
+        d.field("expires_at", &self.expires_at);
+        d.field("state", &self.state);
+        d.field("device_fingerprint", &self.device_fingerprint);
+        d.field("creation_ip", &self.creation_ip);
+        d.field("current_ip", &self.current_ip);
+        d.field("user_agent", &self.user_agent);
+        d.field("mfa_verified", &self.mfa_verified);
+        d.field("security_flags", &self.security_flags);
+        d.field("metadata", &self.metadata);
+        d.field("concurrent_sessions", &self.concurrent_sessions);
+        d.field("risk_score", &self.risk_score);
+        d.field("rotation_count", &self.rotation_count);
+        d.finish()
+    }
 }
 
 /// Device fingerprint for tracking sessions

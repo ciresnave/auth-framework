@@ -305,7 +305,10 @@ impl std::fmt::Debug for AdvancedTokenExchangeRequest {
         d.field("resource", &self.resource);
         d.field("exchange_context", &self.exchange_context);
         d.field("policy_requirements", &self.policy_requirements);
-        d.field("custom_parameters", &self.custom_parameters);
+        d.field(
+            "custom_parameters",
+            &crate::utils::redact::redacted(&self.custom_parameters),
+        );
         d.finish()
     }
 }
@@ -378,7 +381,7 @@ pub enum DelegationRestriction {
 }
 
 /// Original request metadata for token exchange context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ExchangeRequestMetadata {
     /// Original client ID
     pub client_id: String,
@@ -394,6 +397,18 @@ pub struct ExchangeRequestMetadata {
 
     /// Request headers
     pub headers: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for ExchangeRequestMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ExchangeRequestMetadata");
+        d.field("client_id", &self.client_id);
+        d.field("user_agent", &self.user_agent);
+        d.field("ip_address", &self.ip_address);
+        d.field("timestamp", &self.timestamp);
+        d.field("headers", &crate::utils::redact::redacted(&self.headers));
+        d.finish()
+    }
 }
 
 /// Security context information
@@ -640,7 +655,10 @@ impl std::fmt::Debug for AdvancedTokenExchangeResponse {
         );
         d.field("exchange_audit", &self.exchange_audit);
         d.field("preserved_context", &self.preserved_context);
-        d.field("additional_parameters", &self.additional_parameters);
+        d.field(
+            "additional_parameters",
+            &crate::utils::redact::redacted(&self.additional_parameters),
+        );
         d.finish()
     }
 }

@@ -107,7 +107,7 @@ impl TimestampedValue {
 }
 
 /// DashMap-based storage with deadlock-safe patterns
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DashMapMemoryStorage {
     // Core storage maps
     tokens: DashMap<String, TimestampedToken>,
@@ -121,6 +121,29 @@ pub struct DashMapMemoryStorage {
 
     // Configuration
     default_ttl: Option<Duration>,
+}
+
+impl std::fmt::Debug for DashMapMemoryStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DashMapMemoryStorage");
+        d.field("tokens", &crate::utils::redact::redacted(&self.tokens));
+        d.field("sessions", &crate::utils::redact::redacted(&self.sessions));
+        d.field("kv_store", &crate::utils::redact::redacted(&self.kv_store));
+        d.field(
+            "access_token_to_id",
+            &crate::utils::redact::redacted(&self.access_token_to_id),
+        );
+        d.field(
+            "user_to_tokens",
+            &crate::utils::redact::redacted(&self.user_to_tokens),
+        );
+        d.field(
+            "user_to_sessions",
+            &crate::utils::redact::redacted(&self.user_to_sessions),
+        );
+        d.field("default_ttl", &self.default_ttl);
+        d.finish()
+    }
 }
 
 impl Default for DashMapMemoryStorage {

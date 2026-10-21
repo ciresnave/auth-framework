@@ -228,7 +228,7 @@ impl std::fmt::Debug for SessionData {
         d.field("last_activity", &self.last_activity);
         d.field("ip_address", &self.ip_address);
         d.field("user_agent", &self.user_agent);
-        d.field("data", &self.data);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
         d.finish()
     }
 }

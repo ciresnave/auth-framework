@@ -96,7 +96,10 @@ impl std::fmt::Debug for AuthConfig {
         d.field("max_failed_attempts", &self.max_failed_attempts);
         d.field("enable_rbac", &self.enable_rbac);
         d.field("enable_middleware", &self.enable_middleware);
-        d.field("method_configs", &self.method_configs);
+        d.field(
+            "method_configs",
+            &crate::utils::redact::redacted(&self.method_configs),
+        );
         d.field("force_production_mode", &self.force_production_mode);
         d.finish()
     }
@@ -395,7 +398,7 @@ pub struct AuditConfig {
 /// Audit log storage backend.
 ///
 /// Pairs with [`AuditConfig`] to specify *where* audit events are persisted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum AuditStorage {
     /// Standard logging (via tracing)
     Tracing,
@@ -408,6 +411,25 @@ pub enum AuditStorage {
 
     /// External service
     External { endpoint: String, api_key: String },
+}
+
+impl std::fmt::Debug for AuditStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Tracing => f.write_str("Tracing"),
+            Self::File { path } => f.debug_struct("File").field("path", path).finish(),
+            Self::Database { connection_string } => f
+                .debug_struct("Database")
+                .field("connection_string", &redacted(connection_string))
+                .finish(),
+            Self::External { endpoint, api_key } => f
+                .debug_struct("External")
+                .field("endpoint", endpoint)
+                .field("api_key", &redacted(api_key))
+                .finish(),
+        }
+    }
 }
 
 const fn default_max_failed_attempts() -> u32 {
