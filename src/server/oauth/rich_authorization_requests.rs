@@ -204,7 +204,7 @@ impl RarConfig {
 }
 
 /// Rich Authorization Request following RFC 9396
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct RarAuthorizationRequest {
     /// Client identifier
     pub client_id: String,
@@ -232,6 +232,25 @@ pub struct RarAuthorizationRequest {
 
     /// Additional custom parameters
     pub custom_parameters: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for RarAuthorizationRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RarAuthorizationRequest");
+        d.field("client_id", &self.client_id);
+        d.field("response_type", &self.response_type);
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field("authorization_details", &self.authorization_details);
+        d.field("scope", &self.scope);
+        d.field("state", &self.state);
+        d.field("code_challenge", &self.code_challenge);
+        d.field("code_challenge_method", &self.code_challenge_method);
+        d.field(
+            "custom_parameters",
+            &crate::utils::redact::redacted(&self.custom_parameters),
+        );
+        d.finish()
+    }
 }
 
 /// Authorization detail structure following RFC 9396

@@ -382,7 +382,10 @@ impl std::fmt::Debug for EnhancedCibaAuthResponse {
         );
         d.field("interval", &self.interval);
         d.field("expires_in", &self.expires_in);
-        d.field("additional_data", &self.additional_data);
+        d.field(
+            "additional_data",
+            &crate::utils::redact::redacted(&self.additional_data),
+        );
         d.finish()
     }
 }
@@ -603,7 +606,6 @@ impl std::fmt::Debug for BackchannelAuthParams<'_> {
 }
 
 /// Enhanced CIBA manager
-#[derive(Debug)]
 pub struct EnhancedCibaManager {
     /// CIBA configuration
     config: EnhancedCibaConfig,
@@ -615,6 +617,21 @@ pub struct EnhancedCibaManager {
     notification_client: crate::server::core::common_http::HttpClient,
     /// JWT validator for token operations
     jwt_validator: Arc<SecureJwtValidator>,
+}
+
+impl std::fmt::Debug for EnhancedCibaManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnhancedCibaManager");
+        d.field("config", &self.config);
+        d.field(
+            "auth_requests",
+            &crate::utils::redact::redacted(&self.auth_requests),
+        );
+        d.field("session_manager", &self.session_manager);
+        d.field("notification_client", &self.notification_client);
+        d.field("jwt_validator", &self.jwt_validator);
+        d.finish()
+    }
 }
 
 impl EnhancedCibaManager {

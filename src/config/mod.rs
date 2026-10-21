@@ -103,7 +103,10 @@ impl std::fmt::Debug for AuthConfig {
         d.field("max_failed_attempts", &self.max_failed_attempts);
         d.field("enable_rbac", &self.enable_rbac);
         d.field("enable_middleware", &self.enable_middleware);
-        d.field("method_configs", &self.method_configs);
+        d.field(
+            "method_configs",
+            &crate::utils::redact::redacted(&self.method_configs),
+        );
         d.field("force_production_mode", &self.force_production_mode);
         d.finish()
     }

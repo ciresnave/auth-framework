@@ -35,7 +35,10 @@ impl std::fmt::Debug for TokenIntrospectionRequest {
         let mut d = f.debug_struct("TokenIntrospectionRequest");
         d.field("token", &crate::utils::redact::redacted(&self.token));
         d.field("token_type_hint", &self.token_type_hint);
-        d.field("additional_params", &self.additional_params);
+        d.field(
+            "additional_params",
+            &crate::utils::redact::redacted(&self.additional_params),
+        );
         d.finish()
     }
 }

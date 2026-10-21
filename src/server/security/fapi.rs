@@ -37,7 +37,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// FAPI 2.0 Security Profile Manager
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FapiManager {
     /// DPoP manager for sender constraining
     dpop_manager: Arc<DpopManager>,
@@ -59,6 +59,20 @@ pub struct FapiManager {
 
     /// Active FAPI sessions
     sessions: Arc<RwLock<HashMap<String, FapiSession>>>,
+}
+
+impl std::fmt::Debug for FapiManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FapiManager");
+        d.field("dpop_manager", &self.dpop_manager);
+        d.field("mtls_manager", &self.mtls_manager);
+        d.field("par_manager", &self.par_manager);
+        d.field("private_key_jwt_manager", &self.private_key_jwt_manager);
+        d.field("jwt_validator", &self.jwt_validator);
+        d.field("config", &self.config);
+        d.field("sessions", &crate::utils::redact::redacted(&self.sessions));
+        d.finish()
+    }
 }
 
 /// FAPI 2.0 Configuration
@@ -502,7 +516,10 @@ impl std::fmt::Debug for FapiAuthorizationResponse {
         d.field("state", &self.state);
         d.field("error", &self.error);
         d.field("error_description", &self.error_description);
-        d.field("additional_params", &self.additional_params);
+        d.field(
+            "additional_params",
+            &crate::utils::redact::redacted(&self.additional_params),
+        );
         d.finish()
     }
 }

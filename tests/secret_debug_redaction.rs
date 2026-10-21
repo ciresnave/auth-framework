@@ -544,3 +544,81 @@ fn one_line_enum_variants_do_not_print_secrets() {
         .contains("level-visible")
     );
 }
+
+/// In-memory stores and managers keep maps keyed by tokens and session ids; a map's `Debug` prints
+/// every key, so none of them may be formatted with `{:?}`.
+#[tokio::test]
+async fn maps_keyed_by_tokens_and_session_ids_are_not_printed() {
+    use auth_framework::storage::AuthStorage;
+    use auth_framework::storage::dashmap_memory::DashMapMemoryStorage;
+    use auth_framework::testing::MockStorage;
+    use auth_framework::user_context::{SessionStore, UserContext};
+
+    let storage = DashMapMemoryStorage::new();
+    storage.store_kv(S, b"value", None).await.unwrap();
+    let shown = format!("{storage:?}");
+    assert!(
+        !shown.contains(S),
+        "DashMapMemoryStorage prints a key: {shown}"
+    );
+    assert!(
+        shown.contains("default_ttl"),
+        "dropped a plain field: {shown}"
+    );
+    // Control: the key really is stored, so the absence above is the redaction's doing.
+    assert!(storage.get_kv(S).await.unwrap().is_some());
+
+    let mock = MockStorage::new();
+    mock.store_kv(S, b"value", None).await.unwrap();
+    let shown = format!("{mock:?}");
+    assert!(!shown.contains(S), "MockStorage prints a key: {shown}");
+    assert!(mock.get_kv(S).await.unwrap().is_some());
+
+    let mut sessions = SessionStore::new();
+    let mut ctx = UserContext::new("user-visible".to_string(), "name".to_string(), None);
+    ctx.session_id = S.to_string();
+    sessions.create_session(ctx);
+    let shown = format!("{sessions:?}");
+    assert!(
+        !shown.contains(S),
+        "SessionStore prints a session id: {shown}"
+    );
+    assert!(sessions.validate_session(S));
+}
+
+/// Values that look like identifiers but are bearer or secret-equivalent here: session ids, the
+/// `sid` claim (filled from the session id in this crate), hashes of MFA codes and client secrets,
+/// and request/response parameter bags that can carry credentials.
+#[test]
+fn session_ids_code_hashes_and_parameter_bags_are_not_printed() {
+    use auth_framework::methods::MfaChallenge;
+    use auth_framework::providers::OAuthTokenResponse;
+    use auth_framework::server::oidc::oidc_backchannel_logout::LogoutTokenClaims;
+    use auth_framework::server::token_exchange::token_introspection::TokenIntrospectionRequest;
+
+    let c: MfaChallenge = from_json(json!({
+        "id": "challenge-visible", "mfa_type": "Totp", "user_id": "u",
+        "created_at": "2026-01-01T00:00:00Z", "expires_at": "2026-01-01T00:05:00Z",
+        "attempts": 0, "max_attempts": 3, "code_hash": S, "message": null, "data": {"k": S}
+    }));
+    redacts("MfaChallenge", format!("{c:?}"), "challenge-visible");
+
+    let l: LogoutTokenClaims = from_json(json!({
+        "iss": "iss-visible", "sub": null, "aud": ["a"], "iat": 1, "jti": "j",
+        "events": {}, "sid": S, "exp": 2
+    }));
+    redacts("LogoutTokenClaims", format!("{l:?}"), "iss-visible");
+
+    let r: TokenIntrospectionRequest =
+        from_json(json!({"token": "t", "token_type_hint": "hint-visible", "client_secret": S}));
+    redacts(
+        "TokenIntrospectionRequest",
+        format!("{r:?}"),
+        "hint-visible",
+    );
+
+    let r: OAuthTokenResponse = from_json(json!({
+        "access_token": "a", "token_type": "token-type-visible", "id_token": S
+    }));
+    redacts("OAuthTokenResponse", format!("{r:?}"), "token-type-visible");
+}

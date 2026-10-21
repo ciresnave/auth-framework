@@ -106,7 +106,7 @@ impl std::fmt::Debug for FeedConfig {
         d.field("feed_type", &self.feed_type);
         d.field("url", &self.url);
         d.field("api_key", &crate::utils::redact::redacted(&self.api_key));
-        d.field("headers", &self.headers);
+        d.field("headers", &crate::utils::redact::redacted(&self.headers));
         d.field("filename", &self.filename);
         d.field("format", &self.format);
         d.field("custom_interval_seconds", &self.custom_interval_seconds);

@@ -492,7 +492,7 @@ pub mod consent {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("ConsentManager")
                 .field("config", &self.config)
-                .field("records", &self.records)
+                .field("records", &crate::utils::redact::redacted(&self.records))
                 .field("storage", &self.storage.is_some())
                 .finish()
         }
@@ -857,7 +857,7 @@ pub mod device_flow_server {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("DeviceFlowManager")
                 .field("config", &self.config)
-                .field("records", &self.records)
+                .field("records", &crate::utils::redact::redacted(&self.records))
                 .field("storage", &self.storage.is_some())
                 .finish()
         }

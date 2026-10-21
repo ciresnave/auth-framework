@@ -10,6 +10,11 @@
 #   secret_capable  the name can hold a credential or a bearer value. A derived Debug is a FAILURE unless the
 #                   type has a hand-written redacting Debug (preferred) or an [allow] line below.
 #   ambiguous       free-form content (a body, a query, a url that may embed a password, ...): same rule.
+#   container_ok    the name of a map, set or JSON value (HashMap<String, _>, HashSet<String>, serde_json::Value, ...) that
+#                   holds attributes, claims, labels, configuration objects or other non-credential data and is keyed by
+#                   no credential. A container's Debug prints every key and value, so a map keyed by a token or session
+#                   id, or holding request parameters, a response body or a settings bag that can carry a secret, is NOT
+#                   listed here: redact it (hand-written Debug) or [allow] it with a reason.
 #   allow           path:Type:field | one-line reason it is public information. `<tuple>` is a tuple
 #                   struct / tuple variant payload.
 # A field name on no list FAILS: adding a field with a new name needs a decision here.
@@ -153,14 +158,12 @@ client_ip
 client_name
 client_notification_endpoint
 client_principal
-client_secret_hash
 client_uri
 code_challenge
 code_challenge_method
 code_challenge_methods_supported
 code_complexity
 code_format
-code_hash
 color
 common_name
 component
@@ -526,7 +529,6 @@ redirect_url
 region
 registered_by
 registered_methods
-registration_access_token_hash
 registration_data
 registration_endpoint
 registration_id
@@ -625,7 +627,6 @@ session_state
 setup_instructions
 severity
 sha256_hex
-sid
 sig_alg
 signature_base_string
 signature_data
@@ -786,7 +787,9 @@ browser_session_id
 challenge
 challenge_response
 client_notification_token
+client_secret_hash
 code
+code_hash
 connection_string
 continuation_token
 continue_token
@@ -809,6 +812,7 @@ proof
 proxy_granting_ticket
 raw_assertion
 redis_url
+registration_access_token_hash
 request
 request_uri
 requested_security_token
@@ -817,6 +821,7 @@ result_xml
 saml_request
 saml_response
 session_id
+sid
 signature
 subject_token
 ticket
@@ -841,6 +846,123 @@ request
 sql
 text
 url
+
+[container_ok]
+additional
+additional_attributes
+additional_claims
+additional_data
+additional_details
+additional_events
+additional_fields
+additional_metadata
+additional_params
+allowed_token_types
+annotations
+attributes
+aud
+authentication_context
+backchannel_logout
+banned_passwords
+business_context
+ca_certificates
+certificate_profiles
+certificate_store
+claim_value
+claims
+client_configs
+client_names
+clients
+cnf
+columns
+conditions
+context
+credential_configurations_supported
+credential_subject
+crl_numbers
+custom
+custom_attributes
+custom_claims
+custom_error_mappings
+custom_fields
+details
+disclosed_claims
+endpoint_metrics
+endpoints
+error
+error_counts
+errors
+event_data
+event_type_counts
+expected_value
+extensions
+external_labels
+features
+federations
+feeds
+field_constraints
+field_validation_rules
+filter
+filters
+geo_data
+header
+jwks
+labels
+legacy_mappings
+mapping
+matchers
+metadata
+metric_retentions
+metrics
+new_value
+old_value
+options
+original_value
+outcome_counts
+parameters
+parent_roles
+per_client
+permission_mappings
+pins
+properties
+providers
+public_key_jwk
+receivers
+relations
+request_counts
+required_audiences
+required_claims
+required_issuers
+resource_access
+resource_attributes
+resource_hierarchy
+resource_metadata
+response
+response_times
+result
+revocation_list
+revoked
+risk_level_counts
+role_mappings
+roles
+rp_configs
+scope_mapping
+scope_mappings
+search_criteria
+services
+source_matchers
+tags
+target_matchers
+token_revocation
+transformed_value
+transmitters
+type_action_mapping
+user_attributes
+user_permissions
+user_profiles
+value
+variables
+warnings
 
 [allow]
 src/admin/mod.rs:ConfigAction:key | clap arguments typed by the operator on their own command line; never stored or sent
@@ -924,3 +1046,5 @@ src/types.rs:RedirectUris:<tuple> | list of registered redirect URIs
 src/types.rs:ResponseTypes:<tuple> | list of response type names
 src/types.rs:Roles:<tuple> | list of role names
 src/types.rs:Scopes:<tuple> | list of scope names
+
+src/protocols/acme.rs:Http01ChallengeStore:challenges | ACME HTTP-01 token to key authorization: served unauthenticated at /.well-known/acme-challenge by design

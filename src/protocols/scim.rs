@@ -199,13 +199,23 @@ pub struct PatchOp {
 }
 
 /// A single patch operation entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PatchOperation {
     pub op: PatchOpType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
+}
+
+impl std::fmt::Debug for PatchOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PatchOperation");
+        d.field("op", &self.op);
+        d.field("path", &self.path);
+        d.field("value", &crate::utils::redact::redacted(&self.value));
+        d.finish()
+    }
 }
 
 /// Patch operation type.
@@ -238,7 +248,7 @@ pub struct BulkResponse {
 }
 
 /// A single operation inside a bulk request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkOperation {
     pub method: BulkMethod,
@@ -248,6 +258,17 @@ pub struct BulkOperation {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+}
+
+impl std::fmt::Debug for BulkOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BulkOperation");
+        d.field("method", &self.method);
+        d.field("bulk_id", &self.bulk_id);
+        d.field("path", &self.path);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.finish()
+    }
 }
 
 /// A single operation response inside a bulk response.

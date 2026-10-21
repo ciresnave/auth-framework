@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
 /// PAR request containing authorization parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PushedAuthorizationRequest {
     /// Client identifier
     pub client_id: String,
@@ -38,6 +38,24 @@ pub struct PushedAuthorizationRequest {
     /// Additional parameters
     #[serde(flatten)]
     pub additional_params: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for PushedAuthorizationRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PushedAuthorizationRequest");
+        d.field("client_id", &self.client_id);
+        d.field("response_type", &self.response_type);
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field("scope", &self.scope);
+        d.field("state", &self.state);
+        d.field("code_challenge", &self.code_challenge);
+        d.field("code_challenge_method", &self.code_challenge_method);
+        d.field(
+            "additional_params",
+            &crate::utils::redact::redacted(&self.additional_params),
+        );
+        d.finish()
+    }
 }
 
 impl PushedAuthorizationRequest {

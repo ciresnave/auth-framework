@@ -97,7 +97,7 @@ pub enum CertificateValidation {
 }
 
 /// Common endpoint configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EndpointConfig {
     /// Base URL
     pub base_url: String,
@@ -109,6 +109,18 @@ pub struct EndpointConfig {
     pub timeout: TimeoutConfig,
     /// Security configuration
     pub security: SecurityConfig,
+}
+
+impl std::fmt::Debug for EndpointConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EndpointConfig");
+        d.field("base_url", &self.base_url);
+        d.field("api_version", &self.api_version);
+        d.field("headers", &crate::utils::redact::redacted(&self.headers));
+        d.field("timeout", &self.timeout);
+        d.field("security", &self.security);
+        d.finish()
+    }
 }
 
 impl EndpointConfig {

@@ -54,6 +54,68 @@ impl<T> Secret for Option<T> {
     }
 }
 
+/// Maps, sets, JSON values and shared wrappers: the whole container is hidden, keys included (a map
+/// keyed by a token or session id would print it).
+impl Secret for serde_json::Value {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<K, V, S> Secret for std::collections::HashMap<K, V, S> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<K, V> Secret for std::collections::BTreeMap<K, V> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<T, S> Secret for std::collections::HashSet<T, S> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<K: Eq + std::hash::Hash, V> Secret for dashmap::DashMap<K, V> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<T: ?Sized> Secret for std::sync::Arc<T> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<T: ?Sized> Secret for tokio::sync::RwLock<T> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<T: ?Sized> Secret for tokio::sync::Mutex<T> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<T: ?Sized> Secret for std::sync::Mutex<T> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
+impl<T: ?Sized> Secret for std::sync::RwLock<T> {
+    fn redacted(&self) -> Redacted {
+        Redacted::Present
+    }
+}
+
 /// The value to hand to `DebugStruct::field` in place of a secret.
 pub(crate) fn redacted<T: Secret>(value: &T) -> Redacted {
     value.redacted()
