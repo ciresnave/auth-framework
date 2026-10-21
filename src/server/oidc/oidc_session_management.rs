@@ -74,8 +74,11 @@ impl std::fmt::Debug for OidcSession {
             "browser_session_id",
             &crate::utils::redact::redacted(&self.browser_session_id),
         );
-        d.field("logout_tokens", &self.logout_tokens);
-        d.field("metadata", &self.metadata);
+        d.field(
+            "logout_tokens",
+            &crate::utils::redact::redacted(&self.logout_tokens),
+        );
+        d.field("metadata", &crate::utils::redact::redacted(&self.metadata));
         d.finish()
     }
 }

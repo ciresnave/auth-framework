@@ -114,8 +114,10 @@ backchannel_logout_uri
 backend
 background_color
 backup_path
+base_dn
 base_url
 batch_credential_endpoint
+bind_dn
 binding_id
 binding_message
 birthdate
@@ -126,14 +128,17 @@ c_nonce
 ca_certificates
 ca_certs
 ca_file
+ca_id
 ca_store
 caa_identities
 cached_permissions
 canonicalization_method
 canvas_hash
 cert_file
+cert_id
 cert_thumbprint
 certificate
+certificate_pem
 challenge_id
 channel
 channels
@@ -153,6 +158,7 @@ client
 client_certificate
 client_data
 client_data_json
+client_description
 client_id
 client_ip
 client_name
@@ -202,11 +208,13 @@ current_level
 current_location
 current_phase
 custom_elements
+database
 datasource
 datatypes
 decision_id
 default
 default_audience
+default_policy_path
 default_scope
 default_value
 definition_id
@@ -223,6 +231,7 @@ detail
 detail_type
 details
 device
+device_auth_url
 device_authorization_endpoint
 device_authorization_url
 device_fingerprint
@@ -236,6 +245,7 @@ digest_value
 directory_url
 display
 display_name
+display_name_attribute
 dns_name
 docs_url
 documentation_uri
@@ -248,8 +258,10 @@ ec_public_key_pem
 ed_public_key_pem
 effective_permissions
 effective_scopes
+elements_to_sign
 email
 email_address
+email_attribute
 email_hint
 encoding_type
 encrypted_attributes
@@ -288,6 +300,7 @@ feature
 feedback
 fhir_endpoint
 file
+filename
 filter
 filter_id
 finalize
@@ -311,7 +324,9 @@ granted
 granted_actions
 granted_locations
 granted_privileges
+group_base_dn
 group_by
+group_filter
 groups
 header_name
 health
@@ -338,7 +353,6 @@ initiated_by
 initiating_client_id
 instance
 instructions
-interact_nonce
 interaction_base_url
 intermediate_ca_cert_path
 intermediate_ca_key_path
@@ -350,15 +364,19 @@ ip_address
 iss
 issue_instant
 issued_ip
+issued_token_type
 issuer
 issuer_allowlist
 issuer_did
 issuer_dn
 issuer_state
 issues
+jarm_issuer
 jkt
 jti
 justification
+jwe_algorithm
+jwe_content_encryption
 jwk_thumbprint
 jwks_uri
 jwt_audiences
@@ -397,10 +415,10 @@ location_name
 location_type
 locations
 login_hint
+login_risk_level
 logo_uri
 logout_page_html
 logout_token_jti
-logout_tokens
 logs_endpoint
 manual_steps
 matching_rules
@@ -529,6 +547,7 @@ redirect_url
 region
 registered_by
 registered_methods
+registration_client_uri
 registration_data
 registration_endpoint
 registration_id
@@ -558,6 +577,7 @@ required_permissions
 required_privileges
 required_roles
 required_scopes
+required_vars
 requirement
 resource
 resource_id
@@ -596,6 +616,7 @@ rsa_public_key_pem
 rule_files
 rule_id
 rule_name
+saml_token_endpoint
 san_dns
 san_email
 san_uri
@@ -611,6 +632,7 @@ search
 search_paths
 section
 security_token_reference
+security_warnings
 selection_reason
 selector_type
 serial
@@ -632,6 +654,7 @@ signature_base_string
 signature_data
 signature_method
 signature_value
+signing_certificate
 signing_certificates
 size
 skip_paths
@@ -650,6 +673,7 @@ source_type
 sources
 sp_name_qualifier
 spec_uri
+ssl_mode
 sso_url
 start
 start_date
@@ -708,6 +732,7 @@ token_endpoint_auth_method
 token_endpoint_auth_methods_supported
 token_iss
 token_type
+token_type_hint
 token_types_offered
 token_url
 tos_uri
@@ -744,12 +769,14 @@ uri
 use_
 user
 user_agent
+user_attributes
 user_display_name
 user_dn
 user_handle
 user_hint
 user_id
 user_name
+user_search_filter
 user_verification
 userinfo_endpoint
 userinfo_signing_alg_values_supported
@@ -763,7 +790,6 @@ validation_type
 value_type
 verification_provider
 verification_uri
-verification_uri_complete
 version
 vid
 warnings
@@ -776,6 +802,8 @@ x
 x509_data
 x5t_s256
 y
+yubico_client_id
+yubico_validation_url
 zoneinfo
 
 [secret_capable]
@@ -786,6 +814,7 @@ authorization_header
 browser_session_id
 challenge
 challenge_response
+client_assertion
 client_notification_token
 client_secret_hash
 code
@@ -797,13 +826,16 @@ csrf_token
 dpop_proof
 existing_token
 id_token_hint
+interact_nonce
 jwt
 key
 key_binding_jwt
 key_data
 key_material
 key_value
+logout_tokens
 mech_token
+mfa_code
 oauth_token
 passkey_data
 password
@@ -812,6 +844,7 @@ proof
 proxy_granting_ticket
 raw_assertion
 redis_url
+registration_access_token
 registration_access_token_hash
 request
 request_uri
@@ -832,6 +865,7 @@ token_id
 user_code
 value
 value_base64
+verification_uri_complete
 
 [ambiguous]
 additional_info
@@ -965,10 +999,7 @@ variables
 warnings
 
 [allow]
-src/admin/mod.rs:ConfigAction:key | clap arguments typed by the operator on their own command line; never stored or sent
-src/admin/mod.rs:ConfigAction:value | clap arguments typed by the operator on their own command line; never stored or sent
 src/admin/mod.rs:HealthStatus:<tuple> | health warning text
-src/admin/mod.rs:UserAction:password | clap arguments typed by the operator on their own command line; never stored or sent
 src/analytics/compliance.rs:ComplianceRuleType:<tuple> | the name of a custom variant: a label, not a credential
 src/analytics/dashboard.rs:DataSource:query | analytics query text; it carries no credentials
 src/analytics/mod.rs:AnalyticsError:<tuple> | error message text: diagnostic, not a credential
@@ -1046,3 +1077,16 @@ src/types.rs:Roles:<tuple> | list of role names
 src/types.rs:Scopes:<tuple> | list of scope names
 
 src/protocols/acme.rs:Http01ChallengeStore:challenges | ACME HTTP-01 token to key authorization: served unauthenticated at /.well-known/acme-challenge by design
+src/admin/web.rs:ConfigItem:key | the name of a configuration entry, shown to the operator who asked for it; the value is redacted
+src/api/saml.rs:SamlAcsRequest:signature | XML signature value of a SAML response: travels in the clear with the response and proves nothing without the signing key
+src/api/webauthn.rs:WebAuthnRegistrationResponse:challenge | WebAuthn challenge: sent to the browser in the clear, single use, useless without the authenticator
+src/api/webauthn.rs:WebAuthnRegistrationCompleteRequest:signature | WebAuthn assertion signature: a public value checked against the public key
+src/api/webauthn.rs:WebAuthnAuthenticationResponse:challenge | WebAuthn challenge: sent to the browser in the clear, single use, useless without the authenticator
+src/api/webauthn.rs:WebAuthnAuthenticationCompleteRequest:signature | WebAuthn assertion signature: a public value checked against the public key
+src/protocols/oauth1.rs:OAuthConsumer:key | OAuth 1.0a consumer key: a public identifier (the secret is separate)
+src/protocols/oauth1.rs:OAuthToken:token | `token` is the public OAuth 1.0a token identifier; the secret half is redacted
+src/protocols/oauth1.rs:OAuthSignedRequest:signature | OAuth 1.0a request signature: sent in the Authorization header of one request and bound to its nonce and timestamp
+src/protocols/ws_federation.rs:WsFedSignInResponse:context | WS-Federation wctx: opaque context the relying party sent and expects echoed back
+src/tokens/mod.rs:AuthToken:token_id | the identifier of the token record (the jti), not the token value
+src/tokens/mod.rs:AuthTokenBuilder:token_id | the identifier of the token record (the jti), not the token value
+src/admin/mod.rs:ConfigAction:key | the name of the configuration entry the operator typed; the value is redacted
