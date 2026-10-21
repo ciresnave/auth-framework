@@ -622,3 +622,42 @@ fn session_ids_code_hashes_and_parameter_bags_are_not_printed() {
     }));
     redacts("OAuthTokenResponse", format!("{r:?}"), "token-type-visible");
 }
+
+/// Hand-written `Debug` impls used to print some of these as they were; the audit now fails any
+/// field of a manual impl that is neither redacted nor reviewed.
+#[test]
+fn hand_written_debug_impls_do_not_print_these_fields() {
+    use auth_framework::api::oauth_advanced::IntrospectRequest as AdvancedIntrospectRequest;
+    use auth_framework::providers::DeviceAuthorizationResponse;
+    use auth_framework::server::oidc::oidc_advanced_jarm::AuthorizationResponse;
+
+    let r: AdvancedIntrospectRequest =
+        from_json(json!({"token": S, "token_type_hint": "hint-visible"}));
+    redacts(
+        "oauth_advanced::IntrospectRequest",
+        format!("{r:?}"),
+        "hint-visible",
+    );
+
+    let r: LoginRequest =
+        from_json(json!({"username": "name-visible", "password": "p", "mfa_code": S}));
+    redacts("LoginRequest.mfa_code", format!("{r:?}"), "name-visible");
+
+    let r: AuthorizationResponse = from_json(json!({"code": S, "state": "state-visible"}));
+    redacts(
+        "jarm AuthorizationResponse",
+        format!("{r:?}"),
+        "state-visible",
+    );
+
+    let r: DeviceAuthorizationResponse = from_json(json!({
+        "device_code": "d", "user_code": S, "verification_uri": "uri-visible",
+        "verification_uri_complete": format!("https://x/?user_code={S}"),
+        "expires_in": 600, "interval": 5
+    }));
+    redacts(
+        "DeviceAuthorizationResponse",
+        format!("{r:?}"),
+        "uri-visible",
+    );
+}

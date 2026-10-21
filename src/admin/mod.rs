@@ -522,7 +522,7 @@ pub enum MaintenanceAction {
     },
 }
 
-#[derive(Debug, Clone, clap::Subcommand)]
+#[derive(Clone, clap::Subcommand)]
 pub enum ConfigAction {
     /// Show configuration
     Show {
@@ -570,7 +570,43 @@ pub enum ConfigAction {
     },
 }
 
-#[derive(Debug, Clone, clap::Subcommand)]
+/// `config set <key> <value>` can carry a secret value on the command line, so `Debug` hides it.
+impl std::fmt::Debug for ConfigAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Show { section, format } => f
+                .debug_struct("Show")
+                .field("section", section)
+                .field("format", format)
+                .finish(),
+            Self::Set {
+                key,
+                value,
+                hot_reload,
+            } => f
+                .debug_struct("Set")
+                .field("key", key)
+                .field("value", &redacted(value))
+                .field("hot_reload", hot_reload)
+                .finish(),
+            Self::Reset => f.write_str("Reset"),
+            Self::Validate { file } => f.debug_struct("Validate").field("file", file).finish(),
+            Self::Get { key } => f.debug_struct("Get").field("key", key).finish(),
+            Self::Reload { show_diff } => f
+                .debug_struct("Reload")
+                .field("show_diff", show_diff)
+                .finish(),
+            Self::Template { output, complete } => f
+                .debug_struct("Template")
+                .field("output", output)
+                .field("complete", complete)
+                .finish(),
+        }
+    }
+}
+
+#[derive(Clone, clap::Subcommand)]
 pub enum UserAction {
     /// List users
     List {
@@ -616,6 +652,50 @@ pub enum UserAction {
         #[arg(long)]
         active: Option<bool>,
     },
+}
+
+/// `user create <email> <password>` can carry the password on the command line, so `Debug` hides it.
+impl std::fmt::Debug for UserAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::List { limit, active } => f
+                .debug_struct("List")
+                .field("limit", limit)
+                .field("active", active)
+                .finish(),
+            Self::Create {
+                email,
+                password,
+                admin,
+            } => f
+                .debug_struct("Create")
+                .field("email", email)
+                .field("password", &redacted(password))
+                .field("admin", admin)
+                .finish(),
+            Self::Delete { user, force } => f
+                .debug_struct("Delete")
+                .field("user", user)
+                .field("force", force)
+                .finish(),
+            Self::SetRole { email, role } => f
+                .debug_struct("SetRole")
+                .field("email", email)
+                .field("role", role)
+                .finish(),
+            Self::Update {
+                user,
+                email,
+                active,
+            } => f
+                .debug_struct("Update")
+                .field("user", user)
+                .field("email", email)
+                .field("active", active)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -808,5 +888,36 @@ mod tests {
             .with_timezone(&chrono::Utc);
 
         assert_eq!(format_uptime_since(started_at, now), "2h 45m");
+    }
+
+    #[test]
+    fn command_line_values_are_not_printed_by_debug() {
+        const SECRET: &str = "SECRET-MARKER-7f3a9c";
+        let shown = format!(
+            "{:?}",
+            ConfigAction::Set {
+                key: "key-visible".into(),
+                value: SECRET.into(),
+                hot_reload: false
+            }
+        );
+        assert!(
+            !shown.contains(SECRET) && shown.contains("key-visible"),
+            "{shown}"
+        );
+        let shown = format!(
+            "{:?}",
+            UserAction::Create {
+                email: "mail-visible".into(),
+                password: Some(SECRET.into()),
+                admin: false
+            }
+        );
+        assert!(
+            !shown.contains(SECRET) && shown.contains("mail-visible"),
+            "{shown}"
+        );
+        // Control: a variant with no secret still prints its payload.
+        assert!(format!("{:?}", ConfigAction::Get { key: "k".into() }).contains("Get"),);
     }
 }

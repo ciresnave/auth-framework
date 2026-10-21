@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc113 -- **Hand-written `Debug` impls are audited field by field, and the fields it found are redacted.** The audit checked derived `Debug` only
+  for plain-text fields and hand-written impls only for maps, so an impl that printed `token`, `code` or a user code as it was passed.
+  Every `.field(..)` of a manual impl must now go through `redacted(..)`, be a literal or a count, or name a field the review file lists
+  as public (or allow it per type with a reason); the same check reads struct field types where the impl prints `&self.member`, and falls
+  back to the field's label for enum arms. Redacted: introspection `token`, `client_assertion`, `registration_access_token`, the JARM
+  authorization `code`, the MFA code of a login request, device `user_code` and `verification_uri_complete`, the GNAP `interact_nonce`,
+  OIDC session `logout_tokens` and `metadata`, token `custom` claims, a threat-feed URL, a token-exchange `jwt_verification_key`, and the
+  password and configuration value typed on the `admin` command line. `logout_tokens`, `interact_nonce` and `verification_uri_complete` moved from the
+  public to the secret-capable name list. Tests fail on the old audit (57 findings on this tree) and on removing any redaction.
 - 0.6.0-rc112 -- **Maps, sets and JSON values no longer print their keys and contents in `{:?}`, and four identifiers that act as credentials are redacted.** The
   derived-`Debug` audit looked at plain-text fields only, so a field such as `DashMap<String, AuthToken>` (keyed by token or session id)
   was never checked; `DashMapMemoryStorage`, `MockStorage`, `SessionStore`, the CIBA, HEART, eKYC, FAPI and OIDC session managers, the

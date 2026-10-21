@@ -207,7 +207,10 @@ impl std::fmt::Debug for AdvancedTokenExchangeConfig {
             "jwt_signing_key",
             &crate::utils::redact::redacted(&self.jwt_signing_key),
         );
-        d.field("jwt_verification_key", &self.jwt_verification_key);
+        d.field(
+            "jwt_verification_key",
+            &crate::utils::redact::redacted(&self.jwt_verification_key),
+        );
         d.field("trusted_issuers", &self.trusted_issuers);
         d.finish()
     }

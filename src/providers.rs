@@ -214,9 +214,15 @@ impl std::fmt::Debug for DeviceAuthorizationResponse {
             "device_code",
             &crate::utils::redact::redacted(&self.device_code),
         );
-        d.field("user_code", &self.user_code);
+        d.field(
+            "user_code",
+            &crate::utils::redact::redacted(&self.user_code),
+        );
         d.field("verification_uri", &self.verification_uri);
-        d.field("verification_uri_complete", &self.verification_uri_complete);
+        d.field(
+            "verification_uri_complete",
+            &crate::utils::redact::redacted(&self.verification_uri_complete),
+        );
         d.field("interval", &self.interval);
         d.field("expires_in", &self.expires_in);
         d.finish()

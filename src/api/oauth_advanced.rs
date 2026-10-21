@@ -43,7 +43,7 @@ pub struct IntrospectRequest {
 impl std::fmt::Debug for IntrospectRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("IntrospectRequest");
-        d.field("token", &self.token);
+        d.field("token", &crate::utils::redact::redacted(&self.token));
         d.field("token_type_hint", &self.token_type_hint);
         d.field("client_id", &self.client_id);
         d.field(

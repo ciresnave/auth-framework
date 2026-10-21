@@ -830,7 +830,10 @@ pub mod device_flow_server {
                 "device_code",
                 &crate::utils::redact::redacted(&self.device_code),
             );
-            d.field("user_code", &self.user_code);
+            d.field(
+                "user_code",
+                &crate::utils::redact::redacted(&self.user_code),
+            );
             d.field("client_id", &self.client_id);
             d.field("scopes", &self.scopes);
             d.field("state", &self.state);
