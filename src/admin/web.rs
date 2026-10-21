@@ -139,12 +139,23 @@ struct LoginTemplate {}
 
 // Data structures
 #[cfg(feature = "web-gui")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ConfigItem {
     pub key: String,
     pub value: String,
     pub description: String,
     pub editable: bool,
+}
+
+impl std::fmt::Debug for ConfigItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ConfigItem");
+        d.field("key", &self.key);
+        d.field("value", &crate::utils::redact::redacted(&self.value));
+        d.field("description", &self.description);
+        d.field("editable", &self.editable);
+        d.finish()
+    }
 }
 
 #[cfg(feature = "web-gui")]

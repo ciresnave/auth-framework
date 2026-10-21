@@ -48,7 +48,7 @@ pub enum SmsKitProvider {
 }
 
 /// Provider-specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum SmsKitProviderConfig {
     Twilio {
         account_sid: String,
@@ -65,13 +65,59 @@ pub enum SmsKitProviderConfig {
     Development,
 }
 
+impl std::fmt::Debug for SmsKitProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Twilio {
+                account_sid,
+                auth_token,
+                from_number,
+                webhook_url,
+            } => f
+                .debug_struct("Twilio")
+                .field("account_sid", account_sid)
+                .field("auth_token", &crate::utils::redact::redacted(auth_token))
+                .field("from_number", from_number)
+                .field("webhook_url", webhook_url)
+                .finish(),
+            Self::Plivo {
+                auth_id,
+                auth_token,
+                from_number,
+                webhook_url,
+            } => f
+                .debug_struct("Plivo")
+                .field("auth_id", auth_id)
+                .field("auth_token", &crate::utils::redact::redacted(auth_token))
+                .field("from_number", from_number)
+                .field("webhook_url", webhook_url)
+                .finish(),
+            Self::Development => f.write_str("Development"),
+        }
+    }
+}
+
 /// Webhook configuration for SMS delivery status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WebhookConfig {
     pub endpoint_url: String,
     pub webhook_secret: String,
     pub track_delivery: bool,
     pub track_clicks: bool,
+}
+
+impl std::fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebhookConfig");
+        d.field("endpoint_url", &self.endpoint_url);
+        d.field(
+            "webhook_secret",
+            &crate::utils::redact::redacted(&self.webhook_secret),
+        );
+        d.field("track_delivery", &self.track_delivery);
+        d.field("track_clicks", &self.track_clicks);
+        d.finish()
+    }
 }
 
 /// Rate limiting configuration

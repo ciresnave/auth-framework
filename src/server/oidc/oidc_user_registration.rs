@@ -122,7 +122,7 @@ pub struct RegistrationData {
 }
 
 /// Registration completion response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RegistrationResponse {
     /// New user's subject identifier
     pub sub: String,
@@ -132,6 +132,17 @@ pub struct RegistrationResponse {
     pub code: Option<String>,
     /// State parameter from original request
     pub state: Option<String>,
+}
+
+impl std::fmt::Debug for RegistrationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RegistrationResponse");
+        d.field("sub", &self.sub);
+        d.field("completed", &self.completed);
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("state", &self.state);
+        d.finish()
+    }
 }
 
 /// Registration configuration
@@ -177,7 +188,7 @@ impl Default for RegistrationConfig {
 }
 
 /// User registration manager
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RegistrationManager {
     /// Configuration
     config: RegistrationConfig,
@@ -185,6 +196,19 @@ pub struct RegistrationManager {
     error_manager: OidcErrorManager,
     /// Active registration sessions
     registration_sessions: HashMap<String, RegistrationData>,
+}
+
+impl std::fmt::Debug for RegistrationManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RegistrationManager");
+        d.field("config", &self.config);
+        d.field("error_manager", &self.error_manager);
+        d.field(
+            "registration_sessions",
+            &crate::utils::redact::redacted(&self.registration_sessions),
+        );
+        d.finish()
+    }
 }
 
 impl RegistrationManager {

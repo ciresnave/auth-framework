@@ -68,7 +68,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Token Exchange Request (RFC 8693)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenExchangeRequest {
     /// Grant type (must be "urn:ietf:params:oauth:grant-type:token-exchange")
     pub grant_type: String,
@@ -98,8 +98,30 @@ pub struct TokenExchangeRequest {
     pub resource: Option<String>,
 }
 
+impl std::fmt::Debug for TokenExchangeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenExchangeRequest");
+        d.field("grant_type", &self.grant_type);
+        d.field(
+            "subject_token",
+            &crate::utils::redact::redacted(&self.subject_token),
+        );
+        d.field("subject_token_type", &self.subject_token_type);
+        d.field(
+            "actor_token",
+            &crate::utils::redact::redacted(&self.actor_token),
+        );
+        d.field("actor_token_type", &self.actor_token_type);
+        d.field("requested_token_type", &self.requested_token_type);
+        d.field("audience", &self.audience);
+        d.field("scope", &self.scope);
+        d.field("resource", &self.resource);
+        d.finish()
+    }
+}
+
 /// Token Exchange Response (RFC 8693)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenExchangeResponse {
     /// Access token issued by authorization server
     pub access_token: String,
@@ -118,6 +140,25 @@ pub struct TokenExchangeResponse {
 
     /// Type of the issued token
     pub issued_token_type: Option<String>,
+}
+
+impl std::fmt::Debug for TokenExchangeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenExchangeResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("scope", &self.scope);
+        d.field("issued_token_type", &self.issued_token_type);
+        d.finish()
+    }
 }
 
 /// Token types defined in RFC 8693
@@ -215,7 +256,7 @@ pub enum ExchangeScenario {
 }
 
 /// SAML token claims extracted from XML
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct SamlClaims {
     /// Subject (NameID)
     pub subject: String,
@@ -231,6 +272,23 @@ struct SamlClaims {
     pub session_id: Option<String>,
     /// Scopes derived from attribute statements
     pub scopes: Vec<String>,
+}
+
+impl std::fmt::Debug for SamlClaims {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SamlClaims");
+        d.field("subject", &self.subject);
+        d.field("issuer", &self.issuer);
+        d.field("audience", &self.audience);
+        d.field("expiry", &self.expiry);
+        d.field("not_before", &self.not_before);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("scopes", &self.scopes);
+        d.finish()
+    }
 }
 
 /// Token Exchange Manager

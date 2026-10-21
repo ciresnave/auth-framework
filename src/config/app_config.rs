@@ -29,7 +29,7 @@ pub struct AppConfig {
     pub logging: LoggingConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub url: String,
     pub max_connections: u32,
@@ -37,19 +37,54 @@ pub struct DatabaseConfig {
     pub connect_timeout_seconds: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DatabaseConfig");
+        d.field("url", &crate::utils::redact::redacted(&self.url));
+        d.field("max_connections", &self.max_connections);
+        d.field("min_connections", &self.min_connections);
+        d.field("connect_timeout_seconds", &self.connect_timeout_seconds);
+        d.finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
     pub url: String,
     pub pool_size: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RedisConfig");
+        d.field("url", &crate::utils::redact::redacted(&self.url));
+        d.field("pool_size", &self.pool_size);
+        d.finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct JwtConfig {
     pub secret_key: String,
     pub issuer: String,
     pub audience: String,
     pub access_token_ttl_seconds: u64,
     pub refresh_token_ttl_seconds: u64,
+}
+
+impl std::fmt::Debug for JwtConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("JwtConfig");
+        d.field(
+            "secret_key",
+            &crate::utils::redact::redacted(&self.secret_key),
+        );
+        d.field("issuer", &self.issuer);
+        d.field("audience", &self.audience);
+        d.field("access_token_ttl_seconds", &self.access_token_ttl_seconds);
+        d.field("refresh_token_ttl_seconds", &self.refresh_token_ttl_seconds);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,12 +94,26 @@ pub struct OAuthConfig {
     pub microsoft: Option<OAuthProviderConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthProviderConfig {
     pub client_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
     pub scopes: Vec<String>,
+}
+
+impl std::fmt::Debug for OAuthProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OAuthProviderConfig");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field("scopes", &self.scopes);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

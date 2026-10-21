@@ -91,7 +91,6 @@ pub struct QuickStartBuilder {
 }
 
 /// Authentication method configuration for quick start
-#[derive(Debug)]
 pub enum QuickStartAuth {
     Jwt {
         secret: String,
@@ -108,14 +107,58 @@ pub enum QuickStartAuth {
     },
 }
 
+impl std::fmt::Debug for QuickStartAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Jwt { secret } => f
+                .debug_struct("Jwt")
+                .field("secret", &redacted(secret))
+                .finish(),
+            Self::JwtFromEnv => f.write_str("JwtFromEnv"),
+            Self::OAuth2 {
+                client_id,
+                client_secret,
+            } => f
+                .debug_struct("OAuth2")
+                .field("client_id", client_id)
+                .field("client_secret", &redacted(client_secret))
+                .finish(),
+            Self::Combined {
+                jwt_secret,
+                oauth_client_id,
+                oauth_client_secret,
+            } => f
+                .debug_struct("Combined")
+                .field("jwt_secret", &redacted(jwt_secret))
+                .field("oauth_client_id", oauth_client_id)
+                .field("oauth_client_secret", &redacted(oauth_client_secret))
+                .finish(),
+        }
+    }
+}
+
 /// Storage configuration for quick start
-#[derive(Debug)]
 pub enum QuickStartStorage {
     Memory,
     Postgres(String),
     PostgresFromEnv,
     Redis(String),
     RedisFromEnv,
+}
+
+impl std::fmt::Debug for QuickStartStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Memory => f.write_str("Memory"),
+            // Connection URLs usually embed a password.
+            Self::Postgres(url) => f.debug_tuple("Postgres").field(&redacted(url)).finish(),
+            Self::PostgresFromEnv => f.write_str("PostgresFromEnv"),
+            Self::Redis(url) => f.debug_tuple("Redis").field(&redacted(url)).finish(),
+            Self::RedisFromEnv => f.write_str("RedisFromEnv"),
+        }
+    }
 }
 
 /// Web framework integration for quick start

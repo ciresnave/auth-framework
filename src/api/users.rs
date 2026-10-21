@@ -37,10 +37,25 @@ pub struct UpdateProfileRequest {
 }
 
 /// Change password request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
+}
+
+impl std::fmt::Debug for ChangePasswordRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ChangePasswordRequest");
+        d.field(
+            "current_password",
+            &crate::utils::redact::redacted(&self.current_password),
+        );
+        d.field(
+            "new_password",
+            &crate::utils::redact::redacted(&self.new_password),
+        );
+        d.finish()
+    }
 }
 
 /// GET /users/profile

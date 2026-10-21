@@ -30,7 +30,7 @@ pub struct AuthorizeRequest {
 }
 
 /// OAuth token request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct TokenRequest {
     pub grant_type: String,
     pub code: Option<String>,
@@ -41,8 +41,31 @@ pub struct TokenRequest {
     pub code_verifier: Option<String>,
 }
 
+impl std::fmt::Debug for TokenRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenRequest");
+        d.field("grant_type", &self.grant_type);
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field(
+            "code_verifier",
+            &crate::utils::redact::redacted(&self.code_verifier),
+        );
+        d.finish()
+    }
+}
+
 /// OAuth token response
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub token_type: String,
@@ -53,6 +76,25 @@ pub struct TokenResponse {
     pub scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
+}
+
+impl std::fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("scope", &self.scope);
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.finish()
+    }
 }
 
 /// OAuth error response
@@ -115,10 +157,19 @@ pub async fn token(
 
 /// POST /oauth/revoke
 /// Token revocation endpoint
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct RevokeRequest {
     pub token: String,
     pub token_type_hint: Option<String>,
+}
+
+impl std::fmt::Debug for RevokeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RevokeRequest");
+        d.field("token", &crate::utils::redact::redacted(&self.token));
+        d.field("token_type_hint", &self.token_type_hint);
+        d.finish()
+    }
 }
 
 /// Not implemented: answers `501`; nothing is revoked.
@@ -131,10 +182,19 @@ pub async fn revoke_token(
 
 /// POST /oauth/introspect
 /// Token introspection endpoint (RFC 7662)
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct IntrospectRequest {
     pub token: String,
     pub token_type_hint: Option<String>,
+}
+
+impl std::fmt::Debug for IntrospectRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IntrospectRequest");
+        d.field("token", &crate::utils::redact::redacted(&self.token));
+        d.field("token_type_hint", &self.token_type_hint);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Serialize)]

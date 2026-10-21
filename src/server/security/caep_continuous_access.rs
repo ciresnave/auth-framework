@@ -203,7 +203,7 @@ pub struct CaepEventSource {
 }
 
 /// A CAEP security event
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CaepEvent {
     /// Unique event identifier
     pub id: Uuid,
@@ -240,6 +240,28 @@ pub struct CaepEvent {
 
     /// Correlation ID for related events
     pub correlation_id: Option<Uuid>,
+}
+
+impl std::fmt::Debug for CaepEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CaepEvent");
+        d.field("id", &self.id);
+        d.field("event_type", &self.event_type);
+        d.field("subject", &self.subject);
+        d.field("severity", &self.severity);
+        d.field("timestamp", &self.timestamp);
+        d.field("source", &self.source);
+        d.field("risk_score", &self.risk_score);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("location", &self.location);
+        d.field("device_info", &self.device_info);
+        d.field("event_data", &self.event_data);
+        d.field("correlation_id", &self.correlation_id);
+        d.finish()
+    }
 }
 
 /// Geographic location information for CAEP events
@@ -338,7 +360,7 @@ pub enum CaepRuleCondition {
 }
 
 /// Action to take when a CAEP rule is triggered
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CaepRuleAction {
     /// Revoke access tokens for the subject
@@ -358,6 +380,35 @@ pub enum CaepRuleAction {
 
     /// Quarantine session
     QuarantineSession { duration_minutes: u32 },
+}
+
+impl std::fmt::Debug for CaepRuleAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RevokeAccess { immediate } => f
+                .debug_struct("RevokeAccess")
+                .field("immediate", immediate)
+                .finish(),
+            Self::RequireStepUp { level } => f
+                .debug_struct("RequireStepUp")
+                .field("level", level)
+                .finish(),
+            Self::SendNotification { channels } => f
+                .debug_struct("SendNotification")
+                .field("channels", channels)
+                .finish(),
+            Self::LogEvent { level } => f.debug_struct("LogEvent").field("level", level).finish(),
+            // A webhook URL can carry a token in its path or query.
+            Self::TriggerWebhook { url } => f
+                .debug_struct("TriggerWebhook")
+                .field("url", &crate::utils::redact::redacted(url))
+                .finish(),
+            Self::QuarantineSession { duration_minutes } => f
+                .debug_struct("QuarantineSession")
+                .field("duration_minutes", duration_minutes)
+                .finish(),
+        }
+    }
 }
 
 /// Result of a continuous access evaluation
@@ -406,7 +457,7 @@ pub enum CaepAccessDecision {
 }
 
 /// State of a CAEP session
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CaepSessionState {
     /// Session identifier
     pub session_id: String,
@@ -434,6 +485,25 @@ pub struct CaepSessionState {
 
     /// Quarantine end time if applicable
     pub quarantine_until: Option<DateTime<Utc>>,
+}
+
+impl std::fmt::Debug for CaepSessionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CaepSessionState");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("subject", &self.subject);
+        d.field("risk_score", &self.risk_score);
+        d.field("last_evaluation", &self.last_evaluation);
+        d.field("active_events", &self.active_events);
+        d.field("created_at", &self.created_at);
+        d.field("last_activity", &self.last_activity);
+        d.field("is_quarantined", &self.is_quarantined);
+        d.field("quarantine_until", &self.quarantine_until);
+        d.finish()
+    }
 }
 
 /// Comprehensive session information combining OIDC and CAEP data

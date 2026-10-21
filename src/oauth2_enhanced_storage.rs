@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use uuid::Uuid;
 
 /// Stored refresh token with validation metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RefreshToken {
     pub token_id: String,
     pub client_id: String,
@@ -16,6 +16,20 @@ pub struct RefreshToken {
     pub issued_at: SystemTime,
     pub expires_at: SystemTime,
     pub is_revoked: bool,
+}
+
+impl std::fmt::Debug for RefreshToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RefreshToken");
+        d.field("token_id", &crate::utils::redact::redacted(&self.token_id));
+        d.field("client_id", &self.client_id);
+        d.field("user_id", &self.user_id);
+        d.field("scopes", &self.scopes);
+        d.field("issued_at", &self.issued_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("is_revoked", &self.is_revoked);
+        d.finish()
+    }
 }
 
 impl RefreshToken {
@@ -51,7 +65,7 @@ impl RefreshToken {
 }
 
 /// Enhanced authorization code with user context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EnhancedAuthorizationCode {
     pub code: String,
     pub client_id: String,
@@ -63,6 +77,23 @@ pub struct EnhancedAuthorizationCode {
     pub issued_at: SystemTime,
     pub expires_at: SystemTime,
     pub is_used: bool,
+}
+
+impl std::fmt::Debug for EnhancedAuthorizationCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnhancedAuthorizationCode");
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("client_id", &self.client_id);
+        d.field("user_id", &self.user_id);
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field("scopes", &self.scopes);
+        d.field("code_challenge", &self.code_challenge);
+        d.field("code_challenge_method", &self.code_challenge_method);
+        d.field("issued_at", &self.issued_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("is_used", &self.is_used);
+        d.finish()
+    }
 }
 
 impl EnhancedAuthorizationCode {
@@ -104,7 +135,7 @@ impl EnhancedAuthorizationCode {
 }
 
 /// Enhanced client credentials with proper secret validation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EnhancedClientCredentials {
     pub client_id: String,
     pub client_secret_hash: String,
@@ -114,6 +145,24 @@ pub struct EnhancedClientCredentials {
     pub grant_types: Vec<String>,
     pub created_at: SystemTime,
     pub is_active: bool,
+}
+
+impl std::fmt::Debug for EnhancedClientCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnhancedClientCredentials");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret_hash",
+            &crate::utils::redact::redacted(&self.client_secret_hash),
+        );
+        d.field("client_type", &self.client_type);
+        d.field("redirect_uris", &self.redirect_uris);
+        d.field("allowed_scopes", &self.allowed_scopes);
+        d.field("grant_types", &self.grant_types);
+        d.field("created_at", &self.created_at);
+        d.field("is_active", &self.is_active);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,11 +235,30 @@ impl EnhancedClientCredentials {
 }
 
 /// Enhanced token storage with proper validation
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EnhancedTokenStorage {
     refresh_tokens: HashMap<String, RefreshToken>,
     authorization_codes: HashMap<String, EnhancedAuthorizationCode>,
     client_credentials: HashMap<String, EnhancedClientCredentials>,
+}
+
+impl std::fmt::Debug for EnhancedTokenStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnhancedTokenStorage");
+        d.field(
+            "refresh_tokens",
+            &crate::utils::redact::redacted(&self.refresh_tokens),
+        );
+        d.field(
+            "authorization_codes",
+            &crate::utils::redact::redacted(&self.authorization_codes),
+        );
+        d.field(
+            "client_credentials",
+            &crate::utils::redact::redacted(&self.client_credentials),
+        );
+        d.finish()
+    }
 }
 
 impl EnhancedTokenStorage {
@@ -365,12 +433,26 @@ impl EnhancedTokenStorage {
 }
 
 /// User credentials stored in the system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UserCredentials {
     pub username: String,
     pub password_hash: String, // In production: bcrypt/argon2 hash
     pub scopes: Vec<String>,
     pub is_active: bool,
+}
+
+impl std::fmt::Debug for UserCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("UserCredentials");
+        d.field("username", &self.username);
+        d.field(
+            "password_hash",
+            &crate::utils::redact::redacted(&self.password_hash),
+        );
+        d.field("scopes", &self.scopes);
+        d.field("is_active", &self.is_active);
+        d.finish()
+    }
 }
 
 /// User permissions/scopes

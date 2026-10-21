@@ -251,7 +251,7 @@ pub struct SamlAction {
 }
 
 /// SAML Evidence
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SamlEvidence {
     /// Supporting assertions
     pub assertions: Vec<String>, // References to other assertions
@@ -261,6 +261,19 @@ pub struct SamlEvidence {
 
     /// Assertion URI references
     pub assertion_uri_refs: Vec<String>,
+}
+
+impl std::fmt::Debug for SamlEvidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SamlEvidence");
+        d.field(
+            "assertions",
+            &crate::utils::redact::redacted(&self.assertions),
+        );
+        d.field("assertion_id_refs", &self.assertion_id_refs);
+        d.field("assertion_uri_refs", &self.assertion_uri_refs);
+        d.finish()
+    }
 }
 
 /// SAML Assertion Builder

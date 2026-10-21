@@ -274,7 +274,7 @@ impl Default for SessionFederationConfig {
 }
 
 /// Protocol translation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProtocolTranslationConfig {
     /// Enable SAML to OIDC translation
     pub enable_saml_to_oidc: bool,
@@ -287,6 +287,20 @@ pub struct ProtocolTranslationConfig {
 
     /// Protocol-specific settings
     pub protocol_settings: HashMap<AuthenticationProtocol, serde_json::Value>,
+}
+
+impl std::fmt::Debug for ProtocolTranslationConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ProtocolTranslationConfig");
+        d.field("enable_saml_to_oidc", &self.enable_saml_to_oidc);
+        d.field("enable_oidc_to_saml", &self.enable_oidc_to_saml);
+        d.field("attribute_mappings", &self.attribute_mappings);
+        d.field(
+            "protocol_settings",
+            &crate::utils::redact::redacted(&self.protocol_settings),
+        );
+        d.finish()
+    }
 }
 
 impl Default for ProtocolTranslationConfig {
@@ -358,7 +372,7 @@ pub enum AuthenticationProtocol {
 }
 
 /// Identity provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IdentityProvider {
     /// Unique identifier for the IdP
     pub id: String,
@@ -392,6 +406,27 @@ pub struct IdentityProvider {
 
     /// Health metrics
     pub health_metrics: IdpHealthMetrics,
+}
+
+impl std::fmt::Debug for IdentityProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IdentityProvider");
+        d.field("id", &self.id);
+        d.field("name", &self.name);
+        d.field("protocol", &self.protocol);
+        d.field("endpoint", &self.endpoint);
+        d.field("trust_level", &self.trust_level);
+        d.field("capabilities", &self.capabilities);
+        d.field("routing_rules", &self.routing_rules);
+        d.field("attribute_mappings", &self.attribute_mappings);
+        d.field(
+            "configuration",
+            &crate::utils::redact::redacted(&self.configuration),
+        );
+        d.field("circuit_state", &self.circuit_state);
+        d.field("health_metrics", &self.health_metrics);
+        d.finish()
+    }
 }
 
 impl Default for IdentityProvider {
@@ -585,7 +620,7 @@ impl Default for IdpHealthMetrics {
 }
 
 /// Orchestration request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OrchestrationRequest {
     /// Unique request identifier
     pub request_id: String,
@@ -610,6 +645,24 @@ pub struct OrchestrationRequest {
 
     /// Custom parameters
     pub custom_parameters: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for OrchestrationRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OrchestrationRequest");
+        d.field("request_id", &self.request_id);
+        d.field("user_hint", &self.user_hint);
+        d.field("client_id", &self.client_id);
+        d.field("scopes", &self.scopes);
+        d.field("requested_attributes", &self.requested_attributes);
+        d.field("authentication_context", &self.authentication_context);
+        d.field("orchestration_preferences", &self.orchestration_preferences);
+        d.field(
+            "custom_parameters",
+            &crate::utils::redact::redacted(&self.custom_parameters),
+        );
+        d.finish()
+    }
 }
 
 /// Orchestration preferences
@@ -689,7 +742,7 @@ pub struct AlternativeIdp {
 }
 
 /// Orchestration session information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OrchestrationSessionInfo {
     /// Orchestration session ID
     pub session_id: String,
@@ -704,8 +757,22 @@ pub struct OrchestrationSessionInfo {
     pub session_state: String,
 }
 
+impl std::fmt::Debug for OrchestrationSessionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OrchestrationSessionInfo");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("expires_at", &self.expires_at);
+        d.field("idp_sessions", &self.idp_sessions);
+        d.field("session_state", &self.session_state);
+        d.finish()
+    }
+}
+
 /// IdP session information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IdpSessionInfo {
     /// IdP identifier
     pub idp_id: String,
@@ -718,6 +785,23 @@ pub struct IdpSessionInfo {
 
     /// Session data
     pub session_data: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for IdpSessionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IdpSessionInfo");
+        d.field("idp_id", &self.idp_id);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("protocol", &self.protocol);
+        d.field(
+            "session_data",
+            &crate::utils::redact::redacted(&self.session_data),
+        );
+        d.finish()
+    }
 }
 
 /// Applied transformation information

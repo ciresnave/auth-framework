@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 /// Main configuration for the authentication framework.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     /// Default token lifetime
     pub token_lifetime: Duration,
@@ -51,8 +51,29 @@ pub struct AuthConfig {
     pub method_configs: HashMap<String, serde_json::Value>,
 }
 
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthConfig");
+        d.field("token_lifetime", &self.token_lifetime);
+        d.field("refresh_token_lifetime", &self.refresh_token_lifetime);
+        d.field("enable_multi_factor", &self.enable_multi_factor);
+        d.field("issuer", &self.issuer);
+        d.field("audience", &self.audience);
+        d.field("secret", &crate::utils::redact::redacted(&self.secret));
+        d.field("storage", &self.storage);
+        d.field("rate_limiting", &self.rate_limiting);
+        d.field("security", &self.security);
+        d.field("audit", &self.audit);
+        d.field(
+            "method_configs",
+            &crate::utils::redact::redacted(&self.method_configs),
+        );
+        d.finish()
+    }
+}
+
 /// Storage configuration options.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum StorageConfig {
     /// In-memory storage (not recommended for production)
     Memory,
@@ -72,6 +93,32 @@ pub enum StorageConfig {
     Custom(String),
 }
 
+impl std::fmt::Debug for StorageConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Memory => f.write_str("Memory"),
+            #[cfg(feature = "redis-storage")]
+            Self::Redis { url, key_prefix } => f
+                .debug_struct("Redis")
+                .field("url", &redacted(url))
+                .field("key_prefix", key_prefix)
+                .finish(),
+            #[cfg(feature = "postgres-storage")]
+            Self::Postgres {
+                connection_string,
+                table_prefix,
+            } => f
+                .debug_struct("Postgres")
+                .field("connection_string", &redacted(connection_string))
+                .field("table_prefix", table_prefix)
+                .finish(),
+            // The name of a custom backend, not a connection string.
+            Self::Custom(name) => f.debug_tuple("Custom").field(name).finish(),
+        }
+    }
+}
+
 /// Rate limiting configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
@@ -89,7 +136,7 @@ pub struct RateLimitConfig {
 }
 
 /// Security configuration options.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// Minimum password length
     pub min_password_length: usize,
@@ -117,6 +164,28 @@ pub struct SecurityConfig {
 
     /// Session timeout
     pub session_timeout: Duration,
+}
+
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecurityConfig");
+        d.field("min_password_length", &self.min_password_length);
+        d.field(
+            "require_password_complexity",
+            &self.require_password_complexity,
+        );
+        d.field("password_hash_algorithm", &self.password_hash_algorithm);
+        d.field("jwt_algorithm", &self.jwt_algorithm);
+        d.field(
+            "secret_key",
+            &crate::utils::redact::redacted(&self.secret_key),
+        );
+        d.field("secure_cookies", &self.secure_cookies);
+        d.field("cookie_same_site", &self.cookie_same_site);
+        d.field("csrf_protection", &self.csrf_protection);
+        d.field("session_timeout", &self.session_timeout);
+        d.finish()
+    }
 }
 
 /// Password hashing algorithms.
@@ -171,7 +240,7 @@ pub struct AuditConfig {
 }
 
 /// Audit log storage options.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum AuditStorage {
     /// Standard logging (via tracing)
     Tracing,
@@ -184,6 +253,25 @@ pub enum AuditStorage {
 
     /// External service
     External { endpoint: String, api_key: String },
+}
+
+impl std::fmt::Debug for AuditStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Tracing => f.write_str("Tracing"),
+            Self::File { path } => f.debug_struct("File").field("path", path).finish(),
+            Self::Database { connection_string } => f
+                .debug_struct("Database")
+                .field("connection_string", &redacted(connection_string))
+                .finish(),
+            Self::External { endpoint, api_key } => f
+                .debug_struct("External")
+                .field("endpoint", endpoint)
+                .field("api_key", &redacted(api_key))
+                .finish(),
+        }
+    }
 }
 
 impl Default for AuthConfig {

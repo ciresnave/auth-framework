@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecureJwtClaims {
     pub sub: String,
     pub iss: String,
@@ -20,7 +20,26 @@ pub struct SecureJwtClaims {
     pub auth_ctx_hash: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+impl std::fmt::Debug for SecureJwtClaims {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureJwtClaims");
+        d.field("sub", &self.sub);
+        d.field("iss", &self.iss);
+        d.field("aud", &self.aud);
+        d.field("exp", &self.exp);
+        d.field("nbf", &self.nbf);
+        d.field("iat", &self.iat);
+        d.field("jti", &self.jti);
+        d.field("scope", &self.scope);
+        d.field("typ", &self.typ);
+        d.field("sid", &crate::utils::redact::redacted(&self.sid));
+        d.field("client_id", &self.client_id);
+        d.field("auth_ctx_hash", &self.auth_ctx_hash);
+        d.finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct SecureJwtConfig {
     pub allowed_algorithms: Vec<Algorithm>,
     pub required_issuers: HashSet<String>,
@@ -33,6 +52,26 @@ pub struct SecureJwtConfig {
     pub require_secure_transport: bool,
     /// JWT signing/validation key
     pub jwt_secret: String,
+}
+
+impl std::fmt::Debug for SecureJwtConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureJwtConfig");
+        d.field("allowed_algorithms", &self.allowed_algorithms);
+        d.field("required_issuers", &self.required_issuers);
+        d.field("required_audiences", &self.required_audiences);
+        d.field("max_token_lifetime", &self.max_token_lifetime);
+        d.field("clock_skew", &self.clock_skew);
+        d.field("require_jti", &self.require_jti);
+        d.field("validate_nbf", &self.validate_nbf);
+        d.field("allowed_token_types", &self.allowed_token_types);
+        d.field("require_secure_transport", &self.require_secure_transport);
+        d.field(
+            "jwt_secret",
+            &crate::utils::redact::redacted(&self.jwt_secret),
+        );
+        d.finish()
+    }
 }
 
 impl Default for SecureJwtConfig {
@@ -60,10 +99,21 @@ impl Default for SecureJwtConfig {
     }
 }
 
-#[derive(Debug)]
 pub struct SecureJwtValidator {
     config: SecureJwtConfig,
     revoked_tokens: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+impl std::fmt::Debug for SecureJwtValidator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureJwtValidator");
+        d.field("config", &self.config);
+        d.field(
+            "revoked_tokens",
+            &crate::utils::redact::redacted(&self.revoked_tokens),
+        );
+        d.finish()
+    }
 }
 
 impl SecureJwtValidator {

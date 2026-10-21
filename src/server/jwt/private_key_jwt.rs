@@ -319,11 +319,21 @@ impl ReceivedAudience {
 }
 
 /// The remembered `jti`s: key -> deadline, with a per-client count for the quota.
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct JtiStore {
     entries: HashMap<String, DateTime<Utc>>,
     per_client: HashMap<String, usize>,
     last_sweep: Option<DateTime<Utc>>,
+}
+
+impl std::fmt::Debug for JtiStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("JtiStore");
+        d.field("entries", &crate::utils::redact::redacted(&self.entries));
+        d.field("per_client", &self.per_client);
+        d.field("last_sweep", &self.last_sweep);
+        d.finish()
+    }
 }
 
 impl std::ops::Deref for JtiStore {

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.35] - Unreleased
+
+### Fixed
+
+- **`{:?}` of a configuration, credential, request, response, store or manager no longer prints its secrets (backport of the 0.6.0 Debug-redaction line).** On this line
+  the derived `Debug` printed passwords, client secrets, signing secrets, API keys, issued access and refresh tokens, authorization and
+  device codes, MFA material, connection strings, and the keys and contents of maps keyed by tokens or session ids. About two hundred
+  types now have a hand-written `Debug` that prints `<redacted>` for those fields, including the enum payloads (`Credential`,
+  `StorageConfig`, `QuickStartAuth`, `AuditStorage`, the email and SMS provider configurations). `tests/code_quality_audit.rs` replaces its list of
+  secret-sounding names with a reviewed field-name whitelist (`tests/debug_field_review.txt`) that reads plain-text fields, one-line enum
+  variants and map, set and JSON-value fields, for derived and hand-written `Debug` impls; an unreviewed name, a stale entry or a type that
+  defines itself inside a macro fails the test. `tests/secret_debug_redaction.rs` formats each family with a marker secret and checks the
+  marker is absent. `regex` is added as a dev-dependency for the audit. No wire or stored format changes.
+
 ## [0.4.34] - Unreleased
 
 ### Fixed

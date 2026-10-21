@@ -21,7 +21,7 @@ pub enum ClientType {
 }
 
 /// OAuth 2.0 Client Configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
     /// Unique client identifier
     pub client_id: String,
@@ -43,6 +43,26 @@ pub struct ClientConfig {
     pub client_description: Option<String>,
     /// Client metadata
     pub metadata: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ClientConfig");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("client_type", &self.client_type);
+        d.field("redirect_uris", &self.redirect_uris);
+        d.field("authorized_scopes", &self.authorized_scopes);
+        d.field("authorized_grant_types", &self.authorized_grant_types);
+        d.field("authorized_response_types", &self.authorized_response_types);
+        d.field("client_name", &self.client_name);
+        d.field("client_description", &self.client_description);
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
 }
 
 impl Default for ClientConfig {

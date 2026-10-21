@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime};
 // Additional imports for session security
 
 /// Session information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
     /// Unique session ID
     pub id: String,
@@ -41,6 +41,25 @@ pub struct Session {
     pub cached_permissions: Option<Vec<String>>,
     /// Last activity details
     pub last_activity: ActivityInfo,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("Session");
+        d.field("id", &crate::utils::redact::redacted(&self.id));
+        d.field("user_id", &self.user_id);
+        d.field("created_at", &self.created_at);
+        d.field("last_accessed", &self.last_accessed);
+        d.field("expires_at", &self.expires_at);
+        d.field("state", &self.state);
+        d.field("device_info", &self.device_info);
+        d.field("security_metadata", &self.security_metadata);
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.field("mfa_verified", &self.mfa_verified);
+        d.field("cached_permissions", &self.cached_permissions);
+        d.field("last_activity", &self.last_activity);
+        d.finish()
+    }
 }
 
 /// Session state
