@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc107 -- **`zeroize` 1.9.1 or later is now required, because earlier versions print `Zeroizing` secrets in `{:?}`.** `Zeroizing<T>`
+  hides its value from `Debug` only from zeroize 1.9.1 (2026-10-06); 1.9.0 and earlier derive `Debug` and print
+  `Zeroizing("<the secret>")`. The manifest allowed 1.8.2, so a build whose lock resolved an older zeroize printed every
+  `Zeroizing<String>` field of a type that derives or forwards `Debug`: configuration secrets (`JwtConfig` / `SecurityConfig` /
+  `SecureJwtConfig` keys, `RadiusConfig`, `StsConfig`, `CaepConfig`, `QuickStartAuth`, `OAuthProviderConfig`), the email, SMS and
+  Grafana API keys and passwords, OAuth 1.0a consumer and token secrets, hashed client secrets and the TOTP secret of an MFA
+  method or setup response. The requirement is now `zeroize = "1.9.1"`. Two tests pin it: one formats a `Zeroizing` holding a
+  marker and checks the marker is absent, the other parses `Cargo.toml` and fails if the requirement is below 1.9.1 (forcing
+  zeroize 1.8.2 in a scratch copy made the MFA redaction test fail with `Zeroizing("...")`).
 - 0.6.0-rc106 -- **`{:?}` no longer prints a WS-Security password, OAuth authorization codes or refresh-token ids.** Redacting `Debug`
   on `UsernamePassword` (`value`), `EnhancedAuthorizationCode` (`code`), `RefreshToken` (`token_id`) and `UserCredentials`
   (`password_hash`); `EnhancedTokenStorage`, whose maps are keyed by authorization code and refresh-token id, prints entry counts
