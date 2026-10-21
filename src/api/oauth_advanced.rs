@@ -22,7 +22,7 @@ use url::Url;
 use uuid::Uuid;
 
 /// Token introspection request (RFC 7662)
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct IntrospectRequest {
     /// The token to introspect
     pub token: String,
@@ -38,6 +38,20 @@ pub struct IntrospectRequest {
     /// Client secret (if using POST body authentication)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
+}
+
+impl std::fmt::Debug for IntrospectRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IntrospectRequest");
+        d.field("token", &self.token);
+        d.field("token_type_hint", &self.token_type_hint);
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.finish()
+    }
 }
 
 /// Token introspection response (RFC 7662)
@@ -123,13 +137,25 @@ pub struct PARRequest {
 }
 
 /// Pushed Authorization Request response (RFC 9126)
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct PARResponse {
     /// The request URI for the authorization request
     pub request_uri: String,
 
     /// Expiration time in seconds
     pub expires_in: u64,
+}
+
+impl std::fmt::Debug for PARResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PARResponse");
+        d.field(
+            "request_uri",
+            &crate::utils::redact::redacted(&self.request_uri),
+        );
+        d.field("expires_in", &self.expires_in);
+        d.finish()
+    }
 }
 
 // ============================================================================

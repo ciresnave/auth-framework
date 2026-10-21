@@ -437,7 +437,7 @@ pub enum StepUpTrigger {
 }
 
 /// Step-up evaluation context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StepUpContext {
     /// User identifier
     pub user_id: String,
@@ -457,6 +457,25 @@ pub struct StepUpContext {
     pub auth_time: DateTime<Utc>,
     /// Custom context attributes
     pub custom_attributes: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for StepUpContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("StepUpContext");
+        d.field("user_id", &self.user_id);
+        d.field("resource", &self.resource);
+        d.field("resource_metadata", &self.resource_metadata);
+        d.field("risk_score", &self.risk_score);
+        d.field("location", &self.location);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("current_auth_level", &self.current_auth_level);
+        d.field("auth_time", &self.auth_time);
+        d.field("custom_attributes", &self.custom_attributes);
+        d.finish()
+    }
 }
 
 /// Location information for step-up evaluation
@@ -530,7 +549,7 @@ pub struct StepUpRequest {
 }
 
 /// Step-up authentication response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StepUpResponse {
     /// Request identifier
     pub request_id: String,
@@ -546,6 +565,23 @@ pub struct StepUpResponse {
     pub expires_at: Option<DateTime<Utc>>,
     /// Error message (if failed)
     pub error: Option<String>,
+}
+
+impl std::fmt::Debug for StepUpResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("StepUpResponse");
+        d.field("request_id", &self.request_id);
+        d.field("success", &self.success);
+        d.field("achieved_level", &self.achieved_level);
+        d.field("method_used", &self.method_used);
+        d.field(
+            "session_token",
+            &crate::utils::redact::redacted(&self.session_token),
+        );
+        d.field("expires_at", &self.expires_at);
+        d.field("error", &self.error);
+        d.finish()
+    }
 }
 
 /// Step-up request status

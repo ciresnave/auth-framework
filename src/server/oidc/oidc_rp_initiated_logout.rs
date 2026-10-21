@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use url::Url;
 
 /// RP-initiated logout request parameters.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RpInitiatedLogoutRequest {
     /// Client initiating the logout request.
     pub client_id: String,
@@ -25,6 +25,25 @@ pub struct RpInitiatedLogoutRequest {
     pub post_logout_redirect_uri: Option<String>,
     /// Optional opaque state to echo back to the RP.
     pub state: Option<String>,
+}
+
+impl std::fmt::Debug for RpInitiatedLogoutRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RpInitiatedLogoutRequest");
+        d.field("client_id", &self.client_id);
+        d.field("sub", &self.sub);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field(
+            "id_token_hint",
+            &crate::utils::redact::redacted(&self.id_token_hint),
+        );
+        d.field("post_logout_redirect_uri", &self.post_logout_redirect_uri);
+        d.field("state", &self.state);
+        d.finish()
+    }
 }
 
 /// Per-client RP-initiated logout registration.

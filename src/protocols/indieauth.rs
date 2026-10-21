@@ -51,7 +51,7 @@ pub struct IndieAuthRequest {
 }
 
 /// IndieAuth authorization response (callback parameters).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IndieAuthCallback {
     /// Authorization code.
     pub code: String,
@@ -61,8 +61,18 @@ pub struct IndieAuthCallback {
     pub me: Option<String>,
 }
 
+impl std::fmt::Debug for IndieAuthCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IndieAuthCallback");
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("state", &self.state);
+        d.field("me", &self.me);
+        d.finish()
+    }
+}
+
 /// IndieAuth token response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IndieAuthTokenResponse {
     /// The canonical profile URL.
     pub me: String,
@@ -74,6 +84,21 @@ pub struct IndieAuthTokenResponse {
     pub scope: Option<String>,
     /// Profile information.
     pub profile: Option<IndieAuthProfile>,
+}
+
+impl std::fmt::Debug for IndieAuthTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IndieAuthTokenResponse");
+        d.field("me", &self.me);
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field("scope", &self.scope);
+        d.field("profile", &self.profile);
+        d.finish()
+    }
 }
 
 /// Profile information returned by IndieAuth.
@@ -274,7 +299,7 @@ impl IndieAuthMetadata {
 
 /// Stored authorization code with associated metadata.
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct StoredAuthCode {
     code: String,
     client_id: String,
@@ -284,6 +309,21 @@ struct StoredAuthCode {
     code_challenge: String,
     code_challenge_method: String,
     created_at: u64,
+}
+
+impl std::fmt::Debug for StoredAuthCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("StoredAuthCode");
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("client_id", &self.client_id);
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field("me", &self.me);
+        d.field("scope", &self.scope);
+        d.field("code_challenge", &self.code_challenge);
+        d.field("code_challenge_method", &self.code_challenge_method);
+        d.field("created_at", &self.created_at);
+        d.finish()
+    }
 }
 
 /// IndieAuth server handling code issuance and token exchange.

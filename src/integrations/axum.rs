@@ -94,18 +94,44 @@ pub struct AuthRouter {
 }
 
 /// Request/response types for auth endpoints
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, Serialize)]
+impl std::fmt::Debug for LoginRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LoginRequest");
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.finish()
+    }
+}
+
+#[derive(Serialize)]
 pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: u64,
     pub user: UserInfo,
+}
+
+impl std::fmt::Debug for LoginResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LoginResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("expires_in", &self.expires_in);
+        d.field("user", &self.user);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Serialize)]

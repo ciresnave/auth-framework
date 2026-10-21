@@ -275,8 +275,17 @@ fn clear_failed_admin_logins(state: &AppState, username: &str) {
 /// CSRF token extracted from the authenticated session and injected into
 /// request extensions by [`require_admin_session`].
 #[cfg(feature = "web-gui")]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct CsrfToken(String);
+
+#[cfg(feature = "web-gui")]
+impl std::fmt::Debug for CsrfToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("CsrfToken")
+            .field(&crate::utils::redact::redacted(&self.0))
+            .finish()
+    }
+}
 
 /// Axum middleware that enforces admin GUI session authentication.
 ///
@@ -431,12 +440,23 @@ struct LoginTemplate {
 
 // Data structures
 #[cfg(feature = "web-gui")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ConfigItem {
     pub key: String,
     pub value: String,
     pub description: String,
     pub editable: bool,
+}
+
+impl std::fmt::Debug for ConfigItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ConfigItem");
+        d.field("key", &self.key);
+        d.field("value", &crate::utils::redact::redacted(&self.value));
+        d.field("description", &self.description);
+        d.field("editable", &self.editable);
+        d.finish()
+    }
 }
 
 #[cfg(feature = "web-gui")]

@@ -1,0 +1,911 @@
+# Reviewed field names for the derive(Debug) audit (tests/code_quality_audit.rs,
+# test_derived_debug_plain_fields_are_reviewed).
+#
+# Every struct / enum in src/ that derives Debug and has a plain-text field (String, Vec<u8>,
+# Vec<String>, Option of those, Box<str>, Arc<str>) is checked by FIELD NAME:
+#   public          the name is fine anywhere: identifiers, URLs, names, protocol metadata, public keys and
+#                   certificates, timestamps, diagnostic text, single-use protocol values that travel in the
+#                   clear (state, nonce, jti, ...). Personal data (email, phone_number, username, ip_address)
+#                   is listed here too: this audit covers credentials, not privacy.
+#   secret_capable  the name can hold a credential or a bearer value. A derived Debug is a FAILURE unless the
+#                   type has a hand-written redacting Debug (preferred) or an [allow] line below.
+#   ambiguous       free-form content (a body, a query, a url that may embed a password, ...): same rule.
+#   allow           path:Type:field | one-line reason it is public information. `<tuple>` is a tuple
+#                   struct / tuple variant payload.
+# A field name on no list FAILS: adding a field with a new name needs a decision here.
+# Zeroizing<String>, HashMap values and other wrapper types are not plain text and are not scanned.
+
+[public]
+aaguid
+access_key_id
+access_type
+accounting_addr
+acr_values
+acs_url
+action
+action_taken
+action_type
+actions
+active_authorizations
+activity_type
+actor
+actor_id
+actor_name
+actor_token_type
+actor_type
+address
+admin_user_id
+aggregate_id
+alert_endpoints
+alg
+algorithm
+allowed_actions
+allowed_audiences
+allowed_auth_methods
+allowed_cidrs
+allowed_countries
+allowed_credentials
+allowed_days
+allowed_grant_types
+allowed_headers
+allowed_hours
+allowed_ips
+allowed_locations
+allowed_methods
+allowed_origins
+allowed_response_types
+allowed_scopes
+allowed_token_types
+amr_values
+api_url
+api_version
+app_id
+applicable_type
+applied_modifications
+applies_to
+approver_roles
+args
+assertion_formats
+assertion_id_refs
+assertion_uri_refs
+assessment_type
+assigned_by
+ath
+attestation
+attestation_cert
+attestation_conveyance
+attestation_object
+attestor
+attr_type
+attribute
+attribute_name
+aud
+audience
+audiences
+audit_log
+audit_storage
+auth_ctx_hash
+auth_endpoint
+auth_method
+auth_url
+authenticating_authorities
+authentication_level
+authentication_method
+authenticator_attachment
+authenticator_data
+authn_context_class_ref
+authn_context_decl
+authn_context_decl_ref
+authorization_endpoint
+authorization_url
+authorizations
+authorized_providers
+authorized_resources
+available_actions
+backchannel_logout_uri
+backend
+background_color
+backup_path
+base_url
+batch_credential_endpoint
+binding_id
+binding_message
+birthdate
+browser
+browser_hash
+bulk_id
+c_nonce
+ca_file
+caa_identities
+cached_permissions
+canonicalization_method
+canvas_hash
+cert_file
+cert_thumbprint
+certificate
+challenge_id
+channel
+channels
+check_ip
+check_session_iframe_endpoint
+checksum_sha256
+cid
+cipher_suites
+city
+cl
+claim_name
+claims
+claims_interaction_endpoint
+claims_locales
+claims_supported
+client
+client_certificate
+client_data
+client_data_json
+client_id
+client_ip
+client_name
+client_notification_endpoint
+client_principal
+client_secret_hash
+client_uri
+code_challenge
+code_challenge_method
+code_challenge_methods_supported
+code_complexity
+code_format
+code_hash
+color
+common_name
+component
+computed_userset_relation
+condition
+condition_type
+consent_id
+consented_scopes
+contact
+contact_emails
+contacts
+context_requirements
+controller
+conversion_logic
+conversion_summary
+cookie_name
+correlation_id
+country
+cpu_usage
+created
+created_at
+creation_ip
+credential_configuration_ids
+credential_endpoint
+credential_id
+credential_issuer
+credential_public_key
+credential_signing_alg_values_supported
+credential_type
+crl_distribution_url
+crv
+cryptographic_binding_methods_supported
+current
+current_ip
+current_level
+current_location
+current_phase
+custom_elements
+datasource
+datatypes
+decision_id
+default
+default_audience
+default_scope
+default_value
+definition_id
+delegated_scopes
+delegatee
+delegatee_id
+delegation_reason
+delegator
+delegator_id
+dependencies
+description
+destination
+detail
+detail_type
+details
+device
+device_authorization_endpoint
+device_authorization_url
+device_fingerprint
+device_id
+device_name
+device_public_key
+device_type
+digest
+digest_method
+digest_value
+directory_url
+display
+display_name
+dns_name
+docs_url
+documentation_uri
+domain
+domains
+dpop_signing_alg_values_supported
+dsl
+e
+ec_public_key_pem
+ed_public_key_pem
+effective_permissions
+effective_scopes
+email
+email_hint
+encoding_type
+encrypted_attributes
+end_date
+end_session_endpoint
+ended_sessions
+endpoint
+endpoint_url
+endpoints
+entity_id
+env_prefix
+environment
+equal
+error
+error_base_uri
+error_code
+error_description
+error_message
+error_uri
+errors
+event_id
+event_stream_url
+event_type
+event_types
+events_supported
+excluded_attributes
+excluded_idps
+expected_audiences
+expected_subject_dn
+expires
+external_endpoints
+failed
+family_name
+feedback
+fhir_endpoint
+file
+filter
+filter_id
+finalize
+fingerprint
+first_name
+footer
+format
+formatted
+friendly_name
+from
+from_email
+from_name
+from_number
+frontchannel_logout_uri
+gender
+given_name
+grant_type
+grant_types
+grant_types_supported
+granted_actions
+granted_locations
+granted_privileges
+group_by
+groups
+header_name
+health
+help
+home_realm
+honorific_prefix
+honorific_suffix
+host
+htm
+http_method
+htu
+id
+id_token_encryption_alg_values_supported
+id_token_encryption_enc_values_supported
+id_token_signing_alg_values_supported
+id_type
+identifier
+identity_assurance_level
+idp_entity_id
+idp_id
+idp_name
+in_response_to
+initiated_by
+initiating_client_id
+instance
+instructions
+interact_nonce
+interaction_base_url
+intermediate_ca_cert_path
+intermediate_ca_key_path
+intermediate_ca_path
+introspection_endpoint
+introspection_endpoint_auth_methods_supported
+ip
+ip_address
+iss
+issue_instant
+issued_ip
+issuer
+issuer_allowlist
+issuer_did
+issuer_dn
+issuer_state
+issues
+jkt
+jti
+justification
+jwk_thumbprint
+jwks_uri
+jwt_audiences
+kdc_addresses
+key_change
+key_derivation
+key_file
+key_handle
+key_id
+key_identifier
+key_ops
+key_prefix
+key_thumbprint
+key_type
+keytab_path
+kid
+kty
+label
+language
+languages
+last_active
+last_check
+last_config_update
+last_login
+last_modified
+last_name
+latency
+legacy_permissions
+legacy_roles
+level
+limit_disclosure
+locale
+locality
+location
+location_name
+location_type
+locations
+login_hint
+logo_uri
+logout_page_html
+logout_token_jti
+logout_tokens
+logs_endpoint
+manual_steps
+matching_rules
+max_privilege_level
+me
+mech_oid
+memory_footprint
+memory_usage
+merchant_info
+message
+metadata_endpoint
+metadata_url
+method
+method_type
+methods
+metric_name
+metric_queries
+metric_type
+metrics_endpoint
+middle_name
+migration_notes
+min_tls_version
+missing_permissions
+n
+name
+name_format
+name_id
+name_id_format
+name_qualifier
+namespace
+nas_identifier
+network_in
+network_info
+network_out
+new_account
+new_authz
+new_nonce
+new_order
+new_roles
+nickname
+nonce
+not_after
+not_before
+not_on_or_after
+notified_clients
+oauth_client_id
+object
+ocsp_responder_url
+operating_system
+optional_fields
+order_url
+orders
+organization
+organization_id
+organizational_unit
+origin
+original
+original_location
+orphaned_permissions
+os
+outcome
+output
+output_path
+owner_id
+parent_id
+parent_role
+parent_role_id
+parent_roles
+partner_org
+passive_endpoint
+path
+patient_id
+pattern
+peak_hours
+pem_chain
+permission
+permission_endpoint
+permission_id
+permissions
+phases_completed
+phone_hint
+phone_number
+photo
+picture
+plan_id
+platform
+policy_id
+policy_requirements
+policy_uri
+port
+post_logout_redirect_uri
+post_logout_redirect_uris
+postal_code
+preferred_idp_order
+preferred_username
+prefix
+presentation_endpoint
+principal
+privilege
+privileges
+profile
+prompt
+proof_type
+propagation_endpoints
+provider
+provider_id
+proxies
+public_key
+public_key_multibase
+public_key_pem
+purpose
+pushed_authorization_request_endpoint
+qr_code
+query_param_name
+realm
+reason
+reason_admin
+reason_user
+receiver
+receiver_id
+recipient
+recommendations
+redirect_uri
+redirect_uris
+redirect_url
+region
+registered_by
+registered_methods
+registration_access_token_hash
+registration_data
+registration_endpoint
+registration_id
+registration_metadata
+rejection_reason
+relation
+relationship_id
+relay_state
+remote_address
+replacement
+reply_message
+reply_url
+request_id
+request_jti
+request_type
+requested_attached_reference
+requested_attributes
+requested_scopes
+requested_token_type
+requested_unattached_reference
+requester
+required_claims
+required_fields
+required_level
+required_permissions
+required_privileges
+required_roles
+required_scopes
+requirement
+resource
+resource_id
+resource_name
+resource_registration_endpoint
+resource_type
+resource_usage
+resources
+response_id
+response_modes_supported
+response_type
+response_types
+response_types_supported
+restriction_type
+result
+revocation_endpoint
+revocation_endpoint_auth_methods_supported
+revocation_url
+revoke_cert
+revoked_reason
+risk_level
+role
+role_id
+role_name
+roles
+root_ca_cert_path
+root_ca_key_path
+root_ca_path
+rp_id
+rp_identifier
+rp_name
+rp_origins
+rpt_endpoint
+rsa_public_key_pem
+rule_files
+rule_id
+rule_name
+san_dns
+san_email
+san_uri
+sans
+schemas
+scheme_type
+scim_type
+scope
+scopes
+scopes_supported
+screen_resolution
+search
+search_paths
+section
+security_token_reference
+selection_reason
+selector_type
+serial
+serial_number
+series_type
+server_addr
+server_msg
+server_url
+service_name
+service_principal
+service_url
+session_index
+session_state
+setup_instructions
+severity
+sha256_hex
+sid
+sig_alg
+signature_base_string
+signature_data
+signature_method
+signature_value
+signing_certificates
+size
+skip_paths
+slo_url
+sls_url
+smtp_server
+software_id
+software_version
+sort_by
+sort_order
+source
+source_attribute
+source_domain
+source_ip
+source_type
+sources
+sp_name_qualifier
+spec_uri
+sso_url
+start
+start_date
+state
+state_path
+statement
+status
+step_up_url
+storage_backend
+street_address
+sts_url
+sub
+sub_id_formats
+subject
+subject_allowlist
+subject_contains
+subject_dn
+subject_id
+subject_token_type
+subject_type
+subject_types_supported
+suggested_fix
+suggestion
+suggestions
+summary
+supported_events
+supported_grant_types
+supported_protocols
+supported_response_types
+supported_scopes
+supported_token_types
+supported_types
+syslog_endpoint
+system_id
+system_uptime
+table_prefix
+tags
+target_attribute
+target_domain
+target_role
+target_user_id
+template
+terminate
+terms_of_service
+text_color
+throughput
+thumbprint
+timestamp
+timezone
+title
+tls_cert
+to
+token_aud
+token_endpoint
+token_endpoint_auth_method
+token_endpoint_auth_methods_supported
+token_iss
+token_type
+token_types_offered
+token_url
+tos_uri
+transaction_currency
+transaction_endpoint
+transaction_id
+transformation_type
+transforms
+transmitter_id
+transports
+triggered_rules
+trust_anchor
+trust_anchors
+trust_domain
+trust_level
+trusted_cert_thumbprints
+trusted_domains
+trusted_issuers
+trusted_partners
+tupleset_relation
+typ
+type_
+type_field
+type_info
+types
+ui_locales
+uma_profiles_supported
+union
+unit
+updated_at
+uptime
+uri
+use_
+user
+user_agent
+user_display_name
+user_dn
+user_handle
+user_hint
+user_id
+user_name
+user_verification
+userinfo_endpoint
+userinfo_signing_alg_values_supported
+userinfo_url
+username
+validated
+validation_errors
+validation_expression
+validation_messages
+validation_type
+value_type
+verification_provider
+verification_uri
+verification_uri_complete
+version
+vid
+warnings
+webgl_hash
+website
+whitelist
+widget_id
+wsu_id
+x
+x509_data
+x5t_s256
+y
+zoneinfo
+
+[secret_capable]
+actor_token
+assertions
+auth_req_id
+authorization_header
+browser_session_id
+challenge
+challenge_response
+client_notification_token
+code
+connection_string
+continuation_token
+continue_token
+csrf_token
+dpop_proof
+existing_token
+id_token_hint
+jwt
+key
+key_binding_jwt
+key_data
+key_material
+key_value
+mech_token
+oauth_token
+passkey_data
+password
+pre_authorized_code
+proof
+proxy_granting_ticket
+raw_assertion
+redis_url
+request
+request_uri
+requested_security_token
+response_token
+result_xml
+saml_request
+saml_response
+session_id
+signature
+subject_token
+ticket
+tls_key
+token
+token_content
+token_id
+user_code
+value
+value_base64
+
+[ambiguous]
+additional_info
+attributes
+body
+context
+data
+encoded
+example_code
+query
+request
+sql
+text
+url
+
+[allow]
+src/admin/mod.rs:ConfigAction:key | clap arguments typed by the operator on their own command line; never stored or sent
+src/admin/mod.rs:ConfigAction:value | clap arguments typed by the operator on their own command line; never stored or sent
+src/admin/mod.rs:HealthStatus:<tuple> | health warning text
+src/admin/mod.rs:UserAction:password | clap arguments typed by the operator on their own command line; never stored or sent
+src/analytics/compliance.rs:ComplianceRuleType:<tuple> | the name of a custom variant: a label, not a credential
+src/analytics/dashboard.rs:DataSource:query | analytics query text; it carries no credentials
+src/analytics/mod.rs:AnalyticsError:<tuple> | error message text: diagnostic, not a credential
+src/analytics/mod.rs:ReportType:<tuple> | the name of a custom variant: a label, not a credential
+src/api/responses.rs:ApiError:code | machine-readable error code
+src/api/saml.rs:SamlSsoResponse:saml_request | a SAML AuthnRequest is sent to the IdP in the clear and holds no credential
+src/auth.rs:AuthResult:<tuple> | failure message text
+src/authorization.rs:AccessCondition:value | authorization policy condition operand
+src/authorization_enhanced/storage.rs:DatabaseError:<tuple> | error message text: diagnostic, not a credential
+src/authorization_enhanced/storage.rs:StorageError:<tuple> | error message text: diagnostic, not a credential
+src/config/app_config.rs:ConfigError:<tuple> | error message text: diagnostic, not a credential
+src/config/app_config.rs:OAuthProvider:<tuple> | the name of a custom variant: a label, not a credential
+src/deployment/automation.rs:AutomationError:<tuple> | error message text: diagnostic, not a credential
+src/deployment/config.rs:ConfigError:<tuple> | error message text: diagnostic, not a credential
+src/deployment/health.rs:HealthCheckType:<tuple> | the name of a custom variant: a label, not a credential
+src/deployment/health.rs:HealthError:<tuple> | error message text: diagnostic, not a credential
+src/deployment/mod.rs:DeploymentEnvironment:<tuple> | the name of a custom variant: a label, not a credential
+src/deployment/mod.rs:DeploymentError:<tuple> | error message text: diagnostic, not a credential
+src/deployment/mod.rs:DeploymentStatus:<tuple> | failure message text
+src/deployment/mod.rs:DeploymentStrategy:<tuple> | the name of a custom variant: a label, not a credential
+src/deployment/monitoring.rs:EmailConfig:body | notification email body template
+src/deployment/monitoring.rs:MonitoringError:<tuple> | error message text: diagnostic, not a credential
+src/deployment/monitoring.rs:SlackConfig:text | notification message template
+src/deployment/scaling.rs:ScalingError:<tuple> | error message text: diagnostic, not a credential
+src/errors.rs:AuthError:<tuple> | error message text: diagnostic, not a credential
+src/methods/saml/mod.rs:SamlAttributeValue:value | SAML attribute value: asserted user data, not a credential
+src/methods/saml/mod.rs:SamlIssuer:value | SAML issuer entity id: public identifier
+src/methods/saml/mod.rs:SamlNameId:value | SAML NameID: a subject identifier, not a credential
+src/migration/mod.rs:LegacySystemType:<tuple> | the name of a custom variant: a label, not a credential
+src/migration/mod.rs:MigrationError:<tuple> | error message text: diagnostic, not a credential
+src/migration/mod.rs:MigrationStrategy:<tuple> | the name of a custom variant: a label, not a credential
+src/migration/mod.rs:ValidationType:<tuple> | the name of a custom variant: a label, not a credential
+src/migrations/mod.rs:Migration:sql | schema migration SQL text
+src/protocols/acme.rs:AcmeChallenge:token | the ACME challenge token is published at /.well-known/acme-challenge/<token> by design
+src/protocols/acme.rs:AcmeChallenge:url | ACME challenge URL on the CA
+src/protocols/acme.rs:AcmeIdentifier:value | ACME identifier (a domain name)
+src/protocols/fido1.rs:U2fClientData:challenge | one-time U2F challenge that is sent to the client in the clear
+src/protocols/fido1.rs:U2fRegistrationRequest:challenge | one-time U2F challenge that is sent to the client in the clear
+src/protocols/fido1.rs:U2fSignRequest:challenge | one-time U2F challenge that is sent to the client in the clear
+src/protocols/gnap.rs:GnapClientKey:proof | name of the GNAP proof method (httpsig, mtls, dpop, ...)
+src/protocols/indieauth.rs:IndieAuthProfile:url | IndieAuth profile URL: public identifier
+src/protocols/saml_assertions.rs:SamlAction:value | SAML authorization action name
+src/protocols/saml_assertions.rs:SamlAttributeValue:value | SAML attribute value: asserted user data, not a credential
+src/protocols/saml_assertions.rs:SamlNameId:value | SAML NameID: a subject identifier, not a credential
+src/protocols/scim.rs:MultiValuedAttr:value | SCIM attribute value: user data, not a credential
+src/protocols/scim.rs:SearchRequest:attributes | SCIM attribute names to return
+src/protocols/spiffe.rs:WorkloadSelector:value | SPIFFE workload selector value (uid, service account, ...)
+src/protocols/tacacs.rs:AcctReplyBody:data | TACACS+ server message text shown to the user
+src/protocols/tacacs.rs:AuthenReplyBody:data | TACACS+ server message text shown to the user
+src/protocols/tacacs.rs:AuthorReplyBody:data | TACACS+ server message text shown to the user
+src/protocols/ws_security.rs:BinarySecurityToken:value | base64 X.509 certificate: public
+src/protocols/ws_security.rs:KeyInfo:key_value | public key material
+src/sdks/mod.rs:SdkGenerationError:<tuple> | error message text: diagnostic, not a credential
+src/security/enhanced_crypto.rs:EnhancedEncryptedData:data | ciphertext
+src/server/core/federated_authentication_orchestration.rs:AuthenticationProtocol:<tuple> | the name of a custom variant: a label, not a credential
+src/server/core/federated_authentication_orchestration.rs:IdpCapability:<tuple> | the name of a custom variant: a label, not a credential
+src/server/core/federated_authentication_orchestration.rs:SessionProtocol:<tuple> | the name of a custom variant: a label, not a credential
+src/server/core/stepped_up_auth.rs:StepUpTrigger:<tuple> | resource sensitivity / type label
+src/server/oauth/rich_authorization_requests.rs:RarResourceDiscoveryResponse:continuation_token | pagination cursor for a resource listing
+src/server/security/caep_continuous_access.rs:CaepEventType:<tuple> | the name of a custom variant: a label, not a credential
+src/server/security/x509_signing.rs:RevocationEntry:additional_info | free-text note on a certificate revocation
+src/server/security/x509_signing.rs:SubjectAltName:<tuple> | certificate subject alternative name: public
+src/server/token_exchange/token_exchange_factory.rs:SetupGuide:example_code | documentation sample code
+src/storage/encryption.rs:EncryptedData:data | ciphertext
+src/tenant/context.rs:TenantId:<tuple> | tenant identifier
+src/tenant/registry.rs:TenantRegistryError:<tuple> | error message text: diagnostic, not a credential
+src/threat_intelligence.rs:FeedStatus:<tuple> | feed error message text
+src/threat_intelligence.rs:FeedType:<tuple> | the name of a custom variant: a label, not a credential
+src/types.rs:GrantTypes:<tuple> | list of grant type names
+src/types.rs:IpList:<tuple> | list of IP addresses (not a credential)
+src/types.rs:Permissions:<tuple> | list of permission names
+src/types.rs:RedirectUris:<tuple> | list of registered redirect URIs
+src/types.rs:ResponseTypes:<tuple> | list of response type names
+src/types.rs:Roles:<tuple> | list of role names
+src/types.rs:Scopes:<tuple> | list of scope names

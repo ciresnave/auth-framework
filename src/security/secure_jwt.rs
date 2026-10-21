@@ -20,7 +20,7 @@ pub struct SecureJwtClaims {
     pub auth_ctx_hash: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SecureJwtConfig {
     pub allowed_algorithms: Vec<Algorithm>,
     pub required_issuers: HashSet<String>,
@@ -39,6 +39,29 @@ pub struct SecureJwtConfig {
     pub ec_public_key_pem: Option<String>,
     /// PEM-encoded Ed25519 public key for EdDSA
     pub ed_public_key_pem: Option<String>,
+}
+
+impl std::fmt::Debug for SecureJwtConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureJwtConfig");
+        d.field("allowed_algorithms", &self.allowed_algorithms);
+        d.field("required_issuers", &self.required_issuers);
+        d.field("required_audiences", &self.required_audiences);
+        d.field("max_token_lifetime", &self.max_token_lifetime);
+        d.field("clock_skew", &self.clock_skew);
+        d.field("require_jti", &self.require_jti);
+        d.field("validate_nbf", &self.validate_nbf);
+        d.field("allowed_token_types", &self.allowed_token_types);
+        d.field("require_secure_transport", &self.require_secure_transport);
+        d.field(
+            "jwt_secret",
+            &crate::utils::redact::redacted(&self.jwt_secret),
+        );
+        d.field("rsa_public_key_pem", &self.rsa_public_key_pem);
+        d.field("ec_public_key_pem", &self.ec_public_key_pem);
+        d.field("ed_public_key_pem", &self.ed_public_key_pem);
+        d.finish()
+    }
 }
 
 impl Default for SecureJwtConfig {

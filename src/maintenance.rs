@@ -52,10 +52,22 @@ pub struct SnapshotUserSummary {
     pub active: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SnapshotKvEntry {
     pub key: String,
     pub value_base64: String,
+}
+
+impl std::fmt::Debug for SnapshotKvEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SnapshotKvEntry");
+        d.field("key", &crate::utils::redact::redacted(&self.key));
+        d.field(
+            "value_base64",
+            &crate::utils::redact::redacted(&self.value_base64),
+        );
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

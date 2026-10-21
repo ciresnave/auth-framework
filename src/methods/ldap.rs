@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 /// LDAP authentication configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LdapConfig {
     /// LDAP server URL (e.g., "ldap://ldap.example.com:389" or "ldaps://ldap.example.com:636")
     pub server_url: String,
@@ -50,6 +50,28 @@ pub struct LdapConfig {
 
     /// Group membership filter template. `{}` is replaced with the user DN.
     pub group_filter: Option<String>,
+}
+
+impl std::fmt::Debug for LdapConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("LdapConfig");
+        d.field("server_url", &self.server_url);
+        d.field("base_dn", &self.base_dn);
+        d.field("user_search_filter", &self.user_search_filter);
+        d.field("bind_dn", &self.bind_dn);
+        d.field(
+            "bind_password",
+            &crate::utils::redact::redacted(&self.bind_password),
+        );
+        d.field("user_attributes", &self.user_attributes);
+        d.field("email_attribute", &self.email_attribute);
+        d.field("display_name_attribute", &self.display_name_attribute);
+        d.field("timeout_seconds", &self.timeout_seconds);
+        d.field("starttls", &self.starttls);
+        d.field("group_base_dn", &self.group_base_dn);
+        d.field("group_filter", &self.group_filter);
+        d.finish()
+    }
 }
 
 impl LdapConfig {

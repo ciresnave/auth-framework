@@ -26,7 +26,7 @@ const VERIFICATION_TOKEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const VERIFY_KEY_PREFIX: &str = "email_verify:";
 
 /// Response returned when a verification token is generated.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct VerificationSentResponse {
     /// Whether the operation succeeded.
     pub sent: bool,
@@ -36,11 +36,32 @@ pub struct VerificationSentResponse {
     pub message: String,
 }
 
+impl std::fmt::Debug for VerificationSentResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("VerificationSentResponse");
+        d.field("sent", &self.sent);
+        d.field(
+            "verification_token",
+            &crate::utils::redact::redacted(&self.verification_token),
+        );
+        d.field("message", &self.message);
+        d.finish()
+    }
+}
+
 /// Request body for `POST /auth/verify-email`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct VerifyEmailRequest {
     /// The verification token received via email or API.
     pub token: String,
+}
+
+impl std::fmt::Debug for VerifyEmailRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("VerifyEmailRequest");
+        d.field("token", &crate::utils::redact::redacted(&self.token));
+        d.finish()
+    }
 }
 
 /// Request body for `POST /auth/resend-verification`.

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Rate limiting configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
     /// Maximum requests per window
     pub max_requests: u32,
@@ -33,6 +33,24 @@ pub struct RateLimitConfig {
     pub adaptive: bool,
     /// Penalty duration for rate limit violations
     pub penalty_duration: Option<Duration>,
+}
+
+impl std::fmt::Debug for RateLimitConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RateLimitConfig");
+        d.field("max_requests", &self.max_requests);
+        d.field("window_duration", &self.window_duration);
+        d.field("strategy", &self.strategy);
+        d.field("distributed", &self.distributed);
+        d.field(
+            "redis_url",
+            &crate::utils::redact::redacted(&self.redis_url),
+        );
+        d.field("burst_allowance", &self.burst_allowance);
+        d.field("adaptive", &self.adaptive);
+        d.field("penalty_duration", &self.penalty_duration);
+        d.finish()
+    }
 }
 
 /// Rate limiting strategies

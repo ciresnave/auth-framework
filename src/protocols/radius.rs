@@ -72,7 +72,7 @@ const AUTHENTICATOR_LEN: usize = 16;
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 /// RADIUS client configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RadiusConfig {
     /// RADIUS server address (host:port, default port 1812).
     pub server_addr: String,
@@ -91,6 +91,22 @@ pub struct RadiusConfig {
 
     /// Accounting server address (host:port, default port 1813).
     pub accounting_addr: Option<String>,
+}
+
+impl std::fmt::Debug for RadiusConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RadiusConfig");
+        d.field("server_addr", &self.server_addr);
+        d.field(
+            "shared_secret",
+            &crate::utils::redact::redacted(&self.shared_secret),
+        );
+        d.field("timeout", &self.timeout);
+        d.field("retries", &self.retries);
+        d.field("nas_identifier", &self.nas_identifier);
+        d.field("accounting_addr", &self.accounting_addr);
+        d.finish()
+    }
 }
 
 impl Default for RadiusConfig {
@@ -166,10 +182,19 @@ impl RadiusConfig {
 // ─── Data Types ──────────────────────────────────────────────────────────────
 
 /// A RADIUS attribute (type-length-value).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RadiusAttribute {
     pub attr_type: u8,
     pub value: Vec<u8>,
+}
+
+impl std::fmt::Debug for RadiusAttribute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RadiusAttribute");
+        d.field("attr_type", &self.attr_type);
+        d.field("value", &crate::utils::redact::redacted(&self.value));
+        d.finish()
+    }
 }
 
 /// A RADIUS packet.

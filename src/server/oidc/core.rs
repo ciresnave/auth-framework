@@ -1021,7 +1021,7 @@ impl<S: AuthStorage + ?Sized> OidcProvider<S> {
 }
 
 /// OIDC Authorization Request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OidcAuthorizationRequest {
     pub response_type: String,
     pub client_id: String,
@@ -1038,6 +1038,34 @@ pub struct OidcAuthorizationRequest {
     pub claims: Option<String>,
     pub request: Option<String>,
     pub request_uri: Option<String>,
+}
+
+impl std::fmt::Debug for OidcAuthorizationRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OidcAuthorizationRequest");
+        d.field("response_type", &self.response_type);
+        d.field("client_id", &self.client_id);
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field("scope", &self.scope);
+        d.field("state", &self.state);
+        d.field("nonce", &self.nonce);
+        d.field("max_age", &self.max_age);
+        d.field("ui_locales", &self.ui_locales);
+        d.field("claims_locales", &self.claims_locales);
+        d.field(
+            "id_token_hint",
+            &crate::utils::redact::redacted(&self.id_token_hint),
+        );
+        d.field("login_hint", &self.login_hint);
+        d.field("acr_values", &self.acr_values);
+        d.field("claims", &self.claims);
+        d.field("request", &crate::utils::redact::redacted(&self.request));
+        d.field(
+            "request_uri",
+            &crate::utils::redact::redacted(&self.request_uri),
+        );
+        d.finish()
+    }
 }
 
 impl OidcAuthorizationRequest {

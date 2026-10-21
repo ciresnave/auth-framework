@@ -280,7 +280,7 @@ enum GnapTransactionState {
     Denied,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct GnapTransaction {
     id: String,
     state: GnapTransactionState,
@@ -293,8 +293,25 @@ struct GnapTransaction {
     subject_id: Option<String>,
 }
 
+impl std::fmt::Debug for GnapTransaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("GnapTransaction");
+        d.field("id", &self.id);
+        d.field("state", &self.state);
+        d.field("request", &self.request);
+        d.field(
+            "continue_token",
+            &crate::utils::redact::redacted(&self.continue_token),
+        );
+        d.field("created_at", &self.created_at);
+        d.field("interact_nonce", &self.interact_nonce);
+        d.field("subject_id", &self.subject_id);
+        d.finish()
+    }
+}
+
 /// A GNAP access token that has been issued and can be managed
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct GnapIssuedToken {
     /// Opaque token value
     pub value: String,
@@ -306,6 +323,18 @@ struct GnapIssuedToken {
     pub key_thumbprint: Option<String>,
     /// The transaction that produced this token
     pub transaction_id: String,
+}
+
+impl std::fmt::Debug for GnapIssuedToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("GnapIssuedToken");
+        d.field("value", &crate::utils::redact::redacted(&self.value));
+        d.field("access", &self.access);
+        d.field("expires_at", &self.expires_at);
+        d.field("key_thumbprint", &self.key_thumbprint);
+        d.field("transaction_id", &self.transaction_id);
+        d.finish()
+    }
 }
 
 pub struct GnapService {

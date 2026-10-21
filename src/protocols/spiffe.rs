@@ -420,7 +420,7 @@ impl Default for SpiffeTrustManager {
 // ── Workload API Client ─────────────────────────────────────────────
 
 /// SVID type returned by the Workload API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum SvidResponse {
     /// An X.509-SVID with DER-encoded certificate chain and private key.
     X509 {
@@ -438,6 +438,37 @@ pub enum SvidResponse {
         token: String,
         expires_at: u64,
     },
+}
+
+impl std::fmt::Debug for SvidResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::X509 {
+                spiffe_id,
+                cert_chain,
+                bundle,
+                expires_at,
+                private_key: _,
+            } => f
+                .debug_struct("SvidResponse::X509")
+                .field("spiffe_id", spiffe_id)
+                .field("cert_chain", cert_chain)
+                .field("private_key", &"[redacted]")
+                .field("bundle", bundle)
+                .field("expires_at", expires_at)
+                .finish(),
+            Self::Jwt {
+                spiffe_id,
+                expires_at,
+                token: _,
+            } => f
+                .debug_struct("SvidResponse::Jwt")
+                .field("spiffe_id", spiffe_id)
+                .field("token", &"[redacted]")
+                .field("expires_at", expires_at)
+                .finish(),
+        }
+    }
 }
 
 /// Configuration for the SPIFFE Workload API client.

@@ -104,7 +104,7 @@ impl Default for WsFederationConfig {
 // ─── Data Types ──────────────────────────────────────────────────────────────
 
 /// Parsed WS-Federation sign-in response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WsFedSignInResponse {
     /// The action (`wa` parameter) — should be `wsignin1.0`.
     pub action: String,
@@ -116,8 +116,21 @@ pub struct WsFedSignInResponse {
     pub context: Option<String>,
 }
 
+impl std::fmt::Debug for WsFedSignInResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WsFedSignInResponse");
+        d.field("action", &self.action);
+        d.field(
+            "result_xml",
+            &crate::utils::redact::redacted(&self.result_xml),
+        );
+        d.field("context", &self.context);
+        d.finish()
+    }
+}
+
 /// Validated security token extracted from a WS-Federation response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WsFedSecurityToken {
     /// Token type (SAML 1.1 or SAML 2.0).
     pub token_type: WsFedTokenType,
@@ -142,6 +155,24 @@ pub struct WsFedSecurityToken {
 
     /// Raw assertion XML (for downstream processing).
     pub raw_assertion: String,
+}
+
+impl std::fmt::Debug for WsFedSecurityToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WsFedSecurityToken");
+        d.field("token_type", &self.token_type);
+        d.field("subject", &self.subject);
+        d.field("issuer", &self.issuer);
+        d.field("audience", &self.audience);
+        d.field("issued_at", &self.issued_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("claims", &self.claims);
+        d.field(
+            "raw_assertion",
+            &crate::utils::redact::redacted(&self.raw_assertion),
+        );
+        d.finish()
+    }
 }
 
 /// Security token type.

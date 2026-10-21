@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc54] - Unreleased
+
+### Fixed
+
+- **Redacting `Debug` on every type that holds a secret, backported from the 0.6.0 line (0.6.0-rc96, -rc99, -rc101, -rc106, -rc109).** `{:?}` of
+  a configuration, credential, request, response or enrolment value on this line printed its secret fields: passwords, client secrets, JWT
+  and signing secrets, API keys, issued access and refresh tokens, authorization and device codes, MFA backup codes, the TOTP secret and
+  `otpauth://` URI, SVID private keys, connection strings. About a hundred types now have a hand-written `Debug` that prints `<redacted>` for
+  those fields, including the enum payloads (`Credential`, `StorageConfig`, `QuickStartAuth`, the email and SMS provider configurations and
+  `SvidResponse`). `tests/code_quality_audit.rs` replaces its list of secret-sounding names with a reviewed field-name whitelist
+  (`tests/debug_field_review.txt`): a `derive(Debug)` type with a field name nobody has reviewed, or a stale allow entry, fails the test.
+  Secret fields on this line are plain `String`s, so the redaction is in the `Debug` impls themselves rather than in the field types.
+  `tests/secret_debug_redaction.rs` formats each family with a marker secret and checks the marker is absent. No wire or stored format changes.
+
 ## [0.5.0-rc53] - Unreleased
 
 ### Fixed

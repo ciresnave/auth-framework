@@ -167,13 +167,25 @@ pub struct PrometheusConfig {
     pub rule_files: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct GrafanaConfig {
     pub endpoint: String,
     pub api_key: String,
     pub organization: String,
     pub datasource: String,
     pub auto_provision: bool,
+}
+
+impl std::fmt::Debug for GrafanaConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("GrafanaConfig");
+        d.field("endpoint", &self.endpoint);
+        d.field("api_key", &crate::utils::redact::redacted(&self.api_key));
+        d.field("organization", &self.organization);
+        d.field("datasource", &self.datasource);
+        d.field("auto_provision", &self.auto_provision);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,10 +204,19 @@ pub struct AlertReceiver {
     pub slack_configs: Vec<SlackConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WebhookConfig {
     pub url: String,
     pub http_config: Option<HttpConfig>,
+}
+
+impl std::fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebhookConfig");
+        d.field("url", &crate::utils::redact::redacted(&self.url));
+        d.field("http_config", &self.http_config);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,17 +236,39 @@ pub struct SlackConfig {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HttpConfig {
     pub basic_auth: Option<BasicAuth>,
     pub bearer_token: Option<String>,
     pub tls_config: Option<TlsConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for HttpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("HttpConfig");
+        d.field("basic_auth", &self.basic_auth);
+        d.field(
+            "bearer_token",
+            &crate::utils::redact::redacted(&self.bearer_token),
+        );
+        d.field("tls_config", &self.tls_config);
+        d.finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BasicAuth {
     pub username: String,
     pub password: String,
+}
+
+impl std::fmt::Debug for BasicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BasicAuth");
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
