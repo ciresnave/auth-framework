@@ -1,7 +1,7 @@
 [package]
 description = "A comprehensive, production-ready authentication and authorization framework for Rust applications"
 name = "auth-framework"
-version = "0.4.33"
+version = "0.4.34"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
@@ -130,7 +130,7 @@ x509-parser = "0.17"
 crc32fast = "1.3"
 
 # Memory protection and zeroization
-zeroize = { version = "1.8", features = ["zeroize_derive"] }
+zeroize = { version = "1.9.1", features = ["zeroize_derive"] }
 
 # Constant-time comparisons
 subtle = "2.5"
