@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derives or forwards `Debug` (configuration secrets, API keys and passwords, hashed client secrets, TOTP secrets). The requirement is
   now `zeroize = "1.9.1"`; a test formats a `Zeroizing` holding a marker and another parses `Cargo.toml` and fails below 1.9.1.
 
+- **Dependencies: `rustls-webpki` 0.103.15 -> 0.103.16 and `webpki-roots` 1.0.9 -> 1.0.10 (lockfile).** RUSTSEC-2026-0382 (certificate
+  verification may accept distrusted intermediates) and RUSTSEC-2026-0381 (bundled root certificates allow trust in distrusted emSign
+  intermediates) turned the "Security Audit" jobs red on this line; both are fixed by these semver-compatible releases. No manifest or
+  source change.
+
 ## [0.4.33] - Unreleased
 
 ### Fixed
