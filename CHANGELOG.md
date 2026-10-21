@@ -182,6 +182,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc110 -- **CI: a weekly `cargo audit` + `cargo deny` run on every maintained branch.** A new RustSec advisory reaches a release branch's
+  lockfile the day it is published, but lockfile refreshes land on `main` alone, so `release/0.4.x` and `release/0.5.x` went red
+  (RUSTSEC-2026-0381/-0382/-0383) only when an unrelated PR ran CI there. The new workflow `security-audit-branches.yml` lists `main`
+  and `release/*` from the remote each Monday (and on demand), then runs the same two checks as the "Security Audit" jobs against each
+  branch; the list step fails if it is empty or lacks `main`, so the audit cannot pass vacuously. No code change.
 - 0.6.0-rc109 -- **The derived-`Debug` audit is now a reviewed whitelist instead of a list of secret-sounding names, and about a hundred more types
   redact their `Debug`.** The earlier audit failed the build only for fields whose names looked secret, so it missed `value`, `code` and
   `token_id`. `tests/debug_field_review.txt` now lists every plain-text field name of every `Debug`-deriving struct and enum in `src/`

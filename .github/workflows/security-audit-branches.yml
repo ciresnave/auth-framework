@@ -1,0 +1,66 @@
+# Weekly `cargo audit` and `cargo deny` on every maintained branch.
+#
+# A new RustSec advisory reaches a release branch's lockfile on the day it is published, but lockfile
+# refreshes land on `main` alone, so `release/0.4.x` and `release/0.5.x` only noticed when an unrelated
+# PR happened to run CI there. This runs the same two checks as ci-cd.yml's "Security Audit" jobs against
+# each maintained branch on a schedule. The branch list comes from the remote, so a new release branch is
+# covered the day it is created.
+
+name: Security audit (maintained branches)
+
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/security-audit-branches.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  branches:
+    name: List maintained branches
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - name: List main and release/* from the remote
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          heads=$(git ls-remote --heads "https://github.com/${GITHUB_REPOSITORY}.git" 'main' 'release/*' | awk '{sub("refs/heads/", "", $2); print $2}')
+          echo "branches:"; echo "$heads"
+          # Controls: an empty or main-less list would make the audit below pass vacuously.
+          test -n "$heads" || { echo "no branches listed"; exit 1; }
+          echo "$heads" | grep -qx main || { echo "main missing from the list"; exit 1; }
+          matrix=$(echo "$heads" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  audit:
+    name: Audit ${{ matrix.branch }}
+    needs: branches
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.branches.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.branch }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+
+      - name: Install cargo-audit and cargo-deny
+        run: cargo install --locked cargo-audit cargo-deny
+
+      - name: cargo audit
+        run: cargo audit
+
+      - name: cargo deny
+        run: cargo deny --all-features check
