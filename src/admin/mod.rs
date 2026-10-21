@@ -97,7 +97,7 @@ use tokio::sync::RwLock;
 ///     csrf_token: "random-token".into(),
 /// };
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AdminSessionRecord {
     pub username: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -105,6 +105,21 @@ pub struct AdminSessionRecord {
     pub last_activity: chrono::DateTime<chrono::Utc>,
     /// Per-session CSRF token (Synchronizer Token Pattern).
     pub csrf_token: String,
+}
+
+impl std::fmt::Debug for AdminSessionRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AdminSessionRecord");
+        d.field("username", &self.username);
+        d.field("created_at", &self.created_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("last_activity", &self.last_activity);
+        d.field(
+            "csrf_token",
+            &crate::utils::redact::redacted(&self.csrf_token),
+        );
+        d.finish()
+    }
 }
 
 /// In-memory login throttling state for the admin GUI.

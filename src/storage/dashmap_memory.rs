@@ -36,11 +36,21 @@ struct TimestampedSession {
 }
 
 /// Wrapper for KV values with expiration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct TimestampedValue {
     data: Vec<u8>,
     created_at: chrono::DateTime<chrono::Utc>,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl std::fmt::Debug for TimestampedValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TimestampedValue");
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.field("created_at", &self.created_at);
+        d.field("expires_at", &self.expires_at);
+        d.finish()
+    }
 }
 
 impl TimestampedToken {

@@ -110,7 +110,7 @@ impl std::fmt::Debug for AuthConfig {
 }
 
 /// Storage configuration options.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum StorageConfig {
     /// In-memory storage (not recommended for production)
     Memory,
@@ -134,6 +134,37 @@ pub enum StorageConfig {
 
     /// Custom storage backend
     Custom(String),
+}
+
+impl std::fmt::Debug for StorageConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Memory => f.write_str("Memory"),
+            #[cfg(feature = "redis-storage")]
+            Self::Redis { url, key_prefix } => f
+                .debug_struct("Redis")
+                .field("url", &redacted(url))
+                .field("key_prefix", key_prefix)
+                .finish(),
+            #[cfg(feature = "postgres-storage")]
+            Self::Postgres {
+                connection_string,
+                table_prefix,
+            } => f
+                .debug_struct("Postgres")
+                .field("connection_string", &redacted(connection_string))
+                .field("table_prefix", table_prefix)
+                .finish(),
+            #[cfg(feature = "sqlite-storage")]
+            Self::Sqlite { connection_string } => f
+                .debug_struct("Sqlite")
+                .field("connection_string", &redacted(connection_string))
+                .finish(),
+            // The name of a custom backend, not a connection string.
+            Self::Custom(name) => f.debug_tuple("Custom").field(name).finish(),
+        }
+    }
 }
 
 /// Controls whether values written through the generic key-value storage

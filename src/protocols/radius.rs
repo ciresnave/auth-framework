@@ -167,10 +167,19 @@ impl RadiusConfig {
 // ─── Data Types ──────────────────────────────────────────────────────────────
 
 /// A RADIUS attribute (type-length-value).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RadiusAttribute {
     pub attr_type: u8,
     pub value: Vec<u8>,
+}
+
+impl std::fmt::Debug for RadiusAttribute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RadiusAttribute");
+        d.field("attr_type", &self.attr_type);
+        d.field("value", &crate::utils::redact::redacted(&self.value));
+        d.finish()
+    }
 }
 
 /// A RADIUS packet.

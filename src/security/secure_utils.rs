@@ -6,9 +6,17 @@ use subtle::ConstantTimeEq;
 use zeroize::ZeroizeOnDrop;
 
 /// A secure string that is automatically zeroized when dropped
-#[derive(Debug, Clone, ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct SecureString {
     data: String,
+}
+
+impl std::fmt::Debug for SecureString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureString");
+        d.field("data", &crate::utils::redact::redacted(&self.data));
+        d.finish()
+    }
 }
 
 impl SecureString {

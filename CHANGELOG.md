@@ -182,6 +182,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc109 -- **The derived-`Debug` audit is now a reviewed whitelist instead of a list of secret-sounding names, and about a hundred more types
+  redact their `Debug`.** The earlier audit failed the build only for fields whose names looked secret, so it missed `value`, `code` and
+  `token_id`. `tests/debug_field_review.txt` now lists every plain-text field name of every `Debug`-deriving struct and enum in `src/`
+  (about 680 types, 800 names) as public, secret-capable or ambiguous; a derived `Debug` over a secret-capable or ambiguous name fails
+  unless the type redacts it by hand or has a per-type decision with a reason, and a name on no list fails, so each new field name needs a
+  human decision. The scanner must find at least 900 `Debug`-deriving types and fails on seeded copies of the two leaks the old audit missed.
+  Review of the secret-capable names redacted `Debug` on session ids, OAuth / OIDC / SAML / WebAuthn / CAS / GNAP / WS-Trust / Kerberos
+  tokens, tickets and hints, SAML responses and assertions, MFA challenge codes, connection URLs and strings (`StorageConfig`,
+  `DatabaseConfig`, `RedisConfig`, `RateLimitConfig`, `QuickStartStorage`), webhook URLs and headers (`NotificationChannel`,
+  `WebhookConfig`), the unified-storage keys and values, generic database column strings, the admin session and CSRF tokens, and
+  more; `Serialize` is unchanged. Tuple payloads (error messages, variant names) and public protocol values are recorded as allowed with a
+  one-line reason. A behaviour test covers the enum payloads and connection strings.
 - 0.6.0-rc104 -- **Dependencies: the RustCrypto digest family moves to its 0.11 / 0.13 generation** (`sha2` 0.10 -> 0.11, `sha1` 0.10 ->
   0.11, `md-5` 0.10 -> 0.11, `hmac` 0.12 -> 0.13). No public item names these crates' types, and no wire or stored format changes:
   six known-answer tests were written first and pass on both generations (HMAC-SHA1 and HMAC-MD5 per RFC 2202, HMAC-SHA256 per

@@ -64,7 +64,7 @@ fn default_expires_in() -> u64 {
 // ── Authentication Request ──────────────────────────────────────────
 
 /// Hint identifying the end-user to authenticate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoginHint {
     /// Subject identifier.
@@ -75,8 +75,20 @@ pub enum LoginHint {
     LoginHint(String),
 }
 
+impl std::fmt::Debug for LoginHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::LoginHintToken(v) => f.debug_tuple("LoginHintToken").field(&redacted(v)).finish(),
+            Self::IdTokenHint(v) => f.debug_tuple("IdTokenHint").field(&redacted(v)).finish(),
+            // An e-mail address or phone number the client supplied, not a credential.
+            Self::LoginHint(v) => f.debug_tuple("LoginHint").field(v).finish(),
+        }
+    }
+}
+
 /// A backchannel authentication request sent by the consumption device.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CibaAuthRequest {
     /// The scopes requested.
     pub scope: String,
@@ -99,8 +111,28 @@ pub struct CibaAuthRequest {
     pub client_notification_token: Option<String>,
 }
 
+impl std::fmt::Debug for CibaAuthRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CibaAuthRequest");
+        d.field("scope", &self.scope);
+        d.field("hint", &self.hint);
+        d.field("binding_message", &self.binding_message);
+        d.field(
+            "user_code",
+            &crate::utils::redact::redacted(&self.user_code),
+        );
+        d.field("requested_expiry", &self.requested_expiry);
+        d.field("acr_values", &self.acr_values);
+        d.field(
+            "client_notification_token",
+            &crate::utils::redact::redacted(&self.client_notification_token),
+        );
+        d.finish()
+    }
+}
+
 /// Successful response to a backchannel authentication request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CibaAuthResponse {
     /// Unique identifier for the authentication request.
     pub auth_req_id: String,
@@ -109,6 +141,19 @@ pub struct CibaAuthResponse {
     /// Minimum polling interval (seconds) — included for poll / ping modes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interval: Option<u64>,
+}
+
+impl std::fmt::Debug for CibaAuthResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CibaAuthResponse");
+        d.field(
+            "auth_req_id",
+            &crate::utils::redact::redacted(&self.auth_req_id),
+        );
+        d.field("expires_in", &self.expires_in);
+        d.field("interval", &self.interval);
+        d.finish()
+    }
 }
 
 // ── Token Request / Response ────────────────────────────────────────

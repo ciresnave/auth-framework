@@ -396,3 +396,81 @@ async fn ws_security_password_and_oauth_codes_are_not_printed() {
             .is_some()
     );
 }
+
+/// Types redacted when the audit was changed from a name blacklist to reviewed field lists: tuple
+/// payloads, enum variants and connection strings.
+#[test]
+fn enum_payloads_and_connection_strings_are_not_printed() {
+    use auth_framework::builders::QuickStartStorage;
+    use auth_framework::monitoring::alerts::NotificationChannel;
+    use auth_framework::protocols::caep::SubjectIdentifier;
+    use auth_framework::protocols::ciba::LoginHint;
+    use auth_framework::server::oidc::oidc_advanced_jarm::DeliveryResult;
+
+    let shown = format!(
+        "{:?}",
+        QuickStartStorage::Postgres(format!("postgres://u:{S}@h/db"))
+    );
+    assert!(!shown.contains(S) && shown.contains("Postgres"), "{shown}");
+    let shown = format!("{:?}", QuickStartStorage::Redis(format!("redis://:{S}@h")));
+    assert!(!shown.contains(S) && shown.contains("Redis"), "{shown}");
+
+    let shown = format!(
+        "{:?}",
+        NotificationChannel::Slack {
+            webhook_url: format!("https://hooks.example/{S}")
+        }
+    );
+    assert!(!shown.contains(S) && shown.contains("Slack"), "{shown}");
+    let mut headers = std::collections::HashMap::new();
+    headers.insert("X-Trace".to_string(), S.to_string());
+    let shown = format!(
+        "{:?}",
+        NotificationChannel::Webhook {
+            url: format!("https://hooks.example/{S}"),
+            headers
+        }
+    );
+    assert!(!shown.contains(S) && shown.contains("X-Trace"), "{shown}");
+
+    let shown = format!(
+        "{:?}",
+        SubjectIdentifier::SessionId {
+            session_id: S.into(),
+            iss: Some("iss-visible".into())
+        }
+    );
+    assert!(
+        !shown.contains(S) && shown.contains("iss-visible"),
+        "{shown}"
+    );
+    // Control: a variant whose payload is public still prints it.
+    let shown = format!(
+        "{:?}",
+        SubjectIdentifier::Opaque {
+            id: "id-visible".into()
+        }
+    );
+    assert!(shown.contains("id-visible"), "{shown}");
+
+    let shown = format!("{:?}", LoginHint::IdTokenHint(S.into()));
+    assert!(!shown.contains(S), "{shown}");
+    assert!(format!("{:?}", LoginHint::LoginHint("hint-visible".into())).contains("hint-visible"));
+
+    let shown = format!(
+        "{:?}",
+        DeliveryResult::Redirect(format!("https://rp/cb?response={S}"))
+    );
+    assert!(!shown.contains(S), "{shown}");
+}
+
+#[cfg(feature = "performance-optimization")]
+#[test]
+fn unified_storage_keys_are_not_printed() {
+    use auth_framework::storage::unified::StorageKey;
+    let shown = format!("{:?}", StorageKey::AccessToken(S.into()));
+    assert!(
+        !shown.contains(S) && shown.contains("AccessToken"),
+        "{shown}"
+    );
+}

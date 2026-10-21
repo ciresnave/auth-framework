@@ -21,7 +21,7 @@ use tokio::time::Duration;
 use uuid::Uuid;
 
 /// Back-channel logout request parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BackChannelLogoutRequest {
     /// Session ID being logged out
     pub session_id: String,
@@ -35,6 +35,22 @@ pub struct BackChannelLogoutRequest {
     pub initiating_client_id: Option<String>,
     /// Additional events to include in logout token
     pub additional_events: Option<HashMap<String, serde_json::Value>>,
+}
+
+impl std::fmt::Debug for BackChannelLogoutRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BackChannelLogoutRequest");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("sub", &self.sub);
+        d.field("sid", &self.sid);
+        d.field("iss", &self.iss);
+        d.field("initiating_client_id", &self.initiating_client_id);
+        d.field("additional_events", &self.additional_events);
+        d.finish()
+    }
 }
 
 /// Back-channel logout response

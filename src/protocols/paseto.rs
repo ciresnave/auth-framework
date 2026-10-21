@@ -35,13 +35,25 @@ impl Default for PasetoConfig {
 }
 
 /// Decoded PASETO token payload.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PasetoToken {
     pub subject: String,
     pub issuer: String,
     pub token_id: Option<String>,
     pub audience: Option<String>,
     pub custom_claims: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for PasetoToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PasetoToken");
+        d.field("subject", &self.subject);
+        d.field("issuer", &self.issuer);
+        d.field("token_id", &crate::utils::redact::redacted(&self.token_id));
+        d.field("audience", &self.audience);
+        d.field("custom_claims", &self.custom_claims);
+        d.finish()
+    }
 }
 
 /// PASETO v4.local token manager (symmetric encryption).

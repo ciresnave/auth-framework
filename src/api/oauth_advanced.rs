@@ -137,13 +137,25 @@ pub struct PARRequest {
 }
 
 /// Pushed Authorization Request response (RFC 9126)
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct PARResponse {
     /// The request URI for the authorization request
     pub request_uri: String,
 
     /// Expiration time in seconds
     pub expires_in: u64,
+}
+
+impl std::fmt::Debug for PARResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PARResponse");
+        d.field(
+            "request_uri",
+            &crate::utils::redact::redacted(&self.request_uri),
+        );
+        d.field("expires_in", &self.expires_in);
+        d.finish()
+    }
 }
 
 // ============================================================================

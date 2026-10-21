@@ -31,7 +31,7 @@ pub struct AppConfig {
 }
 
 /// Database connection settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     /// Database connection URL (PostgreSQL, SQLite, etc.)
     pub url: String,
@@ -43,13 +43,33 @@ pub struct DatabaseConfig {
     pub connect_timeout_seconds: u64,
 }
 
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DatabaseConfig");
+        d.field("url", &crate::utils::redact::redacted(&self.url));
+        d.field("max_connections", &self.max_connections);
+        d.field("min_connections", &self.min_connections);
+        d.field("connect_timeout_seconds", &self.connect_timeout_seconds);
+        d.finish()
+    }
+}
+
 /// Redis cache and session storage settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
     /// Redis connection URL
     pub url: String,
     /// Number of connections in the Redis connection pool
     pub pool_size: u32,
+}
+
+impl std::fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RedisConfig");
+        d.field("url", &crate::utils::redact::redacted(&self.url));
+        d.field("pool_size", &self.pool_size);
+        d.finish()
+    }
 }
 
 /// JWT authentication settings.

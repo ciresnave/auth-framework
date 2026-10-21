@@ -45,7 +45,7 @@ pub struct MfaChallenge {
 }
 
 /// Challenge data specific to each MFA method
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum MfaChallengeData {
     Totp {
         /// Current time window
@@ -73,6 +73,40 @@ pub enum MfaChallengeData {
         /// Remaining backup codes count
         remaining_codes: u32,
     },
+}
+
+impl std::fmt::Debug for MfaChallengeData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Totp { time_window } => f
+                .debug_struct("Totp")
+                .field("time_window", time_window)
+                .finish(),
+            Self::Sms { phone_number, code } => f
+                .debug_struct("Sms")
+                .field("phone_number", phone_number)
+                .field("code", &redacted(code))
+                .finish(),
+            Self::Email { email, code } => f
+                .debug_struct("Email")
+                .field("email", email)
+                .field("code", &redacted(code))
+                .finish(),
+            Self::WebAuthn {
+                challenge,
+                allowed_credentials,
+            } => f
+                .debug_struct("WebAuthn")
+                .field("challenge", &redacted(challenge))
+                .field("allowed_credentials", allowed_credentials)
+                .finish(),
+            Self::BackupCodes { remaining_codes } => f
+                .debug_struct("BackupCodes")
+                .field("remaining_codes", remaining_codes)
+                .finish(),
+        }
+    }
 }
 
 /// MFA method configuration for a user

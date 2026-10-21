@@ -149,13 +149,26 @@ pub enum QuickStartAuth {
 }
 
 /// Storage backend selection for [`QuickStartBuilder`].
-#[derive(Debug)]
 pub enum QuickStartStorage {
     Memory,
     Postgres(String),
     PostgresFromEnv,
     Redis(String),
     RedisFromEnv,
+}
+
+impl std::fmt::Debug for QuickStartStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Memory => f.write_str("Memory"),
+            // Connection URLs usually embed a password.
+            Self::Postgres(url) => f.debug_tuple("Postgres").field(&redacted(url)).finish(),
+            Self::PostgresFromEnv => f.write_str("PostgresFromEnv"),
+            Self::Redis(url) => f.debug_tuple("Redis").field(&redacted(url)).finish(),
+            Self::RedisFromEnv => f.write_str("RedisFromEnv"),
+        }
+    }
 }
 
 /// Web framework integration selection for [`QuickStartBuilder`].

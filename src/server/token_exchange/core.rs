@@ -76,7 +76,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Token Exchange Request (RFC 8693)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenExchangeRequest {
     /// Grant type (must be "urn:ietf:params:oauth:grant-type:token-exchange")
     pub grant_type: String,
@@ -104,6 +104,28 @@ pub struct TokenExchangeRequest {
 
     /// Requested resource for the exchanged token
     pub resource: Option<String>,
+}
+
+impl std::fmt::Debug for TokenExchangeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("TokenExchangeRequest");
+        d.field("grant_type", &self.grant_type);
+        d.field(
+            "subject_token",
+            &crate::utils::redact::redacted(&self.subject_token),
+        );
+        d.field("subject_token_type", &self.subject_token_type);
+        d.field(
+            "actor_token",
+            &crate::utils::redact::redacted(&self.actor_token),
+        );
+        d.field("actor_token_type", &self.actor_token_type);
+        d.field("requested_token_type", &self.requested_token_type);
+        d.field("audience", &self.audience);
+        d.field("scope", &self.scope);
+        d.field("resource", &self.resource);
+        d.finish()
+    }
 }
 
 /// Token Exchange Response (RFC 8693)

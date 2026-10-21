@@ -246,7 +246,7 @@ impl Default for AdvancedTokenExchangeConfig {
 }
 
 /// Advanced Token Exchange Request following enhanced RFC 8693
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AdvancedTokenExchangeRequest {
     /// Grant type (must be "urn:ietf:params:oauth:grant-type:token-exchange")
     pub grant_type: String,
@@ -283,6 +283,31 @@ pub struct AdvancedTokenExchangeRequest {
 
     /// Custom exchange parameters
     pub custom_parameters: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for AdvancedTokenExchangeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AdvancedTokenExchangeRequest");
+        d.field("grant_type", &self.grant_type);
+        d.field(
+            "subject_token",
+            &crate::utils::redact::redacted(&self.subject_token),
+        );
+        d.field("subject_token_type", &self.subject_token_type);
+        d.field(
+            "actor_token",
+            &crate::utils::redact::redacted(&self.actor_token),
+        );
+        d.field("actor_token_type", &self.actor_token_type);
+        d.field("requested_token_type", &self.requested_token_type);
+        d.field("scope", &self.scope);
+        d.field("audience", &self.audience);
+        d.field("resource", &self.resource);
+        d.field("exchange_context", &self.exchange_context);
+        d.field("policy_requirements", &self.policy_requirements);
+        d.field("custom_parameters", &self.custom_parameters);
+        d.finish()
+    }
 }
 
 /// Exchange context for preserving business and technical context
@@ -372,7 +397,7 @@ pub struct ExchangeRequestMetadata {
 }
 
 /// Security context information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityContext {
     /// Session identifier
     pub session_id: Option<String>,
@@ -391,6 +416,22 @@ pub struct SecurityContext {
 
     /// Location information
     pub location_info: Option<LocationContext>,
+}
+
+impl std::fmt::Debug for SecurityContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecurityContext");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("authentication_level", &self.authentication_level);
+        d.field("mfa_completed", &self.mfa_completed);
+        d.field("risk_score", &self.risk_score);
+        d.field("device_info", &self.device_info);
+        d.field("location_info", &self.location_info);
+        d.finish()
+    }
 }
 
 /// Device context information

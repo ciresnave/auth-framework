@@ -193,10 +193,19 @@ pub struct AlertReceiver {
     pub slack_configs: Vec<SlackConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WebhookConfig {
     pub url: String,
     pub http_config: Option<HttpConfig>,
+}
+
+impl std::fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebhookConfig");
+        d.field("url", &crate::utils::redact::redacted(&self.url));
+        d.field("http_config", &self.http_config);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

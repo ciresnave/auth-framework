@@ -437,7 +437,7 @@ pub enum StepUpTrigger {
 }
 
 /// Step-up evaluation context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StepUpContext {
     /// User identifier
     pub user_id: String,
@@ -457,6 +457,25 @@ pub struct StepUpContext {
     pub auth_time: DateTime<Utc>,
     /// Custom context attributes
     pub custom_attributes: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for StepUpContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("StepUpContext");
+        d.field("user_id", &self.user_id);
+        d.field("resource", &self.resource);
+        d.field("resource_metadata", &self.resource_metadata);
+        d.field("risk_score", &self.risk_score);
+        d.field("location", &self.location);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("current_auth_level", &self.current_auth_level);
+        d.field("auth_time", &self.auth_time);
+        d.field("custom_attributes", &self.custom_attributes);
+        d.finish()
+    }
 }
 
 /// Location information for step-up evaluation

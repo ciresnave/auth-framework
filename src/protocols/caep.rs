@@ -36,7 +36,7 @@ pub mod event_types {
 // ── Subject identifiers (SSE §3) ───────────────────────────────────
 
 /// Subject identifier formats per the SSE Framework.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "format")]
 pub enum SubjectIdentifier {
     /// Email-based subject.
@@ -58,6 +58,30 @@ pub enum SubjectIdentifier {
         #[serde(default)]
         iss: Option<String>,
     },
+}
+
+impl std::fmt::Debug for SubjectIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Email { email } => f.debug_struct("Email").field("email", email).finish(),
+            Self::IssSub { iss, sub } => f
+                .debug_struct("IssSub")
+                .field("iss", iss)
+                .field("sub", sub)
+                .finish(),
+            Self::Opaque { id } => f.debug_struct("Opaque").field("id", id).finish(),
+            Self::PhoneNumber { phone_number } => f
+                .debug_struct("PhoneNumber")
+                .field("phone_number", phone_number)
+                .finish(),
+            Self::SessionId { session_id, iss } => f
+                .debug_struct("SessionId")
+                .field("session_id", &redacted(session_id))
+                .field("iss", iss)
+                .finish(),
+        }
+    }
 }
 
 // ── CAEP Event ──────────────────────────────────────────────────────

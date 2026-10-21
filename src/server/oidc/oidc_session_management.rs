@@ -33,7 +33,7 @@ pub enum OidcSessionState {
 }
 
 /// OpenID Connect session information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OidcSession {
     /// Unique session identifier
     pub session_id: String,
@@ -55,6 +55,29 @@ pub struct OidcSession {
     pub logout_tokens: Vec<String>,
     /// Session metadata
     pub metadata: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for OidcSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OidcSession");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("sub", &self.sub);
+        d.field("client_id", &self.client_id);
+        d.field("created_at", &self.created_at);
+        d.field("last_activity", &self.last_activity);
+        d.field("expires_at", &self.expires_at);
+        d.field("state", &self.state);
+        d.field(
+            "browser_session_id",
+            &crate::utils::redact::redacted(&self.browser_session_id),
+        );
+        d.field("logout_tokens", &self.logout_tokens);
+        d.field("metadata", &self.metadata);
+        d.finish()
+    }
 }
 
 /// Session Management configuration

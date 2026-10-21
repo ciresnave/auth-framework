@@ -51,7 +51,7 @@ pub struct IndieAuthRequest {
 }
 
 /// IndieAuth authorization response (callback parameters).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IndieAuthCallback {
     /// Authorization code.
     pub code: String,
@@ -59,6 +59,16 @@ pub struct IndieAuthCallback {
     pub state: String,
     /// The URL the user authenticated as (canonical form).
     pub me: Option<String>,
+}
+
+impl std::fmt::Debug for IndieAuthCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IndieAuthCallback");
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("state", &self.state);
+        d.field("me", &self.me);
+        d.finish()
+    }
 }
 
 /// IndieAuth token response.

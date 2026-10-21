@@ -29,7 +29,7 @@ fn extract_sub_from_jwt(jwt: &str) -> Option<String> {
 }
 
 /// Instructions for device flow authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DeviceFlowInstructions {
     /// URL the user should visit
     pub verification_uri: String,
@@ -43,6 +43,22 @@ pub struct DeviceFlowInstructions {
     pub expires_in: u64,
     /// How often to poll for completion
     pub interval: u64,
+}
+
+impl std::fmt::Debug for DeviceFlowInstructions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DeviceFlowInstructions");
+        d.field("verification_uri", &self.verification_uri);
+        d.field("verification_uri_complete", &self.verification_uri_complete);
+        d.field(
+            "user_code",
+            &crate::utils::redact::redacted(&self.user_code),
+        );
+        d.field("qr_code", &self.qr_code);
+        d.field("expires_in", &self.expires_in);
+        d.field("interval", &self.interval);
+        d.finish()
+    }
 }
 
 /// Enhanced device flow method using oauth-device-flows crate

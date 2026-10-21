@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 
 /// Request context for authorization decisions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthorizationContext {
     /// User information
     pub user_id: String,
@@ -39,6 +39,31 @@ pub struct AuthorizationContext {
 
     /// Custom attributes
     pub custom_attributes: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for AuthorizationContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthorizationContext");
+        d.field("user_id", &self.user_id);
+        d.field("roles", &self.roles);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("method", &self.method);
+        d.field("path", &self.path);
+        d.field("ip_address", &self.ip_address);
+        d.field("user_agent", &self.user_agent);
+        d.field("request_time", &self.request_time);
+        d.field("time_of_day", &self.time_of_day);
+        d.field("day_type", &self.day_type);
+        d.field("device_type", &self.device_type);
+        d.field("connection_type", &self.connection_type);
+        d.field("security_level", &self.security_level);
+        d.field("risk_score", &self.risk_score);
+        d.field("custom_attributes", &self.custom_attributes);
+        d.finish()
+    }
 }
 
 /// Time of day classification

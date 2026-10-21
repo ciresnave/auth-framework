@@ -1450,11 +1450,24 @@ pub async fn jwks(State(_state): State<ApiState>) -> impl IntoResponse {
 /// ).unwrap();
 /// assert!(req.post_logout_redirect_uri.is_none());
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct EndSessionRequest {
     pub id_token_hint: Option<String>,
     pub post_logout_redirect_uri: Option<String>,
     pub state: Option<String>,
+}
+
+impl std::fmt::Debug for EndSessionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EndSessionRequest");
+        d.field(
+            "id_token_hint",
+            &crate::utils::redact::redacted(&self.id_token_hint),
+        );
+        d.field("post_logout_redirect_uri", &self.post_logout_redirect_uri);
+        d.field("state", &self.state);
+        d.finish()
+    }
 }
 
 /// OIDC RP-Initiated Logout (OpenID Connect RP-Initiated Logout 1.0).
