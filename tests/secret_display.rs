@@ -78,3 +78,23 @@ fn authorization_context_debug_hides_custom_attribute_values() {
     // Control: the attribute names are still printed.
     assert!(shown.contains("token"), "{shown}");
 }
+
+#[test]
+fn step_up_context_debug_hides_custom_attribute_values() {
+    use auth_framework::server::core::stepped_up_auth::{AuthenticationLevel, StepUpContext};
+    let context = StepUpContext {
+        user_id: "user-1".to_string(),
+        resource: "/admin".to_string(),
+        resource_metadata: Default::default(),
+        risk_score: None,
+        location: None,
+        session_id: "session-1".to_string(),
+        current_auth_level: AuthenticationLevel::Basic,
+        auth_time: chrono::Utc::now(),
+        custom_attributes: [("token".to_string(), serde_json::json!(MARKER))].into(),
+    };
+    let shown = format!("{context:?}");
+    assert!(!shown.contains(MARKER), "{shown}");
+    // Control: the attribute names are still printed.
+    assert!(shown.contains("token"), "{shown}");
+}
