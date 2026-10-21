@@ -248,6 +248,44 @@ jobs:
           done
           exit $fail
 
+  # The JavaScript SDK had no CI at all, and rotted: it did not typecheck, its build needed a package
+  # nobody had installed, and its test runner could not start. Node comes from the runner image.
+  js-sdk:
+    name: JavaScript SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/javascript
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package entry points exist
+        run: |
+          node -e '
+          const p = require("./package.json");
+          const fs = require("fs");
+          for (const k of ["main", "module", "types"]) {
+            if (!fs.existsSync(p[k])) { console.error("package.json " + k + " -> " + p[k] + " was not built"); process.exit(1); }
+          }
+          require("./" + p.main);
+          '
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

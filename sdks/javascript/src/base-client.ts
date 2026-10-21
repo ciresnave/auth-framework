@@ -153,8 +153,9 @@ export class BaseClient {
       url,
       data,
       timeout,
-      params: options?.params,
-      headers: options?.headers,
+      // exactOptionalPropertyTypes: leave a key out rather than set it to undefined.
+      ...(options?.params !== undefined && { params: options.params }),
+      ...(options?.headers !== undefined && { headers: options.headers }),
     };
 
     for (let attempt = 0; attempt <= retries; attempt++) {

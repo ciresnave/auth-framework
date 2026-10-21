@@ -5,7 +5,7 @@
 export class AuthFrameworkError extends Error {
   public readonly code: string;
   public readonly details?: any;
-  public readonly statusCode?: number;
+  public readonly statusCode?: number | undefined;
 
   constructor(message: string, code: string = 'UNKNOWN_ERROR', details?: any, statusCode?: number) {
     super(message);
@@ -57,7 +57,7 @@ export class ConflictError extends AuthFrameworkError {
 }
 
 export class RateLimitError extends AuthFrameworkError {
-  public readonly retryAfter?: number;
+  public readonly retryAfter?: number | undefined;
 
   constructor(message: string = 'Rate limit exceeded', retryAfter?: number, details?: any) {
     super(message, 'RATE_LIMIT_ERROR', details, 429);
