@@ -63,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc106 -- **`{:?}` no longer prints a WS-Security password, OAuth authorization codes or refresh-token ids.** Redacting `Debug`
+  on `UsernamePassword` (`value`), `EnhancedAuthorizationCode` (`code`), `RefreshToken` (`token_id`) and `UserCredentials`
+  (`password_hash`); `EnhancedTokenStorage`, whose maps are keyed by authorization code and refresh-token id, prints entry counts
+  instead of its keys. These were missed by the name-based audit (`value`, `code` and `token_id` are not secret-sounding names).
+  `Serialize` is unchanged. The MFA enrolment test now also pins that the `Zeroizing<String>` TOTP secret is not printed, so a
+  change in the zeroize crate cannot expose it unnoticed, and each QR redaction was checked by making it raw (the test fails).
 - 0.6.0-rc105 -- **`distributed-rate-limiting` (and any feature that enables the `redis` dependency without `redis-storage`) builds again on
   its own.** `storage::redis` calls `key_names::without_shadowed_legacy`, which was gated on `redis-storage` instead of on the
   `redis` dependency that compiles the module, so `--no-default-features --features distributed-rate-limiting` failed with
