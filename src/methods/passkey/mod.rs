@@ -134,8 +134,8 @@ use passkey_client::DefaultClientData;
 use url::Url;
 
 /// A WebAuthn byte field from JSON: base64url text, or an array of numbers (what `passkey-types`
-/// writes unless its `serialize_bytes_as_base64_string` feature is on).
-#[cfg(feature = "passkeys")]
+/// writes unless its `serialize_bytes_as_base64_string` feature is on). Not gated on `passkeys`: the
+/// feature-independent verification code reads assertions with it too.
 fn json_bytes(value: &serde_json::Value) -> Option<Vec<u8>> {
     match value {
         serde_json::Value::String(s) => URL_SAFE_NO_PAD.decode(s).ok(),
