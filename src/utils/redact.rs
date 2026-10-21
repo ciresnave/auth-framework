@@ -120,3 +120,54 @@ impl<T: ?Sized> Secret for std::sync::RwLock<T> {
 pub(crate) fn redacted<T: Secret>(value: &T) -> Redacted {
     value.redacted()
 }
+
+/// A short reference to a high-entropy identifier (a session id, a token) that is safe to put in a log
+/// line: it lets two lines about the same value be matched, and it cannot be turned back into the
+/// value. Low-entropy secrets (one-time codes, passwords) must not be fingerprinted -- a 32-bit prefix
+/// of their hash can be brute-forced -- and are logged as `"<redacted>"` instead.
+pub(crate) struct Fingerprint(String);
+
+impl fmt::Display for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl fmt::Debug for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// `sha256:` and the first four bytes of the SHA-256 of `value`, in hex.
+pub(crate) fn fingerprint(value: &str) -> Fingerprint {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(value.as_bytes());
+    let mut out = String::from("sha256:");
+    for byte in &digest[..4] {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    Fingerprint(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SHA-256("abc") starts ba7816bf (FIPS 180-2 test vector).
+    #[test]
+    fn fingerprint_is_a_prefix_of_the_sha256_digest() {
+        assert_eq!(fingerprint("abc").to_string(), "sha256:ba7816bf");
+        assert_eq!(format!("{:?}", fingerprint("abc")), "sha256:ba7816bf");
+    }
+
+    #[test]
+    fn fingerprint_does_not_contain_the_value() {
+        let secret = "SECRET-MARKER-7f3a9c";
+        assert!(!fingerprint(secret).to_string().contains(secret));
+        assert_ne!(
+            fingerprint(secret).to_string(),
+            fingerprint("other").to_string()
+        );
+    }
+}

@@ -63,6 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc114 -- **Log lines no longer carry session ids, tokens or one-time codes.** Forty-six `trace!`/`debug!`/`info!`/`warn!`/`error!` calls
+  wrote a session id (session manager, secure sessions, CAEP, OIDC extensions, rich authorization requests, user and session
+  endpoints), an event JWT (OIDC extensions), the e-mail MFA code or the YubiKey response as they were. High-entropy identifiers are now logged
+  as `redact::fingerprint(..)` (`sha256:` and four bytes of the digest, enough to match two lines about the same value and no way back);
+  one-time codes and challenges are not logged. A new audit test fails when a log macro is passed a bare session id, token, code,
+  password, challenge or similar identifier, as an argument or inline in the format string; wrapped values, field accesses, literals,
+  comments and test code are not reported. It fails on this tree before the change (46 sites) and when any site is put back.
 - 0.6.0-rc113 -- **Hand-written `Debug` impls are audited field by field, and the fields it found are redacted.** The audit checked derived `Debug` only
   for plain-text fields and hand-written impls only for maps, so an impl that printed `token`, `code` or a user code as it was passed.
   Every `.field(..)` of a manual impl must now go through `redacted(..)`, be a literal or a count, or name a field the review file lists
