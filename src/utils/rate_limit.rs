@@ -27,7 +27,7 @@ impl std::fmt::Debug for RateLimiter {
         f.debug_struct("RateLimiter")
             .field("max_requests", &self.max_requests)
             .field("window", &self.window)
-            .field("requests", &self.requests)
+            .field("requests", &crate::utils::redact::redacted(&self.requests))
             .finish_non_exhaustive()
     }
 }

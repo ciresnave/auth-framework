@@ -1222,13 +1222,25 @@ impl std::fmt::Debug for KeytabEntry {
 // ─── Manager ─────────────────────────────────────────────────────────────────
 
 /// Kerberos / SPNEGO authentication manager.
-#[derive(Debug)]
 pub struct KerberosManager {
     config: KerberosConfig,
     /// Replay cache: authenticator hash → timestamp.
     replay_cache: Arc<RwLock<HashMap<Vec<u8>, u64>>>,
     /// Loaded keytab entries.
     keytab_entries: Arc<RwLock<Vec<KeytabEntry>>>,
+}
+
+impl std::fmt::Debug for KerberosManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("KerberosManager");
+        d.field("config", &self.config);
+        d.field(
+            "replay_cache",
+            &crate::utils::redact::redacted(&self.replay_cache),
+        );
+        d.field("keytab_entries", &self.keytab_entries);
+        d.finish()
+    }
 }
 
 impl KerberosManager {

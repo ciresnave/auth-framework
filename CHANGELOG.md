@@ -63,6 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc112 -- **Maps, sets and JSON values no longer print their keys and contents in `{:?}`, and four identifiers that act as credentials are redacted.** The
+  derived-`Debug` audit looked at plain-text fields only, so a field such as `DashMap<String, AuthToken>` (keyed by token or session id)
+  was never checked; `DashMapMemoryStorage`, `MockStorage`, `SessionStore`, the CIBA, HEART, eKYC, FAPI and OIDC session managers, the
+  step-up manager, `DeviceFlowManager` (device codes) and about sixty more types printed them. The audit now reads container field types (`DashMap`,
+  `HashMap`, `BTreeMap`, sets, `serde_json::Value`, through `Option`, `Arc` and locks), for derived and for hand-written `Debug` impls: a
+  container's name must be listed as holding no credential (`[container_ok]`) or the type redacts it. Redacted: those stores and
+  managers, parameter bags that can carry credentials (authorization and introspection request parameters, token-response extras, outbound
+  headers, identity-provider settings, SCIM bulk data, domain-event payloads), RADIUS reply attributes and State, and the `sid` claim
+  (filled from the session id in this crate), session `id`, MFA `code_hash` and hashed client secret and registration token, which were wrongly listed as public by name.
+  Tests were written first or fail when the redaction is removed.
 - 0.6.0-rc111 -- **The derived-`Debug` audit now sees one-line enum variants, and four more types stop printing credentials.** The audit read one
   field per line, so a variant written `External { endpoint: String, api_key: String },` was never checked. It now parses variants and
   structs written on one line, `#[cfg_attr(.., derive(Debug))]`, attributes that span several lines, and the byte and text shapes

@@ -369,7 +369,7 @@ impl std::fmt::Debug for ClientRegistrationResponse {
 }
 
 /// Registered client information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RegisteredClient {
     /// Client identifier
     pub client_id: String,
@@ -394,6 +394,27 @@ pub struct RegisteredClient {
 
     /// Whether the client is active
     pub is_active: bool,
+}
+
+impl std::fmt::Debug for RegisteredClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RegisteredClient");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret_hash",
+            &crate::utils::redact::redacted(&self.client_secret_hash),
+        );
+        d.field(
+            "registration_access_token_hash",
+            &crate::utils::redact::redacted(&self.registration_access_token_hash),
+        );
+        d.field("metadata", &self.metadata);
+        d.field("registered_at", &self.registered_at);
+        d.field("updated_at", &self.updated_at);
+        d.field("client_secret_expires_at", &self.client_secret_expires_at);
+        d.field("is_active", &self.is_active);
+        d.finish()
+    }
 }
 
 /// Dynamic Client Registration Manager configuration

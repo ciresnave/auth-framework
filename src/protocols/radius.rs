@@ -218,7 +218,7 @@ impl RadiusPacket {
 }
 
 /// Result of a RADIUS authentication attempt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RadiusAuthResult {
     /// Whether authentication succeeded.
     pub accepted: bool,
@@ -240,6 +240,23 @@ pub struct RadiusAuthResult {
 
     /// All reply attributes as key-value pairs.
     pub reply_attributes: HashMap<u8, Vec<Vec<u8>>>,
+}
+
+impl std::fmt::Debug for RadiusAuthResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RadiusAuthResult");
+        d.field("accepted", &self.accepted);
+        d.field("reply_message", &self.reply_message);
+        d.field("session_timeout", &self.session_timeout);
+        d.field("filter_id", &self.filter_id);
+        d.field("challenge", &self.challenge);
+        d.field("state", &crate::utils::redact::redacted(&self.state));
+        d.field(
+            "reply_attributes",
+            &crate::utils::redact::redacted(&self.reply_attributes),
+        );
+        d.finish()
+    }
 }
 
 // ─── Client ──────────────────────────────────────────────────────────────────

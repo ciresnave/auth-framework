@@ -57,7 +57,7 @@ pub enum ConfigSource {
 }
 
 /// Settings that can be used by parent applications to configure auth-framework
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AuthFrameworkSettings {
     /// Main auth framework configuration
@@ -79,6 +79,18 @@ pub struct AuthFrameworkSettings {
     /// Additional custom settings for extensibility
     #[serde(flatten)]
     pub custom: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for AuthFrameworkSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthFrameworkSettings");
+        d.field("auth", &self.auth);
+        d.field("api_server", &self.api_server);
+        d.field("threat_intelligence", &self.threat_intelligence);
+        d.field("session", &self.session);
+        d.field("custom", &crate::utils::redact::redacted(&self.custom));
+        d.finish()
+    }
 }
 
 /// Standalone REST API server runtime settings.

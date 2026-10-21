@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc111`
+- Current crate version: `0.6.0-rc112`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -197,6 +197,10 @@ This phase begins once the release-readiness and DX stabilization work above is 
       and `redis` 1.7.1 have been read so far.
 - [x] Scheduled `cargo deny` / `cargo audit` on every maintained release branch (weekly and on push; done in 0.6.0-rc110 as `security-audit-branches.yml`): a new advisory reached
       `release/0.4.x` and `release/0.5.x` only when an unrelated PR ran CI, because lockfile refreshes land on `main` alone.
+- [ ] The container audit (`[container_ok]` in `tests/debug_field_review.txt`) decides by field NAME, so a new `HashMap<String, Value>` named like an
+      existing entry (`metadata`, `parameters`, `custom`, ...) passes without a look at what it holds. Replace the name list with a per-type decision
+      (`path:Type:field | reason`) for the free-form bags, and give maps keyed by identifiers a typed key (`SessionId`, `TokenId`) whose `Debug` is
+      opaque, so the type system rather than a review list keeps them out of logs.
 - [ ] Error-message variants (`AuthError`, `StorageError`, `DatabaseError`, `ConfigError`, ...) are allowed in the derived-`Debug` audit as
       "diagnostic text", but an error is only as clean as the code that builds it: grep every construction site of the allowed variants
       for interpolated secret-typed values (`format!("...{token}")`, a database error that carries a connection string) and fix or

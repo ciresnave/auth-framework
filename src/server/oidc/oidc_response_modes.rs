@@ -66,12 +66,24 @@ impl Default for MultipleResponseTypesConfig {
 }
 
 /// Form Post Response Mode implementation
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FormPostResponseMode {
     /// Target redirect URI
     pub redirect_uri: String,
     /// Form parameters to post
     pub parameters: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for FormPostResponseMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FormPostResponseMode");
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field(
+            "parameters",
+            &crate::utils::redact::redacted(&self.parameters),
+        );
+        d.finish()
+    }
 }
 
 /// JARM (JWT Response Mode) implementation

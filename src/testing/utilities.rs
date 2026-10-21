@@ -244,12 +244,23 @@ impl AuthMethod for MockAuthMethod {
 /// let storage = MockStorage::new();
 /// storage.store_token(&token).await.unwrap();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MockStorage {
     tokens: Arc<DashMap<String, AuthToken>>,
     sessions: Arc<DashMap<String, SessionData>>,
     kv_store: Arc<DashMap<String, Vec<u8>>>,
     should_fail: bool,
+}
+
+impl std::fmt::Debug for MockStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MockStorage");
+        d.field("tokens", &crate::utils::redact::redacted(&self.tokens));
+        d.field("sessions", &crate::utils::redact::redacted(&self.sessions));
+        d.field("kv_store", &crate::utils::redact::redacted(&self.kv_store));
+        d.field("should_fail", &self.should_fail);
+        d.finish()
+    }
 }
 
 impl MockStorage {
