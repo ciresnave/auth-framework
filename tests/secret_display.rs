@@ -1,0 +1,80 @@
+//! `Debug` and `Display` output that reaches a log line or a terminal must not carry a secret.
+//!
+//! Each test builds a value around a marker string and checks the marker is not in what the value
+//! prints.
+
+const MARKER: &str = "SECRET-MARKER-5c1d9e";
+
+#[test]
+fn slack_config_debug_hides_the_webhook_url() {
+    let slack = auth_framework::deployment::monitoring::SlackConfig {
+        api_url: format!("https://hooks.slack.com/services/T000/B000/{MARKER}"),
+        channel: "#alerts".to_string(),
+        username: "auth-framework".to_string(),
+        title: "title".to_string(),
+        text: "text".to_string(),
+    };
+    let shown = format!("{slack:?}");
+    assert!(!shown.contains(MARKER), "{shown}");
+    // Control: the rest of the value is still printed.
+    assert!(shown.contains("#alerts"), "{shown}");
+}
+
+#[cfg(feature = "redis-storage")]
+#[test]
+fn storage_config_display_hides_the_redis_password() {
+    let storage = auth_framework::config::StorageConfig::Redis {
+        url: format!("redis://:{MARKER}@cache.internal:6379/0"),
+        key_prefix: "auth:".to_string(),
+    };
+    let shown = storage.to_string();
+    assert!(!shown.contains(MARKER), "{shown}");
+    // Control: the host is still printed.
+    assert!(shown.contains("cache.internal"), "{shown}");
+}
+
+#[test]
+fn logout_response_debug_hides_the_ended_session_ids() {
+    let response = auth_framework::RpInitiatedLogoutResponse {
+        success: true,
+        ended_sessions: vec![MARKER.to_string()],
+        post_logout_redirect_uri: None,
+        state: None,
+        logout_notifications: Vec::new(),
+        iss: "https://issuer.example".to_string(),
+    };
+    let shown = format!("{response:?}");
+    assert!(!shown.contains(MARKER), "{shown}");
+    // Control: the issuer is still printed, and a session is still counted by its fingerprint.
+    assert!(shown.contains("https://issuer.example"), "{shown}");
+    assert!(shown.contains("sha256:"), "{shown}");
+}
+
+#[cfg(feature = "role-system")]
+#[test]
+fn authorization_context_debug_hides_custom_attribute_values() {
+    use auth_framework::authorization_enhanced::context::{
+        AuthorizationContext, ConnectionType, DayType, DeviceType, SecurityLevel, TimeOfDay,
+    };
+    let context = AuthorizationContext {
+        user_id: "user-1".to_string(),
+        roles: Vec::new(),
+        session_id: None,
+        method: "GET".to_string(),
+        path: "/".to_string(),
+        ip_address: None,
+        user_agent: None,
+        request_time: chrono::Utc::now(),
+        time_of_day: TimeOfDay::BusinessHours,
+        day_type: DayType::Weekday,
+        device_type: DeviceType::Unknown,
+        connection_type: ConnectionType::Unknown,
+        security_level: SecurityLevel::Low,
+        risk_score: 0,
+        custom_attributes: [("token".to_string(), MARKER.to_string())].into(),
+    };
+    let shown = format!("{context:?}");
+    assert!(!shown.contains(MARKER), "{shown}");
+    // Control: the attribute names are still printed.
+    assert!(shown.contains("token"), "{shown}");
+}

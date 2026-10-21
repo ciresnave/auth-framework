@@ -111,7 +111,7 @@ impl std::fmt::Debug for LogoutNotificationTarget {
 }
 
 /// RP-initiated logout result.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RpInitiatedLogoutResponse {
     /// Whether request validation and session termination succeeded.
     pub success: bool,
@@ -125,6 +125,25 @@ pub struct RpInitiatedLogoutResponse {
     pub logout_notifications: Vec<LogoutNotificationTarget>,
     /// Issuer identifier to include in downstream logout notifications.
     pub iss: String,
+}
+
+/// The ended session ids are shown as fingerprints.
+impl std::fmt::Debug for RpInitiatedLogoutResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ended: Vec<_> = self
+            .ended_sessions
+            .iter()
+            .map(|id| crate::utils::redact::fingerprint(id))
+            .collect();
+        let mut d = f.debug_struct("RpInitiatedLogoutResponse");
+        d.field("success", &self.success);
+        d.field("ended_sessions", &ended);
+        d.field("post_logout_redirect_uri", &self.post_logout_redirect_uri);
+        d.field("state", &self.state);
+        d.field("logout_notifications", &self.logout_notifications);
+        d.field("iss", &self.iss);
+        d.finish()
+    }
 }
 
 /// RP-initiated logout manager.
