@@ -116,7 +116,7 @@ impl HardwareOtpToken {
 
     /// Validate YubiKey response
     async fn validate_yubikey_response(&self, challenge: &str) -> Result<bool> {
-        tracing::debug!("Validating YubiKey response for challenge: {}", challenge);
+        tracing::debug!("Validating YubiKey response");
 
         // YubiKey OTP format: starts with the 12-char device prefix (modhex) followed
         // by a 32-char encrypted OTP — total 44 characters.  The default public-ID
