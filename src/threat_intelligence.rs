@@ -104,7 +104,7 @@ impl std::fmt::Debug for FeedConfig {
         let mut d = f.debug_struct("FeedConfig");
         d.field("enabled", &self.enabled);
         d.field("feed_type", &self.feed_type);
-        d.field("url", &self.url);
+        d.field("url", &crate::utils::redact::redacted(&self.url));
         d.field("api_key", &crate::utils::redact::redacted(&self.api_key));
         d.field("headers", &crate::utils::redact::redacted(&self.headers));
         d.field("filename", &self.filename);

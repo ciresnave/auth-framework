@@ -205,7 +205,10 @@ impl std::fmt::Debug for IntrospectionClientCredentials {
             "client_secret",
             &crate::utils::redact::redacted(&self.client_secret),
         );
-        d.field("client_assertion", &self.client_assertion);
+        d.field(
+            "client_assertion",
+            &crate::utils::redact::redacted(&self.client_assertion),
+        );
         d.field("auth_method", &self.auth_method);
         d.finish()
     }

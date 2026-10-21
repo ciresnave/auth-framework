@@ -565,7 +565,7 @@ impl std::fmt::Debug for TokenMetadata {
         d.field("revoked_reason", &self.revoked_reason);
         d.field("last_used", &self.last_used);
         d.field("use_count", &self.use_count);
-        d.field("custom", &self.custom);
+        d.field("custom", &crate::utils::redact::redacted(&self.custom));
         d.finish()
     }
 }
