@@ -923,7 +923,7 @@ impl CaepManager {
 
         tracing::info!(
             "Processing CAEP logout for session: {}",
-            logout_request.session_id
+            crate::utils::redact::fingerprint(&logout_request.session_id)
         );
 
         // Update CAEP session state to reflect logout
@@ -971,7 +971,7 @@ impl CaepManager {
 
         tracing::info!(
             "CAEP logout completed for session: {}",
-            logout_request.session_id
+            crate::utils::redact::fingerprint(&logout_request.session_id)
         );
         Ok(())
     }
@@ -1252,7 +1252,7 @@ impl CaepManager {
                 CaepRuleAction::TriggerWebhook { url } => {
                     tracing::info!(
                         "CAEP triggering webhook {} for subject {}",
-                        url,
+                        crate::utils::redact::url_origin(url),
                         evaluation.subject
                     );
                 }
@@ -1283,11 +1283,10 @@ impl CaepManager {
         }
 
         tracing::info!(
-            "CAEP quarantined {} sessions for subject {} until {}. Session IDs: {:?}",
+            "CAEP quarantined {} sessions for subject {} until {}",
             quarantined_session_ids.len(),
             subject,
-            quarantine_until,
-            quarantined_session_ids
+            quarantine_until
         );
 
         // In a production implementation, you might want to notify the SessionManager

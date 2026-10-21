@@ -1458,6 +1458,10 @@ enum LogSecret {
 
 /// Whether a bare identifier names a value that must not be logged as it is.
 fn log_secret_kind(ident: &str) -> Option<LogSecret> {
+    let ident = ident
+        .strip_suffix("_string")
+        .or_else(|| ident.strip_suffix("_str"))
+        .unwrap_or(ident);
     const LOW: &[&str] = &[
         "otp",
         "otp_code",
@@ -1495,6 +1499,9 @@ fn log_secret_kind(ident: &str) -> Option<LogSecret> {
         "bearer",
         "id_token",
         "event_jwt",
+        "auth_req_id",
+        "session_ids",
+        "sids",
     ];
     if LOW.contains(&ident)
         || ident.ends_with("_secret")
@@ -1547,75 +1554,118 @@ fn split_macro_args(args: &str) -> Vec<&str> {
     parts
 }
 
-/// The secrets a `trace!`/`debug!`/`info!`/`warn!`/`error!` call in `content` logs as they are: a bare
-/// identifier (optionally `&x`, `x.clone()`, `x.as_str()`, ...) passed as an argument or written inline
-/// in the format string (`"{session_id}"`). A value that goes through a function
-/// (`redact::fingerprint(&session_id)`), a field access or a literal is not bare and is not reported.
-/// Code after the first `#[cfg(test)]` and commented-out lines are ignored. Returns `(line, ident, kind)`.
-fn logged_secrets(content: &str) -> Vec<(usize, String, LogSecret)> {
-    let mac =
-        regex::Regex::new(r"\b(?:tracing::|log::)?(?:trace|debug|info|warn|error)!\s*\(").unwrap();
+/// The index just past the `)` that closes a call whose arguments start at `from` (string literals
+/// are skipped); the end of `code` if it never closes.
+fn call_end(code: &str, from: usize) -> usize {
+    let (mut depth, mut in_str, mut escaped) = (1i32, false, false);
+    for (i, c) in code[from..].char_indices() {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return from + i;
+                }
+            }
+            _ => {}
+        }
+    }
+    code.len()
+}
+
+/// Reports what the arguments `args` of a log macro, or of a `format!`/`json!`/`serde_json::to_string`
+/// call nested in one, write as they are.
+fn log_arg_secrets(args: &str, line: usize, found: &mut Vec<(usize, String, LogSecret)>) {
     let bare = regex::Regex::new(
-        r"^(?:%|\?)?\s*(?:&|\*)*\s*([a-z_][a-z_0-9]*)(?:\.(?:clone|as_str|to_string|as_ref|as_deref)\(\))*$",
+        r"^(?:%|\?)?\s*(?:&|\*)*\s*((?:[a-z_][a-z_0-9]*\.)*[a-z_][a-z_0-9]*)(?:\.(?:clone|as_str|to_string|as_ref|as_deref)\(\))*$",
     )
     .unwrap();
     let named = regex::Regex::new(r"^[a-z_][a-z_0-9]*\s*=\s*(?s:(.*))$").unwrap();
+    let json_key = regex::Regex::new(r#"^"[^"]*"\s*:\s*(?s:(.*))$"#).unwrap();
     let inline = regex::Regex::new(r"\{([a-z_][a-z_0-9]*)(?::[^}]*)?\}").unwrap();
-    let code = content.split("#[cfg(test)]").next().unwrap_or(content);
+    let nested =
+        regex::Regex::new(r"\b(?:format!|json!|serde_json::to_string(?:_pretty)?)\s*\(").unwrap();
+    for part in split_macro_args(args) {
+        let part = part.trim();
+        if part.starts_with('"') && !json_key.is_match(part) {
+            for c in inline.captures_iter(part) {
+                if let Some(kind) = log_secret_kind(&c[1]) {
+                    found.push((line, c[1].to_string(), kind));
+                }
+            }
+            continue;
+        }
+        let part = json_key
+            .captures(part)
+            .map_or(part, |c| c.get(1).unwrap().as_str().trim());
+        let expr = named
+            .captures(part)
+            .map_or(part, |c| c.get(1).unwrap().as_str().trim());
+        if let Some(b) = bare.captures(expr) {
+            let mut path = b[1].rsplit('.');
+            let ident = path.next().unwrap_or(&b[1]);
+            // `session.id` names a session id by its owner, not by itself.
+            let kind = if ident == "id" && path.next() == Some("session") {
+                Some(LogSecret::HighEntropy)
+            } else {
+                log_secret_kind(ident)
+            };
+            if let Some(kind) = kind {
+                found.push((line, ident.to_string(), kind));
+            }
+            continue;
+        }
+        // A `json!({ .. })` object: look at each of its members.
+        if let Some(inner) = expr.strip_prefix('{').and_then(|e| e.strip_suffix('}')) {
+            log_arg_secrets(inner, line, found);
+        }
+        for m in nested.find_iter(expr) {
+            let end = call_end(expr, m.end());
+            log_arg_secrets(&expr[m.end()..end], line, found);
+        }
+    }
+}
+
+/// The secrets a `trace!`/`debug!`/`info!`/`warn!`/`error!` call in `content` logs as they are: a bare
+/// identifier or field access (optionally `&x`, `x.clone()`, `x.as_str()`, ...) passed as an argument or
+/// written inline in the format string (`"{session_id}"`), also inside a `format!`, `json!` or
+/// `serde_json::to_string` that is one of its arguments. A value that goes through a function
+/// (`redact::fingerprint(&session_id)`) or is a literal is not reported. Only test-only items (see
+/// [`production_lines`]) and commented-out lines are skipped. Returns `(line, ident, kind)`.
+fn logged_secrets(content: &str) -> Vec<(usize, String, LogSecret)> {
+    let mac =
+        regex::Regex::new(r"\b(?:tracing::|log::)?(?:trace|debug|info|warn|error)!\s*\(").unwrap();
+    // Test-only lines are blanked, not removed, so line numbers stay those of the file.
+    let kept: std::collections::HashSet<usize> = production_lines("log scan", content)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    let code: String = content
+        .lines()
+        .enumerate()
+        .map(|(i, l)| if kept.contains(&(i + 1)) { l } else { "" })
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut found = Vec::new();
-    for m in mac.find_iter(code) {
+    for m in mac.find_iter(&code) {
         let line_start = code[..m.start()].rfind('\n').map_or(0, |i| i + 1);
         if code[line_start..m.start()].trim_start().starts_with("//") {
             continue;
         }
-        // Balanced end of the call.
-        let (mut depth, mut end) = (1i32, m.end());
-        let mut in_str = false;
-        let mut escaped = false;
-        for (i, c) in code[m.end()..].char_indices() {
-            if in_str {
-                if escaped {
-                    escaped = false;
-                } else if c == '\\' {
-                    escaped = true;
-                } else if c == '"' {
-                    in_str = false;
-                }
-                continue;
-            }
-            match c {
-                '"' => in_str = true,
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = m.end() + i;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
+        let end = call_end(&code, m.end());
         let line = code[..m.start()].matches('\n').count() + 1;
-        for part in split_macro_args(&code[m.end()..end]) {
-            let part = part.trim();
-            if part.starts_with('"') {
-                for c in inline.captures_iter(part) {
-                    if let Some(kind) = log_secret_kind(&c[1]) {
-                        found.push((line, c[1].to_string(), kind));
-                    }
-                }
-                continue;
-            }
-            let expr = named
-                .captures(part)
-                .map_or(part, |c| c.get(1).unwrap().as_str().trim());
-            if let Some(b) = bare.captures(expr)
-                && let Some(kind) = log_secret_kind(&b[1])
-            {
-                found.push((line, b[1].to_string(), kind));
-            }
-        }
+        log_arg_secrets(&code[m.end()..end], line, &mut found);
     }
     found
 }
@@ -2012,6 +2062,15 @@ pub struct A {
     }
 
     #[test]
+    fn a_test_only_item_does_not_hide_the_code_after_it() {
+        let src =
+            "#[cfg(test)]\nfn helper() {}\nfn prod() {\n    info!(\"x {}\", session_id);\n}\n";
+        let got = logged_secrets(src);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, 4, "line numbers stay those of the file");
+    }
+
+    #[test]
     fn logged_secrets_are_found_and_wrapped_ones_are_not() {
         let leaky = "fn f() {\n    info!(\"revoked {}\", session_id);\n    debug!(\"code {code}\");\n    tracing::warn!(\"x {}\", &token.clone());\n    info!(\n        \"two {} {}\",\n        user_id,\n        otp\n    );\n}\n";
         let got = logged_secrets(leaky);
@@ -2021,10 +2080,26 @@ pub struct A {
             vec!["session_id", "code", "token", "otp"],
             "{got:?}"
         );
+        // Round 2 shapes: field access, `*_str` names, ids of a session or request, nested
+        // `format!`/`json!`/`to_string`, and a list of ids.
+        let shapes = [
+            "info!(\"a {}\", request.session_id);",
+            "info!(\"a {}\", logout_request.session_id);",
+            "info!(\"a {}\", session.id);",
+            "info!(\"a {}\", session_id_str);",
+            "info!(\"a {}\", auth_req_id);",
+            "info!(\"a {}\", format!(\"x {}\", session_id));",
+            "info!(\"a {}\", json!({ \"session_id\": session_id }));",
+            "info!(\"a {}\", serde_json::to_string(&token).unwrap());",
+            "info!(\"a {:?}\", session_ids);",
+        ];
+        for shape in shapes {
+            assert_eq!(logged_secrets(shape).len(), 1, "not reported: {shape}");
+        }
         assert_eq!(got[0].2, LogSecret::HighEntropy);
         assert_eq!(got[1].2, LogSecret::LowEntropy);
         // Controls: wrapped, field access, literal, comment and test code are not reported.
-        let fine = "fn f() {\n    info!(\"a {}\", crate::utils::redact::fingerprint(&session_id));\n    debug!(\"b {}\", request.session_id);\n    warn!(\"c {}\", \"<redacted>\");\n    // info!(\"d {}\", token);\n    info!(\"e {}\", user_id);\n}\n#[cfg(test)]\nmod tests {\n    fn t() { info!(\"{}\", token); }\n}\n";
+        let fine = "fn f() {\n    info!(\"a {}\", crate::utils::redact::fingerprint(&session_id));\n    debug!(\"b {}\", crate::utils::redact::fingerprint(&request.session_id));\n    debug!(\"b2 {}\", session.created_at);\n    warn!(\"c {}\", \"<redacted>\");\n    // info!(\"d {}\", token);\n    info!(\"e {}\", user_id);\n}\n#[cfg(test)]\nmod tests {\n    fn t() { info!(\"{}\", token); }\n}\n";
         assert!(
             logged_secrets(fine).is_empty(),
             "{:?}",

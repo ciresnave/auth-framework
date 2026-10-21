@@ -1134,7 +1134,10 @@ impl SharedSignalsManager {
         // Extract session information from event data
         if let Some(session_id) = event.data.get("session_id") {
             let session_id_str = session_id.as_str().unwrap_or("");
-            tracing::info!("Revoking session: {}", session_id_str);
+            tracing::info!(
+                "Revoking session: {}",
+                crate::utils::redact::fingerprint(session_id_str)
+            );
 
             // IMPLEMENTATION COMPLETE: Full session revocation workflow
             // 1. Remove session from active sessions store
@@ -1164,7 +1167,7 @@ impl SharedSignalsManager {
 
             tracing::info!(
                 "Session revocation completed for session: {} - all associated tokens invalidated",
-                session_id_str
+                crate::utils::redact::fingerprint(session_id_str)
             );
         } else {
             // Fallback - revoke all sessions for the subject
@@ -1389,8 +1392,9 @@ impl SharedSignalsManager {
 
         // In production, this would add to a distributed revocation list
         // that all services check before accepting tokens
+        // The entry is only logged here, so it names the session by its fingerprint.
         let revocation_entry = serde_json::json!({
-            "session_id": session_id,
+            "session_id": crate::utils::redact::fingerprint(session_id).to_string(),
             "revoked_at": chrono::Utc::now().to_rfc3339(),
             "reason": "security_event"
         });
@@ -1412,9 +1416,10 @@ impl SharedSignalsManager {
 
         // In production, this would send notifications to all registered resource servers
         // This could be done via webhooks, message queues, or direct API calls
+        // The notification is only logged here, so it names the session by its fingerprint.
         let notification = serde_json::json!({
             "type": "session_revoked",
-            "session_id": session_id,
+            "session_id": crate::utils::redact::fingerprint(session_id).to_string(),
             "timestamp": chrono::Utc::now().to_rfc3339(),
             "issuer": &self.config.endpoint_url
         });
@@ -1432,7 +1437,7 @@ impl SharedSignalsManager {
                     tracing::info!(
                         "Notifying transmitter {} endpoint {} of session revocation: {}",
                         id,
-                        endpoint,
+                        crate::utils::redact::url_origin(endpoint),
                         notification
                     );
                     // In production: reqwest POST to endpoint with signed JWT payload
@@ -1447,7 +1452,7 @@ impl SharedSignalsManager {
     async fn log_session_revocation_audit(&self, session_id: &str, subject: &str) {
         let audit_event = serde_json::json!({
             "event_type": "session_revoked",
-            "session_id": session_id,
+            "session_id": crate::utils::redact::fingerprint(session_id).to_string(),
             "subject": subject,
             "timestamp": chrono::Utc::now().to_rfc3339(),
             "initiator": "security_event_handler",

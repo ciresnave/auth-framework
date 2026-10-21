@@ -651,7 +651,7 @@ impl SecureSessionManager {
         tracing::warn!(
             "IP address change #{} for session {}: {} -> {}",
             *change_count,
-            session.id,
+            crate::utils::redact::fingerprint(&session.id),
             session.current_ip,
             new_ip
         );
