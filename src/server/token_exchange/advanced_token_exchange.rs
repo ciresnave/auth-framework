@@ -143,7 +143,7 @@ impl std::fmt::Display for AuthLevel {
 }
 
 /// Configuration for Advanced Token Exchange
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AdvancedTokenExchangeConfig {
     /// Enable multi-party token chains
     pub enable_multi_party_chains: bool,
@@ -182,6 +182,37 @@ pub struct AdvancedTokenExchangeConfig {
     pub trusted_issuers: Vec<String>,
 }
 
+impl std::fmt::Debug for AdvancedTokenExchangeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AdvancedTokenExchangeConfig");
+        d.field("enable_multi_party_chains", &self.enable_multi_party_chains);
+        d.field("max_delegation_depth", &self.max_delegation_depth);
+        d.field("require_audit_trail", &self.require_audit_trail);
+        d.field(
+            "enable_context_preservation",
+            &self.enable_context_preservation,
+        );
+        d.field("default_token_lifetime", &self.default_token_lifetime);
+        d.field(
+            "supported_subject_token_types",
+            &self.supported_subject_token_types,
+        );
+        d.field(
+            "supported_requested_token_types",
+            &self.supported_requested_token_types,
+        );
+        d.field("exchange_policies", &self.exchange_policies);
+        d.field("cross_domain_settings", &self.cross_domain_settings);
+        d.field(
+            "jwt_signing_key",
+            &crate::utils::redact::redacted(&self.jwt_signing_key),
+        );
+        d.field("jwt_verification_key", &self.jwt_verification_key);
+        d.field("trusted_issuers", &self.trusted_issuers);
+        d.finish()
+    }
+}
+
 impl Default for AdvancedTokenExchangeConfig {
     fn default() -> Self {
         Self {
@@ -215,7 +246,7 @@ impl Default for AdvancedTokenExchangeConfig {
 }
 
 /// Advanced Token Exchange Request following enhanced RFC 8693
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AdvancedTokenExchangeRequest {
     /// Grant type (must be "urn:ietf:params:oauth:grant-type:token-exchange")
     pub grant_type: String,
@@ -252,6 +283,31 @@ pub struct AdvancedTokenExchangeRequest {
 
     /// Custom exchange parameters
     pub custom_parameters: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for AdvancedTokenExchangeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AdvancedTokenExchangeRequest");
+        d.field("grant_type", &self.grant_type);
+        d.field(
+            "subject_token",
+            &crate::utils::redact::redacted(&self.subject_token),
+        );
+        d.field("subject_token_type", &self.subject_token_type);
+        d.field(
+            "actor_token",
+            &crate::utils::redact::redacted(&self.actor_token),
+        );
+        d.field("actor_token_type", &self.actor_token_type);
+        d.field("requested_token_type", &self.requested_token_type);
+        d.field("scope", &self.scope);
+        d.field("audience", &self.audience);
+        d.field("resource", &self.resource);
+        d.field("exchange_context", &self.exchange_context);
+        d.field("policy_requirements", &self.policy_requirements);
+        d.field("custom_parameters", &self.custom_parameters);
+        d.finish()
+    }
 }
 
 /// Exchange context for preserving business and technical context
@@ -341,7 +397,7 @@ pub struct ExchangeRequestMetadata {
 }
 
 /// Security context information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityContext {
     /// Session identifier
     pub session_id: Option<String>,
@@ -360,6 +416,22 @@ pub struct SecurityContext {
 
     /// Location information
     pub location_info: Option<LocationContext>,
+}
+
+impl std::fmt::Debug for SecurityContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecurityContext");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("authentication_level", &self.authentication_level);
+        d.field("mfa_completed", &self.mfa_completed);
+        d.field("risk_score", &self.risk_score);
+        d.field("device_info", &self.device_info);
+        d.field("location_info", &self.location_info);
+        d.finish()
+    }
 }
 
 /// Device context information
@@ -521,7 +593,7 @@ pub struct CrossDomainPolicy {
 }
 
 /// Token exchange response following enhanced RFC 8693
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AdvancedTokenExchangeResponse {
     /// The security token issued by the authorization server
     pub access_token: String,
@@ -549,6 +621,28 @@ pub struct AdvancedTokenExchangeResponse {
 
     /// Additional response parameters
     pub additional_parameters: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for AdvancedTokenExchangeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AdvancedTokenExchangeResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("issued_token_type", &self.issued_token_type);
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field("scope", &self.scope);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("exchange_audit", &self.exchange_audit);
+        d.field("preserved_context", &self.preserved_context);
+        d.field("additional_parameters", &self.additional_parameters);
+        d.finish()
+    }
 }
 
 /// Exchange audit information

@@ -824,7 +824,7 @@ pub struct AlternativeIdp {
 }
 
 /// Orchestration session information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OrchestrationSessionInfo {
     /// Orchestration session ID
     pub session_id: String,
@@ -839,8 +839,22 @@ pub struct OrchestrationSessionInfo {
     pub session_state: String,
 }
 
+impl std::fmt::Debug for OrchestrationSessionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OrchestrationSessionInfo");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("expires_at", &self.expires_at);
+        d.field("idp_sessions", &self.idp_sessions);
+        d.field("session_state", &self.session_state);
+        d.finish()
+    }
+}
+
 /// IdP session information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IdpSessionInfo {
     /// IdP identifier
     pub idp_id: String,
@@ -853,6 +867,20 @@ pub struct IdpSessionInfo {
 
     /// Session data
     pub session_data: HashMap<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for IdpSessionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("IdpSessionInfo");
+        d.field("idp_id", &self.idp_id);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("protocol", &self.protocol);
+        d.field("session_data", &self.session_data);
+        d.finish()
+    }
 }
 
 /// Applied transformation information

@@ -12,7 +12,7 @@ use ring::hmac;
 use serde::{Deserialize, Serialize};
 
 /// A Macaroon authorization token with chained HMAC caveats.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Macaroon {
     /// Location hint (not cryptographically bound).
     pub location: String,
@@ -22,6 +22,20 @@ pub struct Macaroon {
     pub caveats: Vec<Caveat>,
     /// HMAC signature (hex-encoded).
     pub signature: String,
+}
+
+impl std::fmt::Debug for Macaroon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("Macaroon");
+        d.field("location", &self.location);
+        d.field("identifier", &self.identifier);
+        d.field("caveats", &self.caveats);
+        d.field(
+            "signature",
+            &crate::utils::redact::redacted(&self.signature),
+        );
+        d.finish()
+    }
 }
 
 /// A first-party caveat restricting the macaroon's authority.

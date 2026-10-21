@@ -1097,7 +1097,7 @@ pub mod oid {
 }
 
 /// Result of Kerberos authentication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KerberosAuthResult {
     /// Authenticated client principal (e.g. `user@REALM`).
     pub client_principal: String,
@@ -1119,6 +1119,23 @@ pub struct KerberosAuthResult {
 
     /// SPNEGO response token to return to the client (mutual auth).
     pub response_token: Option<String>,
+}
+
+impl std::fmt::Debug for KerberosAuthResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("KerberosAuthResult");
+        d.field("client_principal", &self.client_principal);
+        d.field("realm", &self.realm);
+        d.field("auth_time", &self.auth_time);
+        d.field("end_time", &self.end_time);
+        d.field("is_delegated", &self.is_delegated);
+        d.field("flags", &self.flags);
+        d.field(
+            "response_token",
+            &crate::utils::redact::redacted(&self.response_token),
+        );
+        d.finish()
+    }
 }
 
 /// Kerberos ticket flags (RFC 4120 §5.3).
@@ -1149,7 +1166,7 @@ pub enum SpnegoState {
 }
 
 /// Parsed SPNEGO token (simplified).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SpnegoToken {
     /// Which mechanism was selected.
     pub mech_oid: String,
@@ -1159,14 +1176,39 @@ pub struct SpnegoToken {
     pub state: SpnegoState,
 }
 
+impl std::fmt::Debug for SpnegoToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SpnegoToken");
+        d.field("mech_oid", &self.mech_oid);
+        d.field(
+            "mech_token",
+            &crate::utils::redact::redacted(&self.mech_token),
+        );
+        d.field("state", &self.state);
+        d.finish()
+    }
+}
+
 /// Kerberos keytab entry.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct KeytabEntry {
     pub principal: String,
     pub realm: String,
     pub kvno: u32,
     pub key_type: u32,
     pub key_data: Vec<u8>,
+}
+
+impl std::fmt::Debug for KeytabEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("KeytabEntry");
+        d.field("principal", &self.principal);
+        d.field("realm", &self.realm);
+        d.field("kvno", &self.kvno);
+        d.field("key_type", &self.key_type);
+        d.field("key_data", &crate::utils::redact::redacted(&self.key_data));
+        d.finish()
+    }
 }
 
 // ─── Manager ─────────────────────────────────────────────────────────────────

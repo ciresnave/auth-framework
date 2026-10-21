@@ -126,7 +126,7 @@ fn default_limit() -> u32 {
 }
 
 /// Create user request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct CreateUserRequest {
     pub username: String,
     pub password: String,
@@ -139,6 +139,20 @@ pub struct CreateUserRequest {
     pub roles: Vec<String>,
     #[serde(default = "default_active")]
     pub active: bool,
+}
+
+impl std::fmt::Debug for CreateUserRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CreateUserRequest");
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field("email", &self.email);
+        d.field("first_name", &self.first_name);
+        d.field("last_name", &self.last_name);
+        d.field("roles", &self.roles);
+        d.field("active", &self.active);
+        d.finish()
+    }
 }
 
 fn default_active() -> bool {

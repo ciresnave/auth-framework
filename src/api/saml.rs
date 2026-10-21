@@ -63,7 +63,7 @@ pub struct SamlSsoResponse {
 }
 
 /// SAML ACS (Assertion Consumer Service) request
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SamlAcsRequest {
     #[serde(rename = "SAMLResponse")]
     pub saml_response: String,
@@ -73,6 +73,20 @@ pub struct SamlAcsRequest {
     pub sig_alg: Option<String>,
     #[serde(rename = "Signature")]
     pub signature: Option<String>,
+}
+
+impl std::fmt::Debug for SamlAcsRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SamlAcsRequest");
+        d.field(
+            "saml_response",
+            &crate::utils::redact::redacted(&self.saml_response),
+        );
+        d.field("relay_state", &self.relay_state);
+        d.field("sig_alg", &self.sig_alg);
+        d.field("signature", &self.signature);
+        d.finish()
+    }
 }
 
 /// SAML metadata configuration

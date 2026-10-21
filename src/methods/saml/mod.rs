@@ -34,7 +34,7 @@ pub struct SamlAuthMethod {
 }
 
 /// SAML configuration for authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SamlConfig {
     /// Service Provider Entity ID
     pub entity_id: String,
@@ -56,6 +56,26 @@ pub struct SamlConfig {
     pub clock_skew_seconds: u64,
     /// Enable production-grade XML signature validation
     pub validate_xml_signature: bool,
+}
+
+impl std::fmt::Debug for SamlConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SamlConfig");
+        d.field("entity_id", &self.entity_id);
+        d.field("acs_url", &self.acs_url);
+        d.field("sls_url", &self.sls_url);
+        d.field("certificate", &self.certificate);
+        d.field(
+            "private_key",
+            &crate::utils::redact::redacted(&self.private_key),
+        );
+        d.field("require_signed_assertions", &self.require_signed_assertions);
+        d.field("require_signed_responses", &self.require_signed_responses);
+        d.field("max_assertion_age", &self.max_assertion_age);
+        d.field("clock_skew_seconds", &self.clock_skew_seconds);
+        d.field("validate_xml_signature", &self.validate_xml_signature);
+        d.finish()
+    }
 }
 
 impl Default for SamlConfig {

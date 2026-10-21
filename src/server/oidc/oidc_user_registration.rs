@@ -284,7 +284,7 @@ impl RegistrationData {
 }
 
 /// Registration completion response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RegistrationResponse {
     /// New user's subject identifier
     pub sub: String,
@@ -294,6 +294,17 @@ pub struct RegistrationResponse {
     pub code: Option<String>,
     /// State parameter from original request
     pub state: Option<String>,
+}
+
+impl std::fmt::Debug for RegistrationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RegistrationResponse");
+        d.field("sub", &self.sub);
+        d.field("completed", &self.completed);
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.field("state", &self.state);
+        d.finish()
+    }
 }
 
 /// Registration configuration

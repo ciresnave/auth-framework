@@ -796,7 +796,7 @@ pub mod device_flow_server {
     ///     client_id: "c1".into(), scopes: vec![], state: DeviceAuthState::Pending, expires_at: 0,
     /// };
     /// ```
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Clone, Serialize, Deserialize)]
     pub struct DeviceAuthRecord {
         pub device_code: String,
         pub user_code: String,
@@ -804,6 +804,22 @@ pub mod device_flow_server {
         pub scopes: Vec<String>,
         pub state: DeviceAuthState,
         pub expires_at: u64,
+    }
+
+    impl std::fmt::Debug for DeviceAuthRecord {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let mut d = f.debug_struct("DeviceAuthRecord");
+            d.field(
+                "device_code",
+                &crate::utils::redact::redacted(&self.device_code),
+            );
+            d.field("user_code", &self.user_code);
+            d.field("client_id", &self.client_id);
+            d.field("scopes", &self.scopes);
+            d.field("state", &self.state);
+            d.field("expires_at", &self.expires_at);
+            d.finish()
+        }
     }
 
     /// Manages device authorization flow state with optional storage backend.

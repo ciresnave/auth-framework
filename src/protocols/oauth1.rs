@@ -11,17 +11,35 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// OAuth 1.0a consumer credentials (application).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthConsumer {
     pub key: String,
     pub secret: String,
 }
 
+impl std::fmt::Debug for OAuthConsumer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OAuthConsumer");
+        d.field("key", &self.key);
+        d.field("secret", &crate::utils::redact::redacted(&self.secret));
+        d.finish()
+    }
+}
+
 /// OAuth 1.0a token credentials (user-authorized).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthToken {
     pub token: String,
     pub secret: String,
+}
+
+impl std::fmt::Debug for OAuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OAuthToken");
+        d.field("token", &self.token);
+        d.field("secret", &crate::utils::redact::redacted(&self.secret));
+        d.finish()
+    }
 }
 
 /// OAuth 1.0a signature method.
@@ -43,7 +61,7 @@ impl SignatureMethod {
 }
 
 /// A signed OAuth 1.0a request.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OAuthSignedRequest {
     /// The Authorization header value.
     pub authorization_header: String,
@@ -53,19 +71,63 @@ pub struct OAuthSignedRequest {
     pub signature: String,
 }
 
+impl std::fmt::Debug for OAuthSignedRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OAuthSignedRequest");
+        d.field(
+            "authorization_header",
+            &crate::utils::redact::redacted(&self.authorization_header),
+        );
+        d.field("signature_base_string", &self.signature_base_string);
+        d.field("signature", &self.signature);
+        d.finish()
+    }
+}
+
 /// OAuth 1.0a request token response (temporary credentials).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RequestTokenResponse {
     pub oauth_token: String,
     pub oauth_token_secret: String,
     pub oauth_callback_confirmed: bool,
 }
 
+impl std::fmt::Debug for RequestTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RequestTokenResponse");
+        d.field(
+            "oauth_token",
+            &crate::utils::redact::redacted(&self.oauth_token),
+        );
+        d.field(
+            "oauth_token_secret",
+            &crate::utils::redact::redacted(&self.oauth_token_secret),
+        );
+        d.field("oauth_callback_confirmed", &self.oauth_callback_confirmed);
+        d.finish()
+    }
+}
+
 /// OAuth 1.0a access token response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AccessTokenResponse {
     pub oauth_token: String,
     pub oauth_token_secret: String,
+}
+
+impl std::fmt::Debug for AccessTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AccessTokenResponse");
+        d.field(
+            "oauth_token",
+            &crate::utils::redact::redacted(&self.oauth_token),
+        );
+        d.field(
+            "oauth_token_secret",
+            &crate::utils::redact::redacted(&self.oauth_token_secret),
+        );
+        d.finish()
+    }
 }
 
 /// OAuth 1.0a client for constructing signed requests.

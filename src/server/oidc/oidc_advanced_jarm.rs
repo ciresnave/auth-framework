@@ -68,7 +68,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Advanced JARM configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AdvancedJarmConfig {
     /// Supported signing algorithms
     pub supported_algorithms: Vec<Algorithm>,
@@ -116,6 +116,40 @@ pub struct AdvancedJarmConfig {
     /// full round-trip tests).  If `None`, falls back to
     /// `JARM_JWE_RECIPIENT_PRIVATE_KEY_PEM`.
     pub jwe_recipient_private_key_pem: Option<String>,
+}
+
+impl std::fmt::Debug for AdvancedJarmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AdvancedJarmConfig");
+        d.field("supported_algorithms", &self.supported_algorithms);
+        d.field("default_token_expiry", &self.default_token_expiry);
+        d.field("enable_jwe_encryption", &self.enable_jwe_encryption);
+        d.field("supported_delivery_modes", &self.supported_delivery_modes);
+        d.field("enable_custom_claims", &self.enable_custom_claims);
+        d.field("max_custom_claims", &self.max_custom_claims);
+        d.field(
+            "enable_response_validation",
+            &self.enable_response_validation,
+        );
+        d.field("jarm_issuer", &self.jarm_issuer);
+        d.field("enable_audit_logging", &self.enable_audit_logging);
+        d.field("jwe_algorithm", &self.jwe_algorithm);
+        d.field("jwe_content_encryption", &self.jwe_content_encryption);
+        d.field(
+            "rsa_private_key_pem",
+            &crate::utils::redact::redacted(&self.rsa_private_key_pem),
+        );
+        d.field("rsa_public_key_pem", &self.rsa_public_key_pem);
+        d.field(
+            "jwe_recipient_public_key_pem",
+            &self.jwe_recipient_public_key_pem,
+        );
+        d.field(
+            "jwe_recipient_private_key_pem",
+            &crate::utils::redact::redacted(&self.jwe_recipient_private_key_pem),
+        );
+        d.finish()
+    }
 }
 
 impl Default for AdvancedJarmConfig {
@@ -1245,7 +1279,7 @@ impl AdvancedJarmManager {
 }
 
 /// Authorization response data to be included in JARM
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthorizationResponse {
     /// Authorization code
     pub code: Option<String>,
@@ -1267,8 +1301,27 @@ pub struct AuthorizationResponse {
     pub error_description: Option<String>,
 }
 
+impl std::fmt::Debug for AuthorizationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("AuthorizationResponse");
+        d.field("code", &self.code);
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.field("state", &self.state);
+        d.field("token_type", &self.token_type);
+        d.field("expires_in", &self.expires_in);
+        d.field("scope", &self.scope);
+        d.field("error", &self.error);
+        d.field("error_description", &self.error_description);
+        d.finish()
+    }
+}
+
 /// JARM response structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct JarmResponse {
     /// JWT response token
     pub response_token: String,
@@ -1280,6 +1333,21 @@ pub struct JarmResponse {
     pub client_id: String,
     /// Unique response identifier
     pub response_id: String,
+}
+
+impl std::fmt::Debug for JarmResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("JarmResponse");
+        d.field(
+            "response_token",
+            &crate::utils::redact::redacted(&self.response_token),
+        );
+        d.field("delivery_mode", &self.delivery_mode);
+        d.field("expires_at", &self.expires_at);
+        d.field("client_id", &self.client_id);
+        d.field("response_id", &self.response_id);
+        d.finish()
+    }
 }
 
 /// JARM validation result
@@ -1294,7 +1362,7 @@ pub struct JarmValidationResult {
 }
 
 /// Delivery result
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum DeliveryResult {
     /// Redirect URL for query/fragment modes
     Redirect(String),
@@ -1307,6 +1375,22 @@ pub enum DeliveryResult {
         /// Push endpoint
         endpoint: String,
     },
+}
+
+impl std::fmt::Debug for DeliveryResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            // The redirect URL and the form-post page carry the signed JARM response.
+            Self::Redirect(v) => f.debug_tuple("Redirect").field(&redacted(v)).finish(),
+            Self::FormPost(v) => f.debug_tuple("FormPost").field(&redacted(v)).finish(),
+            Self::Push { success, endpoint } => f
+                .debug_struct("Push")
+                .field("success", success)
+                .field("endpoint", endpoint)
+                .finish(),
+        }
+    }
 }
 
 #[cfg(test)]

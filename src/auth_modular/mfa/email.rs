@@ -41,7 +41,7 @@ pub enum EmailProvider {
 }
 
 /// Provider-specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum ProviderConfig {
     /// SendGrid configuration
     SendGrid {
@@ -64,6 +64,44 @@ pub enum ProviderConfig {
     },
     /// Development configuration
     Development,
+}
+
+impl std::fmt::Debug for ProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::SendGrid { api_key, endpoint } => f
+                .debug_struct("SendGrid")
+                .field("api_key", &redacted(api_key))
+                .field("endpoint", endpoint)
+                .finish(),
+            Self::AwsSes {
+                region,
+                access_key_id,
+                secret_access_key,
+            } => f
+                .debug_struct("AwsSes")
+                .field("region", region)
+                .field("access_key_id", access_key_id)
+                .field("secret_access_key", &redacted(secret_access_key))
+                .finish(),
+            Self::Smtp {
+                host,
+                port,
+                username,
+                password,
+                use_tls,
+            } => f
+                .debug_struct("Smtp")
+                .field("host", host)
+                .field("port", port)
+                .field("username", username)
+                .field("password", &redacted(password))
+                .field("use_tls", use_tls)
+                .finish(),
+            Self::Development => f.write_str("Development"),
+        }
+    }
 }
 
 impl Default for EmailProviderConfig {

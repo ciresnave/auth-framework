@@ -37,7 +37,7 @@ pub enum ConfigFormat {
 }
 
 /// Environment-specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EnvironmentConfig {
     pub name: String,
     pub variables: HashMap<String, String>,
@@ -46,8 +46,20 @@ pub struct EnvironmentConfig {
     pub required_vars: Vec<String>,
 }
 
+impl std::fmt::Debug for EnvironmentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnvironmentConfig");
+        d.field("name", &self.name);
+        d.field("variables", &self.variables);
+        d.field("overrides", &self.overrides);
+        d.field("secrets", &crate::utils::redact::redacted(&self.secrets));
+        d.field("required_vars", &self.required_vars);
+        d.finish()
+    }
+}
+
 /// Database configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub host: String,
     pub port: u16,
@@ -59,8 +71,23 @@ pub struct DatabaseConfig {
     pub timeout: u64,
 }
 
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DatabaseConfig");
+        d.field("host", &self.host);
+        d.field("port", &self.port);
+        d.field("database", &self.database);
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field("ssl_mode", &self.ssl_mode);
+        d.field("pool_size", &self.pool_size);
+        d.field("timeout", &self.timeout);
+        d.finish()
+    }
+}
+
 /// Server configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -69,6 +96,20 @@ pub struct ServerConfig {
     pub timeout: u64,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ServerConfig");
+        d.field("host", &self.host);
+        d.field("port", &self.port);
+        d.field("workers", &self.workers);
+        d.field("max_connections", &self.max_connections);
+        d.field("timeout", &self.timeout);
+        d.field("tls_cert", &self.tls_cert);
+        d.field("tls_key", &crate::utils::redact::redacted(&self.tls_key));
+        d.finish()
+    }
 }
 
 /// Logging configuration
@@ -89,13 +130,28 @@ pub struct LogRotationConfig {
 }
 
 /// Security configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     pub jwt_secret: String,
     pub session_timeout: u64,
     pub bcrypt_cost: u32,
     pub rate_limiting: RateLimitConfig,
     pub cors: CorsConfig,
+}
+
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecurityConfig");
+        d.field(
+            "jwt_secret",
+            &crate::utils::redact::redacted(&self.jwt_secret),
+        );
+        d.field("session_timeout", &self.session_timeout);
+        d.field("bcrypt_cost", &self.bcrypt_cost);
+        d.field("rate_limiting", &self.rate_limiting);
+        d.field("cors", &self.cors);
+        d.finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

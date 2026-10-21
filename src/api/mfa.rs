@@ -21,7 +21,7 @@ use subtle::ConstantTimeEq as _;
 ///
 /// The client must render the `qr_code` (or display `secret`) to the user and
 /// prompt for a TOTP code to complete enrollment via the verify endpoint.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct MfaSetupResponse {
     /// `otpauth://` URI suitable for a QR code.
     pub qr_code: String,
@@ -31,20 +31,56 @@ pub struct MfaSetupResponse {
     pub backup_codes: Vec<String>,
 }
 
+impl std::fmt::Debug for MfaSetupResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaSetupResponse");
+        d.field("qr_code", &crate::utils::redact::redacted(&self.qr_code));
+        d.field("secret", &crate::utils::redact::redacted(&self.secret));
+        d.field(
+            "backup_codes",
+            &crate::utils::redact::redacted(&self.backup_codes),
+        );
+        d.finish()
+    }
+}
+
 /// Request payload for the TOTP verification step.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct MfaVerifyRequest {
     /// Six-digit TOTP code from the authenticator app.
     pub totp_code: String,
 }
 
+impl std::fmt::Debug for MfaVerifyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaVerifyRequest");
+        d.field(
+            "totp_code",
+            &crate::utils::redact::redacted(&self.totp_code),
+        );
+        d.finish()
+    }
+}
+
 /// Request payload to disable MFA (requires proof of identity).
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct MfaDisableRequest {
     /// Account password for re-authentication.
     pub password: String,
     /// A valid TOTP code confirming the user still controls the authenticator.
     pub totp_code: String,
+}
+
+impl std::fmt::Debug for MfaDisableRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MfaDisableRequest");
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field(
+            "totp_code",
+            &crate::utils::redact::redacted(&self.totp_code),
+        );
+        d.finish()
+    }
 }
 
 /// Current MFA enrollment status for the authenticated user.
@@ -498,10 +534,21 @@ pub async fn regenerate_backup_codes(
 /// Verifies a backup code for the authenticated user and consumes it (one-time
 /// use).  This can be used in lieu of a TOTP code when the user has lost
 /// access to their authenticator app.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct BackupCodeVerifyRequest {
     /// The plaintext backup code to verify.
     pub backup_code: String,
+}
+
+impl std::fmt::Debug for BackupCodeVerifyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("BackupCodeVerifyRequest");
+        d.field(
+            "backup_code",
+            &crate::utils::redact::redacted(&self.backup_code),
+        );
+        d.finish()
+    }
 }
 
 /// Handler for `POST /mfa/verify-backup-code`.

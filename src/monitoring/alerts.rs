@@ -40,7 +40,7 @@ impl Default for AlertThresholds {
 }
 
 /// Notification channel types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum NotificationChannel {
     /// Email notifications
     Email { recipients: Vec<String> },
@@ -55,6 +55,33 @@ pub enum NotificationChannel {
     },
     /// Log-based alerts
     Log { level: String },
+}
+
+impl std::fmt::Debug for NotificationChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Email { recipients } => f
+                .debug_struct("Email")
+                .field("recipients", recipients)
+                .finish(),
+            Self::Slack { webhook_url } => f
+                .debug_struct("Slack")
+                .field("webhook_url", &redacted(webhook_url))
+                .finish(),
+            Self::Teams { webhook_url } => f
+                .debug_struct("Teams")
+                .field("webhook_url", &redacted(webhook_url))
+                .finish(),
+            // Webhook URLs embed their access token and the headers may carry an Authorization value.
+            Self::Webhook { url, headers } => f
+                .debug_struct("Webhook")
+                .field("url", &redacted(url))
+                .field("headers", &headers.keys().collect::<Vec<_>>())
+                .finish(),
+            Self::Log { level } => f.debug_struct("Log").field("level", level).finish(),
+        }
+    }
 }
 
 /// Alert severity levels

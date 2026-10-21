@@ -14,9 +14,17 @@ use subtle::ConstantTimeEq;
 use zeroize::ZeroizeOnDrop;
 
 /// Secure MFA code that zeros itself when dropped
-#[derive(Debug, Clone, ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct SecureMfaCode {
     code: String,
+}
+
+impl std::fmt::Debug for SecureMfaCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecureMfaCode");
+        d.field("code", &crate::utils::redact::redacted(&self.code));
+        d.finish()
+    }
 }
 
 impl SecureMfaCode {

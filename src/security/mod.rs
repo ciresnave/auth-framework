@@ -156,12 +156,22 @@ pub struct LockoutConfig {
 ///
 /// **Security note:** `api_key` is never serialized to prevent accidental
 /// secret leakage in logs or config dumps.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SmsConfig {
     pub provider: String,
     #[serde(skip_serializing, default)]
     pub api_key: String,
     pub from_number: String,
+}
+
+impl std::fmt::Debug for SmsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SmsConfig");
+        d.field("provider", &self.provider);
+        d.field("api_key", &crate::utils::redact::redacted(&self.api_key));
+        d.field("from_number", &self.from_number);
+        d.finish()
+    }
 }
 
 impl Default for SmsConfig {
@@ -178,7 +188,7 @@ impl Default for SmsConfig {
 ///
 /// **Security note:** `password` is never serialized to prevent accidental
 /// secret leakage in logs or config dumps.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EmailConfig {
     pub smtp_server: String,
     pub smtp_port: u16,
@@ -187,6 +197,19 @@ pub struct EmailConfig {
     pub password: String,
     pub from_email: String,
     pub use_tls: bool,
+}
+
+impl std::fmt::Debug for EmailConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EmailConfig");
+        d.field("smtp_server", &self.smtp_server);
+        d.field("smtp_port", &self.smtp_port);
+        d.field("username", &self.username);
+        d.field("password", &crate::utils::redact::redacted(&self.password));
+        d.field("from_email", &self.from_email);
+        d.field("use_tls", &self.use_tls);
+        d.finish()
+    }
 }
 
 impl Default for EmailConfig {
@@ -203,12 +226,26 @@ impl Default for EmailConfig {
 }
 
 /// Security context for authentication operations
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SecurityContext {
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub session_id: Option<String>,
     pub request_id: Option<String>,
+}
+
+impl std::fmt::Debug for SecurityContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SecurityContext");
+        d.field("ip_address", &self.ip_address);
+        d.field("user_agent", &self.user_agent);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("request_id", &self.request_id);
+        d.finish()
+    }
 }
 
 /// Password validator

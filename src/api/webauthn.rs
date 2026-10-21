@@ -116,7 +116,7 @@ pub struct WebAuthnRegistrationInitRequest {
 }
 
 /// WebAuthn registration challenge response
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct WebAuthnRegistrationResponse {
     pub challenge: String,
     pub rp: PublicKeyCredentialRpEntity,
@@ -131,8 +131,27 @@ pub struct WebAuthnRegistrationResponse {
     pub session_id: String,
 }
 
+impl std::fmt::Debug for WebAuthnRegistrationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebAuthnRegistrationResponse");
+        d.field("challenge", &self.challenge);
+        d.field("rp", &self.rp);
+        d.field("user", &self.user);
+        d.field("pubkey_cred_params", &self.pubkey_cred_params);
+        d.field("timeout", &self.timeout);
+        d.field("exclude_credentials", &self.exclude_credentials);
+        d.field("authenticator_selection", &self.authenticator_selection);
+        d.field("attestation", &self.attestation);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.finish()
+    }
+}
+
 /// Complete WebAuthn registration
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct WebAuthnRegistrationCompleteRequest {
     pub session_id: String,
     pub credential_id: String,
@@ -143,6 +162,23 @@ pub struct WebAuthnRegistrationCompleteRequest {
     pub signature: String,
 }
 
+impl std::fmt::Debug for WebAuthnRegistrationCompleteRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebAuthnRegistrationCompleteRequest");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("credential_id", &self.credential_id);
+        d.field("credential_public_key", &self.credential_public_key);
+        d.field("attestation_object", &self.attestation_object);
+        d.field("client_data_json", &self.client_data_json);
+        d.field("authenticator_data", &self.authenticator_data);
+        d.field("signature", &self.signature);
+        d.finish()
+    }
+}
+
 /// WebAuthn authentication initiation request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WebAuthnAuthenticationRequest {
@@ -151,7 +187,7 @@ pub struct WebAuthnAuthenticationRequest {
 }
 
 /// WebAuthn authentication challenge response
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct WebAuthnAuthenticationResponse {
     pub challenge: String,
     pub allow_credentials: Vec<PublicKeyCredentialDescriptor>,
@@ -160,8 +196,23 @@ pub struct WebAuthnAuthenticationResponse {
     pub session_id: String,
 }
 
+impl std::fmt::Debug for WebAuthnAuthenticationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebAuthnAuthenticationResponse");
+        d.field("challenge", &self.challenge);
+        d.field("allow_credentials", &self.allow_credentials);
+        d.field("timeout", &self.timeout);
+        d.field("user_verification", &self.user_verification);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.finish()
+    }
+}
+
 /// Complete WebAuthn authentication
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct WebAuthnAuthenticationCompleteRequest {
     pub session_id: String,
     pub credential_id: String,
@@ -169,6 +220,22 @@ pub struct WebAuthnAuthenticationCompleteRequest {
     pub client_data_json: String,
     pub signature: String,
     pub user_handle: Option<String>,
+}
+
+impl std::fmt::Debug for WebAuthnAuthenticationCompleteRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebAuthnAuthenticationCompleteRequest");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("credential_id", &self.credential_id);
+        d.field("authenticator_data", &self.authenticator_data);
+        d.field("client_data_json", &self.client_data_json);
+        d.field("signature", &self.signature);
+        d.field("user_handle", &self.user_handle);
+        d.finish()
+    }
 }
 
 /// Supporting structures

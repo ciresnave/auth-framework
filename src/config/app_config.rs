@@ -30,7 +30,7 @@ pub struct AppConfig {
 }
 
 /// Database connection settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     /// Database connection URL (PostgreSQL, SQLite, etc.)
     pub url: String,
@@ -42,8 +42,19 @@ pub struct DatabaseConfig {
     pub connect_timeout_seconds: u64,
 }
 
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DatabaseConfig");
+        d.field("url", &crate::utils::redact::redacted(&self.url));
+        d.field("max_connections", &self.max_connections);
+        d.field("min_connections", &self.min_connections);
+        d.field("connect_timeout_seconds", &self.connect_timeout_seconds);
+        d.finish()
+    }
+}
+
 /// Redis cache and session storage settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
     /// Redis connection URL
     pub url: String,
@@ -51,8 +62,17 @@ pub struct RedisConfig {
     pub pool_size: u32,
 }
 
+impl std::fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RedisConfig");
+        d.field("url", &crate::utils::redact::redacted(&self.url));
+        d.field("pool_size", &self.pool_size);
+        d.finish()
+    }
+}
+
 /// JWT authentication settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct JwtConfig {
     /// Cryptographic secret key used to sign and verify JWTs
     pub secret_key: String,
@@ -64,6 +84,21 @@ pub struct JwtConfig {
     pub access_token_ttl_seconds: u64,
     /// Refresh token lifetime in seconds
     pub refresh_token_ttl_seconds: u64,
+}
+
+impl std::fmt::Debug for JwtConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("JwtConfig");
+        d.field(
+            "secret_key",
+            &crate::utils::redact::redacted(&self.secret_key),
+        );
+        d.field("issuer", &self.issuer);
+        d.field("audience", &self.audience);
+        d.field("access_token_ttl_seconds", &self.access_token_ttl_seconds);
+        d.field("refresh_token_ttl_seconds", &self.refresh_token_ttl_seconds);
+        d.finish()
+    }
 }
 
 /// Supported OAuth provider identities.
@@ -88,7 +123,7 @@ pub struct OAuthConfig {
 }
 
 /// Individual OAuth provider settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthProviderConfig {
     /// OAuth client ID provided by the Identity Provider
     pub client_id: String,
@@ -98,6 +133,20 @@ pub struct OAuthProviderConfig {
     pub redirect_uri: String,
     /// List of scopes to request during authentication
     pub scopes: Vec<String>,
+}
+
+impl std::fmt::Debug for OAuthProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("OAuthProviderConfig");
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
+        d.field("redirect_uri", &self.redirect_uri);
+        d.field("scopes", &self.scopes);
+        d.finish()
+    }
 }
 
 /// Application-wide security policies.

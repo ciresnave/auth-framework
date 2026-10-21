@@ -100,12 +100,23 @@ pub struct UmaResourceSet {
 }
 
 /// A permission ticket issued when a resource server encounters an unauthorized request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct PermissionTicket {
     pub ticket: String,
     pub resource_id: String,
     pub requested_scopes: Vec<String>,
     pub created_at: u64,
+}
+
+impl std::fmt::Debug for PermissionTicket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PermissionTicket");
+        d.field("ticket", &crate::utils::redact::redacted(&self.ticket));
+        d.field("resource_id", &self.resource_id);
+        d.field("requested_scopes", &self.requested_scopes);
+        d.field("created_at", &self.created_at);
+        d.finish()
+    }
 }
 
 impl UmaService {
@@ -370,7 +381,7 @@ impl UmaService {
 ///
 /// PATs are OAuth 2.0 access tokens with the `uma_protection` scope that
 /// resource servers use to access the UMA protection API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Pat {
     /// The PAT access token value.
     pub access_token: String,
@@ -380,6 +391,20 @@ pub struct Pat {
     pub issued_at: u64,
     /// When the PAT expires (UNIX timestamp).
     pub expires_at: u64,
+}
+
+impl std::fmt::Debug for Pat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("Pat");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("client_id", &self.client_id);
+        d.field("issued_at", &self.issued_at);
+        d.field("expires_at", &self.expires_at);
+        d.finish()
+    }
 }
 
 impl Pat {

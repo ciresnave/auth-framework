@@ -20,7 +20,7 @@ use std::time::SystemTime;
 use uuid::Uuid;
 
 /// Front-channel logout request parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FrontChannelLogoutRequest {
     /// Session ID being logged out
     pub session_id: String,
@@ -32,6 +32,21 @@ pub struct FrontChannelLogoutRequest {
     pub iss: String,
     /// Initiating client ID (if logout was client-initiated)
     pub initiating_client_id: Option<String>,
+}
+
+impl std::fmt::Debug for FrontChannelLogoutRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("FrontChannelLogoutRequest");
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("sub", &self.sub);
+        d.field("sid", &self.sid);
+        d.field("iss", &self.iss);
+        d.field("initiating_client_id", &self.initiating_client_id);
+        d.finish()
+    }
 }
 
 /// Front-channel logout response

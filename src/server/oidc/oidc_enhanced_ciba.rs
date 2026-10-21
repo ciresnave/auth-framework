@@ -290,7 +290,7 @@ pub enum AuthenticationMode {
 }
 
 /// Enhanced CIBA authentication request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EnhancedCibaAuthRequest {
     /// Unique authentication request identifier
     pub auth_req_id: String,
@@ -326,8 +326,42 @@ pub struct EnhancedCibaAuthRequest {
     pub consent: Option<ConsentInfo>,
 }
 
+impl std::fmt::Debug for EnhancedCibaAuthRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnhancedCibaAuthRequest");
+        d.field(
+            "auth_req_id",
+            &crate::utils::redact::redacted(&self.auth_req_id),
+        );
+        d.field("client_id", &self.client_id);
+        d.field("user_hint", &self.user_hint);
+        d.field("binding_message", &self.binding_message);
+        d.field("auth_context", &self.auth_context);
+        d.field("scopes", &self.scopes);
+        d.field("mode", &self.mode);
+        d.field(
+            "client_notification_endpoint",
+            &self.client_notification_endpoint,
+        );
+        d.field(
+            "client_notification_token",
+            &crate::utils::redact::redacted(&self.client_notification_token),
+        );
+        d.field("expires_at", &self.expires_at);
+        d.field("created_at", &self.created_at);
+        d.field("status", &self.status);
+        d.field(
+            "session_id",
+            &crate::utils::redact::redacted(&self.session_id),
+        );
+        d.field("device_binding", &self.device_binding);
+        d.field("consent", &self.consent);
+        d.finish()
+    }
+}
+
 /// Enhanced CIBA authentication response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EnhancedCibaAuthResponse {
     /// Authentication request identifier
     pub auth_req_id: String,
@@ -339,8 +373,22 @@ pub struct EnhancedCibaAuthResponse {
     pub additional_data: HashMap<String, serde_json::Value>,
 }
 
+impl std::fmt::Debug for EnhancedCibaAuthResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("EnhancedCibaAuthResponse");
+        d.field(
+            "auth_req_id",
+            &crate::utils::redact::redacted(&self.auth_req_id),
+        );
+        d.field("interval", &self.interval);
+        d.field("expires_in", &self.expires_in);
+        d.field("additional_data", &self.additional_data);
+        d.finish()
+    }
+}
+
 /// User identifier hint for CIBA
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum UserIdentifierHint {
     /// Login hint (username, email, etc.)
     LoginHint(String),
@@ -352,6 +400,19 @@ pub enum UserIdentifierHint {
     PhoneNumber(String),
     /// Email address for email-based authentication
     Email(String),
+}
+
+impl std::fmt::Debug for UserIdentifierHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::LoginHint(v) => f.debug_tuple("LoginHint").field(v).finish(),
+            Self::IdTokenHint(v) => f.debug_tuple("IdTokenHint").field(&redacted(v)).finish(),
+            Self::UserCode(v) => f.debug_tuple("UserCode").field(&redacted(v)).finish(),
+            Self::PhoneNumber(v) => f.debug_tuple("PhoneNumber").field(v).finish(),
+            Self::Email(v) => f.debug_tuple("Email").field(v).finish(),
+        }
+    }
 }
 
 /// Advanced authentication context for enhanced CIBA
@@ -402,7 +463,7 @@ pub struct CibaDeviceInfo {
 }
 
 /// Device binding information with cryptographic support
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DeviceBinding {
     /// Device binding identifier
     pub binding_id: String,
@@ -420,6 +481,27 @@ pub struct DeviceBinding {
     pub challenge: Option<String>,
     /// Challenge response for verification
     pub challenge_response: Option<String>,
+}
+
+impl std::fmt::Debug for DeviceBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("DeviceBinding");
+        d.field("binding_id", &self.binding_id);
+        d.field("device_public_key", &self.device_public_key);
+        d.field("binding_method", &self.binding_method);
+        d.field("created_at", &self.created_at);
+        d.field("expires_at", &self.expires_at);
+        d.field("device_fingerprint", &self.device_fingerprint);
+        d.field(
+            "challenge",
+            &crate::utils::redact::redacted(&self.challenge),
+        );
+        d.field(
+            "challenge_response",
+            &crate::utils::redact::redacted(&self.challenge_response),
+        );
+        d.finish()
+    }
 }
 
 /// Device binding methods
@@ -485,7 +567,6 @@ pub enum CibaRequestStatus {
 }
 
 /// Parameters for backchannel authentication request
-#[derive(Debug)]
 pub struct BackchannelAuthParams<'a> {
     pub client_id: &'a str,
     pub user_hint: UserIdentifierHint,
@@ -498,6 +579,27 @@ pub struct BackchannelAuthParams<'a> {
     /// The client supplies this value; the server MUST forward it verbatim.
     /// Required when `mode` is `Ping` or `Push`.
     pub client_notification_token: Option<String>,
+}
+
+impl std::fmt::Debug for BackchannelAuthParams<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackchannelAuthParams")
+            .field("client_id", &self.client_id)
+            .field("user_hint", &self.user_hint)
+            .field("binding_message", &self.binding_message)
+            .field("auth_context", &self.auth_context)
+            .field("scopes", &self.scopes)
+            .field("mode", &self.mode)
+            .field(
+                "client_notification_endpoint",
+                &self.client_notification_endpoint,
+            )
+            .field(
+                "client_notification_token",
+                &crate::utils::redact::redacted(&self.client_notification_token),
+            )
+            .finish()
+    }
 }
 
 /// Enhanced CIBA manager
@@ -1448,7 +1550,7 @@ struct IdTokenHintClaims {
 }
 
 /// CIBA token response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CibaTokenResponse {
     /// Access token
     pub access_token: String,
@@ -1462,6 +1564,25 @@ pub struct CibaTokenResponse {
     pub id_token: Option<String>,
     /// Granted scopes
     pub scope: Option<String>,
+}
+
+impl std::fmt::Debug for CibaTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("CibaTokenResponse");
+        d.field(
+            "access_token",
+            &crate::utils::redact::redacted(&self.access_token),
+        );
+        d.field("token_type", &self.token_type);
+        d.field(
+            "refresh_token",
+            &crate::utils::redact::redacted(&self.refresh_token),
+        );
+        d.field("expires_in", &self.expires_in);
+        d.field("id_token", &crate::utils::redact::redacted(&self.id_token));
+        d.field("scope", &self.scope);
+        d.finish()
+    }
 }
 
 #[cfg(test)]
