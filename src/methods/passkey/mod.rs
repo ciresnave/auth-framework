@@ -133,6 +133,116 @@ use passkey_client::DefaultClientData;
 #[cfg(feature = "passkeys")]
 use url::Url;
 
+/// A WebAuthn byte field from JSON: base64url text, or an array of numbers (what `passkey-types`
+/// writes unless its `serialize_bytes_as_base64_string` feature is on). Not gated on `passkeys`: the
+/// feature-independent verification code reads assertions with it too.
+fn json_bytes(value: &serde_json::Value) -> Option<Vec<u8>> {
+    match value {
+        serde_json::Value::String(s) => URL_SAFE_NO_PAD.decode(s).ok(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(|b| b.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect(),
+        _ => None,
+    }
+}
+
+/// One DER element: `(tag, content, rest)`.
+#[cfg(feature = "passkeys")]
+fn der_element(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+    let (&tag, rest) = input.split_first()?;
+    let (&first, rest) = rest.split_first()?;
+    let (len, rest) = if first < 0x80 {
+        (usize::from(first), rest)
+    } else {
+        let count = usize::from(first & 0x7f);
+        if count == 0 || count > 4 || rest.len() < count {
+            return None;
+        }
+        let len = rest[..count]
+            .iter()
+            .fold(0usize, |acc, &b| (acc << 8) | usize::from(b));
+        (len, &rest[count..])
+    };
+    if rest.len() < len {
+        return None;
+    }
+    Some((tag, &rest[..len], &rest[len..]))
+}
+
+/// A JWK (`kty`, `alg`, and `crv`/`x`/`y` or `n`/`e`) for the SubjectPublicKeyInfo of a WebAuthn public
+/// key, for the COSE algorithms the method offers: ES256 (-7), ES384 (-35) and RS256 (-257).
+#[cfg(feature = "passkeys")]
+fn jwk_from_spki(spki: &[u8], algorithm: i64) -> Result<serde_json::Value> {
+    const BAD: &str = "Passkey public key is not a valid SubjectPublicKeyInfo";
+    const EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+    const P256: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+    const P384: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x22];
+    const RSA: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+
+    let bad = || AuthError::validation(BAD);
+    let (tag, spki_body, trailing) = der_element(spki).ok_or_else(bad)?;
+    if tag != 0x30 || !trailing.is_empty() {
+        return Err(bad());
+    }
+    let (tag, alg_id, rest) = der_element(spki_body).ok_or_else(bad)?;
+    if tag != 0x30 {
+        return Err(bad());
+    }
+    let (tag, key_bits, trailing) = der_element(rest).ok_or_else(bad)?;
+    if tag != 0x03 || !trailing.is_empty() || key_bits.first() != Some(&0) {
+        return Err(bad());
+    }
+    let key = &key_bits[1..];
+    let (tag, key_oid, alg_params) = der_element(alg_id).ok_or_else(bad)?;
+    if tag != 0x06 {
+        return Err(bad());
+    }
+
+    match (algorithm, key_oid) {
+        (-7 | -35, oid) if oid == EC_PUBLIC_KEY => {
+            let (tag, curve, _) = der_element(alg_params).ok_or_else(bad)?;
+            let (crv, alg, size) = match (algorithm, curve) {
+                (-7, c) if tag == 0x06 && c == P256 => ("P-256", "ES256", 32),
+                (-35, c) if tag == 0x06 && c == P384 => ("P-384", "ES384", 48),
+                _ => return Err(AuthError::validation("Unsupported passkey curve")),
+            };
+            if key.len() != 1 + 2 * size || key[0] != 0x04 {
+                return Err(bad());
+            }
+            Ok(serde_json::json!({
+                "kty": "EC",
+                "crv": crv,
+                "alg": alg,
+                "x": URL_SAFE_NO_PAD.encode(&key[1..1 + size]),
+                "y": URL_SAFE_NO_PAD.encode(&key[1 + size..]),
+            }))
+        }
+        (-257, oid) if oid == RSA => {
+            let (tag, rsa_key, trailing) = der_element(key).ok_or_else(bad)?;
+            if tag != 0x30 || !trailing.is_empty() {
+                return Err(bad());
+            }
+            let (tag, n, rest) = der_element(rsa_key).ok_or_else(bad)?;
+            let (tag_e, e, trailing) = der_element(rest).ok_or_else(bad)?;
+            if tag != 0x02 || tag_e != 0x02 || !trailing.is_empty() {
+                return Err(bad());
+            }
+            let strip = |v: &[u8]| -> Vec<u8> {
+                let skip = v.iter().take_while(|&&b| b == 0).count();
+                v[skip..].to_vec()
+            };
+            Ok(serde_json::json!({
+                "kty": "RSA",
+                "alg": "RS256",
+                "n": URL_SAFE_NO_PAD.encode(strip(n)),
+                "e": URL_SAFE_NO_PAD.encode(strip(e)),
+            }))
+        }
+        _ => Err(AuthError::validation("Unsupported passkey key algorithm")),
+    }
+}
+
 /// 32 random bytes for a WebAuthn challenge, from the operating system's generator.
 #[cfg(feature = "passkeys")]
 fn random_challenge() -> Result<Vec<u8>> {
@@ -442,24 +552,52 @@ impl PasskeyAuthMethod {
             .await
             .map_err(|e| AuthError::validation(format!("Passkey registration failed: {:?}", e)))?;
 
-        // Extract credential ID and store registration
+        self.register_credential(user_id, user_name, user_display_name, &credential)?;
+        Ok(credential)
+    }
+
+    /// Store a credential that an authenticator created, so it can authenticate later.
+    ///
+    /// The credential's public key (a SubjectPublicKeyInfo, as WebAuthn defines it) is converted to a
+    /// JWK and kept with the sign count read from the credential's authenticator data. A credential
+    /// whose key is missing, malformed or of an unsupported type is refused and nothing is stored.
+    #[cfg(feature = "passkeys")]
+    pub fn register_credential(
+        &mut self,
+        user_id: &str,
+        user_name: &str,
+        user_display_name: &str,
+        credential: &CreatedPublicKeyCredential,
+    ) -> Result<()> {
         let credential_id = &credential.raw_id;
         let credential_id_b64 = URL_SAFE_NO_PAD.encode(credential_id.as_slice());
 
-        // Serialize the credential attestation response so the public key and
-        // counter are available for future authentication verification.
-        let credential_value = serde_json::to_value(&credential).unwrap_or(serde_json::Value::Null);
-        let public_key_value = credential_value
-            .pointer("/response/authenticatorData/attestedCredentialData/credentialPublicKey")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let sign_count = credential_value
-            .pointer("/response/authenticatorData/signCount")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let credential_value = serde_json::to_value(credential)
+            .map_err(|e| AuthError::validation(format!("Unreadable passkey credential: {e}")))?;
+        let response = credential_value
+            .get("response")
+            .ok_or_else(|| AuthError::validation("Passkey credential has no response"))?;
+        let spki = response
+            .get("publicKey")
+            .and_then(json_bytes)
+            .ok_or_else(|| AuthError::validation("Passkey credential has no public key"))?;
+        let algorithm = response
+            .get("publicKeyAlgorithm")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| AuthError::validation("Passkey credential has no key algorithm"))?;
+        let public_key_jwk = jwk_from_spki(&spki, algorithm)?;
+        let sign_count = response
+            .get("authenticatorData")
+            .and_then(json_bytes)
+            .and_then(|d| {
+                d.get(33..37)
+                    .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+            })
+            .ok_or_else(|| AuthError::validation("Passkey credential has no authenticator data"))?;
+
         let passkey_data_json = serde_json::json!({
             "credential_id": credential_id_b64,
-            "public_key": public_key_value,
+            "public_key": public_key_jwk,
             "signature_counter": sign_count,
             "raw_attestation": credential_value,
         });
@@ -483,11 +621,18 @@ impl PasskeyAuthMethod {
                     "Lock poisoned — a prior thread panicked while holding this lock",
                 )
             })?;
-            passkeys.insert(credential_id_b64.clone(), registration);
+            passkeys.insert(credential_id_b64, registration);
         }
 
         tracing::info!("Successfully registered passkey for user: {}", user_id);
-        Ok(credential)
+        Ok(())
+    }
+
+    /// The registration stored for a credential id, if any.
+    #[cfg(feature = "passkeys")]
+    pub fn registered_passkey(&self, credential_id: &[u8]) -> Option<PasskeyRegistration> {
+        let key = URL_SAFE_NO_PAD.encode(credential_id);
+        self.registered_passkeys.read().ok()?.get(&key).cloned()
     }
 
     /// Initiate passkey authentication
@@ -617,22 +762,31 @@ impl PasskeyAuthMethod {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
 
-        // Retrieve the stored challenge for this credential.
+        // Take the stored challenge for this credential: it is single use, so it is removed whether or
+        // not verification succeeds, and an assertion cannot be replayed or retried against it.
         let expected_challenge_bytes: Vec<u8> = {
-            let challenges = self.pending_challenges.read().map_err(|_| {
+            let mut challenges = self.pending_challenges.write().map_err(|_| {
                 AuthError::internal(
                     "Lock poisoned — a prior thread panicked while holding this lock",
                 )
             })?;
-            challenges
-                .get(&credential_id_b64)
-                .or_else(|| challenges.get("latest"))
-                .cloned()
-                .ok_or_else(|| {
-                    AuthError::validation(
-                        "No pending challenge found; call initiate_authentication first",
-                    )
-                })?
+            let own = challenges.remove(&credential_id_b64);
+            // "latest" mirrors the newest challenge for usernameless flows: drop it too when it is the
+            // same challenge, but leave another user's newer one alone.
+            let taken = match own {
+                Some(own) => {
+                    if challenges.get("latest") == Some(&own) {
+                        challenges.remove("latest");
+                    }
+                    Some(own)
+                }
+                None => challenges.remove("latest"),
+            };
+            taken.ok_or_else(|| {
+                AuthError::validation(
+                    "No pending challenge found; call initiate_authentication first",
+                )
+            })?
         };
 
         // Full cryptographic verification (challenge, origin, RP ID hash, signature, counter).
@@ -947,7 +1101,6 @@ impl PasskeyAuthMethod {
         stored_counter: u32,
         public_key_jwk: &serde_json::Value,
     ) -> Result<AdvancedVerificationResult> {
-        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
         use ring::digest;
 
         tracing::info!("Starting advanced passkey verification flow");
@@ -960,12 +1113,10 @@ impl PasskeyAuthMethod {
         let client_data_json = assertion
             .get("response")
             .and_then(|r| r.get("clientDataJSON"))
-            .and_then(|c| c.as_str())
             .ok_or_else(|| AuthError::validation("Missing clientDataJSON"))?;
 
-        let decoded_client_data = URL_SAFE_NO_PAD
-            .decode(client_data_json)
-            .map_err(|_| AuthError::validation("Invalid base64 in clientDataJSON"))?;
+        let decoded_client_data = json_bytes(client_data_json)
+            .ok_or_else(|| AuthError::validation("Invalid encoding of clientDataJSON"))?;
 
         let client_data_str = std::str::from_utf8(&decoded_client_data)
             .map_err(|_| AuthError::validation("Invalid UTF-8 in clientDataJSON"))?;
@@ -1011,12 +1162,10 @@ impl PasskeyAuthMethod {
         let authenticator_data = assertion
             .get("response")
             .and_then(|r| r.get("authenticatorData"))
-            .and_then(|a| a.as_str())
             .ok_or_else(|| AuthError::validation("Missing authenticatorData"))?;
 
-        let auth_data_bytes = URL_SAFE_NO_PAD
-            .decode(authenticator_data)
-            .map_err(|_| AuthError::validation("Invalid authenticatorData base64"))?;
+        let auth_data_bytes = json_bytes(authenticator_data)
+            .ok_or_else(|| AuthError::validation("Invalid authenticatorData encoding"))?;
 
         if auth_data_bytes.len() < 37 {
             return Err(AuthError::validation("AuthenticatorData too short"));
@@ -1453,7 +1602,6 @@ impl PasskeyAuthMethod {
         decoded_client_data: &[u8],
         public_key_jwk: &serde_json::Value,
     ) -> Result<()> {
-        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
         use ring::digest;
 
         // IMPLEMENTATION COMPLETE: Enhanced assertion signature verification
@@ -1467,12 +1615,10 @@ impl PasskeyAuthMethod {
         let signature = assertion
             .get("response")
             .and_then(|r| r.get("signature"))
-            .and_then(|s| s.as_str())
             .ok_or_else(|| AuthError::validation("Missing signature in assertion response"))?;
 
-        let signature_bytes = URL_SAFE_NO_PAD
-            .decode(signature)
-            .map_err(|_| AuthError::validation("Invalid signature base64"))?;
+        let signature_bytes = json_bytes(signature)
+            .ok_or_else(|| AuthError::validation("Invalid signature encoding"))?;
 
         // Create signed data: authenticatorData + SHA256(clientDataJSON)
         let client_data_hash = {
@@ -1493,8 +1639,6 @@ impl PasskeyAuthMethod {
 
     /// Extract counter from WebAuthn assertion response for replay attack protection
     fn extract_counter_from_assertion(&self, assertion_response: &str) -> Result<u32> {
-        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-
         // IMPLEMENTATION COMPLETE: Extract counter for replay attack protection
         tracing::debug!("Extracting counter from assertion response");
 
@@ -1505,15 +1649,13 @@ impl PasskeyAuthMethod {
         let authenticator_data = assertion
             .get("response")
             .and_then(|r| r.get("authenticatorData"))
-            .and_then(|a| a.as_str())
             .ok_or_else(|| {
                 AuthError::validation("Missing authenticatorData in assertion response")
             })?;
 
-        // Decode base64 authenticator data
-        let auth_data_bytes = URL_SAFE_NO_PAD
-            .decode(authenticator_data)
-            .map_err(|_| AuthError::validation("authenticatorData is not valid base64url"))?;
+        let auth_data_bytes = json_bytes(authenticator_data).ok_or_else(|| {
+            AuthError::validation("authenticatorData is neither base64url nor a byte array")
+        })?;
 
         // AuthenticatorData structure:
         // rpIdHash (32 bytes) + flags (1 byte) + counter (4 bytes) + ...

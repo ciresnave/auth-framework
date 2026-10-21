@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc116 -- **Passkey authentication works with real credentials, and an assertion can be used once.** `PasskeyAuthMethod` could register a credential but could
+  never authenticate one: it looked for the public key at a JSON path the serialized credential does not have (so every registration stored `null`), and it read the
+  assertion's `clientDataJSON`, `authenticatorData` and `signature` only as base64url text although `passkey-types` writes bytes as arrays. Registration now converts the
+  credential's SubjectPublicKeyInfo to a JWK (ES256, ES384 and RS256; anything else, or a malformed key, is refused and nothing is stored) and reads the sign count from the
+  authenticator data; verification accepts both byte encodings. New `register_credential` stores a credential an authenticator created elsewhere and `registered_passkey`
+  reads one back. With authentication able to succeed, the pending challenge is now single use: `complete_authentication` removes it whether or not verification passes,
+  so an assertion cannot be replayed (platform authenticators report a zero counter, which the counter check cannot catch). Tests were written first: the recorded
+  `passkey` 0.5.0 assertion fails on the old code ("Missing clientDataJSON"), a live registration and assertion from the `passkey` client authenticate, and a replay, a
+  tampered signature, a wrong challenge, another key and an unregistered credential are all refused; putting the challenge back after use fails the replay test.
 - 0.6.0-rc114 -- **Log lines no longer carry session ids, tokens or one-time codes.** Forty-six `trace!`/`debug!`/`info!`/`warn!`/`error!` calls
   wrote a session id (session manager, secure sessions, CAEP, OIDC extensions, rich authorization requests, user and session
   endpoints), an event JWT (OIDC extensions), the e-mail MFA code or the YubiKey response as they were. High-entropy identifiers are now logged
