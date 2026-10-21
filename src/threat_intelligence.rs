@@ -704,18 +704,21 @@ impl ThreatFeedManager {
             }
         }
 
-        let response = request.send().await?;
+        let response = request.send().await.map_err(reqwest::Error::without_url)?;
 
         if !response.status().is_success() {
             return Err(format!(
                 "HTTP error {}: {}",
                 response.status(),
-                response.text().await?
+                response.text().await.map_err(reqwest::Error::without_url)?
             )
             .into());
         }
 
-        let content = response.bytes().await?;
+        let content = response
+            .bytes()
+            .await
+            .map_err(reqwest::Error::without_url)?;
         let file_path = config.feeds_directory.join(&feed_config.filename);
 
         // Handle compressed feeds (like MaxMind)

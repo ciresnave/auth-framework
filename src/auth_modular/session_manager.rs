@@ -454,7 +454,7 @@ impl SessionManager {
         if self.get_session(session_id).await?.is_none() {
             return Err(AuthError::validation(format!(
                 "Session {} not found",
-                session_id
+                crate::utils::redact::fingerprint(session_id)
             )));
         }
         tracing::info!(

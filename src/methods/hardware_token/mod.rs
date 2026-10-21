@@ -193,11 +193,17 @@ impl HardwareOtpToken {
             validation_url, client_id, otp, nonce
         );
         let response = client.get(&url).send().await.map_err(|e| {
-            crate::errors::AuthError::internal(format!("Yubico API request failed: {}", e))
+            crate::errors::AuthError::internal(format!(
+                "Yubico API request failed: {}",
+                e.without_url()
+            ))
         })?;
 
         let body: String = response.text().await.map_err(|e: reqwest::Error| {
-            crate::errors::AuthError::internal(format!("Failed to read Yubico API response: {}", e))
+            crate::errors::AuthError::internal(format!(
+                "Failed to read Yubico API response: {}",
+                e.without_url()
+            ))
         })?;
 
         // The Yubico API returns a CRLF-delimited key=value list.

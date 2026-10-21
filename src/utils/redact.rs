@@ -150,9 +150,51 @@ pub(crate) fn fingerprint(value: &str) -> Fingerprint {
     Fingerprint(out)
 }
 
+/// `scheme://host[:port]` of a URL, for a log line: user info, path, query and fragment are dropped,
+/// because a webhook URL carries its secret in the path or the query (`hooks.slack.com/services/..`).
+/// Text that is not an absolute URL is logged as `<invalid url>`.
+pub(crate) fn url_origin(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return "<invalid url>".to_string();
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let scheme_ok = !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !scheme_ok || host.is_empty() {
+        return "<invalid url>".to_string();
+    }
+    format!("{scheme}://{host}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_origin_keeps_only_scheme_and_host() {
+        assert_eq!(
+            url_origin("https://hooks.slack.com/services/T000/B000/SECRET-MARKER"),
+            "https://hooks.slack.com"
+        );
+        assert_eq!(
+            url_origin("https://user:SECRET-MARKER@example.com:8443/p?license_key=SECRET-MARKER#f"),
+            "https://example.com:8443"
+        );
+        assert_eq!(
+            url_origin("https://example.com?key=SECRET-MARKER"),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn url_origin_does_not_echo_text_that_is_not_a_url() {
+        assert_eq!(url_origin("SECRET-MARKER"), "<invalid url>");
+        assert_eq!(url_origin("https:///SECRET-MARKER"), "<invalid url>");
+        assert_eq!(url_origin("://example.com"), "<invalid url>");
+    }
 
     /// SHA-256("abc") starts ba7816bf (FIPS 180-2 test vector).
     #[test]

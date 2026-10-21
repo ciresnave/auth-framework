@@ -452,7 +452,7 @@ impl SmsKitManager {
             SmsKitProvider::Plivo => self.send_via_plivo(phone_number, message).await,
             SmsKitProvider::Development => {
                 info!("📱 [SMSKit Development] SMS sent to: {}", phone_number);
-                info!("   Message: {}", message);
+                info!("   Message: <{} bytes, not logged>", message.len());
                 Ok(format!("dev_msg_{}", chrono::Utc::now().timestamp()))
             }
         };
@@ -472,7 +472,7 @@ impl SmsKitManager {
                                 "📱 [SMSKit Development Fallback] SMS sent to: {}",
                                 phone_number
                             );
-                            info!("   Message: {}", message);
+                            info!("   Message: <{} bytes, not logged>", message.len());
                             Ok(format!(
                                 "dev_fallback_msg_{}",
                                 chrono::Utc::now().timestamp()

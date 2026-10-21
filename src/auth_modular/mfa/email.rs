@@ -275,7 +275,7 @@ impl EmailManager {
                 info!("📧 [DEVELOPMENT] Email would be sent:");
                 info!("   To: {}", to_email);
                 info!("   Subject: {}", subject);
-                info!("   Body: {}", body);
+                info!("   Body: <{} bytes, not logged>", body.len());
                 Ok(())
             }
         }
