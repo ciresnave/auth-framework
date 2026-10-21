@@ -474,3 +474,73 @@ fn unified_storage_keys_are_not_printed() {
         "{shown}"
     );
 }
+
+/// Enum variants written on one line (`Variant { a: String, b: String },`), which the derive audit
+/// used to skip.
+#[test]
+fn one_line_enum_variants_do_not_print_secrets() {
+    use auth_framework::config::AuditStorage;
+    use auth_framework::server::core::additional_modules::device_flow_server::DeviceAuthState;
+    use auth_framework::server::security::caep_continuous_access::CaepRuleAction;
+
+    redacts(
+        "AuditStorage::External",
+        format!(
+            "{:?}",
+            AuditStorage::External {
+                endpoint: "endpoint-visible".into(),
+                api_key: S.into()
+            }
+        ),
+        "endpoint-visible",
+    );
+    redacts(
+        "AuditStorage::Database",
+        format!(
+            "{:?}",
+            AuditStorage::Database {
+                connection_string: format!("postgres://u:{S}@h/db")
+            }
+        ),
+        "Database",
+    );
+    redacts(
+        "DeviceAuthState::Authorized",
+        format!(
+            "{:?}",
+            DeviceAuthState::Authorized {
+                access_token: S.into()
+            }
+        ),
+        "Authorized",
+    );
+    redacts(
+        "CaepRuleAction::TriggerWebhook",
+        format!(
+            "{:?}",
+            CaepRuleAction::TriggerWebhook {
+                url: format!("https://hooks.example/{S}")
+            }
+        ),
+        "TriggerWebhook",
+    );
+    // Controls: variants with no secret still print their payload.
+    assert!(
+        format!(
+            "{:?}",
+            AuditStorage::File {
+                path: "path-visible".into()
+            }
+        )
+        .contains("path-visible")
+    );
+    assert!(
+        format!(
+            "{:?}",
+            CaepRuleAction::LogEvent {
+                level: "level-visible".into()
+            }
+        )
+        .contains("level-visible")
+    );
+}

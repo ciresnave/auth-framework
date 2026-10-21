@@ -462,7 +462,7 @@ pub struct AuditConfig {
 /// Audit log storage backend.
 ///
 /// Pairs with [`AuditConfig`] to specify *where* audit events are persisted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum AuditStorage {
     /// In-process, queryable audit storage. Supports `permission_logs`,
     /// `security_stats`, and other query-based audit operations out of the
@@ -485,6 +485,26 @@ pub enum AuditStorage {
 
     /// External service
     External { endpoint: String, api_key: String },
+}
+
+impl std::fmt::Debug for AuditStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::redact::redacted;
+        match self {
+            Self::Memory => f.write_str("Memory"),
+            Self::Tracing => f.write_str("Tracing"),
+            Self::File { path } => f.debug_struct("File").field("path", path).finish(),
+            Self::Database { connection_string } => f
+                .debug_struct("Database")
+                .field("connection_string", &redacted(connection_string))
+                .finish(),
+            Self::External { endpoint, api_key } => f
+                .debug_struct("External")
+                .field("endpoint", endpoint)
+                .field("api_key", &redacted(api_key))
+                .finish(),
+        }
+    }
 }
 
 const fn default_max_failed_attempts() -> u32 {

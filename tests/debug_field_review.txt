@@ -56,6 +56,7 @@ allowed_origins
 allowed_response_types
 allowed_scopes
 allowed_token_types
+allowed_types
 amr_values
 api_url
 api_version
@@ -91,6 +92,7 @@ auth_url
 authenticating_authorities
 authentication_level
 authentication_method
+authenticator
 authenticator_attachment
 authenticator_data
 authn_context_class_ref
@@ -99,6 +101,7 @@ authn_context_decl_ref
 authorization_endpoint
 authorization_url
 authorizations
+authorized_clients
 authorized_providers
 authorized_resources
 available_actions
@@ -115,7 +118,10 @@ browser
 browser_hash
 bulk_id
 c_nonce
+ca_certificates
+ca_certs
 ca_file
+ca_store
 caa_identities
 cached_permissions
 canonicalization_method
@@ -240,6 +246,7 @@ ed_public_key_pem
 effective_permissions
 effective_scopes
 email
+email_address
 email_hint
 encoding_type
 encrypted_attributes
@@ -270,9 +277,11 @@ excluded_idps
 expected_audiences
 expected_subject_dn
 expires
+expression
 external_endpoints
 failed
 family_name
+feature
 feedback
 fhir_endpoint
 file
@@ -295,6 +304,7 @@ given_name
 grant_type
 grant_types
 grant_types_supported
+granted
 granted_actions
 granted_locations
 granted_privileges
@@ -538,6 +548,7 @@ requested_scopes
 requested_token_type
 requested_unattached_reference
 requester
+required
 required_claims
 required_fields
 required_level
@@ -558,6 +569,7 @@ response_modes_supported
 response_type
 response_types
 response_types_supported
+restricted_scopes
 restriction_type
 result
 revocation_endpoint
@@ -710,6 +722,7 @@ trust_anchor
 trust_anchors
 trust_domain
 trust_level
+trusted_ca_ders
 trusted_cert_thumbprints
 trusted_domains
 trusted_issuers
