@@ -779,12 +779,29 @@ pub mod device_flow_server {
     /// ```rust,ignore
     /// let state = DeviceAuthState::Pending;
     /// ```
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Clone, Serialize, Deserialize)]
     pub enum DeviceAuthState {
         Pending,
         Authorized { access_token: String },
         Denied,
         Expired,
+    }
+
+    impl std::fmt::Debug for DeviceAuthState {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Pending => f.write_str("Pending"),
+                Self::Authorized { access_token } => f
+                    .debug_struct("Authorized")
+                    .field(
+                        "access_token",
+                        &crate::utils::redact::redacted(access_token),
+                    )
+                    .finish(),
+                Self::Denied => f.write_str("Denied"),
+                Self::Expired => f.write_str("Expired"),
+            }
+        }
     }
 
     /// A device authorization record.

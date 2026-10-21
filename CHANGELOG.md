@@ -63,6 +63,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc111 -- **The derived-`Debug` audit now sees one-line enum variants, and four more types stop printing credentials.** The audit read one
+  field per line, so a variant written `External { endpoint: String, api_key: String },` was never checked. It now parses variants and
+  structs written on one line, `#[cfg_attr(.., derive(Debug))]`, attributes that span several lines, and the byte and text shapes
+  `Vec<Vec<u8>>`, `Box<[u8]>`, `Cow<str>`, `Bytes` and `[u8; N]`; a further test fails if a macro defines a type, which the scan cannot see.
+  Redacting `Debug` on `AuditStorage` (the external-service key and the database connection string), `DeviceAuthState` (the access
+  token of an authorized request) and `CaepRuleAction` (a webhook URL can carry a token); the other findings were reviewed and listed as
+  public (certificate stores, scope lists, the RADIUS authenticator, which travels in the clear). Tests were written first and fail on the
+  old scanner; `tests/secret_debug_redaction.rs` gains one case per redacted type. ROADMAP: the scheduled branch-audit row is ticked.
 - 0.6.0-rc108 -- **The JavaScript SDK (`sdks/javascript`) typechecks, builds and tests again, and CI now runs it.** It had no CI and had
   rotted: `tsc` reported three `exactOptionalPropertyTypes` errors (`AuthFrameworkError.statusCode`, `RateLimitError.retryAfter`
   and the request config in `base-client.ts`), `npm run build` failed because `tslib` (required by `@rollup/plugin-typescript`)

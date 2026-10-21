@@ -804,24 +804,78 @@ fn split_top_level(list: &str) -> Vec<&str> {
     parts
 }
 
+/// Joins an attribute that spans several lines (a multi-line `#[derive(..)]`) into one entry, so the
+/// derive scan sees `Debug` in it. The entry keeps the line number of the attribute's first line.
+fn join_multiline_attributes(lines: Vec<(usize, &str)>) -> Vec<(usize, String)> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let (no, line) = lines[i];
+        let open = line.matches('[').count() as i32 - line.matches(']').count() as i32;
+        if line.trim_start().starts_with("#[") && open > 0 {
+            let mut joined = line.to_string();
+            let mut depth = open;
+            while depth > 0 && i + 1 < lines.len() {
+                i += 1;
+                let next = lines[i].1;
+                depth += next.matches('[').count() as i32 - next.matches(']').count() as i32;
+                joined.push(' ');
+                joined.push_str(next.trim());
+            }
+            out.push((no, joined));
+        } else {
+            out.push((no, line.to_string()));
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The `name: type` pairs written between the braces of a single line, for a struct declared on one
+/// line (`struct A { a: String }`, `from_item`) or an enum variant on one line
+/// (`Variant { a: String, b: u32 },`, `variant`). Empty when the line has no complete brace pair or is
+/// not one of those shapes.
+fn inline_fields(code: &str, from_item: bool, variant: bool) -> Vec<(String, String)> {
+    if !from_item && !variant {
+        return Vec::new();
+    }
+    let (Some(open), Some(close)) = (code.find('{'), code.rfind('}')) else {
+        return Vec::new();
+    };
+    if open >= close {
+        return Vec::new();
+    }
+    split_top_level(&code[open + 1..close])
+        .iter()
+        .filter_map(|part| {
+            let (name, ty) = part.split_once(':')?;
+            let name = name.trim().trim_start_matches("pub").trim();
+            let name = name.trim_start_matches(|c: char| c == '(' || c == ')' || c.is_whitespace());
+            let name = name.rsplit(' ').next().unwrap_or(name);
+            (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                .then(|| (name.to_string(), ty.trim().to_string()))
+        })
+        .collect()
+}
+
 fn scan_derived_debug(file: &str, content: &str) -> DebugScan {
     let item = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(struct|enum)\s+(\w+)").unwrap();
     let field = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*(.+?),?\s*(?://.*)?$")
         .unwrap();
     let tuple = regex::Regex::new(r"(?:^|[^\w])(\w*)\(([^()]*)\)").unwrap();
     let plain = regex::Regex::new(
-        r"^(?:pub(?:\([^)]*\))?\s+)?(?:Option<)?(?:String|Vec<u8>|Vec<String>|Box<str>|Arc<str>)>?$",
+        r"^(?:pub(?:\([^)]*\))?\s+)?(?:Option<)?(?:String|Vec<u8>|Vec<String>|Vec<Vec<u8>>|Box<str>|Box<\[u8\]>|Arc<str>|Cow<'\w+, ?str>|Bytes|\[u8; ?\w+\])>?$",
     )
     .unwrap();
 
-    let lines = production_lines(file, content);
+    let lines = join_multiline_attributes(production_lines(file, content));
     let mut scan = DebugScan {
         derived_types: 0,
         plain_fields: Vec::new(),
     };
     let mut i = 0;
     while i < lines.len() {
-        let Some(m) = item.captures(lines[i].1) else {
+        let Some(m) = item.captures(lines[i].1.as_str()) else {
             i += 1;
             continue;
         };
@@ -832,7 +886,10 @@ fn scan_derived_debug(file: &str, content: &str) -> DebugScan {
         while j > 0 {
             let above = lines[j - 1].1.trim();
             if above.starts_with("#[") || above.starts_with("///") {
-                if above.starts_with("#[derive(") && above.contains("Debug") {
+                if (above.starts_with("#[derive(") || above.starts_with("#[cfg_attr("))
+                    && above.contains("derive(")
+                    && above.contains("Debug")
+                {
                     derives_debug = true;
                 }
                 j -= 1;
@@ -847,13 +904,21 @@ fn scan_derived_debug(file: &str, content: &str) -> DebugScan {
         let (mut depth, mut opened) = (0i32, false);
         let mut k = i;
         while k < lines.len() {
-            let l = lines[k].1;
+            let l = lines[k].1.as_str();
             depth += l.matches('{').count() as i32 - l.matches('}').count() as i32;
             opened |= l.contains('{');
             if derives_debug {
                 let code = l.split("//").next().unwrap_or(l);
                 let trimmed = code.trim_start();
-                if k > i
+                let inline = inline_fields(code, k == i && kind == "struct", k > i);
+                if !inline.is_empty() {
+                    // `Variant { a: String, b: String },` or `struct A { a: String }` on one line.
+                    for (fname, fty) in inline {
+                        if plain.is_match(fty.trim()) {
+                            scan.plain_fields.push((name.clone(), lines[k].0, fname));
+                        }
+                    }
+                } else if k > i
                     && let Some(f) = field.captures(l)
                 {
                     if plain.is_match(f[2].trim()) {
@@ -1085,6 +1150,75 @@ fn test_derived_debug_plain_fields_are_reviewed() {
     );
 }
 
+/// Lines inside `macro_rules!` bodies that define a type or derive anything. A type generated by a
+/// macro is invisible to the derived-`Debug` scan, so none may exist until the scan learns them.
+fn macro_defined_types(file: &str, content: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].contains("macro_rules!") {
+            i += 1;
+            continue;
+        }
+        let (mut depth, mut opened) = (0i32, false);
+        let mut k = i;
+        while k < lines.len() {
+            let l = lines[k];
+            depth += l.matches('{').count() as i32 - l.matches('}').count() as i32;
+            opened |= l.contains('{');
+            let code = l.trim_start();
+            if !code.starts_with("//")
+                && (code.contains("#[derive(")
+                    || code.starts_with("struct ")
+                    || code.starts_with("pub struct ")
+                    || code.starts_with("enum ")
+                    || code.starts_with("pub enum "))
+            {
+                found.push(format!("{file}:{} - {}", k + 1, code));
+            }
+            if opened && depth <= 0 {
+                break;
+            }
+            k += 1;
+        }
+        i = k + 1;
+    }
+    found
+}
+
+/// No macro in `src/` defines a type (see [`macro_defined_types`]).
+#[test]
+fn test_no_types_are_defined_inside_macros() {
+    let mut paths = Vec::new();
+    rust_files_under("src", &mut paths);
+    paths.sort();
+    let macros_seen = paths
+        .iter()
+        .filter_map(|p| fs::read_to_string(p).ok())
+        .filter(|c| c.contains("macro_rules!"))
+        .count();
+    // Control: the walk reaches files that do contain macros.
+    assert!(
+        macros_seen > 0,
+        "no macro_rules! found under src/: the walk is broken"
+    );
+    let found: Vec<String> = paths
+        .iter()
+        .filter_map(|p| fs::read_to_string(p).ok().map(|c| (p, c)))
+        .flat_map(|(p, c)| macro_defined_types(p, &c))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "types defined inside macros:
+{}",
+        found.join(
+            "
+"
+        )
+    );
+}
+
 #[cfg(test)]
 mod debug_review_tests {
     use super::*;
@@ -1158,5 +1292,130 @@ mod debug_review_tests {
     fn enum_variant_fields_are_seen() {
         let src = "#[derive(Debug)]\npub enum C {\n    Create {\n        value: Option<String>,\n    },\n}\n";
         assert_eq!(problems(src).len(), 1);
+    }
+
+    #[test]
+    fn one_line_struct_variants_and_structs_are_seen() {
+        let variant = "#[derive(Debug)]
+pub enum E {
+    Ext { name: String, value: String },
+    Unit,
+}
+";
+        let got = problems(variant);
+        assert!(got.iter().any(|p| p.contains("E.value")), "{got:?}");
+        let inline_struct = "#[derive(Debug)]
+pub struct A { pub value: String }
+";
+        let got = problems(inline_struct);
+        assert!(got.iter().any(|p| p.contains("A.value")), "{got:?}");
+        // Controls: a one-line variant with only public names, and a hand-written one, are fine.
+        assert!(
+            problems(
+                "#[derive(Debug)]
+pub enum E {
+    Ext { name: String, client_id: String },
+}
+"
+            )
+            .is_empty()
+        );
+        assert!(problems(&variant.replace("#[derive(Debug)]", "#[derive(Clone)]")).is_empty());
+    }
+
+    #[test]
+    fn a_derive_inside_cfg_attr_counts() {
+        let src = "#[cfg_attr(feature = \"x\", derive(Debug))]
+pub struct A {
+    pub value: String,
+}
+";
+        let got = problems(src);
+        assert!(got.iter().any(|p| p.contains("A.value")), "{got:?}");
+        // Control: a cfg_attr that derives something else is not a Debug derive.
+        assert!(problems(&src.replace("derive(Debug)", "derive(Clone)")).is_empty());
+    }
+
+    #[test]
+    fn generic_cfg_gated_and_multiline_derive_items_are_scanned() {
+        let generic = "#[cfg(feature = \"x\")]
+#[derive(Debug)]
+pub struct W<T>(pub String, T);
+";
+        let got = problems(generic);
+        assert!(got.iter().any(|p| p.contains("W.<tuple>")), "{got:?}");
+        let multi = "#[derive(
+    Debug,
+    Clone,
+)]
+pub struct M {
+    pub value: String,
+}
+";
+        let got = problems(multi);
+        assert!(got.iter().any(|p| p.contains("M.value")), "{got:?}");
+        // Control: the same multi-line attribute without `Debug` derives nothing to check.
+        assert!(
+            problems(&multi.replace(
+                "    Debug,
+",
+                ""
+            ))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn other_byte_and_string_shapes_count_as_plain_text() {
+        for ty in [
+            "Vec<Vec<u8>>",
+            "Box<[u8]>",
+            "Cow<'static, str>",
+            "Bytes",
+            "[u8; 32]",
+            "Option<Bytes>",
+        ] {
+            let src = format!(
+                "#[derive(Debug)]
+pub struct A {{
+    pub value: {ty},
+}}
+"
+            );
+            assert_eq!(problems(&src).len(), 1, "{ty}: {:?}", problems(&src));
+        }
+        // Control: a non-text shape is not scanned.
+        assert!(
+            problems(
+                "#[derive(Debug)]
+pub struct A {
+    pub value: u64,
+}
+"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn macro_bodies_that_define_types_are_found() {
+        let defining = "macro_rules! make {
+    ($n:ident) => {
+        #[derive(Debug)]
+        pub struct $n {
+            pub value: String,
+        }
+    };
+}
+";
+        assert!(!macro_defined_types("fixture.rs", defining).is_empty());
+        // Control: a macro that only expands to expressions is fine.
+        let plain = "macro_rules! twice {
+    ($e:expr) => {
+        $e + $e
+    };
+}
+";
+        assert!(macro_defined_types("fixture.rs", plain).is_empty());
     }
 }

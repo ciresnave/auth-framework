@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc110`
+- Current crate version: `0.6.0-rc111`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -195,7 +195,7 @@ This phase begins once the release-readiness and DX stabilization work above is 
 - [ ] Verify what `Debug` prints for the third-party types our structs hold: `reqwest::Client`, `sqlx` pools and connect options,
       `tokio_postgres::Config`, and `redis` versions before 1.7.1 (1.7.1 redacts the password). Only `jsonwebtoken` 9.3 / 10.x / 11.1
       and `redis` 1.7.1 have been read so far.
-- [ ] Scheduled `cargo deny` / `cargo audit` on every maintained release branch (weekly and on push): a new advisory reached
+- [x] Scheduled `cargo deny` / `cargo audit` on every maintained release branch (weekly and on push; done in 0.6.0-rc110 as `security-audit-branches.yml`): a new advisory reached
       `release/0.4.x` and `release/0.5.x` only when an unrelated PR ran CI, because lockfile refreshes land on `main` alone.
 - [ ] Error-message variants (`AuthError`, `StorageError`, `DatabaseError`, `ConfigError`, ...) are allowed in the derived-`Debug` audit as
       "diagnostic text", but an error is only as clean as the code that builds it: grep every construction site of the allowed variants
