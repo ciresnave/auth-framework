@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.37] - Unreleased
+
+### Fixed
+
+- **Log lines and error text no longer carry session ids, event JWTs, webhook URLs or one-time codes (backport of 0.6.0-rc114 and rc117).** Thirteen
+  `trace!`/`debug!`/`info!`/`warn!`/`error!` calls wrote a session id (the session endpoints, `AuthFramework` session handling, OIDC extensions, CAEP),
+  an event JWT or the e-mail MFA code as they were. High-entropy identifiers are now logged as `redact::fingerprint(..)` (`sha256:` and four bytes of the
+  digest, enough to match two lines about the same value and no way back); one-time codes are not logged. The development SMS provider logs the length of
+  a message, not the message; alert webhook URLs (Slack, Teams, generic) are logged as `scheme://host` by the new `redact::url_origin`. A new audit test
+  fails when a log macro is passed a bare session id, token, code, password, challenge or similar identifier, as an argument or inline in the format
+  string; it skips only test-only items (not the rest of the file after one), reads field access, `*_str` names and the arguments of a nested `format!`,
+  `json!` or `serde_json::to_string`, and fails on this tree before the change (13 sites) and when any site is put back.
+
 ## [0.4.36] - Unreleased
 
 ### Fixed

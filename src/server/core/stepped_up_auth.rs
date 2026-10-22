@@ -925,7 +925,7 @@ impl SteppedUpAuthManager {
             tracing::info!(
                 "Updated auth level for user {} session {} to {:?}",
                 user_id,
-                session.session_id,
+                crate::utils::redact::fingerprint(&session.session_id),
                 auth_level
             );
         }
@@ -980,7 +980,7 @@ impl SteppedUpAuthManager {
 
                         tracing::info!(
                             "CIBA authentication status for {}: {}",
-                            auth_req_id_str,
+                            crate::utils::redact::fingerprint(auth_req_id_str),
                             status
                         );
                         return Ok(Some(serde_json::json!({
@@ -991,7 +991,11 @@ impl SteppedUpAuthManager {
                         })));
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to get CIBA request for {}: {}", auth_req_id_str, e);
+                        tracing::warn!(
+                            "Failed to get CIBA request for {}: {}",
+                            crate::utils::redact::fingerprint(auth_req_id_str),
+                            e
+                        );
                         // Continue with pending status as fallback
                         return Ok(Some(serde_json::json!({
                             "ciba_auth_req_id": auth_req_id_str,
@@ -1071,13 +1075,13 @@ impl SteppedUpAuthManager {
                             Ok(()) => {
                                 tracing::info!(
                                     "Successfully cancelled expired CIBA request: {}",
-                                    auth_req_id_str
+                                    crate::utils::redact::fingerprint(auth_req_id_str)
                                 );
                             }
                             Err(e) => {
                                 tracing::warn!(
                                     "Failed to cancel expired CIBA request {}: {}",
-                                    auth_req_id_str,
+                                    crate::utils::redact::fingerprint(auth_req_id_str),
                                     e
                                 );
                             }

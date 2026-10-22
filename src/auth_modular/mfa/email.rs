@@ -257,8 +257,8 @@ impl EmailManager {
             )).await {
                 Ok(()) => {
                     info!(
-                        "Email code '{}' sent successfully to {} for user '{}' via {:?}",
-                        code, email_address, user_id, self.email_config.provider
+                        "Email code sent successfully to {} for user '{}' via {:?}",
+                        email_address, user_id, self.email_config.provider
                     );
                     Ok(())
                 }
@@ -306,7 +306,7 @@ impl EmailManager {
                 info!("📧 [DEVELOPMENT] Email would be sent:");
                 info!("   To: {}", to_email);
                 info!("   Subject: {}", subject);
-                info!("   Body: {}", body);
+                info!("   Body: <{} bytes, not logged>", body.len());
                 Ok(())
             }
         }
@@ -428,7 +428,7 @@ impl EmailManager {
         let code = format!("{:06}", rand::random::<u32>() % 1_000_000);
 
         // In a real implementation, get the email address and send actual email
-        tracing::info!("Mock email code {} sent to user {}", code, user_id);
+        tracing::info!("Mock email code sent to user {}", user_id);
 
         // Store the code for later verification
         let email_key = format!("email_code:{}", user_id);

@@ -359,7 +359,7 @@ impl SmsKitManager {
                     "📱 [SMSKit Development] SMS would be sent to: {}",
                     phone_number
                 );
-                info!("   Message: {}", message);
+                info!("   Message: <{} bytes, not logged>", message.len());
             }
         }
 

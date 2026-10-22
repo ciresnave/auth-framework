@@ -878,7 +878,10 @@ impl AuthFramework {
             .update_session_count(session_count.saturating_sub(1))
             .await;
 
-        info!("Session '{}' deleted", session_id);
+        info!(
+            "Session '{}' deleted",
+            crate::utils::redact::fingerprint(session_id)
+        );
         Ok(())
     }
 
@@ -1027,7 +1030,9 @@ impl AuthFramework {
 
                 info!(
                     "Session {} for user {} expires at {}",
-                    session_id, session_data.user_id, session_data.expires_at
+                    crate::utils::redact::fingerprint(session_id),
+                    session_data.user_id,
+                    session_data.expires_at
                 );
             }
         }
@@ -2203,7 +2208,7 @@ impl AuthFramework {
             // In production: Send to message queue, distributed cache, or peer instances
             tracing::trace!(
                 "Broadcasting session state - ID: {}, User: {}, Last Activity: {}",
-                session_id,
+                crate::utils::redact::fingerprint(session_id),
                 session.user_id,
                 session.last_activity
             );
@@ -2239,7 +2244,7 @@ impl AuthFramework {
 
                     tracing::warn!(
                         "Resolved session conflict for session {} using timestamp priority",
-                        session_id
+                        crate::utils::redact::fingerprint(session_id)
                     );
                 }
             }
@@ -2252,7 +2257,10 @@ impl AuthFramework {
     /// Synchronize session with remote instances
     pub async fn synchronize_session(&self, session_id: &str) -> Result<()> {
         // IMPLEMENTATION COMPLETE: Individual session synchronization
-        tracing::debug!("Synchronizing session: {}", session_id);
+        tracing::debug!(
+            "Synchronizing session: {}",
+            crate::utils::redact::fingerprint(session_id)
+        );
 
         let mut sessions_guard = self.sessions.write().await;
 
@@ -2275,7 +2283,7 @@ impl AuthFramework {
             // In production: Send session data to distributed storage/cache
             tracing::info!(
                 "Session {} synchronized - User: {}, Instance: {}",
-                session_id,
+                crate::utils::redact::fingerprint(session_id),
                 session.user_id,
                 self.get_instance_id()
             );

@@ -433,7 +433,9 @@ impl<S: SessionStorage, A: AuditStorage> SessionManager<S, A> {
                     "device_fingerprint_mismatch",
                     &format!(
                         "Session ID: {}, Expected: {}, Got: {}",
-                        session_id, session.device_info.fingerprint, current_fingerprint
+                        crate::utils::redact::fingerprint(session_id),
+                        session.device_info.fingerprint,
+                        current_fingerprint
                     ),
                     metadata.clone(),
                 )

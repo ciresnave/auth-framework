@@ -1401,7 +1401,7 @@ impl FederationOrchestratorImpl {
                 Ok(false) => {
                     tracing::warn!(
                         "IdP session {} is invalid or expired for IdP {}",
-                        idp_session.session_id,
+                        crate::utils::redact::fingerprint(&idp_session.session_id),
                         idp_session.idp_id
                     );
                     sync_needed = true;
@@ -1410,7 +1410,7 @@ impl FederationOrchestratorImpl {
                 Err(e) => {
                     tracing::error!(
                         "Failed to validate IdP session {} for IdP {}: {}",
-                        idp_session.session_id,
+                        crate::utils::redact::fingerprint(&idp_session.session_id),
                         idp_session.idp_id,
                         e
                     );
@@ -1421,7 +1421,7 @@ impl FederationOrchestratorImpl {
                     // Session is valid, continue
                     tracing::debug!(
                         "IdP session {} is valid for IdP {}",
-                        idp_session.session_id,
+                        crate::utils::redact::fingerprint(&idp_session.session_id),
                         idp_session.idp_id
                     );
                 }
@@ -1582,7 +1582,7 @@ impl FederationOrchestratorImpl {
         } else {
             tracing::warn!(
                 "No OAuth2 access token found for IdP session {}",
-                idp_session.session_id
+                crate::utils::redact::fingerprint(&idp_session.session_id)
             );
         }
 

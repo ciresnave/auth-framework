@@ -82,8 +82,7 @@ impl HardwareToken {
 
     /// Validate YubiKey response
     async fn validate_yubikey_response(&self, challenge: &str) -> Result<bool> {
-        // Simulate YubiKey validation
-        tracing::debug!("Validating YubiKey response for challenge: {}", challenge);
+        tracing::debug!("Validating YubiKey response");
 
         // In production, this would validate the OTP or FIDO response
         // For now, simulate based on challenge format

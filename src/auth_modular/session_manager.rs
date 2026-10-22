@@ -50,13 +50,20 @@ impl SessionManager {
 
         self.storage.store_session(&session_id, &session).await?;
 
-        info!("Session '{}' created for user '{}'", session_id, user_id);
+        info!(
+            "Session '{}' created for user '{}'",
+            crate::utils::redact::fingerprint(&session_id),
+            user_id
+        );
         Ok(session_id)
     }
 
     /// Get session information
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionData>> {
-        debug!("Getting session '{}'", session_id);
+        debug!(
+            "Getting session '{}'",
+            crate::utils::redact::fingerprint(session_id)
+        );
 
         let session = self.storage.get_session(session_id).await?;
 
@@ -74,10 +81,16 @@ impl SessionManager {
 
     /// Delete a session
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
-        debug!("Deleting session '{}'", session_id);
+        debug!(
+            "Deleting session '{}'",
+            crate::utils::redact::fingerprint(session_id)
+        );
 
         self.storage.delete_session(session_id).await?;
-        info!("Session '{}' deleted", session_id);
+        info!(
+            "Session '{}' deleted",
+            crate::utils::redact::fingerprint(session_id)
+        );
         Ok(())
     }
 
@@ -137,14 +150,18 @@ impl SessionManager {
     pub async fn extend_session(&self, session_id: &str, additional_time: Duration) -> Result<()> {
         debug!(
             "Extending session '{}' by {:?}",
-            session_id, additional_time
+            crate::utils::redact::fingerprint(session_id),
+            additional_time
         );
 
         if let Some(mut session) = self.storage.get_session(session_id).await? {
             session.expires_at += chrono::Duration::from_std(additional_time)
                 .map_err(|e| AuthError::internal(format!("Failed to convert duration: {}", e)))?;
             self.storage.store_session(session_id, &session).await?;
-            info!("Session '{}' extended", session_id);
+            info!(
+                "Session '{}' extended",
+                crate::utils::redact::fingerprint(session_id)
+            );
         }
 
         Ok(())
