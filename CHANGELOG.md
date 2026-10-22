@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.36] - Unreleased
+
+### Fixed
+
+- **Hand-written `Debug` impls are audited field by field, and the fields it found are redacted (backport of 0.6.0-rc113).** The audit checked derived impls
+  for plain-text fields and hand-written impls only for maps, so an impl that printed `token`, `code` or `logout_tokens` as it is went unseen.
+  Every `.field(..)` of a manual impl must now go through `redacted(..)`, be a literal or a count, or be a name the review file lists as public
+  (or be allowed per type with a reason). Redacted: introspection `token`, `client_assertion`, `registration_access_token`, the JARM authorization
+  `code`, the MFA code of a login request, device `user_code` and `verification_uri_complete`, the `interact_nonce`, OIDC session `logout_tokens`
+  and `metadata`, token `custom` claims, a threat-feed URL, and the password and configuration value typed on the `admin` command line.
+  `logout_tokens`, `interact_nonce` and `verification_uri_complete` moved from the public to the secret-capable name list.
+
 ## [0.4.35] - Unreleased
 
 ### Fixed

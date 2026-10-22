@@ -30,7 +30,10 @@ impl std::fmt::Debug for DeviceFlowInstructions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("DeviceFlowInstructions");
         d.field("verification_uri", &self.verification_uri);
-        d.field("verification_uri_complete", &self.verification_uri_complete);
+        d.field(
+            "verification_uri_complete",
+            &crate::utils::redact::redacted(&self.verification_uri_complete),
+        );
         d.field(
             "user_code",
             &crate::utils::redact::redacted(&self.user_code),

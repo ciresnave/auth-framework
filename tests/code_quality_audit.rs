@@ -823,6 +823,36 @@ fn review_debug_field(
 }
 
 /// `(derive(Debug) types, of which with a plain field, problems, stale [allow] entries)`.
+/// The label of a field of unknown type that a hand-written impl prints as it is: only names the review
+/// file calls secret-capable or ambiguous are a problem, since without the type nothing else is known.
+fn review_unknown_field(
+    review: &DebugFieldReview,
+    used: &mut [bool],
+    file: &str,
+    ty: &str,
+    label: &str,
+) -> Option<&'static str> {
+    if let Some(i) = review
+        .allow
+        .iter()
+        .position(|(f, t, fld, _)| file.ends_with(f.as_str()) && t == ty && fld == label)
+    {
+        used[i] = true;
+        return None;
+    }
+    if review.secret_capable.contains(label) {
+        Some(
+            "printed as it is by a hand-written Debug although the name is secret-capable: redact it or [allow] it with a reason",
+        )
+    } else if review.ambiguous.contains(label) {
+        Some(
+            "printed as it is by a hand-written Debug although the name is ambiguous: redact it or [allow] it with a reason",
+        )
+    } else {
+        None
+    }
+}
+
 fn debug_review_problems(
     review: &DebugFieldReview,
     files: &[(String, String)],
@@ -844,6 +874,20 @@ fn debug_review_problems(
         for (ty, line, field, container) in &scan.plain_fields {
             if let Some(why) = review_debug_field(review, &mut used, file, ty, field, *container) {
                 problems.push(format!("  {file}:{line} - {ty}.{field}: {why}"));
+            }
+        }
+        for (ty, label, kind) in handwritten_debug_fields(content).0 {
+            let why = match kind {
+                HandKind::Plain => review_debug_field(review, &mut used, file, &ty, &label, false),
+                HandKind::Container => {
+                    review_debug_field(review, &mut used, file, &ty, &label, true)
+                }
+                HandKind::Unknown => review_unknown_field(review, &mut used, file, &ty, &label),
+            };
+            if let Some(why) = why {
+                problems.push(format!(
+                    "  {file} - {ty}.{label} (hand-written Debug): {why}"
+                ));
             }
         }
     }
@@ -951,19 +995,91 @@ fn braced_block(content: &str, from: usize) -> Option<&str> {
     None
 }
 
-/// Fields that a hand-written `impl Debug for T` prints as they are (`.field("x", &self.x)`) although
-/// the field is a map, set or JSON value (see [`is_container`]): the impl redacts the plain-text
-/// fields, but a container's `Debug` prints every key and value. Returns `(type, field)` pairs and
-/// the number of hand-written impls looked at (the control that the scan reached any).
-fn handwritten_debug_containers(content: &str) -> (Vec<(String, String)>, usize) {
+/// How a field is printed by a hand-written `impl Debug`, when it is printed as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HandKind {
+    /// A plain-text field (`String`, `Vec<u8>`, ...) of the struct itself.
+    Plain,
+    /// A map, set or JSON value of the struct itself.
+    Container,
+    /// Anything else: an enum payload, a nested expression. Only the field's label is known.
+    Unknown,
+}
+
+/// The text of the call whose `(` is just before `start`, up to its matching `)`.
+fn call_args(body: &str, start: usize) -> Option<&str> {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escaped = false;
+    for (i, c) in body[start..].char_indices() {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return Some(&body[start..start + i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `("label", value)` from the arguments of a `.field(..)` call; the label is `<tuple>` for the
+/// one-argument form used by `debug_tuple`.
+fn split_field_args(args: &str) -> (String, &str) {
+    let args = args.trim();
+    if let Some(rest) = args.strip_prefix('"')
+        && let Some(end) = rest.find('"')
+    {
+        let label = &rest[..end];
+        let value = rest[end + 1..].trim_start().trim_start_matches(',').trim();
+        return (label.to_string(), value);
+    }
+    ("<tuple>".to_string(), args)
+}
+
+/// Whether a value passed to `.field(..)` cannot print a secret: it goes through `redacted(..)`, is a
+/// literal, or is only a count or presence flag.
+fn field_value_is_safe(value: &str) -> bool {
+    let v = value.trim();
+    v.contains("redacted(")
+        || v.starts_with("&\"")
+        || v.starts_with("&format_args!(\"")
+        || v.contains(".len()")
+        || v.contains(".is_some()")
+        || v.contains(".is_none()")
+        || v.contains(".is_empty()")
+}
+
+/// Every field a hand-written `impl Debug for T` prints without redacting it, as `(type, label, kind)`,
+/// and the number of hand-written impls looked at (the control that the scan reached any).
+///
+/// `kind` says what is known about the field: for a struct whose field the impl prints as
+/// `&self.member`, its declared type (plain text or container; other types cannot hold a secret and are
+/// not reported); otherwise only the label.
+fn handwritten_debug_fields(content: &str) -> (Vec<(String, String, HandKind)>, usize) {
     let impl_re =
         regex::Regex::new(r"impl(?:<[^>]*>)?\s+(?:std::fmt::|fmt::)?Debug\s+for\s+(\w+)").unwrap();
     let field_re =
         regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*(.+?),?\s*(?://.*)?$")
             .unwrap();
-    let printed = regex::Regex::new(r#"\.field\(\s*"(\w+)"\s*,\s*&self\.(\w+)\s*\)"#).unwrap();
+    let member_re =
+        regex::Regex::new(r"^&?self\.(\w+)(?:\.as_str\(\)|\.as_deref\(\)|\.clone\(\))?$").unwrap();
     let plain = regex::Regex::new(
-        r"^(?:pub(?:\([^)]*\))?\s+)?(?:Option<)?(?:String|Vec<u8>|Vec<String>|Box<str>|Arc<str>)>?$",
+        r"^(?:pub(?:\([^)]*\))?\s+)?(?:Option<)?(?:String|Vec<u8>|Vec<String>|Vec<Vec<u8>>|Box<str>|Box<\[u8\]>|Arc<str>|Cow<'\w+, ?str>|Bytes|\[u8; ?\w+\])>?$",
     )
     .unwrap();
     let (mut found, mut impls) = (Vec::new(), 0);
@@ -972,75 +1088,65 @@ fn handwritten_debug_containers(content: &str) -> (Vec<(String, String)>, usize)
         let Some(body) = braced_block(content, m.get(0).unwrap().end()) else {
             continue;
         };
+        impls += 1;
+        // Declared field types, when the type is a struct declared in this file.
+        let mut types = std::collections::HashMap::new();
         let item = regex::Regex::new(&format!(
             r"(?:pub(?:\([^)]*\))?\s+)?struct\s+{ty}\b[^;{{]*\{{"
         ))
         .unwrap();
-        let Some(item_m) = item.find(content) else {
-            continue;
-        };
-        impls += 1;
-        let Some(fields) = braced_block(content, item_m.start()) else {
-            continue;
-        };
-        let mut depth = 0i32;
-        let mut types = std::collections::HashMap::new();
-        for line in fields.lines() {
-            if depth == 0
-                && let Some(f) = field_re.captures(line)
-            {
-                types.insert(f[1].to_string(), f[2].trim().to_string());
+        if let Some(item_m) = item.find(content)
+            && let Some(fields) = braced_block(content, item_m.start())
+        {
+            let mut depth = 0i32;
+            for line in fields.lines() {
+                if depth == 0
+                    && let Some(f) = field_re.captures(line)
+                {
+                    types.insert(f[1].to_string(), f[2].trim().to_string());
+                }
+                depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
             }
-            depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
         }
-        for p in printed.captures_iter(body) {
-            if p[1] == p[2]
-                && let Some(ft) = types.get(&p[2])
-                && is_container(ft, &plain)
-            {
-                found.push((ty.to_string(), p[2].to_string()));
+        let mut at = 0;
+        while let Some(i) = body[at..].find(".field(") {
+            let start = at + i + ".field(".len();
+            at = start;
+            let Some(args) = call_args(body, start) else {
+                continue;
+            };
+            let (label, value) = split_field_args(args);
+            if field_value_is_safe(value) {
+                continue;
             }
+            let kind = match member_re
+                .captures(value)
+                .and_then(|c| types.get(&c[1]).cloned())
+            {
+                Some(ft) if plain.is_match(ft.trim()) => HandKind::Plain,
+                Some(ft) if is_container(&ft, &plain) => HandKind::Container,
+                Some(_) => continue,
+                None => HandKind::Unknown,
+            };
+            found.push((ty.to_string(), label, kind));
         }
     }
     (found, impls)
 }
 
-/// A hand-written `Debug` must not print a map, set or JSON value as it is either: its entries and
-/// keys can be tokens or session ids. Name-level and per-type decisions come from the same review file
-/// as the derived-`Debug` audit ([container_ok] and [allow]).
+/// The hand-written side of the audit reaches many impls (control: an empty result is not vacuous).
 #[test]
-fn test_handwritten_debug_does_not_print_containers() {
+fn test_handwritten_debug_scan_reaches_the_impls() {
     let mut paths = Vec::new();
     rust_files_under("src", &mut paths);
-    paths.sort();
-    let review = parse_debug_field_review(include_str!("debug_field_review.txt"));
-    let mut used = vec![false; review.allow.len()];
-    let (mut problems, mut impls) = (Vec::new(), 0);
-    check_not_compiled(&paths);
-    for path in paths
+    let impls: usize = paths
         .iter()
-        .filter(|p| !NOT_COMPILED.iter().any(|(n, _)| *n == p.as_str()))
-    {
-        let Ok(content) = fs::read_to_string(path) else {
-            continue;
-        };
-        let (found, n) = handwritten_debug_containers(&content);
-        impls += n;
-        for (ty, field) in found {
-            if let Some(why) = review_debug_field(&review, &mut used, path, &ty, &field, true) {
-                problems.push(format!("  {path} - {ty}.{field}: {why}"));
-            }
-        }
-    }
-    // Control: the walk reached many hand-written impls, so an empty result is not vacuous.
+        .filter_map(|p| fs::read_to_string(p).ok())
+        .map(|c| handwritten_debug_fields(&c).1)
+        .sum();
     assert!(
         impls >= 100,
         "only {impls} hand-written Debug impls scanned"
-    );
-    assert!(
-        problems.is_empty(),
-        "hand-written Debug impls that print a map, set or JSON value as it is:\n{}",
-        problems.join("\n")
     );
 }
 
@@ -1340,16 +1446,60 @@ pub struct A {
     }
 
     #[test]
-    fn handwritten_debug_printing_a_container_is_found() {
-        let leaky = "pub struct M {\n    pub name: String,\n    sessions: HashMap<String, Session>,\n}\nimpl std::fmt::Debug for M {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        f.debug_struct(\"M\")\n            .field(\"name\", &self.name)\n            .field(\"sessions\", &self.sessions)\n            .finish()\n    }\n}\n";
-        let (found, impls) = handwritten_debug_containers(leaky);
+    fn handwritten_debug_printing_a_field_as_it_is_is_found() {
+        let leaky = "pub struct M {\n    pub name: String,\n    pub token: String,\n    sessions: HashMap<String, Session>,\n    count: u32,\n}\nimpl std::fmt::Debug for M {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        f.debug_struct(\"M\")\n            .field(\"name\", &self.name)\n            .field(\"token\", &self.token)\n            .field(\"sessions\", &self.sessions)\n            .field(\"count\", &self.count)\n            .finish()\n    }\n}\n";
+        let (found, impls) = handwritten_debug_fields(leaky);
         assert_eq!(impls, 1);
-        assert_eq!(found, vec![("M".to_string(), "sessions".to_string())]);
-        // Controls: the same field hidden behind `redacted(..)`, or a map with no free-text key or
-        // value, is not reported.
-        let hidden = leaky.replace("&self.sessions", "&redacted(&self.sessions)");
-        assert!(handwritten_debug_containers(&hidden).0.is_empty());
+        assert_eq!(
+            found,
+            vec![
+                ("M".to_string(), "name".to_string(), HandKind::Plain),
+                ("M".to_string(), "token".to_string(), HandKind::Plain),
+                ("M".to_string(), "sessions".to_string(), HandKind::Container),
+            ]
+        );
+        // The review turns those into problems: `token` is secret-capable in the fixture, `name` is
+        // public and `sessions` is not a [container_ok] name.
+        let got =
+            debug_review_problems(&review(), &[("fixture.rs".to_string(), leaky.to_string())]).2;
+        assert!(got.iter().any(|p| p.contains("M.token")), "{got:?}");
+        assert!(got.iter().any(|p| p.contains("M.sessions")), "{got:?}");
+        assert!(!got.iter().any(|p| p.contains("M.name")), "{got:?}");
+        // Controls: the same fields behind `redacted(..)`, as a literal, or as a count are not
+        // reported, and a map with no free-text key or value is not reported.
+        let hidden = leaky
+            .replace("&self.token", "&redacted(&self.token)")
+            .replace("&self.sessions", "&self.sessions.len()");
+        assert_eq!(
+            handwritten_debug_fields(&hidden).0.len(),
+            1,
+            "{:?}",
+            handwritten_debug_fields(&hidden).0
+        );
         let numeric = leaky.replace("HashMap<String, Session>", "HashMap<u64, u64>");
-        assert!(handwritten_debug_containers(&numeric).0.is_empty());
+        assert!(
+            !handwritten_debug_fields(&numeric)
+                .0
+                .iter()
+                .any(|f| f.1 == "sessions")
+        );
+    }
+
+    #[test]
+    fn handwritten_enum_arms_are_checked_by_label() {
+        let src = "pub enum E {\n    A { value: String, name: String },\n}\nimpl std::fmt::Debug for E {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        match self {\n            Self::A { value, name } => f.debug_struct(\"A\").field(\"value\", value).field(\"name\", name).finish(),\n        }\n    }\n}\n";
+        let got =
+            debug_review_problems(&review(), &[("fixture.rs".to_string(), src.to_string())]).2;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("E.value"), "{got:?}");
+        let fixed = src.replace(
+            "field(\"value\", value)",
+            "field(\"value\", &\"<redacted>\")",
+        );
+        assert!(
+            debug_review_problems(&review(), &[("fixture.rs".to_string(), fixed)])
+                .2
+                .is_empty()
+        );
     }
 }
