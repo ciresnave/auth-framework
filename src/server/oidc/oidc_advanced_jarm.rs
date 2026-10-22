@@ -914,7 +914,7 @@ pub struct AuthorizationResponse {
 impl std::fmt::Debug for AuthorizationResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("AuthorizationResponse");
-        d.field("code", &self.code);
+        d.field("code", &crate::utils::redact::redacted(&self.code));
         d.field(
             "access_token",
             &crate::utils::redact::redacted(&self.access_token),

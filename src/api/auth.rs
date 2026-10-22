@@ -22,7 +22,7 @@ impl std::fmt::Debug for LoginRequest {
         let mut d = f.debug_struct("LoginRequest");
         d.field("username", &self.username);
         d.field("password", &crate::utils::redact::redacted(&self.password));
-        d.field("mfa_code", &self.mfa_code);
+        d.field("mfa_code", &crate::utils::redact::redacted(&self.mfa_code));
         d.field("remember_me", &self.remember_me);
         d.finish()
     }
