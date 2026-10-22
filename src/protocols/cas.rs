@@ -218,15 +218,16 @@ impl CasClient {
             urlencoding::encode(ticket)
         );
 
-        let resp =
-            self.http.get(&url).send().await.map_err(|e| {
-                AuthError::internal(format!("CAS v1 validation request failed: {e}"))
-            })?;
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            AuthError::internal(format!(
+                "CAS v1 validation request failed: {}",
+                e.without_url()
+            ))
+        })?;
 
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| AuthError::internal(format!("CAS v1 response read failed: {e}")))?;
+        let body = resp.text().await.map_err(|e| {
+            AuthError::internal(format!("CAS v1 response read failed: {}", e.without_url()))
+        })?;
 
         // CAS 1.0 response: two lines — "yes\nusername\n" or "no\n"
         let lines: Vec<&str> = body.trim().lines().collect();
@@ -276,12 +277,12 @@ impl CasClient {
             urlencoding::encode(ticket)
         );
 
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| AuthError::internal(format!("CAS validation request failed: {e}")))?;
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            AuthError::internal(format!(
+                "CAS validation request failed: {}",
+                e.without_url()
+            ))
+        })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -290,10 +291,9 @@ impl CasClient {
             )));
         }
 
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| AuthError::internal(format!("CAS response read failed: {e}")))?;
+        let body = resp.text().await.map_err(|e| {
+            AuthError::internal(format!("CAS response read failed: {}", e.without_url()))
+        })?;
 
         parse_cas_xml_response(&body)
     }

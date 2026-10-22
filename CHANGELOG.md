@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc57] - Unreleased
+
+### Fixed
+
+- **Log lines no longer carry session ids, event JWTs, webhook URLs, CAS tickets or one-time codes (backport of 0.6.0-rc114 and rc117).** An audit test now
+  fails when a log macro is passed a secret-bearing value outside a redaction helper. Identifiers that must be correlated are logged as a short fingerprint,
+  URLs as their origin only (`crate::utils::redact::{fingerprint, url_origin}`).
+
 ## [0.5.0-rc56] - Unreleased
 
 ### Fixed

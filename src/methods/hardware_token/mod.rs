@@ -116,7 +116,7 @@ impl HardwareOtpToken {
 
     /// Validate YubiKey response
     async fn validate_yubikey_response(&self, challenge: &str) -> Result<bool> {
-        tracing::debug!("Validating YubiKey response for challenge: {}", challenge);
+        tracing::debug!("Validating YubiKey response");
 
         // YubiKey OTP format: starts with the 12-char device prefix (modhex) followed
         // by a 32-char encrypted OTP — total 44 characters.  The default public-ID
@@ -193,11 +193,17 @@ impl HardwareOtpToken {
             validation_url, client_id, otp, nonce
         );
         let response = client.get(&url).send().await.map_err(|e| {
-            crate::errors::AuthError::internal(format!("Yubico API request failed: {}", e))
+            crate::errors::AuthError::internal(format!(
+                "Yubico API request failed: {}",
+                e.without_url()
+            ))
         })?;
 
         let body: String = response.text().await.map_err(|e: reqwest::Error| {
-            crate::errors::AuthError::internal(format!("Failed to read Yubico API response: {}", e))
+            crate::errors::AuthError::internal(format!(
+                "Failed to read Yubico API response: {}",
+                e.without_url()
+            ))
         })?;
 
         // The Yubico API returns a CRLF-delimited key=value list.

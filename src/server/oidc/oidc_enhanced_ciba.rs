@@ -1014,7 +1014,7 @@ impl EnhancedCibaManager {
 
             tracing::info!(
                 "CIBA session configured: {} for user: {} in mode: {:?}",
-                final_session_id,
+                crate::utils::redact::fingerprint(&final_session_id),
                 user_subject,
                 request.mode
             );
@@ -1104,7 +1104,7 @@ impl EnhancedCibaManager {
                         tracing::info!(
                             "CIBA notification sent successfully to {} for request {}",
                             endpoint,
-                            auth_req_id
+                            crate::utils::redact::fingerprint(auth_req_id)
                         );
                         return Ok(());
                     } else {
@@ -1375,7 +1375,7 @@ impl EnhancedCibaManager {
                     if is_valid {
                         tracing::debug!(
                             "CIBA session validation successful for session: {}",
-                            session_id
+                            crate::utils::redact::fingerprint(session_id)
                         );
                         // Additional CIBA-specific session checks
                         if !session.metadata.is_empty() {
@@ -1383,7 +1383,10 @@ impl EnhancedCibaManager {
                             if session.metadata.contains_key("ciba_enabled") {
                                 Ok(true)
                             } else {
-                                tracing::debug!("Session {} does not support CIBA", session_id);
+                                tracing::debug!(
+                                    "Session {} does not support CIBA",
+                                    crate::utils::redact::fingerprint(session_id)
+                                );
                                 Ok(false)
                             }
                         } else {
@@ -1391,7 +1394,10 @@ impl EnhancedCibaManager {
                             Ok(true)
                         }
                     } else {
-                        tracing::warn!("CIBA session {} has expired or is invalid", session_id);
+                        tracing::warn!(
+                            "CIBA session {} has expired or is invalid",
+                            crate::utils::redact::fingerprint(session_id)
+                        );
                         Ok(false)
                     }
                 }
@@ -1402,11 +1408,14 @@ impl EnhancedCibaManager {
                     if session_id.contains("session") || session_id.contains("custom_session") {
                         tracing::debug!(
                             "CIBA test session {} not found in session manager - allowing for test environment",
-                            session_id
+                            crate::utils::redact::fingerprint(session_id)
                         );
                         Ok(true)
                     } else {
-                        tracing::warn!("CIBA session {} not found", session_id);
+                        tracing::warn!(
+                            "CIBA session {} not found",
+                            crate::utils::redact::fingerprint(session_id)
+                        );
                         Ok(false)
                     }
                 }
@@ -1444,8 +1453,8 @@ impl EnhancedCibaManager {
 
                     tracing::info!(
                         "Marking CIBA session {} for revocation (request: {}). Session will expire naturally or be cleaned up by session manager.",
-                        session_id,
-                        auth_req_id
+                        crate::utils::redact::fingerprint(session_id),
+                        crate::utils::redact::fingerprint(auth_req_id)
                     );
 
                     // In a production implementation with Arc<RwLock<SessionManager>>:
@@ -1457,10 +1466,16 @@ impl EnhancedCibaManager {
                     // For now, we record the revocation intent in the CIBA request metadata
                     // This allows other parts of the system to check revocation status
                 } else {
-                    tracing::debug!("CIBA session {} already expired or removed", session_id);
+                    tracing::debug!(
+                        "CIBA session {} already expired or removed",
+                        crate::utils::redact::fingerprint(session_id)
+                    );
                 }
             } else {
-                tracing::debug!("No session associated with CIBA request {}", auth_req_id);
+                tracing::debug!(
+                    "No session associated with CIBA request {}",
+                    crate::utils::redact::fingerprint(auth_req_id)
+                );
             }
         }
 

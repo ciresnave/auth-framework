@@ -263,8 +263,8 @@ impl EmailManager {
             )).await {
                 Ok(()) => {
                     info!(
-                        "Email code '{}' sent successfully to {} for user '{}' via {:?}",
-                        code, email_address, user_id, self.email_config.provider
+                        "Email code sent successfully to {} for user '{}' via {:?}",
+                        email_address, user_id, self.email_config.provider
                     );
                     Ok(())
                 }
@@ -312,7 +312,7 @@ impl EmailManager {
                 info!("📧 [DEVELOPMENT] Email would be sent:");
                 info!("   To: {}", to_email);
                 info!("   Subject: {}", subject);
-                info!("   Body: {}", body);
+                info!("   Body: <{} bytes, not logged>", body.len());
                 Ok(())
             }
         }

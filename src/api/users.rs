@@ -572,7 +572,10 @@ pub async fn revoke_session(
 
                     match storage.delete_session(&session_id).await {
                         Ok(()) => {
-                            tracing::info!("Revoked session: {}", session_id);
+                            tracing::info!(
+                                "Revoked session: {}",
+                                crate::utils::redact::fingerprint(&session_id)
+                            );
                             ApiResponse::<()>::ok_with_message("Session revoked successfully")
                         }
                         Err(e) => ApiResponse::<()>::from(e),

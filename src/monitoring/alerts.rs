@@ -453,12 +453,12 @@ impl AlertManager {
                 let client = reqwest::Client::new();
                 if let Err(e) = client.post(webhook_url).json(&payload).send().await {
                     tracing::error!(
-                        webhook_url = %webhook_url,
-                        error = %e,
+                        webhook_url = %crate::utils::redact::url_origin(webhook_url),
+                        error = %e.without_url(),
                         "Failed to send Slack alert"
                     );
                 } else {
-                    tracing::info!(webhook_url = %webhook_url, "Slack alert sent: {}", alert.title);
+                    tracing::info!(webhook_url = %crate::utils::redact::url_origin(webhook_url), "Slack alert sent: {}", alert.title);
                 }
             }
             NotificationChannel::Teams { webhook_url } => {
@@ -484,12 +484,12 @@ impl AlertManager {
                 let client = reqwest::Client::new();
                 if let Err(e) = client.post(webhook_url).json(&payload).send().await {
                     tracing::error!(
-                        webhook_url = %webhook_url,
-                        error = %e,
+                        webhook_url = %crate::utils::redact::url_origin(webhook_url),
+                        error = %e.without_url(),
                         "Failed to send Teams alert"
                     );
                 } else {
-                    tracing::info!(webhook_url = %webhook_url, "Teams alert sent: {}", alert.title);
+                    tracing::info!(webhook_url = %crate::utils::redact::url_origin(webhook_url), "Teams alert sent: {}", alert.title);
                 }
             }
             NotificationChannel::Webhook { url, headers } => {
@@ -508,9 +508,9 @@ impl AlertManager {
                     req = req.header(k, v);
                 }
                 if let Err(e) = req.send().await {
-                    tracing::error!(url = %url, error = %e, "Failed to send webhook alert");
+                    tracing::error!(url = %crate::utils::redact::url_origin(url), error = %e.without_url(), "Failed to send webhook alert");
                 } else {
-                    tracing::info!(url = %url, "Webhook alert sent: {}", alert.title);
+                    tracing::info!(url = %crate::utils::redact::url_origin(url), "Webhook alert sent: {}", alert.title);
                 }
             }
             NotificationChannel::Log { level } => match level.as_str() {
