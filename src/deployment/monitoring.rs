@@ -227,13 +227,26 @@ pub struct EmailConfig {
     pub body: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SlackConfig {
     pub api_url: String,
     pub channel: String,
     pub username: String,
     pub title: String,
     pub text: String,
+}
+
+/// `api_url` is a Slack incoming-webhook URL: the secret is in its path.
+impl std::fmt::Debug for SlackConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("SlackConfig");
+        d.field("api_url", &crate::utils::redact::redacted(&self.api_url));
+        d.field("channel", &self.channel);
+        d.field("username", &self.username);
+        d.field("title", &self.title);
+        d.field("text", &self.text);
+        d.finish()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

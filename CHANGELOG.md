@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dependencies: `tokio` is required at 1.54.1 or later and locked to it (RUSTSEC-2026-0384).** Tokio 1.54.0, now yanked, has a race between `tokio::time::Interval::poll_tick` and the time driver on the multi-threaded runtime that can free a timer entry still in use (use-after-free). The crate spawns loops that `tick()` an `Interval` (storage cleanup, the architecture cleanup task, the deployment health monitor, CAEP continuous evaluation), so an application that resolved 1.54.0 was exposed. The `Cargo.toml` requirement rises to `1.54.1`, and `Cargo.lock` moves from 1.51.1 to 1.54.1.
 
+## [0.5.0-rc59] - Unreleased
+
+### Fixed
+
+- **`Debug`, `Display` and the admin CLI no longer print webhook URLs, Redis passwords, session ids or header values (backport of 0.6.0-rc118).** `SlackConfig` now has a hand-written `Debug` that shows `<redacted>` for its webhook URL. `StorageConfig`'s `Display`, and so `AuthConfig`'s, prints `redis(redis://host:port)` instead of the whole URL. `RpInitiatedLogoutResponse` prints fingerprints of the ended session ids. `AuthorizationContext` and `StepUpContext` print only the names of their custom attributes. `auth-framework-admin config show` and `config get` now mask every string under a secret-named key and the user info and secret-named query values of any URL; the new `--show-secrets` flag prints the real values.
+
 ## [0.5.0-rc57] - Unreleased
 
 ### Fixed

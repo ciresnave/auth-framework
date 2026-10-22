@@ -532,7 +532,10 @@ impl std::fmt::Display for StorageConfig {
         match self {
             Self::Memory => write!(f, "memory"),
             #[cfg(feature = "redis-storage")]
-            Self::Redis { url, .. } => write!(f, "redis({})", url),
+            // The URL can carry the password (`redis://:password@host`): print scheme and host only.
+            Self::Redis { url, .. } => {
+                write!(f, "redis({})", crate::utils::redact::url_origin(url))
+            }
             #[cfg(feature = "postgres-storage")]
             Self::Postgres { .. } => write!(f, "postgres"),
             #[cfg(feature = "sqlite-storage")]
