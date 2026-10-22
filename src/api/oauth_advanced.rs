@@ -583,7 +583,10 @@ pub async fn ciba_backchannel_auth(
             )
         })?;
 
-    debug!("CIBA request created: auth_req_id={}", auth_req_id);
+    debug!(
+        "CIBA request created: auth_req_id={}",
+        crate::utils::redact::fingerprint(&auth_req_id)
+    );
 
     Ok(Json(json!({
         "auth_req_id": auth_req_id,
