@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.38] - Unreleased
+
+### Fixed
+
+- **`Debug` and the admin CLI no longer print webhook URLs or header values (backport of 0.6.0-rc118).** `SlackConfig` now has a hand-written `Debug` that shows `<redacted>` for its webhook URL. `AuthorizationContext` and `StepUpContext` print only the names of their custom attributes. `auth-framework-admin config show` and `config get` now mask every string under a secret-named key and the user info and secret-named query values of any URL; the new `--show-secrets` flag prints the real values. `config get` now looks the key up in the running configuration instead of printing a placeholder.
+
 ## [0.4.37] - Unreleased
 
 ### Fixed

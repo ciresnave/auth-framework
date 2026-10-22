@@ -28,14 +28,20 @@ pub async fn run_cli(state: AppState, command: CliCommand) -> Result<()> {
 #[cfg(feature = "cli")]
 async fn handle_config_action(state: AppState, action: ConfigAction) -> Result<()> {
     match action {
-        ConfigAction::Show { section, format } => handle_config_show(state, section, format).await,
+        ConfigAction::Show {
+            section,
+            format,
+            show_secrets,
+        } => handle_config_show(state, section, format, show_secrets).await,
         ConfigAction::Validate { file } => handle_config_validate(state, file).await,
         ConfigAction::Set {
             key,
             value,
             hot_reload,
         } => handle_config_set(state, key, value, hot_reload).await,
-        ConfigAction::Get { key } => handle_config_get(key).await,
+        ConfigAction::Get { key, show_secrets } => {
+            handle_config_get(state, key, show_secrets).await
+        }
         ConfigAction::Reload { show_diff } => handle_config_reload(state, show_diff).await,
         ConfigAction::Template { output, complete } => {
             handle_config_template(output, complete).await
@@ -49,15 +55,21 @@ async fn handle_config_show(
     state: AppState,
     section: Option<String>,
     format: String,
+    show_secrets: bool,
 ) -> Result<()> {
     println!("{}", "📋 Current Configuration".bold().blue());
 
     let config = state.config.read().await;
-    let output = match format.as_str() {
-        "json" => serde_json::to_string_pretty(&*config)?,
-        "yaml" => serde_yaml::to_string(&*config)?,
-        "toml" => toml::to_string_pretty(&*config)?,
-        _ => toml::to_string_pretty(&*config)?,
+    let output = if show_secrets {
+        eprintln!("⚠️ Printing secrets (--show-secrets)");
+        render_config(&*config, &format)?
+    } else {
+        let mut masked = crate::admin::masked_config(&*config)?;
+        if format != "json" && format != "yaml" {
+            // TOML has no null: drop the unset values, as serializing the struct does.
+            strip_nulls(&mut masked);
+        }
+        render_config(&masked, &format)?
     };
 
     if let Some(section_name) = section {
@@ -67,6 +79,27 @@ async fn handle_config_show(
 
     println!("{}", output);
     Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn render_config<T: serde::Serialize>(config: &T, format: &str) -> Result<String> {
+    Ok(match format {
+        "json" => serde_json::to_string_pretty(config)?,
+        "yaml" => serde_yaml::to_string(config)?,
+        _ => toml::to_string_pretty(config)?,
+    })
+}
+
+#[cfg(feature = "cli")]
+fn strip_nulls(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|_, item| !item.is_null());
+            map.values_mut().for_each(strip_nulls);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_nulls),
+        _ => {}
+    }
 }
 
 #[cfg(feature = "cli")]
@@ -110,10 +143,30 @@ async fn handle_config_set(
 }
 
 #[cfg(feature = "cli")]
-async fn handle_config_get(key: String) -> Result<()> {
-    println!("Getting configuration for: {}", key.cyan());
-    // Implementation would retrieve and display the specific key value
-    println!("Value: {}", "example_value".green());
+async fn handle_config_get(state: AppState, key: String, show_secrets: bool) -> Result<()> {
+    let config = state.config.read().await;
+    // Serialize the full config to JSON and navigate the key path (dot-separated). Secrets are
+    // masked before the lookup, so asking for a secret's own key prints `<redacted>`.
+    let config_json = if show_secrets {
+        serde_json::to_value(&*config)
+            .map_err(|e| AuthError::internal(format!("Failed to serialize config: {}", e)))?
+    } else {
+        crate::admin::masked_config(&*config)?
+    };
+    let mut current = &config_json;
+    for segment in key.split('.') {
+        current = current.get(segment).ok_or_else(|| {
+            AuthError::internal(format!(
+                "Configuration key '{}' not found (segment '{}' missing)",
+                key, segment
+            ))
+        })?;
+    }
+    let display = match current {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    println!("{}: {}", key.cyan(), display.green());
     Ok(())
 }
 
