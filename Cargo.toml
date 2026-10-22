@@ -83,7 +83,7 @@
 
 [dependencies]
   # Async runtime
-  tokio = { version = "1.47.1", features = ["full"] }
+  tokio = { version = "1.54.1", features = ["full"] }
 
   # JWT handling.
   #
