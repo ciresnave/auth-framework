@@ -531,6 +531,9 @@ pub enum ConfigAction {
         /// Output format (json, yaml, table)
         #[arg(long, default_value = "table")]
         format: String,
+        /// Print secrets (keys, passwords, tokens, URL credentials) instead of `<redacted>`
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Set configuration value
     Set {
@@ -553,6 +556,9 @@ pub enum ConfigAction {
     Get {
         /// Configuration key
         key: String,
+        /// Print a secret value instead of `<redacted>`
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Reload configuration
     Reload {
@@ -575,10 +581,15 @@ impl std::fmt::Debug for ConfigAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use crate::utils::redact::redacted;
         match self {
-            Self::Show { section, format } => f
+            Self::Show {
+                section,
+                format,
+                show_secrets,
+            } => f
                 .debug_struct("Show")
                 .field("section", section)
                 .field("format", format)
+                .field("show_secrets", show_secrets)
                 .finish(),
             Self::Set {
                 key,
@@ -592,7 +603,11 @@ impl std::fmt::Debug for ConfigAction {
                 .finish(),
             Self::Reset => f.write_str("Reset"),
             Self::Validate { file } => f.debug_struct("Validate").field("file", file).finish(),
-            Self::Get { key } => f.debug_struct("Get").field("key", key).finish(),
+            Self::Get { key, show_secrets } => f
+                .debug_struct("Get")
+                .field("key", key)
+                .field("show_secrets", show_secrets)
+                .finish(),
             Self::Reload { show_diff } => f
                 .debug_struct("Reload")
                 .field("show_diff", show_diff)
@@ -807,9 +822,155 @@ pub enum SecurityAction {
     },
 }
 
+/// What a masked value is replaced with.
+const MASKED: &str = "<redacted>";
+
+/// Whether a configuration key names a secret (over-matching only hides more).
+fn is_secret_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    [
+        "secret",
+        "password",
+        "passwd",
+        "token",
+        "key",
+        "credential",
+        "passphrase",
+        "salt",
+        "pepper",
+    ]
+    .iter()
+    .any(|marker| key.contains(marker))
+}
+
+/// A URL with the user info (`user:password@`) and the values of secret-named query parameters
+/// masked; text that is not a URL is returned as it is.
+fn mask_url(text: &str) -> String {
+    let Some((scheme, rest)) = text.split_once("://") else {
+        return text.to_string();
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let authority = match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{MASKED}@{host}"),
+        None => authority.to_string(),
+    };
+    let tail = match tail.split_once('?') {
+        Some((path, query)) => {
+            let query: Vec<String> = query
+                .split('&')
+                .map(|pair| match pair.split_once('=') {
+                    Some((name, _)) if is_secret_key(name) => format!("{name}={MASKED}"),
+                    _ => pair.to_string(),
+                })
+                .collect();
+            format!("{path}?{}", query.join("&"))
+        }
+        None => tail.to_string(),
+    };
+    format!("{scheme}://{authority}{tail}")
+}
+
+fn mask_value(value: &mut serde_json::Value, under_secret_key: bool) {
+    match value {
+        serde_json::Value::String(text) => {
+            *text = if under_secret_key {
+                MASKED.to_string()
+            } else {
+                mask_url(text)
+            };
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                mask_value(item, under_secret_key);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, item) in map.iter_mut() {
+                mask_value(item, under_secret_key || is_secret_key(key));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The configuration as `config show` and `config get` print it: every string under a secret-named
+/// key, and the credentials in any URL, are replaced with `<redacted>`. Numbers and booleans are
+/// kept, so `token_lifetime` and `enable_token_rotation` still show. `--show-secrets` skips this.
+pub(crate) fn masked_config<T: serde::Serialize>(
+    config: &T,
+) -> crate::errors::Result<serde_json::Value> {
+    let mut value = serde_json::to_value(config).map_err(|e| {
+        crate::errors::AuthError::internal(format!("Failed to serialize config: {e}"))
+    })?;
+    mask_value(&mut value, false);
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(clap::Parser)]
+    struct ConfigCli {
+        #[command(subcommand)]
+        action: ConfigAction,
+    }
+
+    #[test]
+    fn masked_config_hides_secrets_and_keeps_everything_else() {
+        let masked = masked_config(&serde_json::json!({
+            "jwt_secret": "SECRET-MARKER",
+            "storage": { "Redis": { "url": "redis://:SECRET-MARKER@cache:6379/0", "key_prefix": "auth:" } },
+            "api_keys": ["SECRET-MARKER", "SECRET-MARKER"],
+            "database_url": "postgres://app:SECRET-MARKER@db:5432/auth?sslmode=require&password=SECRET-MARKER",
+            "token_lifetime": 3600,
+            "enable_token_rotation": true,
+            "issuer": "https://issuer.example",
+            "refresh_token": null
+        }))
+        .unwrap();
+        let shown = masked.to_string();
+        assert!(!shown.contains("SECRET-MARKER"), "{shown}");
+        // Controls: what is not secret is still there, and a masked value says so.
+        assert_eq!(masked["token_lifetime"], 3600);
+        assert_eq!(masked["enable_token_rotation"], true);
+        assert_eq!(masked["issuer"], "https://issuer.example");
+        assert_eq!(masked["jwt_secret"], "<redacted>");
+        assert_eq!(
+            masked["database_url"],
+            "postgres://<redacted>@db:5432/auth?sslmode=require&password=<redacted>"
+        );
+        assert!(masked["refresh_token"].is_null());
+    }
+
+    #[test]
+    fn show_secrets_is_off_unless_asked_for_on_show_and_get() {
+        use clap::Parser;
+        for args in [["x", "show"], ["x", "get"]] {
+            let args: Vec<&str> = if args[1] == "get" {
+                vec!["x", "get", "jwt_secret"]
+            } else {
+                args.to_vec()
+            };
+            match ConfigCli::try_parse_from(&args).unwrap().action {
+                ConfigAction::Show { show_secrets, .. }
+                | ConfigAction::Get { show_secrets, .. } => {
+                    assert!(!show_secrets, "{args:?}");
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            let mut asked = args.clone();
+            asked.push("--show-secrets");
+            match ConfigCli::try_parse_from(&asked).unwrap().action {
+                ConfigAction::Show { show_secrets, .. }
+                | ConfigAction::Get { show_secrets, .. } => {
+                    assert!(show_secrets, "{asked:?}");
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    }
 
     #[test]
     fn test_server_status_default_fields() {
@@ -918,6 +1079,15 @@ mod tests {
             "{shown}"
         );
         // Control: a variant with no secret still prints its payload.
-        assert!(format!("{:?}", ConfigAction::Get { key: "k".into() }).contains("Get"),);
+        assert!(
+            format!(
+                "{:?}",
+                ConfigAction::Get {
+                    key: "k".into(),
+                    show_secrets: false
+                }
+            )
+            .contains("Get"),
+        );
     }
 }

@@ -61,7 +61,11 @@ impl std::fmt::Debug for AuthorizationContext {
         d.field("connection_type", &self.connection_type);
         d.field("security_level", &self.security_level);
         d.field("risk_score", &self.risk_score);
-        d.field("custom_attributes", &self.custom_attributes);
+        // The values come from `X-Auth-*` headers and `ctx_*` query parameters, which can carry
+        // a credential: only the names are shown.
+        let mut names: Vec<&String> = self.custom_attributes.keys().collect();
+        names.sort();
+        d.field("custom_attributes", &names);
         d.finish()
     }
 }
