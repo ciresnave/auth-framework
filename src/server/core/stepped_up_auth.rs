@@ -291,7 +291,10 @@ impl std::fmt::Debug for StepUpContext {
         );
         d.field("current_auth_level", &self.current_auth_level);
         d.field("auth_time", &self.auth_time);
-        d.field("custom_attributes", &self.custom_attributes);
+        // The values are set by the caller and can carry a credential: only the names are shown.
+        let mut names: Vec<&String> = self.custom_attributes.keys().collect();
+        names.sort();
+        d.field("custom_attributes", &names);
         d.finish()
     }
 }
