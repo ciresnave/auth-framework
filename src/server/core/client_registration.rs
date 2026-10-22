@@ -341,7 +341,10 @@ impl std::fmt::Debug for ClientRegistrationResponse {
             "client_secret",
             &crate::utils::redact::redacted(&self.client_secret),
         );
-        d.field("registration_access_token", &self.registration_access_token);
+        d.field(
+            "registration_access_token",
+            &crate::utils::redact::redacted(&self.registration_access_token),
+        );
         d.field("registration_client_uri", &self.registration_client_uri);
         d.field("client_id_issued_at", &self.client_id_issued_at);
         d.field("client_secret_expires_at", &self.client_secret_expires_at);

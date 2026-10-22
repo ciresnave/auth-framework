@@ -304,7 +304,10 @@ impl std::fmt::Debug for GnapTransaction {
             &crate::utils::redact::redacted(&self.continue_token),
         );
         d.field("created_at", &self.created_at);
-        d.field("interact_nonce", &self.interact_nonce);
+        d.field(
+            "interact_nonce",
+            &crate::utils::redact::redacted(&self.interact_nonce),
+        );
         d.field("subject_id", &self.subject_id);
         d.finish()
     }
