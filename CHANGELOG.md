@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc58] - Unreleased
+
+### Fixed
+
+- **Dependencies: `tokio` is required at 1.54.1 or later and locked to it (RUSTSEC-2026-0384).** Tokio 1.54.0, now yanked, has a race between `tokio::time::Interval::poll_tick` and the time driver on the multi-threaded runtime that can free a timer entry still in use (use-after-free). The crate spawns loops that `tick()` an `Interval` (storage cleanup, the architecture cleanup task, the deployment health monitor, CAEP continuous evaluation), so an application that resolved 1.54.0 was exposed. The `Cargo.toml` requirement rises to `1.54.1`, and `Cargo.lock` moves from 1.51.1 to 1.54.1.
+
 ## [0.5.0-rc57] - Unreleased
 
 ### Fixed

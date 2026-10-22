@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.94"
-  version       = "0.5.0-rc57"
+  version       = "0.5.0-rc58"
 
 [[bin]]
   name              = "auth-framework"
@@ -77,7 +77,7 @@
 
 [dependencies]
   # Async runtime
-  tokio = { version = "1.47.1", features = ["full"] }
+  tokio = { version = "1.54.1", features = ["full"] }
 
   # JWT handling. Backed by jsonwebtoken's "aws_lc_rs" provider, not "rust_crypto":
   # "rust_crypto" unconditionally enables the `rsa` crate (RUSTSEC-2023-0071) while
