@@ -311,7 +311,7 @@ impl AlertManager {
                 // In production: Send POST request to Slack webhook
                 tracing::info!(
                     "SLACK ALERT to {}: {} - {}",
-                    webhook_url,
+                    crate::utils::redact::url_origin(webhook_url),
                     alert.title,
                     alert.message
                 );
@@ -320,7 +320,7 @@ impl AlertManager {
                 // In production: Send POST request to Teams webhook
                 tracing::info!(
                     "TEAMS ALERT to {}: {} - {}",
-                    webhook_url,
+                    crate::utils::redact::url_origin(webhook_url),
                     alert.title,
                     alert.message
                 );
@@ -329,7 +329,7 @@ impl AlertManager {
                 // In production: Send POST request to generic webhook
                 tracing::info!(
                     "WEBHOOK ALERT to {}: {} - {}",
-                    url,
+                    crate::utils::redact::url_origin(url),
                     alert.title,
                     alert.message
                 );

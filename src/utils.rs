@@ -128,6 +128,101 @@ pub(crate) mod redact {
     pub(crate) fn redacted<T: Secret>(value: &T) -> Redacted {
         value.redacted()
     }
+
+    /// A short reference to a high-entropy identifier (a session id, a token) that is safe to put in a log
+    /// line: it lets two lines about the same value be matched, and it cannot be turned back into the
+    /// value. Low-entropy secrets (one-time codes, passwords) must not be fingerprinted -- a 32-bit prefix
+    /// of their hash can be brute-forced -- and are logged as `"<redacted>"` instead.
+    pub(crate) struct Fingerprint(String);
+
+    impl fmt::Display for Fingerprint {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl fmt::Debug for Fingerprint {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    /// `sha256:` and the first four bytes of the SHA-256 of `value`, in hex.
+    pub(crate) fn fingerprint(value: &str) -> Fingerprint {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(value.as_bytes());
+        let mut out = String::from("sha256:");
+        for byte in &digest[..4] {
+            out.push_str(&format!("{byte:02x}"));
+        }
+        Fingerprint(out)
+    }
+
+    /// `scheme://host[:port]` of a URL, for a log line: user info, path, query and fragment are dropped,
+    /// because a webhook URL carries its secret in the path or the query (`hooks.slack.com/services/..`).
+    /// Text that is not an absolute URL is logged as `<invalid url>`.
+    pub(crate) fn url_origin(url: &str) -> String {
+        let Some((scheme, rest)) = url.split_once("://") else {
+            return "<invalid url>".to_string();
+        };
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let host = authority.rsplit('@').next().unwrap_or("");
+        let scheme_ok = !scheme.is_empty()
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        if !scheme_ok || host.is_empty() {
+            return "<invalid url>".to_string();
+        }
+        format!("{scheme}://{host}")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn url_origin_keeps_only_scheme_and_host() {
+            assert_eq!(
+                url_origin("https://hooks.slack.com/services/T000/B000/SECRET-MARKER"),
+                "https://hooks.slack.com"
+            );
+            assert_eq!(
+                url_origin(
+                    "https://user:SECRET-MARKER@example.com:8443/p?license_key=SECRET-MARKER#f"
+                ),
+                "https://example.com:8443"
+            );
+            assert_eq!(
+                url_origin("https://example.com?key=SECRET-MARKER"),
+                "https://example.com"
+            );
+        }
+
+        #[test]
+        fn url_origin_does_not_echo_text_that_is_not_a_url() {
+            assert_eq!(url_origin("SECRET-MARKER"), "<invalid url>");
+            assert_eq!(url_origin("https:///SECRET-MARKER"), "<invalid url>");
+            assert_eq!(url_origin("://example.com"), "<invalid url>");
+        }
+
+        /// SHA-256("abc") starts ba7816bf (FIPS 180-2 test vector).
+        #[test]
+        fn fingerprint_is_a_prefix_of_the_sha256_digest() {
+            assert_eq!(fingerprint("abc").to_string(), "sha256:ba7816bf");
+            assert_eq!(format!("{:?}", fingerprint("abc")), "sha256:ba7816bf");
+        }
+
+        #[test]
+        fn fingerprint_does_not_contain_the_value() {
+            let secret = "SECRET-MARKER-7f3a9c";
+            assert!(!fingerprint(secret).to_string().contains(secret));
+            assert_ne!(
+                fingerprint(secret).to_string(),
+                fingerprint("other").to_string()
+            );
+        }
+    }
 }
 
 /// Password hashing utilities.

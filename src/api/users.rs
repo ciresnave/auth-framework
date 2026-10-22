@@ -349,7 +349,10 @@ pub async fn revoke_session(
             match validate_api_token(&state.auth_framework, &token).await {
                 Ok(_auth_token) => {
                     // In a real implementation, remove session from storage
-                    tracing::info!("Revoking session: {}", session_id);
+                    tracing::info!(
+                        "Revoking session: {}",
+                        crate::utils::redact::fingerprint(&session_id)
+                    );
                     ApiResponse::<()>::ok_with_message("Session revoked successfully")
                 }
                 Err(e) => ApiResponse::<()>::from(e),

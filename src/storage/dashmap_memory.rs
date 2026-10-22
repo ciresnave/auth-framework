@@ -246,26 +246,27 @@ impl DashMapMemoryStorage {
         created_at: Option<chrono::DateTime<chrono::Utc>>,
         outcome: EventOutcome,
     ) {
+        let resource_ref = crate::utils::redact::fingerprint(resource_id).to_string();
         let details = if let Some(created) = created_at {
             let age = chrono::Utc::now().signed_duration_since(created);
             format!(
                 "{:?} operation on {} {} (age: {} seconds)",
                 event_type,
                 resource_type,
-                resource_id,
+                resource_ref,
                 age.num_seconds()
             )
         } else {
             format!(
                 "{:?} operation on {} {}",
-                event_type, resource_type, resource_id
+                event_type, resource_type, resource_ref
             )
         };
 
         let audit_event = self.create_audit_event(
             event_type,
             user_id,
-            resource_id,
+            &resource_ref,
             resource_type,
             outcome,
             Some(&details),

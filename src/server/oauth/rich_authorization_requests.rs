@@ -1230,7 +1230,7 @@ impl RarManager {
         if let Some(session) = self.session_manager.get_session(session_id) {
             tracing::debug!(
                 "Verified RAR session exists and recorded activity for: {}",
-                session_id
+                crate::utils::redact::fingerprint(session_id)
             );
 
             // ARCHITECTURAL LIMITATION: SessionManager requires &mut self for updates
@@ -1245,7 +1245,7 @@ impl RarManager {
 
             tracing::info!(
                 "RAR session activity recorded for session {} (subject: {}, client: {})",
-                session_id,
+                crate::utils::redact::fingerprint(session_id),
                 session.sub,
                 session.client_id
             );
@@ -1257,10 +1257,13 @@ impl RarManager {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs(),
-                session_id
+                crate::utils::redact::fingerprint(session_id)
             );
         } else {
-            tracing::warn!("RAR session not found for activity update: {}", session_id);
+            tracing::warn!(
+                "RAR session not found for activity update: {}",
+                crate::utils::redact::fingerprint(session_id)
+            );
             return Err(AuthError::InvalidRequest("Session not found".to_string()));
         }
         Ok(())
@@ -1297,7 +1300,7 @@ impl RarManager {
             tracing::info!(
                 "Linking RAR decision {} to session {}",
                 request_id,
-                session_id
+                crate::utils::redact::fingerprint(session_id)
             );
 
             // Update session metadata with the request_id and store mapping
@@ -1322,13 +1325,13 @@ impl RarManager {
             tracing::info!(
                 "Successfully linked RAR decision {} to session {} with metadata",
                 request_id,
-                session_id
+                crate::utils::redact::fingerprint(session_id)
             );
         } else {
             tracing::warn!(
                 "Cannot link decision {} - session {} not found",
                 request_id,
-                session_id
+                crate::utils::redact::fingerprint(session_id)
             );
         }
 
@@ -1343,7 +1346,10 @@ impl RarManager {
     ) -> Result<()> {
         // Add RAR-specific metadata to the session for audit and coordination
         if let Some(_session) = self.session_manager.get_session(session_id) {
-            tracing::info!("Updating session {} with RAR decision metadata", session_id);
+            tracing::info!(
+                "Updating session {} with RAR decision metadata",
+                crate::utils::redact::fingerprint(session_id)
+            );
 
             // Add decision details to session metadata for audit and coordination
             let mut authorization_metadata = std::collections::HashMap::new();
@@ -1407,7 +1413,10 @@ impl RarManager {
                 serde_json::to_string(decision).unwrap_or_default()
             );
         } else {
-            tracing::warn!("Cannot update session {} - not found", session_id);
+            tracing::warn!(
+                "Cannot update session {} - not found",
+                crate::utils::redact::fingerprint(session_id)
+            );
         }
 
         Ok(())
@@ -1460,7 +1469,10 @@ impl RarManager {
 
         // Check if the session exists first
         if self.session_manager.get_session(session_id).is_none() {
-            tracing::warn!("No decisions found - session {} does not exist", session_id);
+            tracing::warn!(
+                "No decisions found - session {} does not exist",
+                crate::utils::redact::fingerprint(session_id)
+            );
             return Ok(Vec::new());
         }
 
@@ -1482,7 +1494,7 @@ impl RarManager {
         tracing::debug!(
             "Found {} decisions for session {}",
             associated_request_ids.len(),
-            session_id
+            crate::utils::redact::fingerprint(session_id)
         );
         Ok(associated_request_ids)
     }
@@ -1499,7 +1511,7 @@ impl RarManager {
                 tracing::info!(
                     "Revoking RAR decision {} linked to session {}",
                     request_id,
-                    session_id
+                    crate::utils::redact::fingerprint(session_id)
                 );
                 revoked_request_ids.push(request_id.clone());
                 false // Remove this decision
@@ -1521,7 +1533,10 @@ impl RarManager {
 
         // 1. Direct session ID reference in decision metadata
         if decision.request_id.contains(session_id) {
-            tracing::debug!("Decision linked to session via request_id: {}", session_id);
+            tracing::debug!(
+                "Decision linked to session via request_id: {}",
+                crate::utils::redact::fingerprint(session_id)
+            );
             return true;
         }
 

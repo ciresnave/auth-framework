@@ -729,16 +729,25 @@ impl CaepManager {
             // Check if session still exists and is valid in SessionManager
             if let Some(oidc_session) = self.session_manager.get_session(session_id) {
                 if !self.session_manager.is_session_valid(session_id) {
-                    log::info!("CAEP removing expired session: {}", session_id);
+                    log::info!(
+                        "CAEP removing expired session: {}",
+                        crate::utils::redact::fingerprint(session_id)
+                    );
                     sessions_to_remove.push(session_id.clone());
                 }
                 // Verify subject consistency
                 else if oidc_session.sub != caep_session.subject {
-                    log::warn!("CAEP session subject mismatch, removing: {}", session_id);
+                    log::warn!(
+                        "CAEP session subject mismatch, removing: {}",
+                        crate::utils::redact::fingerprint(session_id)
+                    );
                     sessions_to_remove.push(session_id.clone());
                 }
             } else {
-                log::info!("CAEP removing orphaned session: {}", session_id);
+                log::info!(
+                    "CAEP removing orphaned session: {}",
+                    crate::utils::redact::fingerprint(session_id)
+                );
                 sessions_to_remove.push(session_id.clone());
             }
         }
@@ -795,14 +804,14 @@ impl CaepManager {
                 Ok(_) => {
                     log::info!(
                         "Successfully initiated back-channel logout for session {} (subject: {})",
-                        session_id,
+                        crate::utils::redact::fingerprint(session_id),
                         subject
                     );
                 }
                 Err(e) => {
                     log::error!(
                         "Failed to initiate back-channel logout for session {} (subject: {}): {}",
-                        session_id,
+                        crate::utils::redact::fingerprint(session_id),
                         subject,
                         e
                     );
@@ -894,7 +903,7 @@ impl CaepManager {
 
         log::info!(
             "Processing CAEP logout for session: {}",
-            logout_request.session_id
+            crate::utils::redact::fingerprint(&logout_request.session_id)
         );
 
         // Update CAEP session state to reflect logout
@@ -942,7 +951,7 @@ impl CaepManager {
 
         log::info!(
             "CAEP logout completed for session: {}",
-            logout_request.session_id
+            crate::utils::redact::fingerprint(&logout_request.session_id)
         );
         Ok(())
     }
@@ -992,7 +1001,7 @@ impl CaepManager {
             if !self.session_manager.is_session_valid(session_id) {
                 log::warn!(
                     "CAEP received event for expired OIDC session: {}",
-                    session_id
+                    crate::utils::redact::fingerprint(session_id)
                 );
                 // Remove from CAEP sessions as well
                 let mut sessions = self.sessions.write().await;
@@ -1009,7 +1018,7 @@ impl CaepManager {
         } else {
             log::warn!(
                 "CAEP received event for unknown OIDC session: {}",
-                session_id
+                crate::utils::redact::fingerprint(session_id)
             );
             return Err(AuthError::validation("Session not found in SessionManager"));
         }
@@ -1189,7 +1198,7 @@ impl CaepManager {
                 CaepRuleAction::TriggerWebhook { url } => {
                     log::info!(
                         "CAEP triggering webhook {} for subject {}",
-                        url,
+                        crate::utils::redact::url_origin(url),
                         evaluation.subject
                     );
                 }
@@ -1220,11 +1229,10 @@ impl CaepManager {
         }
 
         log::info!(
-            "CAEP quarantined {} sessions for subject {} until {}. Session IDs: {:?}",
+            "CAEP quarantined {} sessions for subject {} until {}",
             quarantined_session_ids.len(),
             subject,
-            quarantine_until,
-            quarantined_session_ids
+            quarantine_until
         );
 
         // In a production implementation, you might want to notify the SessionManager
@@ -1267,7 +1275,7 @@ impl CaepManager {
                 } else {
                     log::warn!(
                         "Subject mismatch between CAEP and OIDC sessions for {}",
-                        session_id
+                        crate::utils::redact::fingerprint(session_id)
                     );
                     return Ok(None);
                 }

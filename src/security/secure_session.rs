@@ -290,7 +290,7 @@ impl SecureSessionManager {
 
         tracing::info!(
             "Created secure session {} for user {} (risk score: {})",
-            session_id,
+            crate::utils::redact::fingerprint(&session_id),
             user_id,
             risk_score
         );
@@ -355,7 +355,7 @@ impl SecureSessionManager {
                 session.security_flags.cross_device_access = true;
                 tracing::warn!(
                     "User agent change detected for session {}: {} -> {}",
-                    session_id,
+                    crate::utils::redact::fingerprint(session_id),
                     session.user_agent,
                     user_agent
                 );
@@ -380,7 +380,7 @@ impl SecureSessionManager {
                 session.state = SessionState::HighRisk;
                 tracing::warn!(
                     "Session {} marked as high risk (score: {})",
-                    session_id,
+                    crate::utils::redact::fingerprint(session_id),
                     new_risk_score
                 );
             }
@@ -416,8 +416,8 @@ impl SecureSessionManager {
 
             tracing::info!(
                 "Session rotated: {} -> {} (rotation count: {})",
-                session_id,
-                new_session_id,
+                crate::utils::redact::fingerprint(session_id),
+                crate::utils::redact::fingerprint(&new_session_id),
                 session.rotation_count
             );
 
@@ -446,7 +446,7 @@ impl SecureSessionManager {
 
             tracing::info!(
                 "Session {} revoked for user {}",
-                session_id,
+                crate::utils::redact::fingerprint(session_id),
                 session.user_id
             );
 
@@ -555,7 +555,7 @@ impl SecureSessionManager {
             self.revoke_session(&session_id)?;
             tracing::info!(
                 "Revoked oldest session {} for user {} due to concurrent limit",
-                session_id,
+                crate::utils::redact::fingerprint(&session_id),
                 user_id
             );
         }
@@ -580,7 +580,7 @@ impl SecureSessionManager {
         tracing::warn!(
             "IP address change #{} for session {}: {} -> {}",
             *change_count,
-            session.id,
+            crate::utils::redact::fingerprint(&session.id),
             session.current_ip,
             new_ip
         );
