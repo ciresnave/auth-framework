@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc62] - Unreleased
+
+### Fixed
+
+- **WS-Federation sign-in tokens are verified before they are read (backport of 0.6.0-rc126).** `WsFederationClient::process_sign_in_response` now accepts a SAML 2.0 or 1.1 token only when its signature verifies (with `bergshamra`, via `methods::saml::dsig`) under a key you configured: `WsFederationConfig::trusted_signing_certificates` (issuer and certificate) or `trusted_cert_thumbprints` (a certificate the token carries is used only if its SHA-256 thumbprint is listed), and only the signed assertion is read. **Configuration changes:** `WsFederationClient::new` fails unless at least one certificate or thumbprint is configured; JWT sign-in tokens are no longer accepted; without the `saml` feature no token is accepted. Also: a token with no `NotOnOrAfter` no longer overflows the expiry check, and SAML 1.1 `saml:`-prefixed `Conditions` are read.
+
+## [0.5.0-rc61] - Unreleased
+
+### Fixed
+
+- **SAML responses: the assertion that is consumed is the one that was verified, and issuer certificates are pinned (backport of 0.6.0-rc125).** Signatures are now verified in one place (`methods::saml::dsig`, on `bergshamra`) under the certificate configured for the assertion's issuer, with every reference digest recomputed; only the signed `Assertion` (found by its unique `ID`) is read afterwards, and `InResponseTo` is taken from the signed assertion unless the `Response` itself is signed. The ACS endpoint, `SamlAuthMethod` and SAML token exchange all use it. **Configuration changes:** `TokenExchangeManager::with_trusted_saml_issuer(issuer, certificate)` must be called for every issuer whose SAML subject tokens are accepted (with none configured, every SAML subject token is refused; the certificate a token carries is no longer used); `POST /api/v1/saml/sso` refuses an IdP whose `saml_idp:{entity_id}` has no usable `signing_cert`; `SamlAuthMethod::validate_config` fails when no identity provider is configured, a certificate does not parse, or `validate_xml_signature` is `false`. **Removed:** `XmlCanonicalizer` and the hand-written signature checks behind `SamlSignatureValidator` (which keeps `validate_xml_signature(xml, cert_der)`, now backed by `bergshamra`); `SamlSignatureValidator::extract_embedded_certificate`.
+
 ## [0.5.0-rc58] - Unreleased
 
 ### Fixed
