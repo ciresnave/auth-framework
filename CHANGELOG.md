@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Debug`, `Display` and the admin CLI no longer print webhook URLs, Redis passwords, session ids or header values (backport of 0.6.0-rc118).** `SlackConfig` now has a hand-written `Debug` that shows `<redacted>` for its webhook URL. `StorageConfig`'s `Display`, and so `AuthConfig`'s, prints `redis(redis://host:port)` instead of the whole URL. `RpInitiatedLogoutResponse` prints fingerprints of the ended session ids. `AuthorizationContext` and `StepUpContext` print only the names of their custom attributes. `auth-framework-admin config show` and `config get` now mask every string under a secret-named key and the user info and secret-named query values of any URL; the new `--show-secrets` flag prints the real values.
 
+## [0.5.0-rc60] - Unreleased
+
+### Fixed
+
+- **Passkey authentication works with real credentials, and an assertion can be used once (backport of 0.6.0-rc116).** `PasskeyAuthMethod` could register a credential but could never authenticate one: it looked for the public key at a JSON path the serialized credential does not have (so every registration stored `null`), and it read the assertion's `clientDataJSON`, `authenticatorData` and `signature` only as base64url text although `passkey-types` writes bytes as arrays. Registration now converts the credential's SubjectPublicKeyInfo to a JWK (ES256, ES384 and RS256; anything else, or a malformed key, is refused and nothing is stored) and reads the sign count from the authenticator data; verification accepts both byte encodings. New `register_credential` stores a credential an authenticator created elsewhere and `registered_passkey` reads one back. The pending challenge is now single use: `complete_authentication` removes it whether or not verification passes, so an assertion cannot be replayed (platform authenticators report a zero counter, which the counter check cannot catch). Tests: a recorded `passkey` 0.5.0 assertion in both byte encodings, a live registration and assertion from the `passkey` client, and a replay, a tampered signature, a wrong challenge, another key and an unregistered credential are all refused.
+
 ## [0.5.0-rc57] - Unreleased
 
 ### Fixed
