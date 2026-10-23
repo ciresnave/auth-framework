@@ -1,14 +1,12 @@
-//! SAML authentication method with production-grade XML signature validation
+//! SAML authentication method
 //!
-//! This module provides SAML 2.0 authentication support with RFC-compliant XML signature
-//! validation using pure Rust implementations (ring, x509-parser, quick-xml).
+//! SAML 2.0 login with XML-DSig verification done by [`dsig`] (`bergshamra`):
 //!
-//! Features:
-//! - Full XML-DSIG signature validation
-//! - X.509 certificate chain validation
-//! - XML canonicalization (C14N)
-//! - RSA-SHA256 and ECDSA-P256-SHA256 support
-//! - Protection against XML signature wrapping attacks
+//! - the verification key is the certificate configured for the assertion's issuer, never one the
+//!   document carries;
+//! - every `Reference` digest is recomputed, so a signature that does not cover the content fails;
+//! - only the `Assertion` the signature covers is read, found by its unique `ID`, so unsigned
+//!   elements added around a genuine signed one are ignored (XML signature wrapping).
 
 use crate::authentication::credentials::{Credential, CredentialMetadata};
 use crate::errors::{AuthError, Result};
@@ -22,9 +20,13 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 // SAML module structure
+pub mod dsig;
 pub mod xml_signature;
 
-pub use xml_signature::{SamlSignatureValidator, XmlCanonicalizer};
+pub use dsig::{
+    SamlTrustAnchors, VerifiedAssertion, anchors_for_thumbprints, verify_signed_assertion,
+};
+pub use xml_signature::SamlSignatureValidator;
 
 /// SAML authentication method with basic XML validation
 pub struct SamlAuthMethod {
@@ -218,9 +220,19 @@ impl SamlAuthMethod {
         self.identity_providers.insert(entity_id, metadata);
     }
 
-    /// Production-grade XML signature validation using pure Rust cryptography
-    #[cfg(feature = "saml")]
-    fn validate_xml_signature(&self, xml: &str, certificate: &[u8]) -> Result<bool> {
+    /// The certificates configured for each identity provider, as trust anchors.
+    fn trust_anchors(&self) -> Result<SamlTrustAnchors> {
+        let mut anchors = SamlTrustAnchors::new();
+        for (issuer, idp) in &self.identity_providers {
+            anchors.trust_pem(issuer.clone(), &idp.certificate)?;
+        }
+        Ok(anchors)
+    }
+
+    /// Verify the response's XML signature under the certificate configured for its issuer and
+    /// return the one assertion that signature covers. Refuses when validation is switched off,
+    /// when no identity provider is configured, and when the document names no configured issuer.
+    fn verify_response(&self, xml: &str) -> Result<VerifiedAssertion> {
         if !self.config.validate_xml_signature {
             tracing::error!(
                 "XML signature validation is disabled; rejecting SAML assertion instead of failing open"
@@ -229,35 +241,7 @@ impl SamlAuthMethod {
                 "XML signature validation cannot be disabled for SAML authentication",
             ));
         }
-
-        tracing::debug!("Performing production-grade XML signature validation");
-
-        // Use the new production-grade SAML signature validator
-        let validator = SamlSignatureValidator;
-
-        // Validate XML signature using pure Rust cryptography
-        match validator.validate_xml_signature(xml, certificate) {
-            Ok(true) => {
-                tracing::info!("XML signature validation PASSED - signature is valid");
-                Ok(true)
-            }
-            Ok(false) => {
-                tracing::error!("XML signature validation FAILED - invalid signature");
-                Err(AuthError::validation("XML signature verification failed"))
-            }
-            Err(e) => {
-                tracing::error!("XML signature validation ERROR: {}", e);
-                Err(e)
-            }
-        }
-    }
-
-    /// Fallback for when SAML feature is disabled
-    #[cfg(not(feature = "saml"))]
-    fn validate_xml_signature(&self, _xml: &str, _certificate: &[u8]) -> Result<bool> {
-        Err(AuthError::validation(
-            "SAML feature is not enabled. Compile with --features saml to enable SAML authentication.",
-        ))
+        verify_signed_assertion(xml, &self.trust_anchors()?)
     }
 
     /// Parse ISO 8601 timestamp to SystemTime
@@ -312,46 +296,27 @@ impl SamlAuthMethod {
         .map_err(|e| AuthError::validation(format!("Invalid UTF-8: {}", e)))
     }
 
-    fn lookup_idp_certificate(&self, issuer: &str) -> Result<Vec<u8>> {
-        let idp_metadata = self
-            .identity_providers
-            .get(issuer)
-            .ok_or_else(|| AuthError::validation(format!("Unknown issuer: {}", issuer)))?;
-
-        base64::engine::general_purpose::STANDARD
-            .decode(&idp_metadata.certificate)
-            .map_err(|e| AuthError::validation(format!("Invalid certificate encoding: {}", e)))
-    }
-
     /// Comprehensive SAML response validation using all available fields
     pub async fn validate_saml_response_comprehensive(
         &self,
         saml_response: &str,
     ) -> Result<ValidatedSamlAssertion> {
         let decoded_response = self.decode_saml_xml(saml_response)?;
-        let parsed_response: SamlResponse = from_str(&decoded_response).map_err(|e| {
-            AuthError::validation(format!("Failed to parse SAML response XML: {}", e))
+
+        // Everything below is read from the assertion the signature covers, never from the rest of
+        // the document: an attacker can add unsigned elements around a genuine signed one.
+        let verified = self.verify_response(&decoded_response)?;
+        let assertion: SamlAssertionXml = from_str(&verified.assertion_xml).map_err(|e| {
+            AuthError::validation(format!("Failed to parse SAML assertion XML: {}", e))
         })?;
+        let signed_response = SamlResponse {
+            issuer: Some(SamlIssuer {
+                value: verified.issuer.clone(),
+            }),
+            assertions: Some(vec![assertion]),
+        };
 
-        let issuer = parsed_response
-            .issuer
-            .as_ref()
-            .map(|issuer| issuer.value.as_str())
-            .or_else(|| {
-                parsed_response
-                    .assertions
-                    .as_ref()
-                    .and_then(|assertions| assertions.first())
-                    .map(|assertion| assertion.issuer.value.as_str())
-            })
-            .ok_or_else(|| AuthError::validation("No issuer found in SAML response"))?;
-
-        let cert_bytes = self.lookup_idp_certificate(issuer)?;
-        if !self.validate_xml_signature(&decoded_response, &cert_bytes)? {
-            return Err(AuthError::validation("XML signature validation failed"));
-        }
-
-        self.validate_structured_saml_response(parsed_response)
+        self.validate_structured_saml_response(signed_response)
             .await
     }
 
@@ -543,6 +508,39 @@ impl AuthMethod for SamlAuthMethod {
                 ),
             });
         }
+
+        if !self.config.validate_xml_signature {
+            return Err(AuthError::Configuration {
+                message: "SAML XML signature validation cannot be disabled".to_string(),
+                source: None,
+                help: Some(
+                    "An unsigned assertion proves nothing; set validate_xml_signature = true"
+                        .to_string(),
+                ),
+                docs_url: None,
+                suggested_fix: Some("Remove validate_xml_signature = false".to_string()),
+            });
+        }
+
+        // No silent fallback: a login method that holds no pinned certificate for any identity
+        // provider could accept nothing, and one with an unusable certificate would fail on the
+        // first login. Say so now.
+        if self.identity_providers.is_empty() {
+            return Err(AuthError::Configuration {
+                message: "No SAML identity provider is configured".to_string(),
+                source: None,
+                help: Some(
+                    "Add an identity provider with its signing certificate; assertions are only accepted under a certificate configured for their issuer"
+                        .to_string(),
+                ),
+                docs_url: None,
+                suggested_fix: Some(
+                    "Call add_identity_provider with the IdP's entity id and signing certificate"
+                        .to_string(),
+                ),
+            });
+        }
+        self.trust_anchors()?;
 
         Ok(())
     }
@@ -843,7 +841,7 @@ mod tests {
             },
         );
 
-        let result = saml.validate_xml_signature("<Response />", b"certificate-bytes");
+        let result = saml.verify_response("<Response />");
 
         assert!(result.is_err());
         assert!(

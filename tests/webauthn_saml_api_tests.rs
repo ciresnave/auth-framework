@@ -19,6 +19,24 @@ async fn create_test_app() -> axum::Router {
         .expect("Failed to build router for tests")
 }
 
+/// A PEM certificate to pin for a test IdP: SSO is only started for an IdP whose responses can be verified.
+#[cfg(feature = "saml")]
+fn test_signing_cert_pem() -> String {
+    use base64::Engine as _;
+    let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+    let cert = rcgen::CertificateParams::new(vec!["idp.example.com".to_string()])
+        .unwrap()
+        .self_signed(&key)
+        .unwrap();
+    format!(
+        "-----BEGIN CERTIFICATE-----
+{}
+-----END CERTIFICATE-----
+",
+        base64::engine::general_purpose::STANDARD.encode(cert.der())
+    )
+}
+
 #[cfg(feature = "saml")]
 async fn create_test_app_with_saml_sp_config() -> axum::Router {
     let auth_framework = Arc::new(AuthFramework::new(AuthConfig::default()));
@@ -143,7 +161,7 @@ async fn test_saml_sso_initiation() {
         "entity_id": "https://idp.example.com",
         "sso_url": "https://idp.example.com/sso",
         "slo_url": "https://idp.example.com/slo",
-        "certificate": ""
+        "signing_cert": test_signing_cert_pem()
     });
     auth_framework
         .storage()
