@@ -232,6 +232,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc128 -- **`html-escape` 0.3.0** (was 0.2). No API change; the admin web GUI's and the OIDC form-post response's escaping is unchanged, pinned by a known-answer test recorded under 0.2.15.
 - 0.6.0-rc127 -- **`quick-xml` 0.42.0** (was 0.41). The SAML parsing code moves to its `&str` API (names, attribute values and text are `&str` now). Behaviour is unchanged; known-answer tests cover carriage returns (character reference and raw line ends) in signed assertions.
 - 0.6.0-rc122 -- **`pasetors` 0.8.1** (was 0.7.7). No API change for `PasetoLocalManager`; a known-answer test confirms a v4.local token minted by 0.7.7 still decrypts.
 - 0.6.0-rc115 -- **Dependencies: `passkey` and `passkey-client` 0.5 -> 0.6.** The new release asks the caller for a crypto backend (`Authenticator::new(.., RustCryptoBackend)`)
