@@ -1048,6 +1048,7 @@ src/protocols/saml_assertions.rs:SamlAttributeValue:value | SAML attribute value
 src/protocols/saml_assertions.rs:SamlNameId:value | SAML NameID: a subject identifier, not a credential
 src/protocols/scim.rs:MultiValuedAttr:value | SCIM attribute value: user data, not a credential
 src/protocols/scim.rs:SearchRequest:attributes | SCIM attribute names to return
+src/protocols/sd_jwt.rs:VerifiedSdJwt:plaintext_claims | the claims an SD-JWT leaves undisclosed: readable by anyone who holds the token, by design
 src/protocols/spiffe.rs:WorkloadSelector:value | SPIFFE workload selector value (uid, service account, ...)
 src/protocols/tacacs.rs:AcctReplyBody:data | TACACS+ server message text shown to the user
 src/protocols/tacacs.rs:AuthenReplyBody:data | TACACS+ server message text shown to the user
@@ -1061,7 +1062,9 @@ src/server/core/federated_authentication_orchestration.rs:IdpCapability:<tuple> 
 src/server/core/federated_authentication_orchestration.rs:SessionProtocol:<tuple> | the name of a custom variant: a label, not a credential
 src/server/core/stepped_up_auth.rs:StepUpTrigger:<tuple> | resource sensitivity / type label
 src/server/oauth/rich_authorization_requests.rs:RarResourceDiscoveryResponse:continuation_token | pagination cursor for a resource listing
+src/server/oidc/oidc_advanced_jarm.rs:AdvancedJarmConfig:supported_algorithms | JWS algorithm names (jsonwebtoken::Algorithm enum), not key material
 src/server/security/caep_continuous_access.rs:CaepEventType:<tuple> | the name of a custom variant: a label, not a credential
+src/server/security/fapi.rs:FapiConfig:request_signing_algorithm | a JWS algorithm name (jsonwebtoken::Algorithm enum), not key material
 src/server/security/x509_signing.rs:RevocationEntry:additional_info | free-text note on a certificate revocation
 src/server/security/x509_signing.rs:SubjectAltName:<tuple> | certificate subject alternative name: public
 src/server/token_exchange/token_exchange_factory.rs:SetupGuide:example_code | documentation sample code
