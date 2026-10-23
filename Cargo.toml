@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc130"
+  version       = "0.6.0-rc131"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -79,6 +79,43 @@
 [[bin]]
   name              = "test_oauth2"
   path              = "src/bin/test_oauth2.rs"
+  required-features = ["api-server"]
+
+[[bin]]
+  name              = "oauth2_test_server"
+  path              = "src/bin/oauth2_test_server.rs"
+  required-features = ["api-server"]
+
+# Targets that import `auth_framework::api` need the feature that compiles it; without these entries
+# `cargo check --no-default-features --all-targets` fails on them (#282).
+[[example]]
+  name              = "debug_server"
+  path              = "examples/debug_server.rs"
+  required-features = ["api-server"]
+
+[[test]]
+  name              = "secret_debug_redaction"
+  path              = "tests/secret_debug_redaction.rs"
+  required-features = ["api-server"]
+
+[[test]]
+  name              = "webauthn_saml_api_tests"
+  path              = "tests/webauthn_saml_api_tests.rs"
+  required-features = ["api-server"]
+
+[[test]]
+  name              = "oauth_advanced_tests"
+  path              = "tests/oauth_advanced_tests.rs"
+  required-features = ["api-server"]
+
+[[test]]
+  name              = "security_ip_blacklisting_tests"
+  path              = "tests/security_ip_blacklisting_tests.rs"
+  required-features = ["api-server"]
+
+[[test]]
+  name              = "security_validation_comprehensive"
+  path              = "tests/security_validation_comprehensive.rs"
   required-features = ["api-server"]
 
 [dependencies]
