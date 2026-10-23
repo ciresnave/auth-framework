@@ -346,4 +346,15 @@ mod tests {
         assert!(config.audience.is_none());
         assert!(config.footer.is_none());
     }
+
+    /// Known-answer: a token minted by pasetors 0.7.7 (key = [42; 32], exp 2999)
+    /// must still decrypt after the upgrade to 0.8.
+    #[test]
+    fn test_token_minted_by_pasetors_0_7_still_validates() {
+        const KNOWN_TOKEN: &str = "v4.local.BDJ3EJ7xkeAZ7EgKJizNVJKVctrjVQ3iv2AcJvnDqrs__PWLUjaQgFYyZMtUDlgtA6hlzCeAmQrmu5HbgcACobjvsOGBhFQgFYoKboZCmVnKDYl5Zyq8O7BZybOf-6nurk4g6VKxKeH6p4vWQjjd0RIpsbtB5shoX3OebrHoXPIW04JE3aztIId3-XZ22cvGpOPcQjjUSqIaf9UOK8__3oiVnBMrZmD4R6ZK4n6r083cHl7DRRl5d-TxoRgrWXpaI64Cjsg";
+        let mgr = PasetoLocalManager::from_key_bytes(PasetoConfig::default(), &[42u8; 32]).unwrap();
+        let decoded = mgr.validate_token(KNOWN_TOKEN).unwrap();
+        assert_eq!(decoded.subject, "kat-user");
+        assert_eq!(decoded.issuer, "auth-framework");
+    }
 }
