@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.40] - Unreleased
+
+### Fixed
+
+- **Passkey authentication verifies the assertion it is given (backport of the 0.5.x and 0.6.0 verification).** `PasskeyAuthMethod::complete_authentication` now checks the assertion against the challenge issued by `initiate_authentication` (kept per credential; `complete_authentication` spends it), the origin, the relying-party id hash, the credential's stored public key and the signature counter before it issues a token, and `authenticate` checks against that same challenge instead of a fixed placeholder. `register_passkey` now stores the credential's public key (as a JWK, from its SubjectPublicKeyInfo: ES256, ES384 and RS256) and sign count, which the earlier code left empty; the new `register_credential` stores a credential created elsewhere and `registered_passkey` reads one back. Assertion byte fields are accepted as base64url text or as byte arrays. Applications that use the `passkeys` feature should upgrade.
+
 ## [0.4.39] - Unreleased
 
 ### Fixed
