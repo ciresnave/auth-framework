@@ -64,7 +64,7 @@ curl http://localhost:8080/api/v1/health
       "token_manager": "healthy",
       "memory": "healthy"
     },
-    "version": "0.6.0-rc128",
+    "version": "0.6.0-rc129",
     "uptime": "0h 12m 03s"
   }
 }
