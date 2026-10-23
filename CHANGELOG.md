@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc62] - Unreleased
+
+### Fixed
+
+- **WS-Federation sign-in tokens are verified before they are read (backport of 0.6.0-rc126).** `WsFederationClient::process_sign_in_response` now accepts a SAML 2.0 or 1.1 token only when its signature verifies (with `bergshamra`, via `methods::saml::dsig`) under a key you configured: `WsFederationConfig::trusted_signing_certificates` (issuer and certificate) or `trusted_cert_thumbprints` (a certificate the token carries is used only if its SHA-256 thumbprint is listed), and only the signed assertion is read. **Configuration changes:** `WsFederationClient::new` fails unless at least one certificate or thumbprint is configured; JWT sign-in tokens are no longer accepted; without the `saml` feature no token is accepted. Also: a token with no `NotOnOrAfter` no longer overflows the expiry check, and SAML 1.1 `saml:`-prefixed `Conditions` are read.
+
 ## [0.5.0-rc61] - Unreleased
 
 ### Fixed

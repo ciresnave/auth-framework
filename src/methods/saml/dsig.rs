@@ -78,6 +78,16 @@ impl SamlTrustAnchors {
         self.trust(issuer, der)
     }
 
+    /// Add everything `other` trusts.
+    pub fn extend(&mut self, other: SamlTrustAnchors) {
+        for (issuer, certificates) in other.by_issuer {
+            self.by_issuer
+                .entry(issuer)
+                .or_default()
+                .extend(certificates);
+        }
+    }
+
     /// Whether nothing is trusted.
     pub fn is_empty(&self) -> bool {
         self.by_issuer.is_empty()
@@ -161,8 +171,10 @@ struct Element {
     start: usize,
     end: usize,
     parent: Option<usize>,
-    /// Unescaped text of the first text child, kept for `Issuer` only.
+    /// Unescaped text of the first text child, kept for `Issuer` and `X509Certificate`.
     text: Option<String>,
+    /// The `Issuer` attribute (a SAML 1.1 assertion names its issuer there).
+    issuer_attr: Option<String>,
 }
 
 fn unescaped(raw: &[u8]) -> Result<String> {
@@ -179,14 +191,19 @@ fn element_of(
 ) -> Result<Element> {
     let local = String::from_utf8_lossy(bytes_of(start.local_name().into_inner())).into_owned();
     let mut id = None;
+    let mut issuer_attr = None;
     for attr in start.attributes() {
         let attr = attr.map_err(|e| invalid(format!("XML attribute error: {e}")))?;
         let key = String::from_utf8_lossy(bytes_of(attr.key.local_name().into_inner()));
-        // Only unprefixed ID attributes name a signable element (xml:id and friends do not).
-        if matches!(key.as_ref(), "ID" | "Id" | "id")
-            && bytes_of(attr.key.as_ref()) == key.as_bytes()
-        {
+        // Only unprefixed attributes name a signable element or an issuer (xml:id and friends
+        // do not). `AssertionID` is how SAML 1.1 names an assertion.
+        if bytes_of(attr.key.as_ref()) != key.as_bytes() {
+            continue;
+        }
+        if matches!(key.as_ref(), "ID" | "Id" | "id" | "AssertionID") {
             id = Some(unescaped(bytes_of(&*attr.value))?);
+        } else if key.as_ref() == "Issuer" {
+            issuer_attr = Some(unescaped(bytes_of(&*attr.value))?);
         }
     }
     Ok(Element {
@@ -196,6 +213,7 @@ fn element_of(
         end: begin,
         parent,
         text: None,
+        issuer_attr,
     })
 }
 
@@ -228,7 +246,7 @@ fn scan(xml: &str) -> Result<Vec<Element>> {
             }
             Ok(Event::Text(t)) => {
                 if let Some(&index) = stack.last()
-                    && elements[index].local == "Issuer"
+                    && matches!(elements[index].local.as_str(), "Issuer" | "X509Certificate")
                     && elements[index].text.is_none()
                 {
                     elements[index].text = Some(unescaped(bytes_of(&*t))?.trim().to_string());
@@ -274,8 +292,13 @@ pub fn verify_signed_assertion(xml: &str, anchors: &SamlTrustAnchors) -> Result<
     // decided by the signature, not by this list.
     let named: BTreeSet<&str> = elements
         .iter()
-        .filter(|e| e.local == "Issuer")
-        .filter_map(|e| e.text.as_deref())
+        .flat_map(|e| {
+            let element_text = (e.local == "Issuer").then_some(e.text.as_deref()).flatten();
+            let attribute = (e.local == "Assertion")
+                .then_some(e.issuer_attr.as_deref())
+                .flatten();
+            element_text.into_iter().chain(attribute)
+        })
         .collect();
     let candidates: Vec<&str> = anchors.issuers().filter(|i| named.contains(i)).collect();
     if candidates.is_empty() {
@@ -385,6 +408,7 @@ fn covered_assertion(
     let assertion_issuer = direct_children(elements, assertion, "Issuer")
         .next()
         .and_then(|i| elements[i].text.as_deref())
+        .or(elements[assertion].issuer_attr.as_deref())
         .ok_or_else(|| invalid("The signed assertion names no issuer"))?;
     if assertion_issuer != issuer {
         return Err(invalid(format!(
@@ -399,4 +423,67 @@ fn covered_assertion(
         assertion_xml: xml[e.start..e.end].to_string(),
         response_signed,
     })
+}
+
+/// Trust anchors for a document whose signing certificate is identified by its SHA-256
+/// thumbprint rather than handed over in full: of the certificates the document carries in its
+/// `KeyInfo`, those whose thumbprint is one of `thumbprints` (hex, case and `:` ignored) become the
+/// certificates trusted for `issuers`, or for the issuers the document names when `issuers` is
+/// empty. A certificate with another thumbprint is never used, so the document supplies the
+/// bytes of the key but not the decision to trust it.
+pub fn anchors_for_thumbprints(
+    xml: &str,
+    issuers: &[String],
+    thumbprints: &[String],
+) -> Result<SamlTrustAnchors> {
+    use sha2::{Digest, Sha256};
+
+    let pinned: BTreeSet<String> = thumbprints
+        .iter()
+        .map(|t| {
+            t.chars()
+                .filter(|c| c.is_ascii_hexdigit())
+                .collect::<String>()
+                .to_ascii_lowercase()
+        })
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut anchors = SamlTrustAnchors::new();
+    if pinned.is_empty() {
+        return Ok(anchors);
+    }
+
+    let elements = scan(xml)?;
+    let named: BTreeSet<String> = if issuers.is_empty() {
+        elements
+            .iter()
+            .flat_map(|e| {
+                let element_text = (e.local == "Issuer").then_some(e.text.as_deref()).flatten();
+                let attribute = (e.local == "Assertion")
+                    .then_some(e.issuer_attr.as_deref())
+                    .flatten();
+                element_text.into_iter().chain(attribute)
+            })
+            .map(str::to_string)
+            .collect()
+    } else {
+        issuers.iter().cloned().collect()
+    };
+
+    for text in elements
+        .iter()
+        .filter(|e| e.local == "X509Certificate")
+        .filter_map(|e| e.text.as_deref())
+    {
+        let b64: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let Ok(der) = base64::engine::general_purpose::STANDARD.decode(b64) else {
+            continue;
+        };
+        if pinned.contains(&hex::encode(Sha256::digest(&der))) {
+            for issuer in &named {
+                anchors.trust(issuer.clone(), der.clone())?;
+            }
+        }
+    }
+    Ok(anchors)
 }

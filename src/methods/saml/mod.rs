@@ -23,7 +23,9 @@ use std::time::{Duration, SystemTime};
 pub mod dsig;
 pub mod xml_signature;
 
-pub use dsig::{SamlTrustAnchors, VerifiedAssertion, verify_signed_assertion};
+pub use dsig::{
+    SamlTrustAnchors, VerifiedAssertion, anchors_for_thumbprints, verify_signed_assertion,
+};
 pub use xml_signature::SamlSignatureValidator;
 
 /// SAML authentication method with basic XML validation

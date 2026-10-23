@@ -15,8 +15,9 @@
 //! # Security Considerations
 //!
 //! - Federation metadata should be fetched over HTTPS and cached
-//! - Security tokens (SAML assertions) must be validated against the STS
-//!   signing certificate
+//! - Security tokens (SAML assertions) are only accepted when their signature
+//!   verifies under a signing certificate (or thumbprint) you configured; with
+//!   none configured the client cannot be built
 //! - Replay protection via `wctx` state parameter
 
 use crate::errors::{AuthError, Result};
@@ -24,6 +25,17 @@ use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Parsed assertion fields: `(subject, issuer, audience, not_before, not_on_or_after, claims)`.
+#[cfg(any(feature = "saml", test))]
+type ParsedAssertion = (
+    String,
+    String,
+    String,
+    u64,
+    u64,
+    HashMap<String, Vec<String>>,
+);
 
 // ─── WS-Federation Constants ─────────────────────────────────────────────────
 
@@ -68,8 +80,17 @@ pub struct WsFederationConfig {
     /// Trusted issuer identifiers.
     pub trusted_issuers: Vec<String>,
 
-    /// Trusted signing certificate fingerprints (SHA-256 hex).
+    /// Trusted signing certificate fingerprints (SHA-256 hex). A token is accepted if it is signed
+    /// under a certificate it carries whose thumbprint is listed here.
     pub trusted_cert_thumbprints: Vec<String>,
+
+    /// Signing certificates to trust, as `(issuer, certificate)` with the certificate a PEM block or
+    /// bare base64 DER (for example from the federation metadata, checked out of band). A token is
+    /// accepted if its issuer is listed and it is signed under that issuer's certificate.
+    ///
+    /// At least one certificate or thumbprint must be configured: a token is only accepted when its
+    /// signature verifies under a key configured here, never under a key the token supplies itself.
+    pub trusted_signing_certificates: Vec<(String, String)>,
 
     /// Maximum allowed clock skew for token validation (seconds).
     pub max_clock_skew_secs: u64,
@@ -93,6 +114,7 @@ impl Default for WsFederationConfig {
             metadata_url: None,
             trusted_issuers: Vec::new(),
             trusted_cert_thumbprints: Vec::new(),
+            trusted_signing_certificates: Vec::new(),
             max_clock_skew_secs: 300,
             require_encrypted_tokens: false,
             timeout_secs: 10,
@@ -234,6 +256,13 @@ impl WsFederationClient {
         if config.realm.is_empty() {
             return Err(AuthError::config("WS-Federation realm must be set"));
         }
+        if config.trusted_signing_certificates.is_empty()
+            && config.trusted_cert_thumbprints.is_empty()
+        {
+            return Err(AuthError::config(
+                "WS-Federation needs a trusted signing certificate or thumbprint: sign-in tokens are only accepted when signed under a configured key",
+            ));
+        }
 
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
@@ -309,8 +338,8 @@ impl WsFederationClient {
             return Err(AuthError::validation("Missing wctx parameter"));
         }
 
-        // Parse the RSTR envelope
-        let token = self.parse_rstr(wresult)?;
+        // Verify the signature under a configured key and read the assertion it covers
+        let token = self.verify_and_parse(wresult)?;
 
         // Validate token
         self.validate_token(&token)?;
@@ -346,39 +375,61 @@ impl WsFederationClient {
         parse_federation_metadata(&body)
     }
 
-    /// Parse a RequestSecurityTokenResponse (RSTR) to extract the security token.
-    fn parse_rstr(&self, rstr_xml: &str) -> Result<WsFedSecurityToken> {
-        // Determine token type
-        let token_type = if rstr_xml.contains(ns::SAML_20_ASSERTION) {
-            WsFedTokenType::Saml20
-        } else if rstr_xml.contains(ns::SAML_11_ASSERTION) {
-            WsFedTokenType::Saml11
-        } else if rstr_xml.contains("\"JWT\"") || rstr_xml.contains("jwt") {
-            WsFedTokenType::Jwt
-        } else {
-            WsFedTokenType::Saml20 // Default assumption
+    /// Verify a RequestSecurityTokenResponse (RSTR) and read the security token out of it.
+    ///
+    /// The assertion must be signed under a key configured in `trusted_signing_certificates` (for
+    /// its issuer) or identified by `trusted_cert_thumbprints`; only the assertion that signature
+    /// covers is read. JWT tokens are not accepted: their signature is not verified here.
+    #[cfg(feature = "saml")]
+    fn verify_and_parse(&self, rstr_xml: &str) -> Result<WsFedSecurityToken> {
+        use crate::methods::saml::{
+            SamlTrustAnchors, anchors_for_thumbprints, verify_signed_assertion,
         };
 
-        // Extract the assertion
-        let raw_assertion = extract_assertion(rstr_xml)?;
+        let mut anchors = SamlTrustAnchors::new();
+        for (issuer, certificate) in &self.config.trusted_signing_certificates {
+            anchors.trust_pem(issuer.clone(), certificate)?;
+        }
+        anchors.extend(anchors_for_thumbprints(
+            rstr_xml,
+            &self.config.trusted_issuers,
+            &self.config.trusted_cert_thumbprints,
+        )?);
 
-        // Parse claims from the assertion
-        let (subject, issuer, audience, issued_at, expires_at, claims) = match token_type {
-            WsFedTokenType::Saml20 => parse_saml20_assertion(&raw_assertion)?,
+        let verified = verify_signed_assertion(rstr_xml, &anchors)?;
+        let raw_assertion = verified.assertion_xml;
+
+        // SAML 1.1 assertions carry `MajorVersion` and `AssertionID` on the element itself.
+        let opening = raw_assertion.split('>').next().unwrap_or_default();
+        let token_type = if opening.contains("AssertionID=") || opening.contains("MajorVersion=") {
+            WsFedTokenType::Saml11
+        } else {
+            WsFedTokenType::Saml20
+        };
+        let (subject, _claimed_issuer, audience, issued_at, expires_at, claims) = match token_type {
             WsFedTokenType::Saml11 => parse_saml11_assertion(&raw_assertion)?,
-            WsFedTokenType::Jwt => parse_jwt_token(&raw_assertion)?,
+            _ => parse_saml20_assertion(&raw_assertion)?,
         };
 
         Ok(WsFedSecurityToken {
             token_type,
             subject,
-            issuer,
+            // The issuer the signature was verified for, not whatever text the assertion repeats.
+            issuer: verified.issuer,
             audience,
             issued_at,
             expires_at,
             claims,
             raw_assertion,
         })
+    }
+
+    /// Without the `saml` feature there is no signature verification, so nothing is accepted.
+    #[cfg(not(feature = "saml"))]
+    fn verify_and_parse(&self, _rstr_xml: &str) -> Result<WsFedSecurityToken> {
+        Err(AuthError::config(
+            "WS-Federation sign-in tokens can only be accepted when their signature is verified: build with the `saml` feature",
+        ))
     }
 
     /// Validate a security token against the configuration.
@@ -408,11 +459,11 @@ impl WsFederationClient {
             .as_secs();
 
         let skew = self.config.max_clock_skew_secs;
-        if token.expires_at + skew < now {
+        if token.expires_at.saturating_add(skew) < now {
             return Err(AuthError::validation("Security token has expired"));
         }
 
-        if token.issued_at > now + skew {
+        if token.issued_at > now.saturating_add(skew) {
             return Err(AuthError::validation("Security token issued in the future"));
         }
 
@@ -422,41 +473,9 @@ impl WsFederationClient {
 
 // ─── XML Parsing Helpers ─────────────────────────────────────────────────────
 
-/// Extract the SAML assertion from a RequestSecurityTokenResponse.
-fn extract_assertion(rstr: &str) -> Result<String> {
-    // Look for <Assertion> or <saml:Assertion>
-    let assertion_tags = [
-        ("saml:Assertion", "</saml:Assertion>"),
-        ("saml2:Assertion", "</saml2:Assertion>"),
-        ("Assertion", "</Assertion>"),
-    ];
-
-    for (open_tag, close_tag) in &assertion_tags {
-        let open = format!("<{open_tag}");
-        if let Some(start) = rstr.find(&open)
-            && let Some(end) = rstr[start..].find(close_tag)
-        {
-            return Ok(rstr[start..start + end + close_tag.len()].to_string());
-        }
-    }
-
-    Err(AuthError::validation(
-        "No SAML assertion found in WS-Federation response",
-    ))
-}
-
 /// Parse a SAML 2.0 assertion.
-#[allow(clippy::type_complexity)] // one-off return type of a private helper; an alias would only be used once
-fn parse_saml20_assertion(
-    xml: &str,
-) -> Result<(
-    String,
-    String,
-    String,
-    u64,
-    u64,
-    HashMap<String, Vec<String>>,
-)> {
+#[cfg(any(feature = "saml", test))]
+fn parse_saml20_assertion(xml: &str) -> Result<ParsedAssertion> {
     let subject = extract_xml_text(xml, "NameID")
         .or_else(|| extract_xml_text(xml, "saml:NameID"))
         .unwrap_or_default();
@@ -492,17 +511,8 @@ fn parse_saml20_assertion(
 }
 
 /// Parse a SAML 1.1 assertion.
-#[allow(clippy::type_complexity)] // one-off return type of a private helper; an alias would only be used once
-fn parse_saml11_assertion(
-    xml: &str,
-) -> Result<(
-    String,
-    String,
-    String,
-    u64,
-    u64,
-    HashMap<String, Vec<String>>,
-)> {
+#[cfg(feature = "saml")]
+fn parse_saml11_assertion(xml: &str) -> Result<ParsedAssertion> {
     let subject = extract_xml_text(xml, "NameIdentifier")
         .or_else(|| extract_xml_text(xml, "saml:NameIdentifier"))
         .unwrap_or_default();
@@ -516,10 +526,12 @@ fn parse_saml11_assertion(
         .unwrap_or_default();
 
     let not_before = extract_xml_attr_val(xml, "Conditions", "NotBefore")
+        .or_else(|| extract_xml_attr_val(xml, "saml:Conditions", "NotBefore"))
         .and_then(|s| parse_iso_timestamp(&s))
         .unwrap_or(0);
 
     let not_on_or_after = extract_xml_attr_val(xml, "Conditions", "NotOnOrAfter")
+        .or_else(|| extract_xml_attr_val(xml, "saml:Conditions", "NotOnOrAfter"))
         .and_then(|s| parse_iso_timestamp(&s))
         .unwrap_or(u64::MAX);
 
@@ -533,84 +545,6 @@ fn parse_saml11_assertion(
         not_on_or_after,
         claims,
     ))
-}
-
-/// Parse a JWT token extracted from a WS-Fed response (used by Azure AD).
-///
-/// NOTE: This performs payload extraction and validation of standard claims
-/// without cryptographic signature verification. Signature verification
-/// requires the IdP's public keys (from federation metadata JWKS).
-#[allow(clippy::type_complexity)] // one-off return type of a private helper; an alias would only be used once
-fn parse_jwt_token(
-    jwt_str: &str,
-) -> Result<(
-    String,
-    String,
-    String,
-    u64,
-    u64,
-    HashMap<String, Vec<String>>,
-)> {
-    use base64::Engine as _;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-
-    // JWT has three base64url-encoded parts separated by dots
-    let parts: Vec<&str> = jwt_str.trim().split('.').collect();
-    if parts.len() != 3 {
-        return Err(AuthError::validation(
-            "Invalid JWT format: expected 3 parts",
-        ));
-    }
-
-    // Decode and parse the payload (second part)
-    let payload_bytes = URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|e| AuthError::validation(format!("Invalid JWT payload encoding: {e}")))?;
-
-    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)
-        .map_err(|e| AuthError::validation(format!("Invalid JWT payload JSON: {e}")))?;
-
-    let subject = payload["sub"]
-        .as_str()
-        .or_else(|| payload["upn"].as_str())
-        .or_else(|| payload["email"].as_str())
-        .unwrap_or_default()
-        .to_string();
-
-    let issuer = payload["iss"].as_str().unwrap_or_default().to_string();
-
-    let audience = payload["aud"].as_str().unwrap_or_default().to_string();
-
-    let issued_at = payload["iat"].as_u64().unwrap_or(0);
-    let expires_at = payload["exp"].as_u64().unwrap_or(u64::MAX);
-
-    // Extract all string claims
-    let mut claims = HashMap::new();
-    if let Some(obj) = payload.as_object() {
-        for (key, value) in obj {
-            match value {
-                serde_json::Value::String(s) => {
-                    claims
-                        .entry(key.clone())
-                        .or_insert_with(Vec::new)
-                        .push(s.clone());
-                }
-                serde_json::Value::Array(arr) => {
-                    for item in arr {
-                        if let Some(s) = item.as_str() {
-                            claims
-                                .entry(key.clone())
-                                .or_insert_with(Vec::new)
-                                .push(s.to_string());
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    Ok((subject, issuer, audience, issued_at, expires_at, claims))
 }
 
 /// Extract text content from an XML element.
@@ -654,6 +588,7 @@ fn extract_xml_attr_val(xml: &str, tag: &str, attr: &str) -> Option<String> {
 }
 
 /// Extract SAML attribute statements.
+#[cfg(any(feature = "saml", test))]
 fn extract_saml_attributes(xml: &str) -> HashMap<String, Vec<String>> {
     let mut attrs = HashMap::new();
 
@@ -708,6 +643,7 @@ fn extract_inline_attr(tag: &str, attr: &str) -> Option<String> {
 }
 
 /// Extract <AttributeValue> elements from an attribute block.
+#[cfg(any(feature = "saml", test))]
 fn extract_attribute_values(block: &str) -> Vec<String> {
     let mut values = Vec::new();
     let mut pos = 0;
@@ -743,6 +679,7 @@ fn extract_attribute_values(block: &str) -> Vec<String> {
 }
 
 /// Parse an ISO 8601 timestamp to Unix epoch seconds.
+#[cfg(any(feature = "saml", test))]
 fn parse_iso_timestamp(s: &str) -> Option<u64> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
@@ -917,6 +854,7 @@ mod tests {
             sts_url: "https://adfs.example.com/adfs/ls".into(),
             realm: "https://app.example.com".into(),
             reply_url: "https://app.example.com/auth/wsfed".into(),
+            trusted_cert_thumbprints: vec!["ab".repeat(32)],
             ..Default::default()
         };
         let client = WsFederationClient::new(config).unwrap();
@@ -933,6 +871,7 @@ mod tests {
             sts_url: "https://adfs.example.com/adfs/ls".into(),
             realm: "https://app.example.com".into(),
             reply_url: "https://app.example.com/auth/wsfed".into(),
+            trusted_cert_thumbprints: vec!["ab".repeat(32)],
             ..Default::default()
         };
         let client = WsFederationClient::new(config).unwrap();
@@ -968,20 +907,6 @@ mod tests {
         assert_eq!(issuer, "https://idp.example.com");
         assert_eq!(audience, "https://app.example.com");
         assert!(claims.contains_key("email"));
-    }
-
-    #[test]
-    fn test_extract_assertion() {
-        let rstr = r#"
-        <RequestSecurityTokenResponse>
-            <saml:Assertion ID="_abc123">
-                <saml:Issuer>test</saml:Issuer>
-            </saml:Assertion>
-        </RequestSecurityTokenResponse>
-        "#;
-        let assertion = extract_assertion(rstr).unwrap();
-        assert!(assertion.contains("saml:Assertion"));
-        assert!(assertion.contains("saml:Issuer"));
     }
 
     #[test]
