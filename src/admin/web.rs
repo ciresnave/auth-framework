@@ -2200,3 +2200,22 @@ mod tests {
         }
     }
 }
+
+/// Known answers recorded under html-escape 0.2.15; the 0.3 upgrade must not change them.
+#[cfg(all(test, feature = "web-gui"))]
+mod escape_known_answers {
+    use super::escape_html;
+
+    #[test]
+    fn escape_html_output_is_unchanged_by_the_html_escape_upgrade() {
+        assert_eq!(
+            escape_html("a&b<c>d\"e'f/g`h=i"),
+            "a&amp;b&lt;c&gt;d&quot;e&#x27;f/g`h=i"
+        );
+        assert_eq!(
+            escape_html("</script><img src=x onerror=alert(1)>"),
+            "&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;"
+        );
+        assert_eq!(escape_html("&amp; &#x27;"), "&amp;amp; &amp;#x27;");
+    }
+}
