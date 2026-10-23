@@ -232,6 +232,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc131 -- **`bergshamra` 0.11 and `kryptering` 0.7** (were 0.9 and 0.6), the XML-DSig stack behind SAML and WS-Federation verification. No API change for our use; the SAML trust, ACS, token-exchange and WS-Federation known-answer and forgery tests pass unchanged, and the `rsa` crate is still absent from the dependency tree.
 - 0.6.0-rc130 -- **Open issues are on the roadmap, and `oauth2_test_server` needs `api-server`.** `docs/ROADMAP.md` gains a "Tracked Issues" table (size, priority, state measured at main) for the open GitHub issues; the `oauth2_test_server` binary, the `debug_server` example and five tests that import `auth_framework::api` now declare `required-features = ["api-server"]`, so `cargo check --no-default-features --all-targets` builds (#282).
 - 0.6.0-rc129 -- **`serde-saphyr` 2.0** (was 1.3). No API change for our YAML reads and writes (config manager, deployment config, threat-intelligence config, migration analyzer, admin CLI); the YAML config round-trip test passes unchanged.
 - 0.6.0-rc128 -- **`html-escape` 0.3.0** (was 0.2). No API change; the admin web GUI's and the OIDC form-post response's escaping is unchanged, pinned by a known-answer test recorded under 0.2.15.
