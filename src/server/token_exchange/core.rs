@@ -62,7 +62,7 @@
 
 use crate::errors::{AuthError, Result};
 #[cfg(feature = "saml")]
-use crate::methods::saml::SamlSignatureValidator;
+use crate::methods::saml::{SamlTrustAnchors, verify_signed_assertion};
 use crate::security::secure_jwt::{SecureJwtClaims, SecureJwtValidator};
 use crate::server::token_exchange::token_exchange_common::{
     ServiceComplexityLevel, TokenExchangeCapabilities, TokenExchangeService, TokenValidationResult,
@@ -372,6 +372,11 @@ pub struct TokenExchangeManager {
 
     /// Active exchanges for tracking
     active_exchanges: tokio::sync::RwLock<HashMap<String, TokenExchangeContext>>,
+
+    /// The certificates SAML subject tokens are accepted under, per issuer. Empty means no SAML
+    /// subject token is accepted.
+    #[cfg(feature = "saml")]
+    saml_trust: SamlTrustAnchors,
 }
 
 impl TokenExchangeManager {
@@ -397,7 +402,24 @@ impl TokenExchangeManager {
             jwt_validator,
             policies: tokio::sync::RwLock::new(HashMap::new()),
             active_exchanges: tokio::sync::RwLock::new(HashMap::new()),
+            #[cfg(feature = "saml")]
+            saml_trust: SamlTrustAnchors::new(),
         }
+    }
+
+    /// Accept SAML subject tokens issued by `issuer` (the `saml:Issuer` they name) when they are
+    /// signed under `certificate` (PEM `CERTIFICATE` or bare base64 DER). Call again to pin a second
+    /// certificate for a rollover. A SAML subject token from any other issuer, or signed under any
+    /// other key (including one the token carries itself), is refused; with none configured, every
+    /// SAML subject token is.
+    #[cfg(feature = "saml")]
+    pub fn with_trusted_saml_issuer(
+        mut self,
+        issuer: impl Into<String>,
+        certificate: &str,
+    ) -> Result<Self> {
+        self.saml_trust.trust_pem(issuer, certificate)?;
+        Ok(self)
     }
 
     /// Register a token exchange policy for a client
@@ -661,39 +683,20 @@ impl TokenExchangeManager {
         xml: &str,
         token_type: &TokenType,
     ) -> Result<SecureJwtClaims> {
-        let validator = SamlSignatureValidator;
-        let certificate = validator.extract_embedded_certificate(xml).map_err(|e| {
+        // The key comes from configuration, every digest is recomputed, and only the signed
+        // assertion is read from here on: the rest of `xml` is attacker-controlled text.
+        let verified = verify_signed_assertion(xml, &self.saml_trust).map_err(|e| {
             AuthError::auth_method(
                 "token_exchange",
-                format!(
-                    "SAML assertion is missing a usable embedded certificate: {}",
-                    e
-                ),
+                format!("SAML signature validation failed: {}", e),
             )
         })?;
-
-        let signature_valid = validator
-            .validate_xml_signature(xml, &certificate)
-            .map_err(|e| {
-                AuthError::auth_method(
-                    "token_exchange",
-                    format!("SAML signature validation failed: {}", e),
-                )
-            })?;
-
-        if !signature_valid {
-            return Err(AuthError::auth_method(
-                "token_exchange",
-                "SAML signature validation failed",
-            ));
-        }
+        let xml = verified.assertion_xml.as_str();
 
         let subject = self.extract_xml_text(xml, "NameID").ok_or_else(|| {
             AuthError::auth_method("token_exchange", "SAML assertion is missing NameID")
         })?;
-        let issuer = self.extract_xml_text(xml, "Issuer").ok_or_else(|| {
-            AuthError::auth_method("token_exchange", "SAML assertion is missing Issuer")
-        })?;
+        let issuer = verified.issuer.clone();
         let audience = self.extract_xml_text(xml, "Audience");
         let issue_instant = self.extract_saml_timestamp(xml, "IssueInstant")?;
         let not_before = self.extract_saml_timestamp(xml, "NotBefore")?;

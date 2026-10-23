@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc61] - Unreleased
+
+### Fixed
+
+- **SAML responses: the assertion that is consumed is the one that was verified, and issuer certificates are pinned (backport of 0.6.0-rc125).** Signatures are now verified in one place (`methods::saml::dsig`, on `bergshamra`) under the certificate configured for the assertion's issuer, with every reference digest recomputed; only the signed `Assertion` (found by its unique `ID`) is read afterwards, and `InResponseTo` is taken from the signed assertion unless the `Response` itself is signed. The ACS endpoint, `SamlAuthMethod` and SAML token exchange all use it. **Configuration changes:** `TokenExchangeManager::with_trusted_saml_issuer(issuer, certificate)` must be called for every issuer whose SAML subject tokens are accepted (with none configured, every SAML subject token is refused; the certificate a token carries is no longer used); `POST /api/v1/saml/sso` refuses an IdP whose `saml_idp:{entity_id}` has no usable `signing_cert`; `SamlAuthMethod::validate_config` fails when no identity provider is configured, a certificate does not parse, or `validate_xml_signature` is `false`. **Removed:** `XmlCanonicalizer` and the hand-written signature checks behind `SamlSignatureValidator` (which keeps `validate_xml_signature(xml, cert_der)`, now backed by `bergshamra`); `SamlSignatureValidator::extract_embedded_certificate`.
+
 ## [0.5.0-rc58] - Unreleased
 
 ### Fixed

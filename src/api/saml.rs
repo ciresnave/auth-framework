@@ -26,7 +26,7 @@ fn xml_escape(input: &str) -> String {
 }
 
 #[cfg(feature = "saml")]
-use bergshamra::{DsigContext, Key, KeyData, KeysManager, VerifyResult, verify};
+use crate::methods::saml::{SamlTrustAnchors, VerifiedAssertion, verify_signed_assertion};
 #[cfg(feature = "saml")]
 use quick_xml::Reader;
 #[cfg(feature = "saml")]
@@ -264,6 +264,20 @@ pub async fn initiate_saml_sso(
         }
     };
 
+    // An IdP whose responses could not be verified must not be sent users: say so before the
+    // redirect, not after the login.
+    #[cfg(feature = "saml")]
+    if let Err(error) = idp_signing_anchors(&state, &request.idp_entity_id).await {
+        tracing::error!(idp = %request.idp_entity_id, error = %error, "SAML SSO: IdP has no usable pinned signing certificate");
+        return Json(ApiResponse::error_typed(
+            "SAML_CONFIG_ERROR",
+            format!(
+                "IdP '{}' cannot be used for login: {}",
+                request.idp_entity_id, error
+            ),
+        ));
+    }
+
     // Generate SAML AuthnRequest
     let request_id = format!("saml_{}", uuid::Uuid::new_v4());
     let issue_instant = chrono::Utc::now().to_rfc3339();
@@ -363,21 +377,21 @@ pub async fn handle_saml_acs(
         };
 
     // --- XML Digital Signature Validation ---
+    // From here on only the assertion the signature covers is read.
     #[cfg(feature = "saml")]
-    {
-        match validate_saml_signature(&state, &saml_response_xml).await {
-            Ok(()) => {
-                tracing::info!("SAML ACS: XML signature validated successfully");
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "SAML ACS: XML signature validation failed");
-                return Json(ApiResponse::error_typed(
-                    "SAML_SIGNATURE_INVALID",
-                    format!("SAML response signature validation failed: {}", e),
-                ));
-            }
+    let verified = match validate_saml_signature(&state, &saml_response_xml).await {
+        Ok(verified) => {
+            tracing::info!("SAML ACS: XML signature validated successfully");
+            verified
         }
-    }
+        Err(e) => {
+            tracing::error!(error = %e, "SAML ACS: XML signature validation failed");
+            return Json(ApiResponse::error_typed(
+                "SAML_SIGNATURE_INVALID",
+                format!("SAML response signature validation failed: {}", e),
+            ));
+        }
+    };
     #[cfg(not(feature = "saml"))]
     {
         tracing::error!(
@@ -390,18 +404,19 @@ pub async fn handle_saml_acs(
         ));
     }
 
-    if !saml_response_xml.contains("<saml:Assertion")
-        && !saml_response_xml.contains("<saml2:Assertion")
-        && !saml_response_xml.contains("<Assertion")
-    {
-        return Json(ApiResponse::validation_error_typed(
-            "No SAML assertion found",
-        ));
-    }
+    // The assertion the signature covers; nothing else in the document is read below.
+    #[cfg(feature = "saml")]
+    let assertion_xml = verified.assertion_xml.clone();
+    #[cfg(not(feature = "saml"))]
+    let assertion_xml = saml_response_xml.clone();
 
     // Validate InResponseTo: the SAML response must reference an AuthnRequest that
     // we actually issued.  This prevents unsolicited response injection attacks.
-    if let Some(irt) = extract_in_response_to(&saml_response_xml) {
+    #[cfg(feature = "saml")]
+    let in_response_to = signed_in_response_to(&saml_response_xml, &verified);
+    #[cfg(not(feature = "saml"))]
+    let in_response_to = extract_in_response_to(&saml_response_xml);
+    if let Some(irt) = in_response_to {
         let request_key = format!("saml_request:{}", irt);
         match state.auth_framework.storage().get_kv(&request_key).await {
             Ok(Some(_)) => {
@@ -442,19 +457,19 @@ pub async fn handle_saml_acs(
             }
         };
 
-        if let Err(e) = validate_saml_conditions(&saml_response_xml, &sp_entity_id) {
+        if let Err(e) = validate_saml_conditions(&assertion_xml, &sp_entity_id) {
             tracing::warn!(error = %e, "SAML ACS: assertion conditions validation failed");
             return Json(ApiResponse::error_typed("SAML_CONDITIONS_INVALID", e));
         }
     }
 
     // Extract user information from assertion
-    let username = match extract_username_from_saml(&saml_response_xml) {
+    let username = match extract_username_from_saml(&assertion_xml) {
         Ok(user) => user,
         Err(e) => return Json(ApiResponse::error_typed("SAML_PARSE_ERROR", e)),
     };
 
-    let attributes = match extract_attributes_from_saml(&saml_response_xml) {
+    let attributes = match extract_attributes_from_saml(&assertion_xml) {
         Ok(attrs) => attrs,
         Err(e) => return Json(ApiResponse::error_typed("SAML_PARSE_ERROR", e)),
     };
@@ -817,140 +832,60 @@ pub async fn list_saml_idps(
     ))
 }
 
-/// Validate the XML-DSig signature on a SAML response using the IdP's trusted signing key.
-///
-/// The IdP's signing certificate (PEM-encoded X.509) must be stored under
-/// `saml_idp:{entity_id}` in the `signing_cert` field.  The IdP entity ID is
-/// extracted from the `<saml:Issuer>` element inside the SAML response.
-///
-/// Uses bergshamra with SAML-hardened settings:
-/// - `trusted_keys_only = true` — ignores attacker-embedded inline KeyInfo
-/// - `strict_verification = true` — XSW attack protection
-/// - `verify_keys = true` — validates key certificates
+/// The certificate pinned for the IdP `entity_id` (`signing_cert` in `saml_idp:{entity_id}`).
+/// Absent or unusable is an error: there is no fallback to a key the response carries.
 #[cfg(feature = "saml")]
-async fn validate_saml_signature(state: &ApiState, saml_xml: &str) -> Result<(), String> {
-    // Extract the IdP entity ID (Issuer) from the response so we can look up
-    // the correct signing key.
-    let issuer = extract_issuer(saml_xml)
-        .ok_or_else(|| "SAML response does not contain an Issuer element".to_string())?;
-
-    // Load the IdP's signing certificate from storage.
-    let idp_key = format!("saml_idp:{}", issuer);
+async fn idp_signing_anchors(
+    state: &ApiState,
+    entity_id: &str,
+) -> Result<SamlTrustAnchors, String> {
+    let idp_key = format!("saml_idp:{}", entity_id);
     let idp_cfg_data = state
         .auth_framework
         .storage()
         .get_kv(&idp_key)
         .await
         .map_err(|e| format!("Storage error loading IdP config: {}", e))?
-        .ok_or_else(|| format!("IdP not configured: {}", issuer))?;
+        .ok_or_else(|| format!("IdP not configured: {}", entity_id))?;
 
     let idp_cfg: serde_json::Value = serde_json::from_slice(&idp_cfg_data)
         .map_err(|e| format!("Invalid IdP config JSON: {}", e))?;
 
     let signing_cert_pem = idp_cfg["signing_cert"]
         .as_str()
-        .ok_or_else(|| format!("IdP '{}' has no signing_cert configured", issuer))?;
+        .filter(|pem| !pem.trim().is_empty())
+        .ok_or_else(|| format!("IdP '{}' has no signing_cert configured", entity_id))?;
 
-    // Parse PEM certificate to DER bytes.
-    let der_bytes = pem_to_der(signing_cert_pem)?;
-
-    // Build the KeysManager with the trusted IdP key.
-    let mut keys_manager = KeysManager::new();
-
-    // Parse the X.509 certificate to extract the public key, then build a
-    // bergshamra Key from it.  Most SAML IdPs use RSA; we also support ECDSA.
-    let key = key_from_x509_der(&der_bytes)?;
-    keys_manager.add_key(key);
-
-    // Also register the cert as a trusted certificate for chain validation.
-    keys_manager.add_trusted_cert(der_bytes);
-
-    // SAML-hardened DsigContext configuration:
-    // - trusted_keys_only: only use our pre-loaded IdP key, ignore inline KeyInfo
-    // - strict_verification: reject XSW (XML Signature Wrapping) attacks
-    // - verify_keys: validate certificates on the keys
-    let ctx = DsigContext::new(keys_manager)
-        .with_trusted_keys_only(true)
-        .with_strict_verification(true)
-        .with_verify_keys(true);
-
-    // Verify the XML signature.
-    let result =
-        verify(&ctx, saml_xml).map_err(|e| format!("XML-DSig verification error: {}", e))?;
-
-    match result {
-        VerifyResult::Valid { references, .. } => {
-            // Ensure the signature actually covers content (not an empty reference set).
-            if references.is_empty() {
-                return Err("Signature is valid but covers no references".to_string());
-            }
-            Ok(())
-        }
-        VerifyResult::Invalid { reason } => Err(format!("Signature invalid: {}", reason)),
-    }
+    let mut anchors = SamlTrustAnchors::new();
+    anchors
+        .trust_pem(entity_id, signing_cert_pem)
+        .map_err(|e| e.to_string())?;
+    Ok(anchors)
 }
 
-/// Decode a PEM-encoded certificate to raw DER bytes.
-#[cfg(feature = "saml")]
-fn pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
-    // Strip PEM headers/footers and whitespace, then base64-decode.
-    let b64: String = pem
-        .lines()
-        .filter(|line| {
-            !line.starts_with("-----BEGIN") && !line.starts_with("-----END") && !line.is_empty()
-        })
-        .collect::<Vec<&str>>()
-        .join("");
-
-    base64::engine::general_purpose::STANDARD
-        .decode(&b64)
-        .map_err(|e| format!("Failed to base64-decode PEM certificate: {}", e))
-}
-
-/// Extract a bergshamra `Key` from a DER-encoded X.509 certificate.
+/// Validate the XML-DSig signature on a SAML response using the IdP's trusted signing key, and
+/// return the one assertion that signature covers.
 ///
-/// Supports RSA and ECDSA (P-256/P-384) public keys — the algorithms used by
-/// the vast majority of SAML Identity Providers.
+/// The IdP's signing certificate (PEM-encoded X.509) must be stored under
+/// `saml_idp:{entity_id}` in the `signing_cert` field.  The IdP entity ID is
+/// extracted from the `<saml:Issuer>` element inside the SAML response, and used only to choose
+/// which configured certificate to verify with: the signed assertion must name the same issuer.
+///
+/// Everything the caller reads afterwards must come from the returned assertion, not from
+/// `saml_xml`: a signature proves one element genuine, and an attacker can put unsigned elements
+/// around it (see [`crate::methods::saml::dsig`]).
 #[cfg(feature = "saml")]
-fn key_from_x509_der(der: &[u8]) -> Result<Key, String> {
-    use x509_parser::prelude::*;
+async fn validate_saml_signature(
+    state: &ApiState,
+    saml_xml: &str,
+) -> Result<VerifiedAssertion, String> {
+    // Extract the IdP entity ID (Issuer) from the response so we can look up
+    // the correct signing key.
+    let issuer = extract_issuer(saml_xml)
+        .ok_or_else(|| "SAML response does not contain an Issuer element".to_string())?;
 
-    let (_, cert) = X509Certificate::from_der(der)
-        .map_err(|e| format!("Failed to parse X.509 certificate: {}", e))?;
-
-    let spki = cert.public_key();
-    let spki_der = spki.raw;
-
-    // Try RSA first (by far the most common in SAML), then the two ECDSA
-    // curves. `KeyData` is an opaque handle as of bergshamra 0.9.2 (no
-    // public enum variants to construct directly, unlike 0.3.x) --
-    // `from_spki_der` requires an explicit algorithm guess per attempt,
-    // same shape as the old code's "try RSA, then P-256, then P-384".
-    let mut last_err = None;
-    for algorithm in [
-        kryptering::KeyAlgorithm::Rsa,
-        kryptering::KeyAlgorithm::Ec(kryptering::EcCurve::P256),
-        kryptering::KeyAlgorithm::Ec(kryptering::EcCurve::P384),
-    ] {
-        match KeyData::from_spki_der(algorithm, spki_der) {
-            Ok(key_data) => return Ok(Key::new(key_data, bergshamra::KeyUsage::Verify)),
-            Err(e) => last_err = Some(e),
-        }
-    }
-
-    // `last_err` (from the final attempt, P-384) is diagnostic detail only --
-    // it is never the reason a GENUINELY RSA or P-256 key is rejected, since
-    // each attempt's own error is independent of the others; keeping it
-    // means a size/strength rejection (e.g. a sub-2048-bit RSA key, per
-    // aws-lc-rs's floor) is surfaced instead of silently collapsed into
-    // "unsupported algorithm".
-    Err(format!(
-        "Unsupported IdP signing key algorithm (OID: {}). RSA, P-256, and P-384 are supported.{}",
-        cert.public_key().algorithm.oid(),
-        last_err
-            .map(|e| format!(" Last error: {e}"))
-            .unwrap_or_default()
-    ))
+    let anchors = idp_signing_anchors(state, &issuer).await?;
+    verify_signed_assertion(saml_xml, &anchors).map_err(|e| e.to_string())
 }
 
 /// Extract the `<saml:Issuer>` or `<saml2:Issuer>` value from the top-level
@@ -1003,6 +938,34 @@ fn extract_issuer(saml_xml: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The `InResponseTo` the signature vouches for: the `Response`'s when the `Response` is signed,
+/// otherwise the one on the signed assertion's `SubjectConfirmationData`. An attribute of an
+/// unsigned `Response` wrapper is the sender's claim, not the IdP's.
+#[cfg(feature = "saml")]
+fn signed_in_response_to(response_xml: &str, verified: &VerifiedAssertion) -> Option<String> {
+    if verified.response_signed
+        && let Some(irt) = extract_in_response_to(response_xml)
+    {
+        return Some(irt);
+    }
+    let mut reader = Reader::from_str(&verified.assertion_xml);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                if xml_local(e.name()) == b"SubjectConfirmationData" {
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref() == b"InResponseTo" {
+                            return String::from_utf8(attr.value.to_vec()).ok();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => return None,
+            _ => {}
+        }
+    }
 }
 
 /// Extract the `InResponseTo` attribute from the top-level `<samlp:Response>` element
@@ -1340,6 +1303,8 @@ fn xml_extract_name_id(saml_xml: &str) -> Option<String> {
 #[cfg(feature = "saml")]
 mod tests {
     use super::*;
+    #[cfg(feature = "saml")]
+    use crate::methods::saml::dsig::key_from_x509_der;
     use chrono::{Duration, Utc};
 
     /// Regression/coverage test for the bergshamra 0.9.2 bump's rewrite of
