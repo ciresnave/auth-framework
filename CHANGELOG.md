@@ -232,6 +232,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc130 -- **CI: advisory CodeRipper portfolio check** (`portfolio` job, pinned reusable workflow). Non-blocking; not a required check. No library change.
 - 0.6.0-rc129 -- **`serde-saphyr` 2.0** (was 1.3). No API change for our YAML reads and writes (config manager, deployment config, threat-intelligence config, migration analyzer, admin CLI); the YAML config round-trip test passes unchanged.
 - 0.6.0-rc128 -- **`html-escape` 0.3.0** (was 0.2). No API change; the admin web GUI's and the OIDC form-post response's escaping is unchanged, pinned by a known-answer test recorded under 0.2.15.
 - 0.6.0-rc127 -- **`quick-xml` 0.42.0** (was 0.41). The SAML parsing code moves to its `&str` API (names, attribute values and text are `&str` now). Behaviour is unchanged; known-answer tests cover carriage returns (character reference and raw line ends) in signed assertions.
