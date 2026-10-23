@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc126"
+  version       = "0.6.0-rc127"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -333,7 +333,7 @@
   # Note: askama_axum was removed in askama 0.13+ - axum integration is now built into askama
 
   # XML processing for SAML
-  quick-xml = { version = "0.41.0", features = ["serialize"], optional = true }
+  quick-xml = { version = "0.42.0", features = ["serialize"], optional = true }
 
   # XML-DSig signature validation for SAML. default-features = false,
   # features = ["aws-lc"]: bergshamra's default pulls in its own

@@ -37,9 +37,9 @@ use quick_xml::name::QName;
 /// Extract the local name (without namespace prefix) from a `QName`, taking
 /// ownership to avoid temporary-lifetime issues from method chaining.
 #[cfg(feature = "saml")]
-fn xml_local<'a>(name: QName<'a>) -> &'a [u8] {
+fn xml_local<'a>(name: QName<'a>) -> &'a str {
     let full = name.0;
-    match full.iter().position(|&b| b == b':') {
+    match full.find(':') {
         Some(pos) => &full[pos + 1..],
         None => full,
     }
@@ -901,20 +901,20 @@ fn extract_issuer(saml_xml: &str) -> Option<String> {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let local = xml_local(e.name());
-                if local == b"Response" && !in_response {
+                if local == "Response" && !in_response {
                     in_response = true;
                     depth = 1;
                 } else if in_response {
                     depth += 1;
                     // Issuer must be a direct child of Response (depth == 2).
-                    if local == b"Issuer" && depth == 2 {
+                    if local == "Issuer" && depth == 2 {
                         in_issuer = true;
                     }
                 }
             }
             Ok(Event::End(e)) => {
                 let local = xml_local(e.name());
-                if in_issuer && local == b"Issuer" {
+                if in_issuer && local == "Issuer" {
                     in_issuer = false;
                 }
                 if in_response {
@@ -925,11 +925,10 @@ fn extract_issuer(saml_xml: &str) -> Option<String> {
                 }
             }
             Ok(Event::Text(t)) if in_issuer => {
-                if let Ok(text) = t.decode() {
-                    let s = text.trim();
-                    if !s.is_empty() {
-                        return Some(s.to_string());
-                    }
+                let text: &str = &t;
+                let s = text.trim();
+                if !s.is_empty() {
+                    return Some(s.to_string());
                 }
             }
             Ok(Event::Eof) => break,
@@ -954,10 +953,10 @@ fn signed_in_response_to(response_xml: &str, verified: &VerifiedAssertion) -> Op
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if xml_local(e.name()) == b"SubjectConfirmationData" {
+                if xml_local(e.name()) == "SubjectConfirmationData" {
                     for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"InResponseTo" {
-                            return String::from_utf8(attr.value.to_vec()).ok();
+                        if attr.key.as_ref() == "InResponseTo" {
+                            return Some(attr.value.to_string());
                         }
                     }
                 }
@@ -976,10 +975,10 @@ fn extract_in_response_to(saml_xml: &str) -> Option<String> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if xml_local(e.name()) == b"Response" {
+                if xml_local(e.name()) == "Response" {
                     for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"InResponseTo" {
-                            return String::from_utf8(attr.value.to_vec()).ok();
+                        if attr.key.as_ref() == "InResponseTo" {
+                            return Some(attr.value.to_string());
                         }
                     }
                     return None; // Found Response but no InResponseTo.
@@ -1019,27 +1018,26 @@ fn extract_username_from_saml(saml_xml: &str) -> Result<String, String> {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let local = xml_local(e.name());
-                if local == b"Assertion" {
+                if local == "Assertion" {
                     in_assertion = true;
-                } else if in_assertion && local == b"NameID" {
+                } else if in_assertion && local == "NameID" {
                     in_name_id = true;
                 }
             }
             Ok(Event::End(e)) => {
                 let local = xml_local(e.name());
-                if in_name_id && local == b"NameID" {
+                if in_name_id && local == "NameID" {
                     in_name_id = false;
                 }
-                if local == b"Assertion" {
+                if local == "Assertion" {
                     break; // Only look in the first Assertion.
                 }
             }
             Ok(Event::Text(t)) if in_name_id => {
-                if let Ok(text) = t.decode() {
-                    let s = text.trim();
-                    if !s.is_empty() {
-                        return Ok(s.to_string());
-                    }
+                let text: &str = &t;
+                let s = text.trim();
+                if !s.is_empty() {
+                    return Ok(s.to_string());
                 }
             }
             Ok(Event::Eof) => break,
@@ -1076,42 +1074,41 @@ fn extract_attributes_from_saml(saml_xml: &str) -> Result<HashMap<String, Vec<St
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let local = xml_local(e.name());
-                if local == b"AttributeStatement" {
+                if local == "AttributeStatement" {
                     in_attr_statement = true;
-                } else if in_attr_statement && local == b"Attribute" {
+                } else if in_attr_statement && local == "Attribute" {
                     in_attribute = true;
                     current_values.clear();
                     current_attr_name = None;
                     for attr in e.attributes().flatten() {
-                        if xml_local(attr.key) == b"Name" {
-                            current_attr_name = String::from_utf8(attr.value.to_vec()).ok();
+                        if xml_local(attr.key) == "Name" {
+                            current_attr_name = Some(attr.value.to_string());
                         }
                     }
-                } else if in_attribute && local == b"AttributeValue" {
+                } else if in_attribute && local == "AttributeValue" {
                     in_attr_value = true;
                 }
             }
             Ok(Event::End(e)) => {
                 let local = xml_local(e.name());
-                if local == b"AttributeValue" {
+                if local == "AttributeValue" {
                     in_attr_value = false;
-                } else if local == b"Attribute" && in_attribute {
+                } else if local == "Attribute" && in_attribute {
                     if let Some(name) = current_attr_name.take()
                         && !current_values.is_empty()
                     {
                         attributes.insert(name, std::mem::take(&mut current_values));
                     }
                     in_attribute = false;
-                } else if local == b"AttributeStatement" {
+                } else if local == "AttributeStatement" {
                     in_attr_statement = false;
                 }
             }
             Ok(Event::Text(t)) if in_attr_value => {
-                if let Ok(text) = t.decode() {
-                    let s = text.trim();
-                    if !s.is_empty() {
-                        current_values.push(s.to_string());
-                    }
+                let text: &str = &t;
+                let s = text.trim();
+                if !s.is_empty() {
+                    current_values.push(s.to_string());
                 }
             }
             Ok(Event::Eof) => break,
@@ -1150,43 +1147,42 @@ fn validate_saml_conditions(saml_xml: &str, sp_entity_id: &str) -> Result<(), St
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let local = xml_local(e.name());
-                if local == b"Assertion" {
+                if local == "Assertion" {
                     in_assertion = true;
-                } else if in_assertion && local == b"Conditions" {
+                } else if in_assertion && local == "Conditions" {
                     in_conditions = true;
                     found_conditions = true;
                     for attr in e.attributes().flatten() {
                         let key = attr.key.as_ref();
-                        if key == b"NotBefore" {
-                            not_before = String::from_utf8(attr.value.to_vec()).ok();
-                        } else if key == b"NotOnOrAfter" {
-                            not_on_or_after = String::from_utf8(attr.value.to_vec()).ok();
+                        if key == "NotBefore" {
+                            not_before = Some(attr.value.to_string());
+                        } else if key == "NotOnOrAfter" {
+                            not_on_or_after = Some(attr.value.to_string());
                         }
                     }
-                } else if in_conditions && local == b"AudienceRestriction" {
+                } else if in_conditions && local == "AudienceRestriction" {
                     in_audience_restriction = true;
-                } else if in_audience_restriction && local == b"Audience" {
+                } else if in_audience_restriction && local == "Audience" {
                     in_audience = true;
                 }
             }
             Ok(Event::End(e)) => {
                 let local = xml_local(e.name());
-                if local == b"Audience" {
+                if local == "Audience" {
                     in_audience = false;
-                } else if local == b"AudienceRestriction" {
+                } else if local == "AudienceRestriction" {
                     in_audience_restriction = false;
-                } else if local == b"Conditions" {
+                } else if local == "Conditions" {
                     break; // Only process the first Conditions element.
-                } else if local == b"Assertion" {
+                } else if local == "Assertion" {
                     break;
                 }
             }
             Ok(Event::Text(t)) if in_audience => {
-                if let Ok(text) = t.decode() {
-                    let s = text.trim();
-                    if !s.is_empty() {
-                        audiences.push(s.to_string());
-                    }
+                let text: &str = &t;
+                let s = text.trim();
+                if !s.is_empty() {
+                    audiences.push(s.to_string());
                 }
             }
             Ok(Event::Eof) => break,
@@ -1243,19 +1239,19 @@ fn xml_extract_status_code(saml_xml: &str) -> Option<String> {
         match reader.read_event() {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let local = xml_local(e.name());
-                if local == b"Status" {
+                if local == "Status" {
                     in_status = true;
-                } else if in_status && local == b"StatusCode" {
+                } else if in_status && local == "StatusCode" {
                     for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"Value" {
-                            return String::from_utf8(attr.value.to_vec()).ok();
+                        if attr.key.as_ref() == "Value" {
+                            return Some(attr.value.to_string());
                         }
                     }
                     return None; // StatusCode without Value attribute.
                 }
             }
             Ok(Event::End(e)) => {
-                if xml_local(e.name()) == b"Status" {
+                if xml_local(e.name()) == "Status" {
                     return None; // Status element ended without StatusCode.
                 }
             }
@@ -1276,19 +1272,18 @@ fn xml_extract_name_id(saml_xml: &str) -> Option<String> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
-                if xml_local(e.name()) == b"NameID" {
+                if xml_local(e.name()) == "NameID" {
                     in_name_id = true;
                 }
             }
             Ok(Event::Text(e)) if in_name_id => {
-                if let Ok(text) = e.decode() {
-                    let s = text.trim();
-                    if !s.is_empty() {
-                        return Some(s.to_string());
-                    }
+                let text: &str = &e;
+                let s = text.trim();
+                if !s.is_empty() {
+                    return Some(s.to_string());
                 }
             }
-            Ok(Event::End(e)) if in_name_id && xml_local(e.name()) == b"NameID" => {
+            Ok(Event::End(e)) if in_name_id && xml_local(e.name()) == "NameID" => {
                 return None; // Empty NameID
             }
             Ok(Event::Eof) => break,

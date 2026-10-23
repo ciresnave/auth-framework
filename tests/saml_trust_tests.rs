@@ -231,3 +231,34 @@ fn trust_pem_reads_a_pem_certificate() {
     anchors.trust_pem(IDP, &pem).unwrap();
     assert!(verify_signed_assertion(&genuine(&idp), &anchors).is_ok());
 }
+
+/// Carriage returns: a character reference is data and survives canonicalization; a raw one in the
+/// document is line-end normalized away. Known answers: both signed forms verify as written, and
+/// swapping one for the other (which changes the canonical form of the text) does not.
+#[test]
+fn a_carriage_return_character_reference_in_signed_text_verifies_and_cannot_be_removed() {
+    let idp = idp();
+    let sig = SIGNATURE.replace("#REF", "#_a1");
+    let signed = idp.sign(&response(&assertion("_a1", IDP, "alice&#13;@idp", &sig)));
+    let verified = verify_signed_assertion(&signed, &idp.anchors()).unwrap();
+    assert_eq!(verified.signed_id, "_a1");
+    assert!(verified.assertion_xml.contains("alice"));
+    for swapped in [
+        signed.replace("alice&#13;@idp", "alice@idp"),
+        signed.replace("&#13;", "\r"),
+    ] {
+        assert_ne!(swapped, signed);
+        let err = verify_signed_assertion(&swapped, &idp.anchors()).unwrap_err();
+        assert!(err.to_string().contains("verification failed"), "{err}");
+    }
+}
+
+#[test]
+fn raw_carriage_return_line_ends_between_signed_elements_verify() {
+    let idp = idp();
+    let sig = SIGNATURE.replace("#REF", "#_a1");
+    let doc = response(&assertion("_a1", IDP, "alice@idp", &sig))
+        .replace("<saml:Subject>", "\r\n<saml:Subject>");
+    let signed = idp.sign(&doc);
+    assert!(verify_signed_assertion(&signed, &idp.anchors()).is_ok());
+}
