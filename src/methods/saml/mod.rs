@@ -224,10 +224,12 @@ impl SamlAuthMethod {
     #[cfg(feature = "saml")]
     fn validate_xml_signature(&self, xml: &str, certificate: &[u8]) -> Result<bool> {
         if !self.config.validate_xml_signature {
-            tracing::warn!(
-                "XML signature validation is disabled - this is INSECURE for production!"
+            tracing::error!(
+                "XML signature validation is disabled; rejecting SAML assertion instead of failing open"
             );
-            return Ok(true);
+            return Err(AuthError::validation(
+                "XML signature validation cannot be disabled for SAML authentication",
+            ));
         }
 
         tracing::debug!("Performing production-grade XML signature validation");
