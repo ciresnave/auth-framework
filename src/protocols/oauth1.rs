@@ -82,7 +82,10 @@ impl std::fmt::Debug for RequestTokenResponse {
             "oauth_token",
             &crate::utils::redact::redacted(&self.oauth_token),
         );
-        d.field("oauth_token_secret", &self.oauth_token_secret);
+        d.field(
+            "oauth_token_secret",
+            &crate::utils::redact::redacted(&*self.oauth_token_secret),
+        );
         d.field("oauth_callback_confirmed", &self.oauth_callback_confirmed);
         d.finish()
     }
@@ -102,7 +105,10 @@ impl std::fmt::Debug for AccessTokenResponse {
             "oauth_token",
             &crate::utils::redact::redacted(&self.oauth_token),
         );
-        d.field("oauth_token_secret", &self.oauth_token_secret);
+        d.field(
+            "oauth_token_secret",
+            &crate::utils::redact::redacted(&*self.oauth_token_secret),
+        );
         d.finish()
     }
 }

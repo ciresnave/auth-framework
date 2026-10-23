@@ -36,7 +36,7 @@ impl std::fmt::Debug for MfaSetupResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("MfaSetupResponse");
         d.field("qr_code", &crate::utils::redact::redacted(&self.qr_code));
-        d.field("secret", &self.secret);
+        d.field("secret", &crate::utils::redact::redacted(&*self.secret));
         d.field(
             "backup_codes",
             &crate::utils::redact::redacted(&self.backup_codes),

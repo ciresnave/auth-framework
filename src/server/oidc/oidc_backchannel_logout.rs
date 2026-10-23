@@ -280,7 +280,10 @@ impl std::fmt::Debug for BackChannelLogoutManager {
             "signing_key",
             &crate::utils::redact::redacted(&self.signing_key),
         );
-        d.field("rsa_signing_key", &self.rsa_signing_key);
+        d.field(
+            "rsa_signing_key",
+            &crate::utils::redact::redacted(&self.rsa_signing_key),
+        );
         d.finish()
     }
 }

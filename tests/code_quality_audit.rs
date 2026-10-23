@@ -1177,11 +1177,40 @@ fn review_unknown_field(
     }
 }
 
+/// A field of a type defined elsewhere that a hand-written impl prints as it is: acceptable when that
+/// type's `Debug` is audited here (derive or hand-written impl in `src/`), or when an `[allow]` says why.
+/// A type from another crate is in neither case, so it needs the `[allow]`.
+fn review_custom_field(
+    review: &DebugFieldReview,
+    used: &mut [bool],
+    audited: &std::collections::HashSet<String>,
+    file: &str,
+    ty: &str,
+    label: &str,
+    field_type: &str,
+) -> Option<String> {
+    if audited.contains(field_type) {
+        return None;
+    }
+    if let Some(i) = review
+        .allow
+        .iter()
+        .position(|(f, t, fld, _)| file.ends_with(f.as_str()) && t == ty && fld == label)
+    {
+        used[i] = true;
+        return None;
+    }
+    Some(format!(
+        "printed as it is by a hand-written Debug, and `{field_type}` has no Debug audited here: redact it, give the type a redacting Debug, or [allow] it with a reason"
+    ))
+}
+
 fn debug_review_problems(
     review: &DebugFieldReview,
     files: &[(String, String)],
 ) -> (usize, usize, Vec<String>, Vec<String>) {
     let mut used = vec![false; review.allow.len()];
+    let audited = audited_debug_types(files);
     let (mut derived, mut with_plain) = (0, 0);
     let mut problems = Vec::new();
     for (file, content) in files {
@@ -1202,11 +1231,17 @@ fn debug_review_problems(
         }
         for (ty, label, kind) in handwritten_debug_fields(content).0 {
             let why = match kind {
-                HandKind::Plain => review_debug_field(review, &mut used, file, &ty, &label, false),
+                HandKind::Plain => review_debug_field(review, &mut used, file, &ty, &label, false)
+                    .map(String::from),
                 HandKind::Container => {
-                    review_debug_field(review, &mut used, file, &ty, &label, true)
+                    review_debug_field(review, &mut used, file, &ty, &label, true).map(String::from)
                 }
-                HandKind::Unknown => review_unknown_field(review, &mut used, file, &ty, &label),
+                HandKind::Unknown => {
+                    review_unknown_field(review, &mut used, file, &ty, &label).map(String::from)
+                }
+                HandKind::Custom(name) => {
+                    review_custom_field(review, &mut used, &audited, file, &ty, &label, &name)
+                }
             };
             if let Some(why) = why {
                 problems.push(format!(
@@ -1293,7 +1328,7 @@ fn braced_block(content: &str, from: usize) -> Option<&str> {
 }
 
 /// How a field is printed by a hand-written `impl Debug`, when it is printed as it is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum HandKind {
     /// A plain-text field (`String`, `Vec<u8>`, ...) of the struct itself.
     Plain,
@@ -1301,6 +1336,8 @@ enum HandKind {
     Container,
     /// Anything else: an enum payload, a nested expression. Only the field's label is known.
     Unknown,
+    /// A field of a type defined elsewhere, printed as it is.
+    Custom(String),
 }
 
 /// The text of the call whose `(` is just before `start`, up to its matching `)`.
@@ -1359,6 +1396,72 @@ fn field_value_is_safe(value: &str) -> bool {
         || v.contains(".is_some()")
         || v.contains(".is_none()")
         || v.contains(".is_empty()")
+}
+
+/// The first type in a field's declared type that is neither a primitive, a std container or time type,
+/// nor a single-letter generic: the type whose own `Debug` decides what the field prints.
+fn custom_type(ty: &str) -> Option<String> {
+    const KNOWN: &[&str] = &[
+        "Option",
+        "Arc",
+        "Box",
+        "Rc",
+        "Vec",
+        "VecDeque",
+        "RwLock",
+        "Mutex",
+        "Cell",
+        "RefCell",
+        "HashMap",
+        "BTreeMap",
+        "HashSet",
+        "BTreeSet",
+        "DashMap",
+        "DashSet",
+        "Duration",
+        "Instant",
+        "SystemTime",
+        "DateTime",
+        "Utc",
+        "Local",
+        "Uuid",
+        "IpAddr",
+        "Ipv4Addr",
+        "Ipv6Addr",
+        "SocketAddr",
+        "PathBuf",
+        "Path",
+        "Self",
+        "Result",
+        "String",
+        "Value",
+        "Cow",
+        "PhantomData",
+    ];
+    let ident = regex::Regex::new(r"\b[A-Z][A-Za-z0-9_]*\b").unwrap();
+    ident
+        .find_iter(ty)
+        .map(|m| m.as_str())
+        .find(|i| i.len() > 1 && !KNOWN.contains(i) && !i.starts_with("Atomic"))
+        .map(str::to_string)
+}
+
+/// Names of the types in `files` whose `Debug` the audit looks at: those with `derive(Debug)`
+/// (plain fields reviewed by the derive scan) and those with a hand-written impl (scanned here).
+fn audited_debug_types(files: &[(String, String)]) -> std::collections::HashSet<String> {
+    let derive = regex::Regex::new(
+        r"(?s)#\[derive\([^\]]*\bDebug\b[^\]]*\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+(\w+)",
+    )
+    .unwrap();
+    let manual =
+        regex::Regex::new(r"impl(?:<[^>]*>)?\s+(?:std::fmt::|fmt::)?Debug\s+for\s+(\w+)").unwrap();
+    let mut out = std::collections::HashSet::new();
+    for (_, content) in files {
+        for re in [&derive, &manual] {
+            out.extend(re.captures_iter(content).map(|c| c[1].to_string()));
+        }
+    }
+    out
 }
 
 /// Every field a hand-written `impl Debug for T` prints without redacting it, as `(type, label, kind)`,
@@ -1422,7 +1525,10 @@ fn handwritten_debug_fields(content: &str) -> (Vec<(String, String, HandKind)>, 
             {
                 Some(ft) if plain.is_match(ft.trim()) => HandKind::Plain,
                 Some(ft) if is_container(&ft, &plain) => HandKind::Container,
-                Some(_) => continue,
+                Some(ft) => match custom_type(&ft) {
+                    Some(name) => HandKind::Custom(name),
+                    None => continue,
+                },
                 None => HandKind::Unknown,
             };
             found.push((ty.to_string(), label, kind));
@@ -2041,6 +2147,61 @@ pub struct A {
                 .iter()
                 .any(|f| f.1 == "sessions")
         );
+    }
+
+    #[test]
+    fn a_custom_typed_field_printed_as_it_is_needs_an_audited_type() {
+        // `client` is a newtype whose Debug nobody here has audited; `count` and `at` cannot hold a secret.
+        let src = "pub struct Holder {\n    pub client: ApiToken,\n    pub count: u32,\n    pub at: Option<Duration>,\n}\nimpl std::fmt::Debug for Holder {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        f.debug_struct(\"Holder\")\n            .field(\"client\", &self.client)\n            .field(\"count\", &self.count)\n            .field(\"at\", &self.at)\n            .finish()\n    }\n}\n";
+        let file = |content: &str| vec![("fixture.rs".to_string(), content.to_string())];
+        let (found, _) = handwritten_debug_fields(src);
+        assert_eq!(
+            found,
+            vec![(
+                "Holder".to_string(),
+                "client".to_string(),
+                HandKind::Custom("ApiToken".to_string())
+            )]
+        );
+        let got = debug_review_problems(&review(), &file(src)).2;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("Holder.client"), "{got:?}");
+        // Controls: the same field is fine once its type is audited (derive(Debug), whose plain
+        // fields the derive scan reviews, or a hand-written impl), is redacted, or is allowed.
+        let derived =
+            format!("{src}#[derive(Debug)]\npub struct ApiToken {{\n    pub id: u64,\n}}\n");
+        assert!(
+            debug_review_problems(&review(), &file(&derived))
+                .2
+                .is_empty()
+        );
+        let manual = format!(
+            "{src}impl std::fmt::Debug for ApiToken {{\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        f.debug_struct(\"ApiToken\").field(\"id\", &\"<redacted>\").finish()\n    }}\n}}\n"
+        );
+        assert!(
+            debug_review_problems(&review(), &file(&manual))
+                .2
+                .is_empty()
+        );
+        let hidden = src.replace("&self.client", "&redacted(&self.client)");
+        assert!(
+            debug_review_problems(&review(), &file(&hidden))
+                .2
+                .is_empty()
+        );
+        let allowed = parse_debug_field_review(
+            "[allow]\nfixture.rs:Holder:client | the token type prints only a public id\n",
+        );
+        assert!(debug_review_problems(&allowed, &file(src)).2.is_empty());
+        // A type audited in another scanned file counts.
+        let two_files = vec![
+            ("a.rs".to_string(), src.to_string()),
+            (
+                "b.rs".to_string(),
+                "#[derive(Debug)]\npub struct ApiToken {\n    pub id: u64,\n}\n".to_string(),
+            ),
+        ];
+        assert!(debug_review_problems(&review(), &two_files).2.is_empty());
     }
 
     #[test]
