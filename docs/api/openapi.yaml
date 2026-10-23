@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AuthFramework Static OpenAPI Note
-  version: 0.6.0-rc122
+  version: 0.6.0-rc125
   description: |
     The repository no longer maintains a separate hand-edited static OpenAPI contract in this file.
 
