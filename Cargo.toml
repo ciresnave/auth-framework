@@ -633,6 +633,11 @@ pasetors = "0.8.1"
   name    = "auth_performance"
 
 [[example]]
+  name              = "persistant_storage_speed"
+  path              = "examples/persistant_storage_speed.rs"
+  required-features = ["persistant-storage", "sqlite-storage"]
+
+[[example]]
   name = "performance_demo"
   required-features = [
     "enhanced-observability",
