@@ -442,6 +442,9 @@
     "uuid",
   ], optional = true }
   tokio-postgres = { version = "0.7.14", optional = true }
+  # AuthStorage over PersistAnt (docs/DESIGN-AUTH-STORAGE.md in PersistAnt). Off by default.
+  persistant-kv = { version = "0.9.24", optional = true }
+  persistant-sqlx = { version = "0.9.24", default-features = false, features = ["sqlite"], optional = true }
 
   # Testing infrastructure (optional)
   html-escape    = "0.3.0"
@@ -478,6 +481,7 @@ pasetors = "0.8.1"
   openid-connect = []
   postgres-storage = ["dep:sqlx", "sqlx/postgres", "tokio-postgres"]
   redis-storage = ["redis"]
+  persistant-storage = ["dep:persistant-kv", "dep:persistant-sqlx"]
   # SMTP delivery (alert emails, MFA email over SMTP). Off by default so a consumer that only needs
   # tokens or TOTP does not compile lettre and its TLS stack.
   smtp = ["dep:lettre"]

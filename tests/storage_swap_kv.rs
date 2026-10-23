@@ -243,6 +243,24 @@ async fn sqlite_swap_kv() {
     contract(Arc::new(storage)).await;
 }
 
+#[cfg(feature = "persistant-storage")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn persistant_memory_swap_kv() {
+    use auth_framework::storage::persistant::PersistantStorage;
+    contract(Arc::new(PersistantStorage::in_memory())).await;
+}
+
+#[cfg(feature = "persistant-storage")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn persistant_sqlite_swap_kv() {
+    use auth_framework::storage::persistant::PersistantStorage;
+    let dir = tempfile::tempdir().unwrap();
+    let storage = PersistantStorage::open_sqlite(dir.path().join("swap.sqlite"))
+        .await
+        .unwrap();
+    contract(Arc::new(storage)).await;
+}
+
 #[cfg(feature = "redis-storage")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn redis_swap_kv() {

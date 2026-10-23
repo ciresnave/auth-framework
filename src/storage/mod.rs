@@ -21,6 +21,8 @@ pub mod encryption; // AES-256-GCM encryption for storage at rest
 pub(crate) mod factory;
 pub(crate) mod key_names; // one-way key names for credentials
 pub mod memory;
+#[cfg(feature = "persistant-storage")]
+pub mod persistant;
 #[cfg(feature = "postgres-storage")]
 pub mod postgres;
 #[cfg(feature = "redis")]
