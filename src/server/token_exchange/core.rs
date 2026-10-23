@@ -255,42 +255,6 @@ pub enum ExchangeScenario {
     ScopeReduction,
 }
 
-/// SAML token claims extracted from XML
-#[derive(Clone)]
-struct SamlClaims {
-    /// Subject (NameID)
-    pub subject: String,
-    /// Issuer
-    pub issuer: String,
-    /// Audience restriction (optional)
-    pub audience: Option<String>,
-    /// Token expiry timestamp (NotOnOrAfter)
-    pub expiry: Option<i64>,
-    /// Not before timestamp (NotBefore)
-    pub not_before: Option<i64>,
-    /// Session ID from authentication statement
-    pub session_id: Option<String>,
-    /// Scopes derived from attribute statements
-    pub scopes: Vec<String>,
-}
-
-impl std::fmt::Debug for SamlClaims {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut d = f.debug_struct("SamlClaims");
-        d.field("subject", &self.subject);
-        d.field("issuer", &self.issuer);
-        d.field("audience", &self.audience);
-        d.field("expiry", &self.expiry);
-        d.field("not_before", &self.not_before);
-        d.field(
-            "session_id",
-            &crate::utils::redact::redacted(&self.session_id),
-        );
-        d.field("scopes", &self.scopes);
-        d.finish()
-    }
-}
-
 /// Token Exchange Manager
 pub struct TokenExchangeManager {
     /// JWT validator for token validation
@@ -469,112 +433,20 @@ impl TokenExchangeManager {
             })
     }
 
-    /// Validate SAML token structure and basic properties
+    /// SAML subject tokens are refused in this release line.
+    ///
+    /// Earlier releases accepted any text that looked like a SAML assertion, without checking a
+    /// signature. This line has no XML signature verifier, so it cannot accept one safely; the
+    /// 0.5 and 0.6 lines verify the signature under a certificate you configure.
     async fn validate_saml_token(
         &self,
-        token: &str,
-        token_type: &TokenType,
+        _token: &str,
+        _token_type: &TokenType,
     ) -> Result<SecureJwtClaims> {
-        // Basic SAML token validation
-        if token.trim().is_empty() {
-            return Err(AuthError::auth_method(
-                "token_exchange",
-                "Empty SAML token provided",
-            ));
-        }
-
-        // Check for basic SAML structure markers
-        let has_saml_markers = token.contains("<saml:")
-            || token.contains("<saml2:")
-            || token.contains("urn:oasis:names:tc:SAML");
-
-        if !has_saml_markers {
-            return Err(AuthError::auth_method(
-                "token_exchange",
-                "Invalid SAML token format - missing SAML namespace markers",
-            ));
-        }
-
-        // IMPLEMENTATION COMPLETE: Parse SAML XML and extract claims
-        let saml_claims = SamlClaims {
-            subject: token
-                .find("<saml:NameID")
-                .and_then(|start| {
-                    let content_start = token[start..].find('>').map(|pos| start + pos + 1)?;
-                    let content_end = token[content_start..]
-                        .find("</saml:NameID>")
-                        .map(|pos| content_start + pos)?;
-                    Some(token[content_start..content_end].trim().to_string())
-                })
-                .unwrap_or_else(|| "saml_subject".to_string()),
-            issuer: token
-                .find("<saml:Issuer")
-                .and_then(|start| {
-                    let content_start = token[start..].find('>').map(|pos| start + pos + 1)?;
-                    let content_end = token[content_start..]
-                        .find("</saml:Issuer>")
-                        .map(|pos| content_start + pos)?;
-                    Some(token[content_start..content_end].trim().to_string())
-                })
-                .unwrap_or_else(|| "saml_identity_provider".to_string()),
-            audience: token.find("<saml:Audience").and_then(|start| {
-                let content_start = token[start..].find('>').map(|pos| start + pos + 1)?;
-                let content_end = token[content_start..]
-                    .find("</saml:Audience>")
-                    .map(|pos| content_start + pos)?;
-                Some(token[content_start..content_end].trim().to_string())
-            }),
-            expiry: Some(chrono::Utc::now().timestamp() + 3600), // 1 hour default
-            not_before: Some(chrono::Utc::now().timestamp()),
-            session_id: Some(format!("saml_session_{}", uuid::Uuid::new_v4())),
-            scopes: {
-                let mut scopes = Vec::new();
-                if token.contains("emailaddress") {
-                    scopes.push("email".to_string());
-                }
-                if token.contains("identity/claims/name") {
-                    scopes.push("profile".to_string());
-                }
-                if token.contains("claims/groups") || token.contains("role") {
-                    scopes.push("groups".to_string());
-                }
-                if scopes.is_empty() {
-                    scopes.push("saml_authenticated".to_string());
-                }
-                scopes
-            },
-        };
-
-        let now = chrono::Utc::now().timestamp();
-        let claims = SecureJwtClaims {
-            iss: saml_claims.issuer,
-            sub: saml_claims.subject,
-            aud: saml_claims
-                .audience
-                .unwrap_or_else(|| "target_audience".to_string()),
-            exp: saml_claims.expiry.unwrap_or(now + 3600), // Use SAML expiry or default 1 hour
-            nbf: saml_claims.not_before.unwrap_or(now),
-            iat: now,
-            jti: format!("saml_token_{}", uuid::Uuid::new_v4()),
-            scope: saml_claims.scopes.join(" "),
-            typ: match token_type {
-                TokenType::Saml2 => "urn:ietf:params:oauth:token-type:saml2",
-                TokenType::Saml1 => "urn:ietf:params:oauth:token-type:saml1",
-                _ => "urn:ietf:params:oauth:token-type:saml2",
-            }
-            .to_string(),
-            sid: saml_claims.session_id,
-            client_id: None,
-            auth_ctx_hash: Some(format!("saml_ctx_{}", uuid::Uuid::new_v4())),
-        };
-
-        tracing::info!(
-            "SAML token validation completed - parsed subject: {}, issuer: {}, scopes: {}",
-            claims.sub,
-            claims.iss,
-            claims.scope
-        );
-        Ok(claims)
+        Err(AuthError::auth_method(
+            "token_exchange",
+            "SAML subject tokens are not accepted by this release line: their signature cannot be verified here. Use a release line with SAML signature verification, or exchange a JWT",
+        ))
     }
 
     /// Parse token type from string
@@ -907,16 +779,18 @@ impl TokenExchangeService for TokenExchangeManager {
                 }
             }
             TokenType::Saml2 | TokenType::Saml1 => {
-                // Basic SAML validation (simplified)
+                // No signature verifier in this release line: a SAML token is never valid here.
                 Ok(TokenValidationResult {
-                    is_valid: true, // Simplified validation
-                    subject: None,  // Would extract from SAML assertion
-                    issuer: None,   // Would extract from SAML assertion
+                    is_valid: false,
+                    subject: None,
+                    issuer: None,
                     audience: Vec::new(),
                     scopes: Vec::new(),
                     expires_at: None,
                     metadata: HashMap::new(),
-                    validation_messages: vec!["SAML validation not fully implemented".to_string()],
+                    validation_messages: vec![
+                        "SAML tokens cannot be validated in this release line".to_string(),
+                    ],
                 })
             }
             _ => Err(AuthError::InvalidRequest(format!(

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.41] - Unreleased
+
+### Fixed
+
+- **SAML subject tokens are no longer accepted by token exchange, and SAML signature validation can no longer be switched off.** This release line has no XML signature verifier, and `TokenExchangeManager` accepted any text that looked like a SAML assertion as a subject token (when a client policy allowed `Saml2`/`Saml1`); it now refuses them, and `TokenExchangeService::validate_token` reports a SAML token as not valid. Exchange a JWT instead, or move to a release line (0.5.x, 0.6.x) that verifies SAML signatures under a certificate you configure. `SamlAuthMethod` with `validate_xml_signature = false` now fails with an error instead of accepting the assertion.
+
 ## [0.4.40] - Unreleased
 
 ### Fixed
