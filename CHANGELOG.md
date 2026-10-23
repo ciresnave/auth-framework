@@ -230,6 +230,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc122 -- **`pasetors` 0.8.1** (was 0.7.7). No API change for `PasetoLocalManager`; a known-answer test confirms a v4.local token minted by 0.7.7 still decrypts.
 - 0.6.0-rc115 -- **Dependencies: `passkey` and `passkey-client` 0.5 -> 0.6.** The new release asks the caller for a crypto backend (`Authenticator::new(.., RustCryptoBackend)`)
   and no longer exports `passkey::types::rand`; the passkey method now passes `RustCryptoBackend` and draws its 32-byte challenge from `ring`'s system
   generator. The lock also moves the RustCrypto elliptic-curve stack that `passkey` uses (`p256` 0.14, `ecdsa` 0.17, `elliptic-curve` 0.14, `crypto-bigint`
