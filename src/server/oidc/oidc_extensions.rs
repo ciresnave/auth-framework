@@ -1028,43 +1028,42 @@ impl SharedSignalsManager {
             use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 
             // Load verification key from secure storage or environment
-            let decoding_key = if let Ok(key_material) =
-                std::env::var("SHARED_SIGNALS_VERIFICATION_KEY")
-            {
-                // Production implementation: Support multiple key formats
-                if key_material.starts_with("-----BEGIN PUBLIC KEY-----") {
-                    // RSA public key
-                    match DecodingKey::from_rsa_pem(key_material.as_bytes()) {
-                        Ok(key) => key,
-                        Err(e) => {
-                            tracing::error!("Failed to parse RSA public key: {}", e);
-                            return Err(AuthError::InvalidRequest(
-                                "Invalid RSA public key configuration".to_string(),
-                            ));
+            let decoding_key =
+                if let Ok(key_material) = std::env::var("SHARED_SIGNALS_VERIFICATION_KEY") {
+                    // Production implementation: Support multiple key formats
+                    if key_material.starts_with("-----BEGIN PUBLIC KEY-----") {
+                        // RSA public key
+                        match DecodingKey::from_rsa_pem(key_material.as_bytes()) {
+                            Ok(key) => key,
+                            Err(e) => {
+                                tracing::error!("Failed to parse RSA public key: {}", e);
+                                return Err(AuthError::InvalidRequest(
+                                    "Invalid RSA public key configuration".to_string(),
+                                ));
+                            }
                         }
-                    }
-                } else if key_material.starts_with("-----BEGIN EC PUBLIC KEY-----") {
-                    // ECDSA public key
-                    match DecodingKey::from_ec_pem(key_material.as_bytes()) {
-                        Ok(key) => key,
-                        Err(e) => {
-                            tracing::error!("Failed to parse ECDSA public key: {}", e);
-                            return Err(AuthError::InvalidRequest(
-                                "Invalid ECDSA public key configuration".to_string(),
-                            ));
+                    } else if key_material.starts_with("-----BEGIN EC PUBLIC KEY-----") {
+                        // ECDSA public key
+                        match DecodingKey::from_ec_pem(key_material.as_bytes()) {
+                            Ok(key) => key,
+                            Err(e) => {
+                                tracing::error!("Failed to parse ECDSA public key: {}", e);
+                                return Err(AuthError::InvalidRequest(
+                                    "Invalid ECDSA public key configuration".to_string(),
+                                ));
+                            }
                         }
+                    } else {
+                        // Symmetric key (HMAC)
+                        DecodingKey::from_secret(key_material.as_bytes())
                     }
                 } else {
-                    // Symmetric key (HMAC)
-                    DecodingKey::from_secret(key_material.as_bytes())
-                }
-            } else {
-                // Nothing is believed without a key the operator configured.
-                tracing::error!(
-                    "Shared signals event refused: SHARED_SIGNALS_VERIFICATION_KEY is not set"
-                );
-                return Ok(false);
-            };
+                    // Nothing is believed without a key the operator configured.
+                    tracing::error!(
+                        "Shared signals event refused: SHARED_SIGNALS_VERIFICATION_KEY is not set"
+                    );
+                    return Ok(false);
+                };
 
             // Production implementation: Configure validation based on key type
             let algorithm = if std::env::var("SHARED_SIGNALS_VERIFICATION_KEY").is_ok() {
