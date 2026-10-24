@@ -1059,16 +1059,11 @@ impl SharedSignalsManager {
                     DecodingKey::from_secret(key_material.as_bytes())
                 }
             } else {
-                // Development fallback with proper security warning
+                // Nothing is believed without a key the operator configured.
                 tracing::error!(
-                    "🔐 SECURITY WARNING: Using development key for shared signals - configure SHARED_SIGNALS_VERIFICATION_KEY for production"
+                    "Shared signals event refused: SHARED_SIGNALS_VERIFICATION_KEY is not set"
                 );
-                tracing::warn!(
-                    "Set SHARED_SIGNALS_VERIFICATION_KEY environment variable with your production key"
-                );
-                DecodingKey::from_secret(
-                    "shared_signals_development_key_not_for_production".as_ref(),
-                )
+                return Ok(false);
             };
 
             // Production implementation: Configure validation based on key type
@@ -1122,9 +1117,9 @@ impl SharedSignalsManager {
                 }
             }
         } else {
-            // Non-JWT events - basic validation
-            tracing::info!("Non-JWT security event - performing basic validation");
-            Ok(!event.subject.is_empty() && !event.event_type.is_empty())
+            // An event with no signed token carries nothing to verify.
+            tracing::warn!("Security event refused: no signed token to verify");
+            Ok(false)
         }
     }
 
