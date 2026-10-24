@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc130`
+- Current crate version: `0.6.0-rc131`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -296,6 +296,33 @@ path rather than bumping the version number.
       blind-indexed lookups, no `AuthStorage` trait change; aligned with
       PersistAnt's `kv.*` capabilities; prerequisites #144, #145, #146, #147, #148;
       decisions D-E1..D-E8 await CireSnave/PM). Stable-release MUST.
+
+### Tracked Issues (open on GitHub)
+
+Measured at `origin/main` 77f7f757 (0.6.0-rc126) unless a row says otherwise. Size: S = a few hours, M = a day or two,
+L = a design decision plus several PRs. Priority: P1 = correctness or security of a shipped path, P2 = quality or
+operations, P3 = hygiene, Blocked = waiting on someone else.
+
+| Issue | What | Size | Priority | State at 77f7f757 |
+| --- | --- | --- | --- | --- |
+| #147 | PostgreSQL `list_user_sessions` selects `last_activity`, `ip_address`, `user_agent`, which `migrate()` never creates; four incompatible `sessions` schemas in the tree | M | P1 | Open: `postgres.rs:701` selects them, the `sessions` table at `:132` has no such columns |
+| #144 | `get_token` / `get_token_by_access_token` return expired tokens on SQLite and both in-memory backends; SQLite also returns expired sessions | M | P1 | Open, re-measured: expired token returned by Memory, DashMap and SQLite on both lookups; expired session returned by SQLite (control: live token returned on all three) |
+| #99 | JARM JWE AES-256-GCM encrypt and decrypt pass no AAD, so the protected header is unauthenticated (RFC 7516 5.1/5.2 step 14) | S | P1 | Open: `oidc_advanced_jarm.rs` `cipher.encrypt(nonce, payload.as_bytes())` and `cipher.decrypt(nonce, ciphertext.as_slice())` |
+| #92 | The only rate limiter on the wired OAuth2 / introspection routes is per IP, not per client | M | P1 | Open: no `rate_limit` in `src/api/oauth_advanced.rs` or `src/api/oauth2.rs` (control: 11 in `src/api/middleware.rs`) |
+| #91 | No audit-trail record of client_credentials, introspection or revocation | M | P1 | Open: no `audit` in `src/api/oauth_advanced.rs`, `src/api/oauth2.rs`, `src/server/oauth/oauth2_server.rs` (control: 242 in `src/audit.rs`) |
+| #90 | Three divergent client-credential registries: in-memory `EnhancedTokenStorage`, KV `oauth2_client:` with the secret compared in plaintext, and the token-exchange client store | L | P1 | Open: `oauth_advanced.rs:213` compares the stored plaintext `client_secret` |
+| #148 | Redis backend on the production path (`storage/core.rs`) uses `KEYS`, leaves the per-user token set without EXPIRE and writes in several round trips | M | P2 | Open: `KEYS` at `core.rs:844`, `:1334`; needs a Redis service in CI for tests |
+| #120 | Clippy errors under `cli,admin-binary,postgres-storage,redis-storage,sqlite-storage` | S | P2 | Open: 7 errors in the lib, 16 in lib tests, mostly `src/admin/web.rs` and `src/admin/cli.rs` |
+| #103 | `cargo clippy --all-targets --all-features -D warnings` fails; decide which feature sets CI lints, then fix to that list | M | P2 | Open: 14 errors in the lib, 23 in lib tests |
+| #116 | No test proves the TOTP facade (`AuthFramework`) and the modular `TotpManager` verify each other's secrets | S | P2 | Open: no test generates through one and verifies through the other |
+| #18 | Audit tests read source paths that moved, and every read failure means "no problem found" | S | P3 | Open: `final_comprehensive_security_audit.rs` still reads the absent `src/server/oidc.rs` |
+| #106 | SAML on Windows: `kryptering` hard-gates its `aws-lc` backend to Linux and macOS | - | Blocked | Upstream (`kryptering`); CireSnave's ruling 2026-10-04: accept for now, keep looking |
+| #282 | `cargo check --no-default-features` fails: bin `oauth2_test_server` has no `required-features` | S | P2 | Fixed by the PR that adds this table: the bin, one example and five tests that import `auth_framework::api` declare `required-features = ["api-server"]`; `cargo check --locked --no-default-features --all-targets` finishes |
+
+Closed with evidence when this table was written: #93 (`user_profile` round-trips on Memory, DashMap and SQLite; PostgreSQL has the
+column since `ALTER TABLE ... ADD COLUMN IF NOT EXISTS user_profile JSONB`), #87 (`test_audit_panics_in_source` now skips
+`#[cfg(test)]` items and no longer needs `#[ignore]`), #13 (the storage guides open with a version notice and the README no
+longer names a `:latest` tag).
 
 ### Community and Project Hygiene
 
