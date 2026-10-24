@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc131`
+- Current crate version: `0.6.0-rc132`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -323,6 +323,20 @@ Closed with evidence when this table was written: #93 (`user_profile` round-trip
 column since `ALTER TABLE ... ADD COLUMN IF NOT EXISTS user_profile JSONB`), #87 (`test_audit_panics_in_source` now skips
 `#[cfg(test)]` items and no longer needs `#[ignore]`), #13 (the storage guides open with a version notice and the README no
 longer names a `:latest` tag).
+
+#### CodeRipper portfolio findings (advisory)
+
+Read from the `portfolio` job on the `main` run for 9abbced8 (run 40040499570; CodeRipper pinned at a48fc6cc; 794 findings, job exit 1). The job is advisory and not a required check. One row per failing rule; owner is the auth-framework lane.
+
+| Rule | Count | Severity | What the log says | Owner | State |
+| --- | --- | --- | --- | --- | --- |
+| reachability | 655 | Medium | Public items with zero callers inside this crate (for example `check_compliance`, `ApiVersion`, `log_message`); a library's public API is called from outside, so each needs a decision: keep as API, or remove | auth-framework lane | Open, to triage by module |
+| SEC-002 | 98 | High | gitleaks hits: 64 `generic-api-key`, 21 `private-key`, 10 `jwt`, 3 `curl-auth-header`, in `src/`, `tests/`, `examples/` and `docs/`; not yet classified as test fixture versus real | auth-framework lane | Open, classify each (fixture, docs placeholder, or real); real ones go to the PM privately |
+| lint-suppression | 33 | Low | `allow(...)` with no reason (`deprecated`, `clippy::result_large_err`, `unused_macros`, `dead_code` and others) | auth-framework lane | Open, S: add `reason = "..."` or remove the allow |
+| unused-return-values | 4 | Low | A call whose return value is dropped at one of its many call sites (for example `write` at `src/server/security/x509_signing.rs:3630`) | auth-framework lane | Open, S |
+| licence | 3 | Medium | `LICENSE-APACHE` and `LICENSE-MIT` name a person as copyright holder; 404 of 404 source files carry no SPDX identifier | auth-framework lane | Open; the copyright holder is CireSnave's decision |
+| version-consistency | 1 | High | `auth-storage-sqlite` is at 0.6.0-rc64 (and `sdks/python` at 0.6.0rc64) while the crate is at 0.6.0-rc130 | auth-framework lane | Open, S: needs a ruling on whether member crates track the root version (the one-version-per-project rule says yes) |
+
 
 ### Community and Project Hygiene
 
