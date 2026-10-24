@@ -862,7 +862,10 @@ impl GnapService {
         }
 
         // Verify continuation token
-        if txn.continue_token != continue_token {
+        if !bool::from(subtle::ConstantTimeEq::ct_eq(
+            txn.continue_token.as_bytes(),
+            continue_token.as_bytes(),
+        )) {
             return Err(AuthError::validation("Invalid continuation token"));
         }
 
