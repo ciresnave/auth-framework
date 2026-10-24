@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "auth-storage-sqlite"
-version = "0.6.0-rc64"
+version = "0.6.0-rc132"
 dependencies = [
  "async-trait",
  "auth-framework",
