@@ -122,7 +122,7 @@ jobs:
     name: CodeRipper portfolio check
     permissions:
       contents: read
-    uses: ciresnave/coderipper/.github/workflows/portfolio.yml@a48fc6cc4726abf21d28fba0525c9e15aef96aff
+    uses: ciresnave/coderipper/.github/workflows/portfolio.yml@ee9c3950c510fae136d316fed3bd9ecda343cede # 0.9.24
 
   msrv:
     name: MSRV Verification
