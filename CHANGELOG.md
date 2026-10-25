@@ -233,6 +233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc145 -- **Two small hardening fixes.** GNAP continuation-token comparison is now constant-time (`ct_eq`), and the OAuth2 revoke log line carries a token fingerprint instead of the token. The CodeRipper portfolio workflow is repinned to `ee9c3950` (0.9.24).
 - 0.6.0-rc144 -- **Spec-to-roadmap audit.** `docs/ROADMAP.md` gains rows A1-A11 for work the docs promise and the roadmap did not carry; the stale "release 0.5.0 from rc18" priority now names `0.6.0`. `SECURITY.md` no longer says WS-Federation extracts unverified JWT payloads or that OpenID4VP skips signature verification (the code does neither), and states the GNAP DPoP limitation. `COMPATIBILITY.md` SQLite row repaired. Documentation only.
 - 0.6.0-rc143 -- **Two secret-scan findings are closed.** `tests/fixtures/test_private_key.pem`, an unused RSA test key (committed in `ee6dd8d2`, made by the `openssl genrsa` command in the fixtures README; no source, test, workflow or doc references it), is deleted. `examples/debug_server.rs` reads its signing secret from `AUTH_FRAMEWORK_DEBUG_SECRET` and fails if it is unset, instead of carrying a literal. The `docs/ROADMAP.md` SEC-002 row is updated. History is not rewritten.
 - 0.6.0-rc142 -- **`auth-framework.png` now has a provenance record.** `PROVENANCE.md` states who made the README image, with what tool, and its terms, per the portfolio provenance rule. Documentation only; the image is unchanged.

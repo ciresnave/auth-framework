@@ -1228,7 +1228,7 @@ pub async fn revoke(
 
     tracing::info!(
         "OAuth2 token revoked: {}",
-        &req.token[..10.min(req.token.len())]
+        crate::utils::redact::fingerprint(&req.token)
     );
 
     ApiResponse::success(serde_json::json!({
