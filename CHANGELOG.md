@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc65] - Unreleased
+
+### Removed
+
+- **Removed: the third-party caveat and discharge API of `protocols::macaroons`** (`add_third_party_caveat`, `verify_with_discharges`, `Caveat::vid`, `Caveat::cl`, `Caveat::is_first_party`). The API was incomplete. A serialized credential that carries a third-party caveat is now refused when it is parsed. First-party caveats are unchanged, `Macaroon`'s `Debug` output redacts the signature, and the signature comparison now uses `ct_eq` (equal-length slices are compared in full; a length mismatch returns early). Not a guarantee: the crate does not interpret caveat predicates, so a deployer can still write a first-party predicate such as `needs-discharge: x` and check it in the verifier closure; anything built that way is the deployer's own code and is not verified or supported by this crate.
+
 ## [0.5.0-rc64] - Unreleased
 
 ### Changed
