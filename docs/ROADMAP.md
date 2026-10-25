@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc149`
+- Current crate version: `0.6.0-rc150`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -356,6 +356,19 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 | A9 | `docs/DEPLOYMENT_GUIDE.md:559-560` | `sdks/go/` and `sdks/java/` are "coming soon"; neither directory exists (only `sdks/javascript` and `sdks/python`). Covered by the Go and Java SDK rows in Phase 3; the guide should say "not started" | Open (doc wording) |
 | A10 | `docs/api/REST_API_DESIGN_RATIONALE.md` | Webhooks for user, role and auth-failure events | Dropped 2026-10-24 (PM ruling): no consumer has asked and no route exists; removed from the design doc. Reopen when a consumer asks |
 | A11 | `docs/api/REST_API_DESIGN_RATIONALE.md` "Planned Additions" | Admin batch operations, advanced filtering, export/import. The other "planned" items (WebAuthn, OIDC discovery, API keys) have routes in `src/api/server.rs` | Open; the note at the top of that document marks it historical |
+
+### Do not build otherwise (patent sweep, 2026-10-25)
+
+Each row is a design constraint from `docs/PATENT-SWEEP-CHARTS.md`: an element of a patent's independent claims that this crate does not do. Not legal advice. Changing any row needs a fresh chart first.
+
+| # | Do not build | Patent | Where the crate stays clear |
+|---|---|---|---|
+| P1 | An event received from a central service that makes the receiver revoke a session and redirect the user to the identity provider for re-authentication | US11349844B2 | CAEP handling revokes by back-channel logout and `RequireStepUp` only logs; no redirect (`src/server/security/caep_continuous_access.rs`) |
+| P2 | A resource provider subscribing to a central conditional-access / session-event service | US11349844B2 (claim 7) | The receiver is handed events (`process_event`); it makes no subscription call |
+| P3 | A device identifier or fingerprint placed inside the token or cookie given to the client and recomputed and compared on each request | US8959650B1 | Session ids are random and the fingerprint is server-side state (`src/security/secure_session.rs`) |
+| P4 | Cross-tenant single sign-on: letting an authentication at one tenant satisfy authentication at another tenant of the same user | US9369456B2 | Tenants are isolated frameworks with per-tenant sessions (`src/tenant/registry.rs`) |
+| P5 | A macaroon issuer-introspection mode (the issuer authenticates a macaroon the resource server hands back) | US11595215B1 | Verification is local |
+| P6 | A weighted reputation formula over threat feeds; a device-tier-dependent key-rotation window or alert on old-key use; usage-monitoring key deactivation; a policy dry-run diff report | US10681071B1; US10462152B2; US9424419B1; US12443741B2 | See the design-around notes in `docs/PATENT-SWEEP.md` |
 
 ### Community and Project Hygiene
 
