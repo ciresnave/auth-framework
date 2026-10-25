@@ -325,6 +325,54 @@ mod oauth2_integration_tests {
         assert!(data.updated_at.is_some(), "updated_at should be set");
     }
 
+    #[derive(Clone, Default)]
+    struct LogBuf(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+        type Writer = LogBuf;
+        fn make_writer(&'a self) -> LogBuf {
+            self.clone()
+        }
+    }
+
+    /// The revoke log line identifies the token by a fingerprint; no part of the token is logged.
+    #[tokio::test]
+    async fn test_oauth2_revoke_log_line_does_not_carry_the_token() {
+        let state = setup_api_state().await;
+        let logs = LogBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let response = oauth2::revoke(
+            State(state),
+            Json(RevokeRequest {
+                token: "LEAKCHECK-0123456789-tail".to_string(),
+                token_type_hint: None,
+            }),
+        )
+        .await;
+        assert!(response.success);
+
+        let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(logged.contains("OAuth2 token revoked"), "log: {logged}");
+        assert!(logged.contains("sha256:"), "log: {logged}");
+        assert!(!logged.contains("LEAKCHECK"), "log: {logged}");
+    }
+
     #[tokio::test]
     async fn test_oauth2_revoke_endpoint() {
         let state = setup_api_state().await;

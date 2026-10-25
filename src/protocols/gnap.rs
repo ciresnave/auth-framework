@@ -348,6 +348,10 @@ pub struct GnapService {
     issued_tokens: Arc<RwLock<HashMap<String, GnapIssuedToken>>>,
 }
 
+/// The one message every refused `continue_transaction` call returns, so a caller cannot tell an
+/// unknown transaction from an expired one, a wrong token or a wrong interaction hash.
+const INVALID_CONTINUATION: &str = "Invalid continuation request";
+
 impl GnapService {
     pub fn new(config: GnapConfig) -> Self {
         Self {
@@ -849,7 +853,7 @@ impl GnapService {
         let mut transactions = self.transactions.write().await;
         let txn = transactions
             .get_mut(transaction_id)
-            .ok_or_else(|| AuthError::validation("Transaction not found or expired"))?;
+            .ok_or_else(|| AuthError::validation(INVALID_CONTINUATION))?;
 
         // Enforce transaction expiration
         let now = std::time::SystemTime::now()
@@ -858,22 +862,21 @@ impl GnapService {
             .as_secs();
         if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
             transactions.remove(transaction_id);
-            return Err(AuthError::validation("Transaction has expired"));
+            return Err(AuthError::validation(INVALID_CONTINUATION));
         }
 
-        // Verify continuation token
+        // Verify continuation token. `ct_eq` examines every byte of two slices of equal
+        // length; a length mismatch returns early, which reveals only the length of a
+        // UUID-formatted token.
         if !bool::from(subtle::ConstantTimeEq::ct_eq(
             txn.continue_token.as_bytes(),
             continue_token.as_bytes(),
         )) {
-            return Err(AuthError::validation("Invalid continuation token"));
+            return Err(AuthError::validation(INVALID_CONTINUATION));
         }
 
-        // Rotate the continuation token (draft §5.1)
-        let new_continue_token = uuid::Uuid::new_v4().to_string();
-        txn.continue_token = new_continue_token.clone();
-
-        // If interaction hash is provided, verify it (draft §4.2.3)
+        // If interaction hash is provided, verify it (draft §4.2.3). This runs before the
+        // token is rotated, so a request that fails the check leaves the holder's token usable.
         if let (Some(hash), Some(iref)) = (interact_hash, interact_ref) {
             let server_nonce = txn.interact_nonce.as_deref().ok_or_else(|| {
                 AuthError::validation("No interaction nonce for this transaction")
@@ -892,12 +895,17 @@ impl GnapService {
                 iref,
                 &self.config.transaction_endpoint,
             );
-            if hash != expected {
-                return Err(AuthError::validation(
-                    "Interaction hash verification failed (draft §4.2.3)",
-                ));
+            if !bool::from(subtle::ConstantTimeEq::ct_eq(
+                hash.as_bytes(),
+                expected.as_bytes(),
+            )) {
+                return Err(AuthError::validation(INVALID_CONTINUATION));
             }
         }
+
+        // Rotate the continuation token (draft §5.1)
+        let new_continue_token = uuid::Uuid::new_v4().to_string();
+        txn.continue_token = new_continue_token.clone();
 
         let result = match txn.state {
             GnapTransactionState::Pending => {
@@ -1959,22 +1967,145 @@ mod tests {
             .await;
         assert!(bad.is_err());
 
-        // Get fresh continuation token after the failed attempt rotated it
-        let fresh_cont = {
-            let txns = service.transactions.read().await;
-            txns.get(&txn_id).unwrap().continue_token.clone()
-        };
-
-        // Correct hash → succeeds
+        // The failed attempt did not use up the continuation token: the same token still works
         let good = service
-            .continue_transaction(
-                &txn_id,
-                &fresh_cont,
-                Some(interact_ref),
-                Some(&correct_hash),
-            )
+            .continue_transaction(&txn_id, &cont, Some(interact_ref), Some(&correct_hash))
             .await;
         assert!(good.is_ok());
+    }
+
+    /// A pending transaction that asks for an interaction hash, with the client nonce, the
+    /// transaction id, its continuation token and the correct hash for `interact_ref`.
+    async fn interact_transaction(
+        service: &GnapService,
+        interact_ref: &str,
+    ) -> (String, String, String) {
+        let client_nonce = "client-nonce-abc";
+        let req = GnapTransactionRequest {
+            client: None,
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: Some(GnapInteractionFinish {
+                    method: "redirect".to_string(),
+                    uri: "https://client.test/cb".to_string(),
+                    nonce: client_nonce.to_string(),
+                }),
+            }),
+            access_token: Some(vec![GnapAccessRequest {
+                access_type: "read".to_string(),
+                actions: vec![],
+                locations: vec![],
+            }]),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        let txns = service.transactions.read().await;
+        let (id, txn) = txns.iter().next().unwrap();
+        let hash = GnapService::compute_interact_hash(
+            client_nonce,
+            txn.interact_nonce.as_deref().unwrap(),
+            interact_ref,
+            &service.config.transaction_endpoint,
+        );
+        (id.clone(), txn.continue_token.clone(), hash)
+    }
+
+    #[tokio::test]
+    async fn test_failed_hash_check_does_not_use_up_the_continuation_token() {
+        let service = GnapService::new(test_config());
+        let (txn_id, cont, hash) = interact_transaction(&service, "ref-1").await;
+
+        // Same length as the real hash, one character different
+        let mut wrong = hash.clone();
+        wrong.pop();
+        wrong.push(if hash.ends_with('a') { 'b' } else { 'a' });
+        assert_eq!(wrong.len(), hash.len());
+
+        for _ in 0..3 {
+            let bad = service
+                .continue_transaction(&txn_id, &cont, Some("ref-1"), Some(&wrong))
+                .await;
+            assert!(bad.is_err());
+        }
+        // The token the client was given is the one stored
+        let stored = service
+            .transactions
+            .read()
+            .await
+            .get(&txn_id)
+            .unwrap()
+            .continue_token
+            .clone();
+        assert_eq!(stored, cont);
+        assert!(
+            service
+                .continue_transaction(&txn_id, &cont, Some("ref-1"), Some(&hash))
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_every_refused_continuation_returns_the_same_message() {
+        let service = GnapService::new(test_config());
+        let (txn_id, cont, hash) = interact_transaction(&service, "ref-1").await;
+
+        let unknown = service
+            .continue_transaction("no-such-transaction", &cont, None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        let wrong_token = service
+            .continue_transaction(&txn_id, "not-the-token", None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        let wrong_hash = service
+            .continue_transaction(&txn_id, &cont, Some("ref-1"), Some("not-the-hash"))
+            .await
+            .unwrap_err()
+            .to_string();
+        {
+            let mut txns = service.transactions.write().await;
+            txns.get_mut(&txn_id).unwrap().created_at = 0;
+        }
+        let expired = service
+            .continue_transaction(&txn_id, &cont, Some("ref-1"), Some(&hash))
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!(unknown, wrong_token);
+        assert_eq!(unknown, wrong_hash);
+        assert_eq!(unknown, expired);
+        assert!(unknown.contains(INVALID_CONTINUATION));
+    }
+
+    #[tokio::test]
+    async fn test_continuation_token_must_match_exactly() {
+        let service = GnapService::new(test_config());
+        let (txn_id, cont, _) = interact_transaction(&service, "ref-1").await;
+
+        let mut near_miss = cont.clone();
+        near_miss.pop();
+        near_miss.push(if cont.ends_with('0') { '1' } else { '0' });
+        let too_long = format!("{cont}0");
+        let prefix = cont[..cont.len() - 1].to_string();
+        for bad in [near_miss, too_long, prefix, String::new()] {
+            assert!(
+                service
+                    .continue_transaction(&txn_id, &bad, None, None)
+                    .await
+                    .is_err(),
+                "token {bad:?} must be refused"
+            );
+        }
+        assert!(
+            service
+                .continue_transaction(&txn_id, &cont, None, None)
+                .await
+                .is_ok()
+        );
     }
 
     #[test]
