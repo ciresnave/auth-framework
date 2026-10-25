@@ -234,6 +234,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc150 -- **First patent sweep recorded** in `docs/PATENT-SWEEP.md` (first pass, not a clearance; its Needs review list is open).
 - 0.6.0-rc149 -- **GNAP `continue_transaction` checks before it changes anything.** The interaction hash is verified before the continuation token is rotated, so a request that fails the check leaves the holder's token usable, and it is compared with `ct_eq`. An unknown transaction, an expired one, a wrong token and a wrong interaction hash now return the same message (`Invalid continuation request`). New tests cover these, the token comparison, and the OAuth2 revoke log line.
 - 0.6.0-rc145 -- **Two small hardening fixes.** GNAP continuation-token comparison now uses `subtle`'s `ct_eq` (equal-length slices are compared in full; a length mismatch returns early), and the OAuth2 revoke log line carries a token fingerprint instead of the token. The CodeRipper portfolio workflow is repinned to `ee9c3950` (0.9.24).
 - 0.6.0-rc144 -- **Spec-to-roadmap audit.** `docs/ROADMAP.md` gains rows A1-A11 for work the docs promise and the roadmap did not carry; the stale "release 0.5.0 from rc18" priority now names `0.6.0`. `SECURITY.md` no longer says WS-Federation extracts unverified JWT payloads or that OpenID4VP skips signature verification (the code does neither), and states the GNAP DPoP limitation. `COMPATIBILITY.md` SQLite row repaired. Documentation only.
