@@ -13,7 +13,9 @@ use ring::hmac;
 use serde::{Deserialize, Serialize};
 
 /// A Macaroon authorization token with chained HMAC caveats.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The signature is the bearer secret, so `Debug` prints it redacted.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Macaroon {
     /// Location hint (not cryptographically bound).
     pub location: String,
@@ -23,6 +25,20 @@ pub struct Macaroon {
     pub caveats: Vec<Caveat>,
     /// HMAC signature (hex-encoded).
     pub signature: String,
+}
+
+impl std::fmt::Debug for Macaroon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Macaroon")
+            .field("location", &self.location)
+            .field("identifier", &self.identifier)
+            .field("caveats", &self.caveats)
+            .field(
+                "signature",
+                &crate::utils::redact::redacted(&self.signature),
+            )
+            .finish()
+    }
 }
 
 /// A first-party caveat restricting the macaroon's authority.
@@ -227,5 +243,14 @@ mod tests {
         mgr.add_first_party_caveat(&mut m, "op = read");
         m.caveats[0] = Caveat::first_party("op = write");
         assert!(mgr.verify(&m, |_| true).is_err());
+    }
+
+    #[test]
+    fn test_debug_output_does_not_contain_the_signature() {
+        let mgr = MacaroonManager::new(&test_key()).unwrap();
+        let m = mgr.create("https://example.com", "token-1");
+        let shown = format!("{m:?}");
+        assert!(!shown.contains(&m.signature), "{shown}");
+        assert!(shown.contains("token-1"));
     }
 }
