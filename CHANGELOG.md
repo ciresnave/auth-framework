@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc64] - Unreleased
+
+### Changed
+
+- **Breaking (pre-release line): `passkey` and `passkey-client` 0.5 -> 0.6** (backport of the main-line change). The new release asks the caller for a crypto backend (`Authenticator::new(.., RustCryptoBackend)`) and no longer exports `passkey::types::rand`; the passkey method passes `RustCryptoBackend` and draws its 32-byte challenge from `ring`. The lock moves the RustCrypto elliptic-curve stack (`p256` 0.14, `elliptic-curve` 0.14, `crypto-bigint` 0.7.9), which clears RUSTSEC-2026-0387. The unused direct `p256` and `p384` dependencies are removed (the `saml` feature no longer lists them). No public item of this crate changes.
+
+### Fixed
+
+- CI: `cargo fmt --check` passes again (shared-signals files), and the Redis-only key helper `without_shadowed_legacy` is compiled only with a Redis feature, so `cargo clippy -D warnings` passes without one.
+
 ## [0.5.0-rc63] - Unreleased
 
 ### Fixed

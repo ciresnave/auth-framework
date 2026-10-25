@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.94"
-  version       = "0.5.0-rc63"
+  version       = "0.5.0-rc64"
 
 [[bin]]
   name              = "auth-framework"
@@ -339,13 +339,11 @@
   # "aws-lc" feature bergshamra's own dependency edge already requests,
   # so this just needs to exist as a nameable crate for KeyAlgorithm/EcCurve.
   kryptering = { version = "0.6", default-features = false, optional = true }
-  p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
-  p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 
   # Passkey/WebAuthn dependencies
   coset          = { version = "0.4.2", optional = true } # Keep aligned with passkey's coset dependency
-  passkey        = { version = "0.5.0", optional = true } # Updated to latest version
-  passkey-client = { version = "0.5.0", optional = true } # Updated to latest version
+  passkey        = { version = "0.6.0", optional = true } # Updated to latest version
+  passkey-client = { version = "0.6.0", optional = true } # Updated to latest version
 
   # Web framework integrations (optional)
   actix-web = { version = "4.11.0", default-features = false, features = ["macros"], optional = true }
@@ -443,7 +441,7 @@ pasetors = "0.7.7"
   otp-auth = ["otpauth"]
   passkeys = ["coset", "passkey", "passkey-client"]
   hsm = ["cryptoki"]  # PKCS#11 / HSM integration for X.509 certificate loading
-  saml = ["dep:bergshamra", "dep:kryptering", "p256", "p384", "quick-xml"]
+  saml = ["dep:bergshamra", "dep:kryptering", "quick-xml"]
   tui = ["colored", "console", "crossterm", "indicatif", "ratatui", "tui-input"]
   unicode-support = ["unicode-normalization"]
   warp-integration = ["warp"]

@@ -46,6 +46,7 @@ pub(crate) fn digest(domain: &str, secret: &str) -> String {
 /// `legacy_prefix` and `new_prefix` are the full key prefixes (including any
 /// namespace) up to the credential / digest; `domain` is the one passed to
 /// [`digest`] for that credential.
+#[cfg(any(feature = "redis-storage", feature = "redis"))] // only the Redis backend lists keys by prefix
 pub(crate) fn without_shadowed_legacy(
     keys: Vec<String>,
     legacy_prefix: &str,
