@@ -69,7 +69,9 @@ async fn events_are_accepted_only_when_signed_by_the_configured_key() {
     );
     assert!(
         manager
-            .receive_event(event(json!({ "jwt": jwt_signed_with("someone-elses-key-0123456789abcdef") })))
+            .receive_event(event(
+                json!({ "jwt": jwt_signed_with("someone-elses-key-0123456789abcdef") })
+            ))
             .await
             .is_err()
     );
