@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc143`
+- Current crate version: `0.6.0-rc144`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -271,7 +271,7 @@ path rather than bumping the version number.
 
 ### Storage and Scaling
 
-- [ ] SQLite support in a separate crate for lightweight deployments
+- [x] SQLite support in a separate crate for lightweight deployments (`auth-storage-sqlite`, a workspace member that carries the root version)
 - [ ] Optional third-party or community-maintained SurrealDB integration
 - [x] More explicit performance benchmarking and regression gates for auth hot paths
 - [x] Improved distributed coordination and large-scale deployment guidance
@@ -338,6 +338,25 @@ Read from the `portfolio` job on the `main` run for 9abbced8 (run 40040499570; C
 | version-consistency | 1 | High | `auth-storage-sqlite`, `sdks/python` (0.6.0rc64) and `sdks/javascript` (0.6.0-rc108) trailed the crate version | auth-framework lane | Fixed in this PR: all three at the root version (PEP 440 form for Python); `tests/member_versions_match_cargo.rs` keeps them there. PM ruling 2026-10-24: one version per project |
 
 
+### Spec-to-roadmap audit (2026-10-24)
+
+Rows from claims in the docs (`SECURITY.md`, `COMPATIBILITY.md`, `docs/api/REST_API_DESIGN_RATIONALE.md`, `docs/DEPLOYMENT_GUIDE.md`)
+that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open / held (by whom) / done (PR). None of these is started by the PR that adds them.
+
+| Row | Source | What | State |
+| --- | --- | --- | --- |
+| A1 | `SECURITY.md` "SHA-1 Usage" | Configurable digest/signature algorithm preference in the SAML handler ("a future release will add...") so SHA-256 can be required | Open |
+| A2 | `SECURITY.md` "Protocol Stubs" | GNAP: validate DPoP proofs and bind the key. `src/protocols/gnap.rs:550` and `:620` accept the method name `dpop` and check nothing else | Open (limitation now stated in `SECURITY.md`) |
+| A3 | `SECURITY.md` "Protocol Stubs" | WS-Trust: issued tokens are held in memory only, lost on restart and unshared across instances; persist them through the `AuthStorage` KV layer | Open |
+| A4 | `SECURITY.md` "Protocol Stubs" | UMA 2.0: the claims-gathering interaction flow is missing | Open |
+| A5 | `SECURITY.md` "Protocol Stubs" | SAML assertions: the doc says no full C14N or signature-chain validation. Re-measure against `src/methods/saml/xml_signature.rs`, then either implement or correct the sentence | Open, needs measuring |
+| A6 | `SECURITY.md` vs `COMPATIBILITY.md` | Kerberos: `SECURITY.md` says AP-REQ validation checks ASN.1 tags only and needs a KDC; `COMPATIBILITY.md` says "Full". `KerberosConfig.kdc_addresses` exists (`kerberos.rs:969`). One of the two docs is wrong; measure and reconcile | Open, needs measuring |
+| A7 | `COMPATIBILITY.md` "Deprecated" | `AppConfigBuilder` and `ModularAuthFramework` are documented as `#[deprecated]` but `src/lib.rs:328` and `:334` carry no attribute. Add the attribute and remove both in `0.7.0` | Open; CireSnave/PM ruled 2026-10-24: removal moves from `0.6.0` to `0.7.0` (`COMPATIBILITY.md` fixed in this PR) |
+| A8 | `COMPATIBILITY.md` "Deprecated" | Remove the monolithic `AuthFramework` method surface in `0.7.0` in favour of grouped accessors | Held until `0.7.0` planning |
+| A9 | `docs/DEPLOYMENT_GUIDE.md:559-560` | `sdks/go/` and `sdks/java/` are "coming soon"; neither directory exists (only `sdks/javascript` and `sdks/python`). Covered by the Go and Java SDK rows in Phase 3; the guide should say "not started" | Open (doc wording) |
+| A10 | `docs/api/REST_API_DESIGN_RATIONALE.md` | Webhooks for user, role and auth-failure events | Dropped 2026-10-24 (PM ruling): no consumer has asked and no route exists; removed from the design doc. Reopen when a consumer asks |
+| A11 | `docs/api/REST_API_DESIGN_RATIONALE.md` "Planned Additions" | Admin batch operations, advanced filtering, export/import. The other "planned" items (WebAuthn, OIDC discovery, API keys) have routes in `src/api/server.rs` | Open; the note at the top of that document marks it historical |
+
 ### Community and Project Hygiene
 
 - [x] Add issue templates
@@ -379,7 +398,8 @@ This phase is focused on making the project not just feature-rich, but the easie
 
 **Next priorities:**
 
-1. Release `0.5.0` from the current `rc18` candidate
+1. Release `0.6.0` from the current release-candidate line
+   - Stable-release MUST items are listed under "Storage and Scaling" (token/session encryption at rest, ADR-011) and the P1 rows of "Tracked Issues"
    - Confirm changelog is accurate and complete
    - Tag release and trigger release workflow
 

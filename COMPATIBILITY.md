@@ -135,12 +135,13 @@ before building stable integrations on top of them.
 
 | Capability                                       | Replacement                                               | Removal target |
 | ------------------------------------------------ | --------------------------------------------------------- | -------------- |
-| `AppConfigBuilder` (legacy)                      | `LayeredConfigBuilder`                                    | `0.6.0`        |
-| `ModularAuthFramework` (legacy alias)            | `AuthFramework`                                           | `0.6.0`        |
+| `AppConfigBuilder` (legacy)                      | `LayeredConfigBuilder`                                    | `0.7.0`        |
+| `ModularAuthFramework` (legacy alias)            | `AuthFramework`                                           | `0.7.0`        |
 | Direct monolithic `AuthFramework` method surface | Grouped accessors (`auth.users()`, `auth.tokens()`, etc.) | `0.7.0`        |
 
 Deprecated items emit a `#[deprecated]` warning at compile time and will be removed in the
-target release. Migration guidance is published in the [changelog](CHANGELOG.md).
+target release. (`AppConfigBuilder` and `ModularAuthFramework` are documented as deprecated but do not yet
+carry the attribute; removal moved from `0.6.0` to `0.7.0`, see `docs/ROADMAP.md` row A7.) Migration guidance is published in the [changelog](CHANGELOG.md).
 
 ---
 
@@ -152,7 +153,7 @@ target release. Migration guidance is published in the [changelog](CHANGELOG.md)
 | **PostgreSQL**        | `postgres-storage` |    ✅    | Stable       | Recommended for production                              |
 | **Redis**             | `redis-storage`    |    ⬜    | Stable       | For distributed session storage and caching             |
 | **Tiered (Redis+PG)** | `tiered-storage`   |    ⬜    | Experimental | Hot-path Redis cache with Postgres persistence          |
-| **SQLite**            | Experimental       |    \u26a0\ufe0f    | Preview      | Available via `sqlite-storage` feature for lightweight/embedded deployments |
+| **SQLite**            | `sqlite-storage`   |    ⬜    | Preview      | Lightweight/embedded deployments; also available as the `auth-storage-sqlite` workspace crate |
 | **SurrealDB**         | *(planned)*        |    ⬜    | Roadmap      | Planned as an optional community-maintained integration |
 
 **MySQL / MariaDB** (`mysql-storage`) was removed in 0.6.0 -- see

@@ -761,16 +761,12 @@ Our OpenAPI spec includes:
 
 ### Under Consideration
 
-1. **Webhooks**
-   - Notify external systems of events
-   - User creation, role changes, auth failures
-
-2. **API Keys Management**
+1. **API Keys Management**
    - `POST /api-keys` - Create API key
    - `GET /api-keys` - List keys
    - `DELETE /api-keys/{key_id}` - Revoke key
 
-3. **Session Management API**
+2. **Session Management API**
    - `GET /sessions` - List all sessions
    - `DELETE /sessions/{session_id}` - Kill session
    - `POST /sessions/{session_id}/extend` - Extend session
