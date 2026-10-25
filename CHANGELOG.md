@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc64] - Unreleased
+
+### Fixed
+
+- CI: `cargo fmt --check` passes again (shared-signals files), and the Redis-only key helper `without_shadowed_legacy` is compiled only with a Redis feature, so `cargo clippy -D warnings` passes without one.
+
 ## [0.5.0-rc63] - Unreleased
 
 ### Fixed
