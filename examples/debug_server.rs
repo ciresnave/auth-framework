@@ -20,11 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _storage = Arc::new(InMemoryStorage::new());
 
     println!("⚙️  Creating auth config...");
-    // Use a cryptographically secure random secret for development
-    // In production, this should come from environment variables
-    let dev_secret = "ZK7xQmP3vN9wR8yT5bF2jL6nX4hC1gD0aS8eW7qU5iO3pM9kJ6vB4nH2zY1xT0rE";
+    // The signing secret comes from the environment; there is no built-in default.
+    // For example: AUTH_FRAMEWORK_DEBUG_SECRET="$(openssl rand -hex 32)" cargo run --example debug_server
+    let dev_secret = std::env::var("AUTH_FRAMEWORK_DEBUG_SECRET")
+        .map_err(|_| "AUTH_FRAMEWORK_DEBUG_SECRET must be set (at least 32 characters)")?;
     let auth_config = AuthConfig::new()
-        .secret(dev_secret.to_string())
+        .secret(dev_secret)
         .token_lifetime(chrono::Duration::hours(1).to_std().unwrap())
         .refresh_token_lifetime(chrono::Duration::days(7).to_std().unwrap());
 
