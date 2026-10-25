@@ -234,10 +234,10 @@ Several protocol modules provide partial or stub implementations that are not ye
 
 - **Kerberos/SPNEGO**: AP-REQ validation performs basic ASN.1 tag checking only. Full Kerberos ticket validation requires integration with a KDC. The module returns an error indicating this limitation.
 - **SAML Assertions**: XML signature verification uses SHA-1 per protocol specification. No full XML canonicalization (C14N) or signature chain validation is implemented.
-- **WS-Federation JWT**: JWT payload extraction is implemented but signature verification is not performed. Use a dedicated JWT validator for production token verification.
+- **WS-Federation**: security tokens are accepted only as SAML assertions whose signature verifies under a key or certificate thumbprint the operator configured. JWT security tokens are rejected, because their signature is not verified here; use a dedicated JWT validator for them.
 - **WS-Trust**: Issued tokens are stored in-memory only. They are lost on restart and not shared across instances. Production deployments should integrate with the StorageBackend KV layer.
-- **GNAP**: Implements grant negotiation flow with transaction state management but lacks DPoP proof validation and full key binding.
-- **OpenID4VP**: Parses and structurally validates Verifiable Presentations but does not perform cryptographic signature verification on credentials.
+- **GNAP**: implements grant negotiation and transaction state management, but a `dpop` proof method is accepted by name only: no DPoP proof is validated (`src/protocols/gnap.rs`). Tracked in `docs/ROADMAP.md`.
+- **OpenID4VP**: resolves `did:key` and `did:web` identifiers and verifies JWS signatures (EdDSA, ES256) against the resolved key. Coverage of other DID methods and credential formats is narrower than the specification; see `COMPATIBILITY.md`.
 - **UMA 2.0**: Implements resource registration, permission tickets, and basic policy evaluation. Does not include a full claims-gathering interaction flow.
 
 ### MD5 in RADIUS
