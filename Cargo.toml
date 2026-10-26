@@ -443,8 +443,8 @@
   ], optional = true }
   tokio-postgres = { version = "0.7.14", optional = true }
   # AuthStorage over PersistAnt (docs/DESIGN-AUTH-STORAGE.md in PersistAnt). Off by default.
-  persistant-kv = { version = "0.9.24", optional = true }
-  persistant-sqlx = { version = "0.9.24", default-features = false, features = ["sqlite"], optional = true }
+  persistant-kv = { version = "0.11.7", optional = true }
+  persistant-sqlx = { version = "0.11.7", default-features = false, features = ["sqlite"], optional = true }
 
   # Testing infrastructure (optional)
   html-escape    = "0.3.0"

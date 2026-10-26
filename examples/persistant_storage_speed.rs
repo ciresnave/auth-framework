@@ -96,7 +96,12 @@ async fn workload(backend: &str, s: &dyn AuthStorage, tokens: usize) {
     .report("get_token_by_access_token", backend);
 
     time(users.min(500), |i| async move {
-        assert!(!s.list_user_tokens(&format!("user{i}")).await.unwrap().is_empty());
+        assert!(
+            !s.list_user_tokens(&format!("user{i}"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
     })
     .await
     .report("list_user_tokens (~5 each)", backend);
