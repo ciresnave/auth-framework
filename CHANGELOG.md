@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc69] - Unreleased
+
+### Fixed
+
+- **The authorization_code grant did not check the client secret (#140).** `POST /oauth/token` accepted a code exchange for a confidential client as long as the request carried some `client_secret`, whether or not it matched the registered one, so anyone holding an authorization code and the `client_id` could redeem it. The client is now authenticated before the code is read: a confidential client must present its registered secret (constant-time compare), a missing or wrong secret is `invalid_client`, a failed authentication neither reveals nor consumes the code, and a code issued to another client is refused and left intact. Whether a client is public comes from its registration, not from what the request carries; public clients still must use PKCE. Already fixed on the 0.6 line since 0.6.0-rc46.
+
 ## [0.5.0-rc67] - Unreleased
 
 ### Changed
