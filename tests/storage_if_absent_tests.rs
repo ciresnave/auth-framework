@@ -75,3 +75,15 @@ async fn sqlite_storage_is_a_compare_and_set() {
     storage.migrate().await.unwrap();
     semantics(Arc::new(storage)).await;
 }
+
+#[cfg(feature = "persistant-storage")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn persistant_storage_is_a_compare_and_set() {
+    use auth_framework::storage::persistant::PersistantStorage;
+    semantics(Arc::new(PersistantStorage::in_memory())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let storage = PersistantStorage::open_sqlite(dir.path().join("absent.sqlite"))
+        .await
+        .unwrap();
+    semantics(Arc::new(storage)).await;
+}
