@@ -442,6 +442,14 @@ async fn handle_authorization_code_grant(
         None => return ApiResponse::validation_error_typed("client_id is required"),
     };
 
+    // Authenticate the client BEFORE the code is looked at, so a failed
+    // authentication neither reveals anything about the code nor consumes it.
+    let client_kind =
+        match authenticate_token_client(&state, &client_id, req.client_secret.as_deref()).await {
+            Ok(kind) => kind,
+            Err(refusal) => return *refusal,
+        };
+
     // Defense-in-depth: Use a consumed marker to mitigate the non-atomic get+delete
     // race condition (TOCTOU). If a concurrent request already marked the code as
     // consumed, reject this request immediately.
@@ -487,15 +495,24 @@ async fn handle_authorization_code_grant(
         }
     };
 
+    // A code issued to a different client is refused and left intact (with its
+    // consumed marker released), so presenting someone else's code cannot burn it.
+    if code_data["client_id"].as_str() != Some(&client_id) {
+        if let Err(e) = state
+            .auth_framework
+            .storage()
+            .delete_kv(&consumed_key)
+            .await
+        {
+            tracing::warn!("Failed to release code consumed marker: {:?}", e);
+        }
+        return ApiResponse::error_typed("invalid_grant", "client_id mismatch");
+    }
+
     // Immediately delete the code to prevent reuse (single-use enforcement).
     if let Err(e) = state.auth_framework.storage().delete_kv(&storage_key).await {
         tracing::error!("Failed to delete authorization code from storage: {:?}", e);
         return ApiResponse::error_typed("server_error", "Failed to process authorization code");
-    }
-
-    // Validate client_id matches
-    if code_data["client_id"].as_str() != Some(&client_id) {
-        return ApiResponse::error_typed("invalid_grant", "client_id mismatch");
     }
 
     // Validate redirect_uri if provided
@@ -548,10 +565,10 @@ async fn handle_authorization_code_grant(
             "invalid_request",
             "code_verifier provided but no PKCE challenge was used in authorization",
         );
-    } else if req.client_secret.is_none() {
-        // S8: Public clients (no client_secret) MUST use PKCE.
-        // If no code_challenge was stored and no client_secret is provided,
-        // the request is from an unauthenticated public client without PKCE.
+    } else if client_kind == ClientKind::Public {
+        // S8: Public clients (registered without a secret) MUST use PKCE.
+        // Whether a client is public comes from its registration, not from whether
+        // the request happens to carry a secret.
         return ApiResponse::error_typed(
             "invalid_request",
             "Public clients must use PKCE: provide code_challenge in authorization and code_verifier in token request",
@@ -650,6 +667,73 @@ async fn handle_authorization_code_grant(
 
     tracing::info!("OAuth2 tokens issued for client: {}", client_id);
     ApiResponse::success(response)
+}
+
+/// A boxed error response (keeps the `Err` variant of the client-check helpers small).
+fn refusal(code: &str, message: &str) -> Box<ApiResponse<TokenResponse>> {
+    Box::new(ApiResponse::error_typed(code, message))
+}
+
+/// Load a registered client's record from `oauth2_client:{client_id}`.
+async fn load_client_record(
+    state: &ApiState,
+    client_id: &str,
+) -> std::result::Result<Option<serde_json::Value>, Box<ApiResponse<TokenResponse>>> {
+    let key = format!("oauth2_client:{client_id}");
+    match state.auth_framework.storage().get_kv(&key).await {
+        Ok(Some(data)) => serde_json::from_slice(&data).map(Some).map_err(|e| {
+            tracing::error!("Unreadable client record for {client_id}: {e}");
+            refusal("server_error", "Failed to validate client")
+        }),
+        Ok(None) => Ok(None),
+        Err(e) => {
+            tracing::error!("Failed to load client {client_id}: {e:?}");
+            Err(refusal("server_error", "Failed to validate client"))
+        }
+    }
+}
+
+/// The client secret of a client record; `None` for a public client.
+fn client_secret_of(record: &serde_json::Value) -> Option<&str> {
+    record["client_secret"].as_str().filter(|s| !s.is_empty())
+}
+
+/// How a client identified itself at the token endpoint.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClientKind {
+    /// Registered without a secret: identified by `client_id` alone (PKCE is mandatory).
+    Public,
+    /// Registered with a secret and authenticated with it.
+    Confidential,
+}
+
+/// Authenticate the client of an authorization-code exchange (RFC 6749 section 3.2.1).
+///
+/// The client must be registered (`oauth2_client:{id}`). A client whose record holds a
+/// non-empty `client_secret` is confidential and MUST present exactly that secret
+/// (constant-time compare); a missing or wrong secret is `invalid_client`. Whether a
+/// client is public is decided by its registration, never by what the request carries.
+async fn authenticate_token_client(
+    state: &ApiState,
+    client_id: &str,
+    presented_secret: Option<&str>,
+) -> std::result::Result<ClientKind, Box<ApiResponse<TokenResponse>>> {
+    let Some(record) = load_client_record(state, client_id).await? else {
+        return Err(refusal("invalid_client", "Unknown client"));
+    };
+    match client_secret_of(&record) {
+        None => Ok(ClientKind::Public),
+        Some(stored) => {
+            let authenticated = presented_secret.is_some_and(|presented| {
+                crate::security::timing_protection::constant_time_string_compare(presented, stored)
+            });
+            if authenticated {
+                Ok(ClientKind::Confidential)
+            } else {
+                Err(refusal("invalid_client", "Client authentication failed"))
+            }
+        }
+    }
 }
 
 async fn handle_refresh_token_grant(
