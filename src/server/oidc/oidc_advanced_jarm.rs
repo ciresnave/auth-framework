@@ -722,15 +722,18 @@ impl AdvancedJarmManager {
         // Generate a content encryption key (CEK)
         let cek = self.generate_content_encryption_key();
 
-        // Encrypt the JWT payload with the CEK
-        let encrypted_payload = self.encrypt_payload(jwt_token, &cek)?;
+        // The protected header is the AAD of the content encryption (RFC 7516 sections 5.1 and
+        // 5.2, step 14: the ASCII bytes of its base64url encoding), so it is built first.
+        let jwe_header = self.create_jwe_header();
+        let header_b64 = URL_SAFE_NO_PAD.encode(jwe_header.as_bytes());
+
+        // Encrypt the JWT payload with the CEK, authenticating the protected header
+        let encrypted_payload = self.encrypt_payload(jwt_token, &cek, header_b64.as_bytes())?;
 
         // Encrypt the CEK with the client's public key
         let encrypted_key = self.encrypt_key(&cek)?;
 
         // Create JWE structure: header.encrypted_key.iv.ciphertext.tag
-        let jwe_header = self.create_jwe_header();
-        let header_b64 = URL_SAFE_NO_PAD.encode(jwe_header.as_bytes());
         let key_b64 = URL_SAFE_NO_PAD.encode(&encrypted_key);
         let payload_parts: Vec<&str> = encrypted_payload.split('.').collect();
 
@@ -766,8 +769,13 @@ impl AdvancedJarmManager {
     ///
     /// Returns `iv_b64.ciphertext_b64.tag_b64` (three Base64url-no-pad parts) matching
     /// the IV / Ciphertext / Authentication-Tag positions of JWE compact serialisation.
-    fn encrypt_payload(&self, payload: &str, cek: &[u8]) -> Result<String> {
-        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce, aead::Aead};
+    ///
+    /// `aad` is the base64url-encoded protected header, as RFC 7516 requires.
+    fn encrypt_payload(&self, payload: &str, cek: &[u8], aad: &[u8]) -> Result<String> {
+        use aes_gcm::{
+            Aes256Gcm, Key, KeyInit, Nonce,
+            aead::{Aead, Payload},
+        };
         use rand::Rng;
 
         if cek.len() != 32 {
@@ -784,7 +792,13 @@ impl AdvancedJarmManager {
 
         // aes-gcm appends the 16-byte authentication tag to the ciphertext
         let ciphertext_with_tag = cipher
-            .encrypt(nonce, payload.as_bytes())
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: payload.as_bytes(),
+                    aad,
+                },
+            )
             .map_err(|e| AuthError::crypto(format!("AES-256-GCM encryption failed: {}", e)))?;
 
         let tag_pos = ciphertext_with_tag.len().saturating_sub(16);
@@ -1022,6 +1036,7 @@ impl AdvancedJarmManager {
                 initialization_vector,
                 ciphertext,
                 authentication_tag,
+                parts[0].as_bytes(),
             ),
             (alg, enc) => {
                 error!(
@@ -1043,8 +1058,12 @@ impl AdvancedJarmManager {
         iv_b64: &str,
         ciphertext_b64: &str,
         tag_b64: &str,
+        aad: &[u8],
     ) -> Result<String, AuthError> {
-        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce, aead::Aead};
+        use aes_gcm::{
+            Aes256Gcm, Key, KeyInit, Nonce,
+            aead::{Aead, Payload},
+        };
 
         let priv_key = self.jwe_private_key.as_ref().ok_or_else(|| {
             AuthError::crypto(
@@ -1103,7 +1122,13 @@ impl AdvancedJarmManager {
         let key = Key::<Aes256Gcm>::from_slice(cek);
         let cipher = Aes256Gcm::new(key);
         let plaintext = cipher
-            .decrypt(nonce, ciphertext.as_slice())
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: ciphertext.as_slice(),
+                    aad,
+                },
+            )
             .map_err(|e| AuthError::crypto(format!("AES-256-GCM decryption failed: {e}")))?;
 
         String::from_utf8(plaintext)
@@ -1551,6 +1576,140 @@ mod tests {
         );
     }
 
+    fn jwe_test_manager() -> AdvancedJarmManager {
+        use aws_lc_rs::encoding::AsDer as _;
+
+        fn der_to_pem(der: &[u8], label: &str) -> String {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+            let mut pem = format!("-----BEGIN {label}-----\n");
+            for chunk in b64.as_bytes().chunks(64) {
+                pem.push_str(std::str::from_utf8(chunk).unwrap());
+                pem.push('\n');
+            }
+            pem.push_str(&format!("-----END {label}-----\n"));
+            pem
+        }
+
+        let private_key =
+            aws_lc_rs::rsa::PrivateDecryptingKey::generate(aws_lc_rs::rsa::KeySize::Rsa2048)
+                .expect("RSA key generation failed");
+        let public_key = private_key.public_key();
+        let priv_pem = der_to_pem(
+            private_key.as_der().expect("private DER").as_ref(),
+            "PRIVATE KEY",
+        );
+        let pub_pem = der_to_pem(
+            public_key.as_der().expect("public DER").as_ref(),
+            "PUBLIC KEY",
+        );
+        let config = AdvancedJarmConfig::builder()
+            .supported_algorithms(vec![Algorithm::HS256])
+            .enable_jwe_encryption(true)
+            .enable_response_validation(false)
+            .jwe_recipient_public_key_pem(pub_pem)
+            .jwe_recipient_private_key_pem(priv_pem)
+            .build();
+        AdvancedJarmManager::new(config)
+    }
+
+    async fn jwe_test_token(manager: &AdvancedJarmManager) -> String {
+        let auth_response = AuthorizationResponse {
+            code: Some("aad_code".to_string()),
+            state: Some("aad_state".to_string()),
+            access_token: None,
+            id_token: None,
+            token_type: None,
+            expires_in: None,
+            scope: None,
+            error: None,
+            error_description: None,
+        };
+        manager
+            .create_jarm_response("aad_client", &auth_response, JarmDeliveryMode::Query, None)
+            .await
+            .expect("create_jarm_response with JWE failed")
+            .response_token
+    }
+
+    /// RFC 7516 sections 5.1/5.2 step 14: the AES-GCM AAD is the ASCII bytes of the base64url
+    /// protected header, so a changed header must stop the content from decrypting (issue #99).
+    #[tokio::test]
+    async fn test_jwe_protected_header_is_authenticated() {
+        let manager = jwe_test_manager();
+        let token = jwe_test_token(&manager).await;
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 5);
+
+        manager
+            .decrypt_jwe_with_algorithm(&parts, "RSA-OAEP", "A256GCM")
+            .await
+            .expect("the untouched token must decrypt");
+
+        // Same alg and enc, one other header field changed: still a well-formed header.
+        let header = String::from_utf8(URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
+        assert!(header.contains("\"typ\":\"JOSE\""), "header was {header}");
+        let tampered_header =
+            URL_SAFE_NO_PAD.encode(header.replace("\"typ\":\"JOSE\"", "\"typ\":\"JOSX\""));
+        assert_ne!(tampered_header, parts[0]);
+        let mut tampered = parts.clone();
+        tampered[0] = &tampered_header;
+        let err = manager
+            .decrypt_jwe_with_algorithm(&tampered, "RSA-OAEP", "A256GCM")
+            .await
+            .expect_err("a token with a changed protected header must not decrypt");
+        assert!(
+            format!("{err}").contains("AES-256-GCM decryption failed"),
+            "{err}"
+        );
+    }
+
+    /// The content encryption must be what any other JWE implementation computes: unwrap the CEK
+    /// by hand and decrypt with AES-GCM using the protected header as AAD, without this crate's
+    /// decrypt path.
+    #[tokio::test]
+    async fn test_jwe_content_decrypts_with_the_header_as_aad() {
+        use aes_gcm::{
+            Aes256Gcm, Key, KeyInit, Nonce,
+            aead::{Aead, Payload},
+        };
+
+        let manager = jwe_test_manager();
+        let token = jwe_test_token(&manager).await;
+        let parts: Vec<&str> = token.split('.').collect();
+
+        let wrapped = URL_SAFE_NO_PAD.decode(parts[1]).unwrap();
+        let priv_key = manager.jwe_private_key.as_ref().unwrap();
+        let mut buf = vec![0u8; priv_key.key_size_bytes()];
+        let cek = priv_key
+            .decrypt(
+                &aws_lc_rs::rsa::OAEP_SHA256_MGF1SHA256,
+                &wrapped,
+                buf.as_mut_slice(),
+                None,
+            )
+            .expect("CEK unwrap");
+        let nonce_bytes = URL_SAFE_NO_PAD.decode(parts[2]).unwrap();
+        let mut sealed = URL_SAFE_NO_PAD.decode(parts[3]).unwrap();
+        sealed.extend_from_slice(&URL_SAFE_NO_PAD.decode(parts[4]).unwrap());
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(cek));
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let jwt = cipher
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: sealed.as_slice(),
+                    aad: parts[0].as_bytes(),
+                },
+            )
+            .expect("AES-GCM with the protected header as AAD must open the content");
+        assert_eq!(String::from_utf8(jwt).unwrap().split('.').count(), 3);
+        assert!(
+            cipher.decrypt(nonce, sealed.as_slice()).is_err(),
+            "content must not open without the AAD"
+        );
+    }
+
     /// The JARM RSA-OAEP decrypt path is the confirmed attacker-reachable
     /// exposure (`validate_jarm_response` feeds external ciphertext straight
     /// into a private-key decrypt). This asserts uniformity AT THE RSA-OAEP
@@ -1639,7 +1798,13 @@ mod tests {
         let mut messages = Vec::new();
         for encrypted_key_b64 in [&wrong_key_same_size, &too_short, &too_long, &empty] {
             let err = manager
-                .decrypt_rsa_oaep_a256gcm(encrypted_key_b64, &iv_b64, &ciphertext_b64, &tag_b64)
+                .decrypt_rsa_oaep_a256gcm(
+                    encrypted_key_b64,
+                    &iv_b64,
+                    &ciphertext_b64,
+                    &tag_b64,
+                    b"header",
+                )
                 .expect_err("malformed/forged ciphertext must never decrypt successfully");
             messages.push(format!("{err}"));
         }
