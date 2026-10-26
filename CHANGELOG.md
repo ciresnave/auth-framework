@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc70] - Unreleased
+
+### Fixed
+
+- **OAuth2 client secrets are stored as hashes (#90).** `POST /oauth/register` stored the client secret in plain text under `oauth2_client:{id}`. It now stores `client_secret_hash` (Argon2id) and no plain secret; the secret is still returned once in the registration response. A record that still holds a plain `client_secret` keeps authenticating (authorization-code exchange and introspection), and the first successful authentication of that client rewrites its record with the hash and without the plain secret; a wrong secret changes nothing. Existing plain secrets stay in storage until their client next authenticates: rotate the secrets of clients that rarely do, and treat backups taken before the upgrade as holding them. On this line the rewrite stores the record without a time to live (the storage trait here cannot read one; registered clients never had one). Fixed on the 0.6 line in 0.6.0-rc158.
+
 ## [0.5.0-rc69] - Unreleased
 
 ### Fixed
