@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc150`
+- Current crate version: `0.6.0-rc151`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -315,7 +315,7 @@ operations, P3 = hygiene, Blocked = waiting on someone else.
 | #120 | Clippy errors under `cli,admin-binary,postgres-storage,redis-storage,sqlite-storage` | S | P2 | Open: 7 errors in the lib, 16 in lib tests, mostly `src/admin/web.rs` and `src/admin/cli.rs` |
 | #103 | `cargo clippy --all-targets --all-features -D warnings` fails; decide which feature sets CI lints, then fix to that list | M | P2 | Open: 14 errors in the lib, 23 in lib tests |
 | #116 | No test proves the TOTP facade (`AuthFramework`) and the modular `TotpManager` verify each other's secrets | S | P2 | Open: no test generates through one and verifies through the other |
-| #18 | Audit tests read source paths that moved, and every read failure means "no problem found" | S | P3 | Open: `final_comprehensive_security_audit.rs` still reads the absent `src/server/oidc.rs` |
+| #18 | Audit tests read source paths that moved, and every read failure means "no problem found" | S | P3 | Open: `final_comprehensive_security_audit.rs` now fails on a moved file (rc151); `critical_security_detection.rs` still needs repointing and `code_quality_audit` still prints where it should panic |
 | #106 | SAML on Windows: `kryptering` hard-gates its `aws-lc` backend to Linux and macOS | - | Blocked | Upstream (`kryptering`); CireSnave's ruling 2026-10-04: accept for now, keep looking |
 | #282 | `cargo check --no-default-features` fails: bin `oauth2_test_server` has no `required-features` | S | P2 | Fixed by the PR that adds this table: the bin, one example and five tests that import `auth_framework::api` declare `required-features = ["api-server"]`; `cargo check --locked --no-default-features --all-targets` finishes |
 
