@@ -174,4 +174,53 @@ mod client_secret_hash_tests {
         assert!(!authenticates(&state, "legacy-client", "wrong").await);
         assert!(!authenticates(&state, "legacy-client", "").await);
     }
+
+    /// A client whose record holds only a hash is still confidential at the token endpoint: it is
+    /// not mistaken for a public client, and a missing or wrong secret is `invalid_client`.
+    #[tokio::test]
+    async fn a_hashed_client_is_confidential_at_the_token_endpoint() {
+        use auth_framework::server::oauth::oauth2_server::TokenRequest;
+
+        let state = state().await;
+        let (client_id, secret) = register(&state).await;
+
+        let exchange = |secret: Option<String>| {
+            let state = state.clone();
+            let client_id = client_id.clone();
+            async move {
+                auth_framework::api::oauth2::token(
+                    State(state),
+                    axum::Json(TokenRequest {
+                        grant_type: "authorization_code".to_string(),
+                        code: Some("no-such-code".to_string()),
+                        client_id: Some(client_id),
+                        client_secret: secret,
+                        redirect_uri: Some("https://app.example.com/cb".to_string()),
+                        ..Default::default()
+                    }),
+                )
+                .await
+            }
+        };
+        let code_of = |resp: &auth_framework::api::ApiResponse<_>| {
+            resp.error
+                .as_ref()
+                .map(|e| e.code.clone())
+                .unwrap_or_default()
+        };
+
+        for presented in [
+            None,
+            Some("not-the-secret".to_string()),
+            Some(String::new()),
+        ] {
+            let resp = exchange(presented).await;
+            assert!(!resp.success);
+            assert_eq!(code_of(&resp), "invalid_client");
+        }
+        // The right secret gets past client authentication; the code itself does not exist.
+        let resp = exchange(Some(secret)).await;
+        assert!(!resp.success);
+        assert_eq!(code_of(&resp), "invalid_grant");
+    }
 }
