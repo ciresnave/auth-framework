@@ -551,7 +551,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "auth-framework"
-version = "0.6.0-rc152"
+version = "0.6.0-rc153"
 dependencies = [
  "actix-web",
  "aes",
@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "auth-storage-sqlite"
-version = "0.6.0-rc152"
+version = "0.6.0-rc153"
 dependencies = [
  "async-trait",
  "auth-framework",
@@ -857,9 +857,9 @@ dependencies = [
 
 [[package]]
 name = "bergshamra"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a292eea51d033e3ae24e2f17817991cf8435012878fd343b7a0df1827cb4bec3"
+checksum = "5e555ffd2388607c95d81a8a2ceb9245243ed27552ceaf5e4d9f6ba3470532ad"
 dependencies = [
  "base64 0.22.1",
  "bergshamra-c14n",
@@ -877,9 +877,9 @@ dependencies = [
 
 [[package]]
 name = "bergshamra-c14n"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9ea63f9d7b6cceeeef8ad96da61325c6ed6397e342377b552a0bf9917e266a9"
+checksum = "6034c3099f6facf649417a92a47a5c1427e845caaa801e5a51e0f31390717ab4"
 dependencies = [
  "bergshamra-core",
  "bergshamra-xml",
@@ -889,18 +889,18 @@ dependencies = [
 
 [[package]]
 name = "bergshamra-core"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af1b1fcd28756ae14d297d69595f0e21da40485b5b7861bd37e7cd8f570b5e39"
+checksum = "6004516aa3fd8395eb120911ea65a592b8684b9590fe65adbe230d9cb66da238"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "bergshamra-crypto"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e0eeb926a8440dea8a531c0ab33446efcbd16dcb70f81a63fc0c5859aede9e4"
+checksum = "94cfeb70f7b22345e3d4d9cbba4cff90ab8d606f25eb08f0fc56767235f50ae2"
 dependencies = [
  "bergshamra-core",
  "kryptering",
@@ -908,9 +908,9 @@ dependencies = [
 
 [[package]]
 name = "bergshamra-dsig"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ab7bb2d291c4d6af5e1af2ad3801176a5d3bbffc8b34be3c7de87ec9b0d8644"
+checksum = "937385c0585954fde0757fb83647161c6feafa2214f18a4054c8e86a00c0a666"
 dependencies = [
  "base64 0.22.1",
  "bergshamra-c14n",
@@ -927,9 +927,9 @@ dependencies = [
 
 [[package]]
 name = "bergshamra-enc"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee9882186758e2229da892f060e3e7c7e2f3ad352f323c953c77e5dea974aea9"
+checksum = "6f690de2a9b36ea9c7e22deee2cc70038e552237aaa9251f341135f50ad1f92e"
 dependencies = [
  "base64 0.22.1",
  "bergshamra-c14n",
@@ -944,9 +944,9 @@ dependencies = [
 
 [[package]]
 name = "bergshamra-keys"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a1bc0d93c57375a09f9fb818c45a95636fe85eeafae1fbca41f8cb14bb6aece"
+checksum = "182e5dc187aec1a041059053979e2e3e5864a55b95a42a4374a1a6f74e870740"
 dependencies = [
  "base64 0.22.1",
  "bergshamra-core",
@@ -965,9 +965,9 @@ dependencies = [
 
 [[package]]
 name = "bergshamra-pkcs12"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53ad4ed8ddc3482b0581c1c5d8774a89ef59e1d86b13299cadb5f0e87e35a064"
+checksum = "89bbfdddd9fad5d266d4f4d88f8480bfdd170404a5344ebebf0acaf7d701c332"
 dependencies = [
  "bergshamra-core",
  "cipher 0.5.2",
@@ -978,9 +978,9 @@ dependencies = [
 
 [[package]]
 name = "bergshamra-transforms"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db260349625b0712bcc919278c3a382a984d5665327be54cd5b9bb3a7d4895c8"
+checksum = "79c0a036bb90a927c72508bbb4b6ef9b0b0e17909242ddac69366f6775fdf4b8"
 dependencies = [
  "base64 0.22.1",
  "bergshamra-c14n",
@@ -993,11 +993,12 @@ dependencies = [
 
 [[package]]
 name = "bergshamra-xml"
-version = "0.9.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2e314d227c3f8cf06487e0d81e6d9992e4eee47cbff2c2dfd6597582ae5e868"
+checksum = "2b141224a83a944a101c3b80609abeededc2c32ac33f7ab30fd22c1330433d77"
 dependencies = [
  "bergshamra-core",
+ "rustc-hash",
  "uppsala",
 ]
 
@@ -3833,12 +3834,11 @@ dependencies = [
 
 [[package]]
 name = "kryptering"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "246fc275192d5342930279ed2070daf15204ca2e6158e91daaa3eaff78a5477d"
+checksum = "8e28992e23beb2622bf1e2492ba7e838abb65186578e05894bf5154c69b74c5e"
 dependencies = [
  "aws-lc-rs",
- "pkcs8 0.10.2",
  "thiserror 2.0.21",
  "zeroize",
 ]
@@ -7205,7 +7205,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -7806,9 +7806,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tsp-ltv"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "563d1761c001e91bfd607f254b1fbc61fa2929dbd3685d5d89964aa95d53c8b2"
+checksum = "b9b645e101162bac5971a66f7c3945aef23eabe68e220a6246b6a14824740e43"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -7969,9 +7969,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "uppsala"
-version = "0.10.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a27f7d40a93824eefcf6b62fd2fa86bca9ea6a5825de56b4aa9a5ed7804b766c"
+checksum = "717b252544d044a701181a32cf7ff443b86603acf99faf8d45e14b20a8c769be"
 
 [[package]]
 name = "url"
