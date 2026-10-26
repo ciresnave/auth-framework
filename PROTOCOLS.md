@@ -75,9 +75,8 @@ Alliance specifications.
 
 ### Macaroons
 
-Bearer credential tokens with first-party caveats, third-party caveats
-(with encrypted caveat keys), and discharge macaroon verification.
-Supports delegation and attenuation chains.
+Bearer credential tokens with first-party caveats. Supports attenuation
+chains. Third-party caveats and discharge macaroons are not supported.
 
 ### CAEP (Continuous Access Evaluation Protocol)
 

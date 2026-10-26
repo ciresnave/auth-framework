@@ -8,10 +8,13 @@
 //! - [Macaroons: Cookies with Contextual Caveats](https://research.google/pubs/pub41892/)
 
 use crate::errors::{AuthError, Result};
+use crate::security::secure_utils::SecureComparison;
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 
 /// A Macaroon authorization token with chained HMAC caveats.
+///
+/// The signature is the bearer secret, so `Debug` prints it redacted.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Macaroon {
     /// Location hint (not cryptographically bound).
@@ -26,27 +29,27 @@ pub struct Macaroon {
 
 impl std::fmt::Debug for Macaroon {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut d = f.debug_struct("Macaroon");
-        d.field("location", &self.location);
-        d.field("identifier", &self.identifier);
-        d.field("caveats", &self.caveats);
-        d.field(
-            "signature",
-            &crate::utils::redact::redacted(&self.signature),
-        );
-        d.finish()
+        f.debug_struct("Macaroon")
+            .field("location", &self.location)
+            .field("identifier", &self.identifier)
+            .field("caveats", &self.caveats)
+            .field(
+                "signature",
+                &crate::utils::redact::redacted(&self.signature),
+            )
+            .finish()
     }
 }
 
 /// A first-party caveat restricting the macaroon's authority.
+///
+/// Unknown fields are rejected on deserialization, so a credential that carries
+/// anything other than a plain predicate is refused instead of being read as one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Caveat {
     /// Caveat identifier (e.g. "account = 3735928559").
     pub cid: String,
-    /// Verification key identifier (for third-party caveats).
-    pub vid: Option<String>,
-    /// Location hint for third-party caveats.
-    pub cl: Option<String>,
 }
 
 impl Caveat {
@@ -54,14 +57,7 @@ impl Caveat {
     pub fn first_party(predicate: &str) -> Self {
         Self {
             cid: predicate.to_string(),
-            vid: None,
-            cl: None,
         }
-    }
-
-    /// Returns true if this is a first-party (local) caveat.
-    pub fn is_first_party(&self) -> bool {
-        self.vid.is_none() && self.cl.is_none()
     }
 }
 
@@ -102,111 +98,7 @@ impl MacaroonManager {
         macaroon.signature = new_sig;
     }
 
-    /// Add a third-party caveat.
-    ///
-    /// Creates an encrypted verification identifier (`vid`) using the current
-    /// macaroon signature as a binding key, and appends a third-party caveat
-    /// referencing the given location and caveat identifier.
-    ///
-    /// The third-party service must issue a *discharge macaroon* whose root key
-    /// matches the `caveat_key` to satisfy this caveat.
-    pub fn add_third_party_caveat(
-        &self,
-        macaroon: &mut Macaroon,
-        location: &str,
-        caveat_id: &str,
-        caveat_key: &[u8],
-    ) {
-        let sig_bytes = hex::decode(&macaroon.signature).unwrap_or_default();
-
-        // Encrypt the caveat_key under the current signature so only the holder of
-        // a valid discharge macaroon can satisfy it. We use HMAC(old_sig, caveat_key)
-        // as a simple symmetric binding (production deployments should use
-        // NaCl secretbox or similar, but this avoids an extra dependency).
-        let vid = hmac_hex(&sig_bytes, caveat_key);
-
-        // Advance the HMAC chain over `vid || cid`
-        let mut chain_input = Vec::with_capacity(vid.len() + caveat_id.len());
-        chain_input.extend_from_slice(vid.as_bytes());
-        chain_input.extend_from_slice(caveat_id.as_bytes());
-        let new_sig = hmac_hex(&sig_bytes, &chain_input);
-
-        macaroon.caveats.push(Caveat {
-            cid: caveat_id.to_string(),
-            vid: Some(vid),
-            cl: Some(location.to_string()),
-        });
-        macaroon.signature = new_sig;
-    }
-
     /// Verify a macaroon by replaying the HMAC chain and checking caveats.
-    ///
-    /// `verifier` is called for each first-party caveat predicate and must return
-    /// `true` if the caveat is satisfied.
-    ///
-    /// `discharge_macaroons` is a slice of discharge macaroons for third-party
-    /// caveat satisfaction. Each discharge macaroon's identifier must match the
-    /// third-party caveat's `cid`.
-    pub fn verify_with_discharges<F>(
-        &self,
-        macaroon: &Macaroon,
-        verifier: F,
-        discharge_macaroons: &[Macaroon],
-    ) -> Result<()>
-    where
-        F: Fn(&str) -> bool,
-    {
-        let mut sig = hmac_hex(&self.root_key, macaroon.identifier.as_bytes());
-
-        for caveat in &macaroon.caveats {
-            let sig_bytes = hex::decode(&sig).unwrap_or_default();
-
-            if caveat.is_first_party() {
-                sig = hmac_hex(&sig_bytes, caveat.cid.as_bytes());
-                if !verifier(&caveat.cid) {
-                    return Err(AuthError::validation(format!(
-                        "Caveat not satisfied: {}",
-                        caveat.cid
-                    )));
-                }
-            } else {
-                // Third-party caveat: find a matching discharge macaroon
-                let vid = caveat
-                    .vid
-                    .as_ref()
-                    .ok_or_else(|| AuthError::validation("Third-party caveat missing vid"))?;
-
-                let discharge = discharge_macaroons
-                    .iter()
-                    .find(|d| d.identifier == caveat.cid)
-                    .ok_or_else(|| {
-                        AuthError::validation(format!(
-                            "No discharge macaroon found for caveat: {}",
-                            caveat.cid
-                        ))
-                    })?;
-
-                // The discharge macaroon's signature must bind to the
-                // third-party caveat's vid. Verify that the discharge's
-                // signature matches HMAC(vid, discharge.signature).
-                let bound_sig = hmac_hex(vid.as_bytes(), discharge.signature.as_bytes());
-                let _ = &bound_sig; // discharge binding validated via chain
-
-                // Advance chain: the same way we created the caveat
-                let mut chain_input = Vec::with_capacity(vid.len() + caveat.cid.len());
-                chain_input.extend_from_slice(vid.as_bytes());
-                chain_input.extend_from_slice(caveat.cid.as_bytes());
-                sig = hmac_hex(&sig_bytes, &chain_input);
-            }
-        }
-
-        if sig != macaroon.signature {
-            return Err(AuthError::validation("Macaroon signature mismatch"));
-        }
-        Ok(())
-    }
-
-    /// Verify a macaroon (first-party caveats only — convenience wrapper).
     ///
     /// `verifier` is called for each caveat predicate and must return `true`
     /// if the caveat is satisfied.
@@ -214,7 +106,23 @@ impl MacaroonManager {
     where
         F: Fn(&str) -> bool,
     {
-        self.verify_with_discharges(macaroon, verifier, &[])
+        let mut sig = hmac_hex(&self.root_key, macaroon.identifier.as_bytes());
+
+        for caveat in &macaroon.caveats {
+            let sig_bytes = hex::decode(&sig).unwrap_or_default();
+            sig = hmac_hex(&sig_bytes, caveat.cid.as_bytes());
+            if !verifier(&caveat.cid) {
+                return Err(AuthError::validation(format!(
+                    "Caveat not satisfied: {}",
+                    caveat.cid
+                )));
+            }
+        }
+
+        if !SecureComparison::constant_time_eq(&sig, &macaroon.signature) {
+            return Err(AuthError::validation("Macaroon signature mismatch"));
+        }
+        Ok(())
     }
 
     /// Attenuate (create a restricted copy of) a macaroon with additional caveats.
@@ -304,87 +212,6 @@ mod tests {
     }
 
     #[test]
-    fn test_add_third_party_caveat() {
-        let mgr = MacaroonManager::new(&test_key()).unwrap();
-        let mut m = mgr.create("https://example.com", "token-1");
-        let caveat_key = [0xDD; 32];
-        mgr.add_third_party_caveat(
-            &mut m,
-            "https://auth.third-party.com",
-            "third-party-caveat-id",
-            &caveat_key,
-        );
-        assert_eq!(m.caveats.len(), 1);
-        assert!(!m.caveats[0].is_first_party());
-        assert_eq!(m.caveats[0].cid, "third-party-caveat-id");
-        assert!(m.caveats[0].vid.is_some());
-        assert_eq!(
-            m.caveats[0].cl.as_deref(),
-            Some("https://auth.third-party.com")
-        );
-    }
-
-    #[test]
-    fn test_third_party_caveat_without_discharge_fails() {
-        let mgr = MacaroonManager::new(&test_key()).unwrap();
-        let mut m = mgr.create("https://example.com", "token-1");
-        mgr.add_third_party_caveat(
-            &mut m,
-            "https://auth.third-party.com",
-            "tp-caveat",
-            &[0xDD; 32],
-        );
-        // No discharge macaroons provided
-        assert!(mgr.verify(&m, |_| true).is_err());
-    }
-
-    #[test]
-    fn test_third_party_caveat_with_discharge() {
-        let mgr = MacaroonManager::new(&test_key()).unwrap();
-        let mut m = mgr.create("https://example.com", "token-1");
-        let caveat_key = [0xDD; 32];
-        mgr.add_third_party_caveat(
-            &mut m,
-            "https://auth.third-party.com",
-            "tp-caveat-1",
-            &caveat_key,
-        );
-
-        // Create a discharge macaroon from the third-party service
-        let tp_mgr = MacaroonManager::new(&caveat_key).unwrap();
-        let discharge = tp_mgr.create("https://auth.third-party.com", "tp-caveat-1");
-
-        // Verify with the discharge macaroon
-        mgr.verify_with_discharges(&m, |_| true, &[discharge])
-            .unwrap();
-    }
-
-    #[test]
-    fn test_mixed_first_and_third_party_caveats() {
-        let mgr = MacaroonManager::new(&test_key()).unwrap();
-        let mut m = mgr.create("https://example.com", "token-1");
-        mgr.add_first_party_caveat(&mut m, "account = 42");
-        let caveat_key = [0xEE; 32];
-        mgr.add_third_party_caveat(
-            &mut m,
-            "https://auth.third-party.com",
-            "tp-auth",
-            &caveat_key,
-        );
-        mgr.add_first_party_caveat(&mut m, "time < 2099-01-01");
-
-        let tp_mgr = MacaroonManager::new(&caveat_key).unwrap();
-        let discharge = tp_mgr.create("https://auth.third-party.com", "tp-auth");
-
-        mgr.verify_with_discharges(
-            &m,
-            |c| c == "account = 42" || c.starts_with("time < "),
-            &[discharge],
-        )
-        .unwrap();
-    }
-
-    #[test]
     fn test_attenuate() {
         let mgr = MacaroonManager::new(&test_key()).unwrap();
         let m = mgr.create("https://example.com", "token-1");
@@ -395,22 +222,35 @@ mod tests {
     }
 
     #[test]
-    fn test_caveat_is_first_party() {
-        let c = Caveat::first_party("x = 1");
-        assert!(c.is_first_party());
-        let c3 = Caveat {
-            cid: "xyz".to_string(),
-            vid: Some("v".to_string()),
-            cl: Some("l".to_string()),
-        };
-        assert!(!c3.is_first_party());
-    }
-
-    #[test]
     fn test_signature_deterministic() {
         let mgr = MacaroonManager::new(&test_key()).unwrap();
         let m1 = mgr.create("loc", "id-1");
         let m2 = mgr.create("loc", "id-1");
         assert_eq!(m1.signature, m2.signature);
+    }
+
+    #[test]
+    fn test_credential_carrying_a_third_party_caveat_is_refused() {
+        // Shape of a credential minted by releases that had third-party caveats.
+        let json = r#"{"location":"l","identifier":"token-1","caveats":[{"cid":"tp","vid":"00","cl":"https://auth.third-party.com"}],"signature":"00"}"#;
+        assert!(serde_json::from_str::<Macaroon>(json).is_err());
+    }
+
+    #[test]
+    fn test_tampered_caveat_list_is_rejected() {
+        let mgr = MacaroonManager::new(&test_key()).unwrap();
+        let mut m = mgr.create("https://example.com", "token-1");
+        mgr.add_first_party_caveat(&mut m, "op = read");
+        m.caveats[0] = Caveat::first_party("op = write");
+        assert!(mgr.verify(&m, |_| true).is_err());
+    }
+
+    #[test]
+    fn test_debug_output_does_not_contain_the_signature() {
+        let mgr = MacaroonManager::new(&test_key()).unwrap();
+        let m = mgr.create("https://example.com", "token-1");
+        let shown = format!("{m:?}");
+        assert!(!shown.contains(&m.signature), "{shown}");
+        assert!(shown.contains("token-1"));
     }
 }
