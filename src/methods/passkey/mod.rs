@@ -112,12 +112,12 @@ use std::time::Duration;
 use coset::iana;
 #[cfg(feature = "passkeys")]
 use passkey::{
-    authenticator::{Authenticator, UserCheck, UserValidationMethod},
+    authenticator::{Authenticator, UiHint, UserCheck, UserValidationMethod},
     client::Client,
+    crypto::rust_crypto::RustCryptoBackend,
     types::{
         Bytes, Passkey,
         ctap2::{Aaguid, Ctap2Error},
-        rand::random_vec,
         webauthn::{
             AttestationConveyancePreference, AuthenticatedPublicKeyCredential,
             CreatedPublicKeyCredential, CredentialCreationOptions, CredentialRequestOptions,
@@ -132,6 +132,17 @@ use passkey::{
 use passkey_client::DefaultClientData;
 #[cfg(feature = "passkeys")]
 use url::Url;
+
+/// 32 random bytes for a WebAuthn challenge, from the operating system's generator.
+#[cfg(feature = "passkeys")]
+fn random_challenge() -> Result<Vec<u8>> {
+    use ring::rand::SecureRandom;
+    let mut challenge = vec![0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut challenge)
+        .map_err(|_| AuthError::internal("Failed to generate a passkey challenge"))?;
+    Ok(challenge)
+}
 
 /// A WebAuthn byte field from JSON: base64url text, or an array of numbers (what `passkey-types`
 /// writes unless its `serialize_bytes_as_base64_string` feature is on). Not gated on `passkeys`: the
@@ -254,7 +265,7 @@ impl UserValidationMethod for PasskeyUserValidation {
 
     async fn check_user<'a>(
         &self,
-        _credential: Option<&'a Passkey>,
+        _hint: UiHint<'a, Passkey>,
         presence: bool,
         verification: bool,
     ) -> std::result::Result<UserCheck, Ctap2Error> {
@@ -485,13 +496,13 @@ impl PasskeyAuthMethod {
         let aaguid = Aaguid::new_empty();
         let user_validation = PasskeyUserValidation;
         let store: Option<Passkey> = None;
-        let authenticator = Authenticator::new(aaguid, store, user_validation);
+        let authenticator = Authenticator::new(aaguid, store, user_validation, RustCryptoBackend);
 
         // Create client
         let mut client = Client::new(authenticator);
 
         // Generate challenge
-        let challenge: Bytes = random_vec(32).into();
+        let challenge: Bytes = random_challenge()?.into();
 
         // Create user entity
         let user_entity = PublicKeyCredentialUserEntity {
@@ -630,7 +641,7 @@ impl PasskeyAuthMethod {
         &self,
         user_id: Option<&str>,
     ) -> Result<CredentialRequestOptions> {
-        let challenge_bytes = random_vec(32);
+        let challenge_bytes = random_challenge()?;
         let challenge: Bytes = challenge_bytes.clone().into();
 
         let allow_credential_ids: Vec<(Vec<u8>, String)> = {

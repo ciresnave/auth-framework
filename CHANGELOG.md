@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `X509CertificateManager::revoke_certificate` and `check_certificate_status` no longer hold the certificate store and the revocation list in opposite orders, which could leave both calls waiting on each other forever (a hang of the manager). Later releases already do this; this brings 0.4.x in line.
 
+### Changed
+
+- `passkey`, `passkey-client` 0.4 -> 0.6 and `coset` 0.3 -> 0.4 (the `passkeys` feature), which drops the `crypto-bigint` 0.5 timing issue (RUSTSEC-2026-0387) reached through `p256` 0.13. Code that names `passkey` types directly must pass `RustCryptoBackend` to `Authenticator::new` and take a `UiHint` in `check_user`, as in `release/0.5.x`.
+
 ## [0.4.42] - Unreleased
 
 ### Fixed
