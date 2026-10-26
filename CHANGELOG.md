@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.43] - Unreleased
+
+### Fixed
+
+- `X509CertificateManager::revoke_certificate` and `check_certificate_status` no longer hold the certificate store and the revocation list in opposite orders, which could leave both calls waiting on each other forever (a hang of the manager). Later releases already do this; this brings 0.4.x in line.
+
 ## [0.4.42] - Unreleased
 
 ### Fixed
