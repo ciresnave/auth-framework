@@ -221,8 +221,10 @@ async fn verify_client_credentials(
         )
         .await);
     }
-    // A record without a secret accepts the empty secret (unchanged here; see issue #90).
-    Ok(crate::security::timing_protection::constant_time_string_compare(client_secret, ""))
+    // A client registered without a secret (a public client) has nothing to authenticate with,
+    // so it cannot call the introspection endpoint (RFC 7662 section 2.1); an empty presented
+    // secret is not a credential.
+    Ok(false)
 }
 
 /// Token introspection endpoint (RFC 7662)
