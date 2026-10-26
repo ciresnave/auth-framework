@@ -14,7 +14,7 @@ curl -s -H "User-Agent: advisory-ranges" "https://crates.io/api/v1/crates/auth-f
 ```
 
 `per_page=100` covers today's list; page the request if the crate passes 100 versions.
-`versions.example.txt` is the list as of 2026-10-23 plus the planned fix releases.
+`versions.example.txt` is the published list as of 2026-10-26 (71 versions).
 
 `intended.json` is `[{"id": "...", "patched": [">= 0.4.7, < 0.5.0-rc1", ">= 0.6.0-rc46"], "unaffected": ["< 0.4.1"]}]`, ranges read numerically.
 The optional third argument is a comma-separated list of versions whose verdict is printed under every advisory.
