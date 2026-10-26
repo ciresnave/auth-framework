@@ -234,6 +234,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc152 -- **Security: GHSA-q4c2-8php-g7c8.** Third-party caveats in `protocols::macaroons` were not verified in 0.6.0-rc41 through 0.6.0-rc138. 0.6.0-rc150 removed that API (see rc148) and is the fixed release. Documentation only; no code change. https://github.com/ciresnave/auth-framework/security/advisories/GHSA-q4c2-8php-g7c8
 - 0.6.0-rc151 -- **The security audit test fails on a moved file.** `tests/final_comprehensive_security_audit.rs` used to read a missing source file as "no problem found"; it now fails loudly, so a moved file cannot pass the audit silently (tests only; part of #18).
 - 0.6.0-rc150 -- **First patent sweep recorded** in `docs/PATENT-SWEEP.md` (first pass, not a clearance; its Needs review list is open).
 - 0.6.0-rc149 -- **GNAP `continue_transaction` checks before it changes anything.** The interaction hash is verified before the continuation token is rotated, so a request that fails the check leaves the holder's token usable, and it is compared with `ct_eq`. An unknown transaction, an expired one, a wrong token and a wrong interaction hash now return the same message (`Invalid continuation request`). New tests cover these, the token comparison, and the OAuth2 revoke log line.
