@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc152"
+  version       = "0.6.0-rc153"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -386,7 +386,7 @@
   # real dependency weight. See
   # `tests::test_bergshamra_feature_choices_are_deliberate` below, which
   # fails if this feature list drifts without updating that reasoning.
-  bergshamra = { version = "0.9", default-features = false, features = [
+  bergshamra = { version = "0.11", default-features = false, features = [
     "aws-lc",
   ], optional = true }
   # Needed directly (not just transitively through bergshamra) to name
@@ -401,7 +401,7 @@
   # "aws-lc" only. No extra features requested here: Cargo unions the
   # "aws-lc" feature bergshamra's own dependency edge already requests,
   # so this just needs to exist as a nameable crate for KeyAlgorithm/EcCurve.
-  kryptering = { version = "0.6", default-features = false, optional = true }
+  kryptering = { version = "0.7", default-features = false, optional = true }
 
   # Passkey/WebAuthn dependencies
   coset          = { version = "0.4.2", optional = true } # Keep aligned with passkey's coset dependency
