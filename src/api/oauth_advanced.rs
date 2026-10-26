@@ -210,14 +210,19 @@ async fn verify_client_credentials(
         }
     };
 
-    let stored_secret = client_data["client_secret"].as_str().unwrap_or("");
-    // Constant-time comparison prevents timing oracle on the secret
-    Ok(
-        crate::security::timing_protection::constant_time_string_compare(
+    if super::client_secret::is_confidential(&client_data) {
+        // A hashed secret is verified against its hash; a legacy plain one is compared in
+        // constant time and then replaced by its hash.
+        return Ok(super::client_secret::authenticate(
+            state.auth_framework.storage().as_ref(),
+            client_id,
+            &client_data,
             client_secret,
-            stored_secret,
-        ),
-    )
+        )
+        .await);
+    }
+    // A record without a secret accepts the empty secret (unchanged here; see issue #90).
+    Ok(crate::security::timing_protection::constant_time_string_compare(client_secret, ""))
 }
 
 /// Token introspection endpoint (RFC 7662)
