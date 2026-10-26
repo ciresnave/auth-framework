@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc67] - Unreleased
+
+### Changed
+
+- **Security: GHSA-q4c2-8php-g7c8.** Third-party caveats in `protocols::macaroons` were not verified in 0.5.0-rc18 through 0.5.0-rc63. 0.5.0-rc65 removed that API and is the fixed release. Documentation only; no code change. https://github.com/ciresnave/auth-framework/security/advisories/GHSA-q4c2-8php-g7c8
+
 ## [0.5.0-rc66] - Unreleased
 
 ### Added
