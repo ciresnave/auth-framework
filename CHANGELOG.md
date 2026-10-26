@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc66] - Unreleased
+
+### Added
+
+- **Tests that pin what the `passkey` crates produce.** `tests/passkey_wire_format.rs` checks a recorded registration and assertion (`tests/fixtures/passkey_wire_format.json`) and a live registration, and verifies the recorded signature independently. Tests only; no library change.
+
 ## [0.5.0-rc65] - Unreleased
 
 ### Removed
