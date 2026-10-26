@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc68] - Unreleased
+
+### Fixed
+
+- **JARM JWE now authenticates its protected header (#99).** The AES-256-GCM content encryption of a JARM JWE uses the base64url protected header as additional authenticated data, as RFC 7516 requires, on both encrypt and decrypt. A JWE made by an older version carries no such binding and **no longer decrypts**: there is no fallback to the old form, because accepting it would keep the header unauthenticated. A standards-compliant JWE implementation on the other end now interoperates.
+
 ## [0.5.0-rc67] - Unreleased
 
 ### Changed
