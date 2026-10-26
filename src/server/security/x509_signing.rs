@@ -863,12 +863,16 @@ impl X509CertificateManager {
         reason: RevocationReason,
         additional_info: Option<String>,
     ) -> Result<()> {
-        // Update certificate status
-        let mut store = self.certificate_store.write().await;
-        for cert in store.values_mut() {
-            if cert.serial_number == serial_number {
-                cert.status = CertificateStatus::Revoked;
-                break;
+        // Update certificate status. The store lock is released before the revocation list is
+        // taken: `check_certificate_status` takes them in the other order, so holding both
+        // here would let the two calls wait on each other forever.
+        {
+            let mut store = self.certificate_store.write().await;
+            for cert in store.values_mut() {
+                if cert.serial_number == serial_number {
+                    cert.status = CertificateStatus::Revoked;
+                    break;
+                }
             }
         }
 
@@ -889,8 +893,13 @@ impl X509CertificateManager {
     /// Check certificate status
     pub async fn check_certificate_status(&self, serial_number: &str) -> Result<CertificateStatus> {
         // Check revocation list first
-        let revocation_list = self.revocation_list.read().await;
-        if revocation_list.contains_key(serial_number) {
+        // (the read guard is dropped at the end of the condition, before the store is taken)
+        if self
+            .revocation_list
+            .read()
+            .await
+            .contains_key(serial_number)
+        {
             return Ok(CertificateStatus::Revoked);
         }
 
@@ -1317,5 +1326,69 @@ mod tests {
         };
 
         assert!(filter.matches(&cert));
+    }
+
+    fn lock_order_certificate(serial: &str) -> StoredCertificate {
+        StoredCertificate {
+            cert_id: "lock-order".to_string(),
+            certificate_pem: String::new(),
+            private_key_pem: None,
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: serial.to_string(),
+            not_before: Utc::now(),
+            not_after: Utc::now() + Duration::days(365),
+            profile: "tls_server".to_string(),
+            status: CertificateStatus::Valid,
+            fingerprint: "test_fp".to_string(),
+            created_at: Utc::now(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// `revoke_certificate` and `check_certificate_status` must not each hold one of the two
+    /// locks while waiting for the other. The test queues a revoke behind a held store lock,
+    /// then a status check that has already taken the revocation list, and releases the store:
+    /// with the two taken in opposite orders neither can finish.
+    #[tokio::test]
+    async fn revoke_and_status_check_do_not_deadlock() {
+        let manager = Arc::new(X509CertificateManager::new(X509Config::default()));
+        manager
+            .certificate_store
+            .write()
+            .await
+            .insert("lock-order".to_string(), lock_order_certificate("77"));
+
+        let store_guard = manager.certificate_store.write().await;
+        let revoker = {
+            let manager = manager.clone();
+            tokio::spawn(async move {
+                manager
+                    .revoke_certificate("77", RevocationReason::KeyCompromise, None)
+                    .await
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let checker = {
+            let manager = manager.clone();
+            tokio::spawn(async move { manager.check_certificate_status("77").await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drop(store_guard);
+
+        let both = async {
+            let revoked = revoker.await.expect("revoke task panicked");
+            let status = checker.await.expect("status task panicked");
+            (revoked, status)
+        };
+        let (revoked, status) = tokio::time::timeout(std::time::Duration::from_secs(10), both)
+            .await
+            .expect("revoke_certificate and check_certificate_status deadlocked");
+        revoked.expect("revoke failed");
+        status.expect("status check failed");
+        assert_eq!(
+            manager.check_certificate_status("77").await.unwrap(),
+            CertificateStatus::Revoked
+        );
     }
 }

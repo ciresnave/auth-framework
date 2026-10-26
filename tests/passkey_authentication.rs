@@ -155,8 +155,9 @@ async fn bad_assertions_are_rejected_in_both_forms() {
     }
 }
 
-use passkey::authenticator::{Authenticator, UserCheck, UserValidationMethod};
+use passkey::authenticator::{Authenticator, UiHint, UserCheck, UserValidationMethod};
 use passkey::client::Client;
+use passkey::crypto::rust_crypto::RustCryptoBackend;
 use passkey::types::{
     Bytes, Passkey,
     ctap2::{Aaguid, Ctap2Error},
@@ -177,7 +178,7 @@ impl UserValidationMethod for Verified {
     type PasskeyItem = Passkey;
     async fn check_user<'a>(
         &self,
-        _credential: Option<&'a Passkey>,
+        _hint: UiHint<'a, Passkey>,
         presence: bool,
         verification: bool,
     ) -> Result<UserCheck, Ctap2Error> {
@@ -295,6 +296,7 @@ async fn a_live_ceremony_authenticates_once() {
         Aaguid::new_empty(),
         None::<Passkey>,
         Verified,
+        RustCryptoBackend,
     ));
     let credential = client
         .register(&origin, creation_options(), DefaultClientData)
