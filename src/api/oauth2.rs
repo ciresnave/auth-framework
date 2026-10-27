@@ -282,11 +282,8 @@ pub async fn authorize(
                 return (StatusCode::BAD_REQUEST, Json(error)).into_response();
             }
 
-            // S8: Public clients (no client_secret) MUST provide a PKCE code_challenge.
-            let is_public_client = client_data
-                .get("client_secret")
-                .and_then(|v| v.as_str())
-                .is_none_or(|s| s.is_empty());
+            // S8: Public clients (no client secret) MUST provide a PKCE code_challenge.
+            let is_public_client = !super::client_secret::is_confidential(&client_data);
             if is_public_client && params.code_challenge.is_none() {
                 let error = OAuthError::new("invalid_request")
                     .description("Public clients must use PKCE: code_challenge is required")
@@ -693,11 +690,6 @@ async fn load_client_record(
     }
 }
 
-/// The client secret of a client record; `None` for a public client.
-fn client_secret_of(record: &serde_json::Value) -> Option<&str> {
-    record["client_secret"].as_str().filter(|s| !s.is_empty())
-}
-
 /// How a client identified itself at the token endpoint.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ClientKind {
@@ -710,9 +702,9 @@ enum ClientKind {
 /// Authenticate the client of an authorization-code exchange (RFC 6749 section 3.2.1).
 ///
 /// The client must be registered (`oauth2_client:{id}`). A client whose record holds a
-/// non-empty `client_secret` is confidential and MUST present exactly that secret
-/// (constant-time compare); a missing or wrong secret is `invalid_client`. Whether a
-/// client is public is decided by its registration, never by what the request carries.
+/// secret (hashed, or a legacy plain one) is confidential and MUST present exactly that secret;
+/// a missing or wrong secret is `invalid_client`. Whether a client is public is decided by its
+/// registration, never by what the request carries.
 async fn authenticate_token_client(
     state: &ApiState,
     client_id: &str,
@@ -721,12 +713,21 @@ async fn authenticate_token_client(
     let Some(record) = load_client_record(state, client_id).await? else {
         return Err(refusal("invalid_client", "Unknown client"));
     };
-    match client_secret_of(&record) {
-        None => Ok(ClientKind::Public),
-        Some(stored) => {
-            let authenticated = presented_secret.is_some_and(|presented| {
-                crate::security::timing_protection::constant_time_string_compare(presented, stored)
-            });
+    match super::client_secret::is_confidential(&record) {
+        false => Ok(ClientKind::Public),
+        true => {
+            let authenticated = match presented_secret {
+                Some(presented) => {
+                    super::client_secret::authenticate(
+                        state.auth_framework.storage().as_ref(),
+                        client_id,
+                        &record,
+                        presented,
+                    )
+                    .await
+                }
+                None => false,
+            };
             if authenticated {
                 Ok(ClientKind::Confidential)
             } else {
@@ -1479,10 +1480,25 @@ pub async fn register_client(
 
     let client_id = Uuid::new_v4().to_string();
     let client_secret = Uuid::new_v4().to_string();
+    // Only the hash is stored; the secret itself is returned once, below.
+    let client_secret_hash = match super::client_secret::hash_secret(&client_secret).await {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::error!("Failed to hash a client secret: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "server_error",
+                    "error_description": "Failed to register client"
+                })),
+            )
+                .into_response();
+        }
+    };
 
     let client_data = serde_json::json!({
         "client_id": client_id,
-        "client_secret": client_secret,
+        "client_secret_hash": client_secret_hash,
         "client_name": req.client_name,
         "redirect_uris": req.redirect_uris,
         "token_endpoint_auth_method": req.token_endpoint_auth_method.as_deref().unwrap_or("client_secret_basic"),
