@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc71] - Unreleased
+
+### Fixed
+
+- **A client without a secret can no longer authenticate to token introspection.** `/oauth/introspect` compared the presented client secret with the stored one, and a client record with no secret, an empty one or a non-string one counted as `""`, so Basic `client_id:` or a POST body with an empty `client_secret` authenticated such a client. RFC 7662 section 2.1 requires the endpoint to demand authorization, so a client registered without a secret (a public client) now gets `invalid_client` (HTTP 401) there. Clients with a secret are unaffected; `POST /oauth/register` always issues one. An operator who relied on a public client calling introspection must give it a secret. Fixed on the 0.6 line in 0.6.0-rc159.
+
 ## [0.5.0-rc70] - Unreleased
 
 ### Fixed
