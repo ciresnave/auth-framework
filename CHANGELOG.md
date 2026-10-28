@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc72] - Unreleased
+
+### Fixed
+
+- **Storage backends no longer return expired tokens or sessions (#144).** `get_token`, `get_token_by_access_token` and `get_session` on the SQLite, PostgreSQL and in-memory (`MemoryStorage`, `DashMapMemoryStorage`) backends now return `None` for a token or session whose `expires_at` has passed, as the `AuthStorage` docs ask; before, only the in-memory sessions honoured it and the SQL backends pruned only in `cleanup_expired`. The framework's own validation already checked the presented token's expiry, so this was a storage-contract defect for code that calls storage directly, not a way past authentication. `list_user_tokens` and `list_user_sessions` are unchanged. Redis expires keys itself. Fixed on the 0.6 line in 0.6.0-rc161.
+
 ## [0.5.0-rc71] - Unreleased
 
 ### Fixed

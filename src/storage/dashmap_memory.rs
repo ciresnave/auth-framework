@@ -470,7 +470,8 @@ impl AuthStorage for DashMapMemoryStorage {
             let created_at = timestamped.created_at;
             let user_id = timestamped.token.user_id.clone();
 
-            if timestamped.is_expired() {
+            // Expired either by the store's own time to live or by the token's `expires_at`.
+            if timestamped.is_expired() || timestamped.token.is_expired() {
                 drop(timestamped); // Release reference
                 self.tokens.remove(token_id); // Cleanup expired
 
@@ -619,7 +620,8 @@ impl AuthStorage for DashMapMemoryStorage {
             let created_at = timestamped.created_at;
             let user_id = timestamped.session.user_id.clone();
 
-            if timestamped.is_expired() {
+            // Expired either by the store's own time to live or by the session's `expires_at`.
+            if timestamped.is_expired() || timestamped.session.expires_at <= chrono::Utc::now() {
                 drop(timestamped);
                 self.sessions.remove(session_id);
 
