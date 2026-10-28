@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc73] - Unreleased
+
+### Fixed
+
+- **PostgreSQL `list_user_sessions` works on a database made by `migrate()` (#147).** It selected `last_activity`, `ip_address` and `user_agent`, columns the `sessions` table (as `migrate()` creates it) does not have, so every call failed, and it rebuilt the session's `data` from the whole JSON object. It now reads the one `data` column, the whole `SessionData` that `store_session` wrote and `get_session` reads. The other `sessions` table definitions named in #147 are not changed here. Fixed on the 0.6 line in 0.6.0-rc162.
+
 ## [0.5.0-rc72] - Unreleased
 
 ### Fixed
