@@ -255,7 +255,8 @@ impl AuthStorage for PostgresStorage {
                         e
                     )))
                 })?;
-        Ok(row)
+        // An expired token is not returned (the trait asks backends to honour expiry).
+        Ok(row.filter(|t| !t.is_expired()))
     }
 
     async fn get_token_by_access_token(&self, access_token: &str) -> Result<Option<AuthToken>> {
@@ -270,7 +271,7 @@ impl AuthStorage for PostgresStorage {
                         e
                     )))
                 })?;
-        Ok(row)
+        Ok(row.filter(|t| !t.is_expired()))
     }
 
     async fn update_token(&self, token: &AuthToken) -> Result<()> {
@@ -406,7 +407,7 @@ impl AuthStorage for PostgresStorage {
                         e
                     )))
                 })?;
-            Ok(Some(session))
+            Ok(Some(session).filter(|s| s.expires_at > chrono::Utc::now()))
         } else {
             Ok(None)
         }

@@ -234,12 +234,15 @@ impl<K: KvBackend + 'static> AuthStorage for PersistantStorage<K> {
     }
 
     async fn get_token(&self, token_id: &str) -> Result<Option<AuthToken>> {
-        self.kv
+        let token: Option<AuthToken> = self
+            .kv
             .get(&token_key(token_id))
             .await
             .map_err(storage_err)?
             .map(|bytes| decode(&bytes))
-            .transpose()
+            .transpose()?;
+        // An expired token is not returned (the trait asks backends to honour expiry).
+        Ok(token.filter(|t| !t.is_expired()))
     }
 
     async fn get_token_by_access_token(&self, access_token: &str) -> Result<Option<AuthToken>> {
@@ -248,7 +251,7 @@ impl<K: KvBackend + 'static> AuthStorage for PersistantStorage<K> {
             .await
             .map_err(storage_err)?;
         match found {
-            Some((_, bytes)) => Ok(Some(decode(&bytes)?)),
+            Some((_, bytes)) => Ok(Some(decode::<AuthToken>(&bytes)?).filter(|t| !t.is_expired())),
             None => Ok(None),
         }
     }
@@ -286,12 +289,14 @@ impl<K: KvBackend + 'static> AuthStorage for PersistantStorage<K> {
     }
 
     async fn get_session(&self, session_id: &str) -> Result<Option<SessionData>> {
-        self.kv
+        let session: Option<SessionData> = self
+            .kv
             .get(&session_key(session_id))
             .await
             .map_err(storage_err)?
             .map(|bytes| decode(&bytes))
-            .transpose()
+            .transpose()?;
+        Ok(session.filter(|s| s.expires_at > chrono::Utc::now()))
     }
 
     async fn delete_session(&self, session_id: &str) -> Result<()> {
