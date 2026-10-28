@@ -1004,9 +1004,16 @@ pub async fn revoke(
 
     // A token issued to an OAuth client is revoked only by that client (RFC 7009 section 2.1):
     // a confidential client authenticates, a public one identifies itself.
-    let owner_client = refresh_record
+    // On this line only refresh tokens are issued to a client, but a JWT that carries a client
+    // is bound to it too, so the check does not depend on that staying true.
+    let owner_client = issued_jwt
         .as_ref()
-        .and_then(|record| record["client_id"].as_str().map(String::from));
+        .and_then(|claims| claims.client_id.clone())
+        .or_else(|| {
+            refresh_record
+                .as_ref()
+                .and_then(|record| record["client_id"].as_str().map(String::from))
+        });
     if let Some(owner) = owner_client
         && !revocation_caller_is(&state, &headers, &req, &owner).await
     {

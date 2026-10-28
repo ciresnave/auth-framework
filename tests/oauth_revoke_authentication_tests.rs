@@ -117,6 +117,79 @@ mod revoke_authentication_tests {
         assert_eq!(stored, 0, "{stored} of 200 junk strings left a marker");
     }
 
+    /// An oversized string is refused before it can become a storage key.
+    #[tokio::test]
+    async fn an_oversized_token_is_refused_and_leaves_no_marker() {
+        let env = env().await;
+        let big = "a".repeat(8193);
+        let resp = call(&env, HeaderMap::new(), request(&big, None, None)).await;
+        assert!(!resp.success);
+        assert_eq!(
+            resp.error.as_ref().map(|e| e.code.as_str()),
+            Some("invalid_request")
+        );
+        assert!(!marker(&env, &big).await);
+        // Control: the boundary itself is accepted (as a no-op, it is not a token).
+        let edge = "a".repeat(8192);
+        assert!(
+            call(&env, HeaderMap::new(), request(&edge, None, None))
+                .await
+                .success
+        );
+    }
+
+    /// A JWT signed by someone else is not a token we issued.
+    #[tokio::test]
+    async fn a_foreign_jwt_is_a_no_op() {
+        let env = env().await;
+        let other = AuthFramework::new(
+            AuthConfig::new().secret("a_different_secret_key_that_is_long_enough_xx".to_string()),
+        );
+        let foreign = other
+            .token_manager()
+            .create_jwt_token(
+                &env.user,
+                vec!["read".into()],
+                Some(Duration::from_secs(300)),
+            )
+            .unwrap();
+        // Control: a JWT of our own does validate.
+        let ours = env
+            .fw
+            .token_manager()
+            .create_jwt_token(
+                &env.user,
+                vec!["read".into()],
+                Some(Duration::from_secs(300)),
+            )
+            .unwrap();
+        assert!(env.fw.token_manager().validate_jwt_token(&ours).is_ok());
+        assert!(env.fw.token_manager().validate_jwt_token(&foreign).is_err());
+
+        let resp = call(&env, HeaderMap::new(), request(&foreign, None, None)).await;
+        assert!(resp.success, "answers like success (RFC 7009 2.2)");
+        assert!(!marker(&env, &foreign).await, "and stores nothing");
+    }
+
+    /// A refresh token of a client whose record is gone cannot be revoked by anyone: the
+    /// request fails closed rather than acting without knowing who the owner is.
+    #[tokio::test]
+    async fn a_token_of_a_deleted_client_fails_closed() {
+        let env = env().await;
+        let token = client_token(&env, "rv-gone").await;
+        let resp = call(
+            &env,
+            HeaderMap::new(),
+            request(&token, Some("rv-gone"), None),
+        )
+        .await;
+        assert_eq!(
+            resp.error.as_ref().map(|e| e.code.as_str()),
+            Some("invalid_client")
+        );
+        assert!(!marker(&env, &token).await);
+    }
+
     /// Control: a first-party token (no client) is still revoked by whoever holds it.
     #[tokio::test]
     async fn a_token_with_no_client_is_revoked_by_its_holder() {
