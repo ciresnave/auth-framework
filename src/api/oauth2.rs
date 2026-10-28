@@ -836,6 +836,23 @@ async fn authenticate_token_client(
                 None => false,
             };
             if authenticated {
+                // An authenticated client is limited by its own identity, whatever address it
+                // uses (#92); a failed attempt is not counted against the client it names.
+                match super::client_rate_limit::check(state, client_id).await {
+                    Ok(()) => {}
+                    Err(super::client_rate_limit::ClientLimited::Exceeded { .. }) => {
+                        return Err(refusal(
+                            "rate_limit_exceeded",
+                            "This client is making too many requests",
+                        ));
+                    }
+                    Err(super::client_rate_limit::ClientLimited::Unavailable) => {
+                        return Err(refusal(
+                            "temporarily_unavailable",
+                            "Rate limiting is temporarily unavailable",
+                        ));
+                    }
+                }
                 Ok(ClientKind::Confidential)
             } else {
                 Err(refusal("invalid_client", "Client authentication failed"))

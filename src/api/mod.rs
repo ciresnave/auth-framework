@@ -6,6 +6,7 @@
 pub mod admin;
 pub mod advanced_protocols;
 pub mod auth;
+pub(crate) mod client_rate_limit;
 pub(crate) mod client_secret;
 pub mod email_verification;
 pub mod error_codes;
