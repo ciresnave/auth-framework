@@ -373,6 +373,21 @@ jobs:
     name: Build and Test Docker Image
     runs-on: ubuntu-latest
     needs: [test, msrv, coverage, feature-matrix, security-audit]
+    # The image's tests run with every feature, and the PostgreSQL ones need a real database.
+    services:
+      postgres:
+        image: postgres:15@sha256:c961aa287d8698297cb26cdfadfbe9fd2cbaf77e53cfffe9636e8d8a1e4d842c
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: auth_framework_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -393,7 +408,7 @@ jobs:
 
       - name: Run Docker tests
         run: |
-          docker run --rm authframework:test
+          docker run --rm --network host             -e DATABASE_URL=postgresql://test_user:test_password@localhost:5432/auth_framework_test             authframework:test
 
       - name: Build production image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
