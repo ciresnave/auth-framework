@@ -1369,7 +1369,10 @@ pub async fn revoke(
         )
         .outcome(EventOutcome::Success)
         .risk_level(RiskLevel::Low)
-        .with_actor("api_caller", owner_client.as_deref().unwrap_or("unauthenticated"))
+        .with_actor(
+            "api_caller",
+            owner_client.as_deref().unwrap_or("unauthenticated"),
+        )
         .detail("endpoint", "/oauth/revoke")
         .detail(
             "token_fingerprint",
