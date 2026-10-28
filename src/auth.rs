@@ -413,6 +413,23 @@ impl AuthFramework {
         AuditOperations { framework: self }
     }
 
+    /// Record an audit event from a request handler. A failure to store the event is logged
+    /// and does not fail the request that caused it.
+    pub(crate) async fn record_audit_event(&self, event: crate::audit::AuditEvent) {
+        let kind = event.event_type.clone();
+        if let Err(e) = self.audit_manager.log_event(event).await {
+            tracing::warn!("Could not record the {kind} audit event: {e}");
+        }
+    }
+
+    /// Query the recorded audit events.
+    pub(crate) async fn query_audit_events(
+        &self,
+        query: &crate::audit::AuditQuery,
+    ) -> Result<Vec<crate::audit::AuditEvent>> {
+        self.audit_manager.query_events(query).await
+    }
+
     /// Access focused maintenance operations.
     pub fn maintenance(&self) -> MaintenanceOperations<'_> {
         MaintenanceOperations { framework: self }
