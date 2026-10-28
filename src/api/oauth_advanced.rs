@@ -227,6 +227,43 @@ async fn verify_client_credentials(
     Ok(false)
 }
 
+/// Record an introspection request in the audit trail: who asked, what came of it, and (for a
+/// token that could be read) its subject and `jti`. Never the token or any secret.
+async fn audit_introspection(
+    state: &State<ApiState>,
+    client_id: &str,
+    success: bool,
+    result: &str,
+    subject: Option<&str>,
+    jti: Option<&str>,
+) {
+    use crate::audit::{AuditEvent, AuditEventType, EventOutcome, RiskLevel};
+    let mut event = AuditEvent::builder(
+        AuditEventType::TokenIntrospected,
+        format!("OAuth2 token introspection: {result}"),
+    )
+    .outcome(if success {
+        EventOutcome::Success
+    } else {
+        EventOutcome::Failure
+    })
+    .risk_level(if success {
+        RiskLevel::Low
+    } else {
+        RiskLevel::Medium
+    })
+    .with_actor("oauth_client", client_id)
+    .detail("endpoint", "/oauth/introspect")
+    .detail("result", result);
+    if let Some(subject) = subject {
+        event = event.user_id(subject);
+    }
+    if let Some(jti) = jti {
+        event = event.detail("jti", jti);
+    }
+    state.auth_framework.record_audit_event(event.build()).await;
+}
+
 /// Token introspection endpoint (RFC 7662)
 ///
 /// Allows authorized clients to determine the active state and meta-information
@@ -247,6 +284,8 @@ pub async fn introspect_token(
     // --- Authentication enforcement (RFC 7662 §2.1) ---
     let auth_header = headers.get(axum::http::header::AUTHORIZATION);
 
+    // Who the caller said it was, for the audit trail (never a secret).
+    let mut presented_client_id: Option<String> = None;
     let authenticated = match auth_header {
         Some(value) => {
             let value_str = value.to_str().unwrap_or("");
@@ -268,6 +307,7 @@ pub async fn introspect_token(
                         let mut parts = decoded.splitn(2, ':');
                         let basic_client_id = parts.next().unwrap_or("").to_string();
                         let basic_client_secret = parts.next().unwrap_or("").to_string();
+                        presented_client_id = Some(basic_client_id.clone());
                         verify_client_credentials(&state, &basic_client_id, &basic_client_secret)
                             .await?
                     }
@@ -297,7 +337,10 @@ pub async fn introspect_token(
         None => {
             // No Authorization header — verify using POST body client_id + client_secret.
             match (&form.client_id, &form.client_secret) {
-                (Some(id), Some(secret)) => verify_client_credentials(&state, id, secret).await?,
+                (Some(id), Some(secret)) => {
+                    presented_client_id = Some(id.clone());
+                    verify_client_credentials(&state, id, secret).await?
+                }
                 _ => {
                     debug!("Introspect rejected: missing client credentials");
                     return Err((
@@ -312,7 +355,17 @@ pub async fn introspect_token(
         }
     };
 
+    let audit_client = presented_client_id.unwrap_or_default();
     if !authenticated {
+        audit_introspection(
+            &state,
+            &audit_client,
+            false,
+            "client_authentication_failed",
+            None,
+            None,
+        )
+        .await;
         debug!("Introspect rejected: invalid client credentials");
         return Err((
             StatusCode::UNAUTHORIZED,
@@ -363,6 +416,15 @@ pub async fn introspect_token(
                 );
             }
             if revoked {
+                audit_introspection(
+                    &state,
+                    &audit_client,
+                    true,
+                    "inactive_revoked_or_unusable",
+                    Some(&claims.sub),
+                    Some(&claims.jti),
+                )
+                .await;
                 debug!(
                     "Token introspection: token has been revoked (jti: {})",
                     claims.jti
@@ -384,6 +446,15 @@ pub async fn introspect_token(
             }
 
             debug_assert!(!claims.sub.is_empty(), "Token subject should not be empty");
+            audit_introspection(
+                &state,
+                &audit_client,
+                true,
+                "active",
+                Some(&claims.sub),
+                Some(&claims.jti),
+            )
+            .await;
             Ok(Json(IntrospectResponse {
                 active: true,
                 sub: Some(claims.sub.clone()),
@@ -404,6 +475,7 @@ pub async fn introspect_token(
             }))
         }
         Err(_e) => {
+            audit_introspection(&state, &audit_client, true, "inactive_invalid", None, None).await;
             debug!("Token introspection: token is inactive");
             // Return inactive token (per RFC 7662, don't reveal why it's invalid)
             Ok(Json(IntrospectResponse {

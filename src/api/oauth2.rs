@@ -1206,6 +1206,8 @@ pub async fn revoke(
     // middleware (validate_api_token in api/mod.rs) blocks it on all protected
     // endpoints. Without this step, the revocation would only be visible to the
     // userinfo endpoint, leaving all other authenticated routes unprotected.
+    let mut revoked_subject: Option<String> = None;
+    let mut revoked_jti: Option<String> = None;
     if let Ok(claims) = state
         .auth_framework
         .token_manager()
@@ -1214,6 +1216,8 @@ pub async fn revoke(
         let now = chrono::Utc::now().timestamp();
         let remaining_secs = (claims.exp - now + 60).max(60) as u64;
         let jti_key = format!("revoked_token:{}", claims.jti);
+        revoked_subject = Some(claims.sub.clone());
+        revoked_jti = Some(claims.jti.clone());
         if let Err(e) = state
             .auth_framework
             .storage()
@@ -1234,6 +1238,32 @@ pub async fn revoke(
         "OAuth2 token revoked: {}",
         crate::utils::redact::fingerprint(&req.token)
     );
+
+    // Audit trail: that a token was revoked, which one (its fingerprint, and `jti` when it is a
+    // JWT) and whose it was; never the token itself. This endpoint does not authenticate the
+    // caller, so the actor is recorded as unauthenticated.
+    {
+        use crate::audit::{AuditEvent, AuditEventType, EventOutcome, RiskLevel};
+        let mut event = AuditEvent::builder(
+            AuditEventType::TokenRevoked,
+            "OAuth2 token revoked via /oauth/revoke",
+        )
+        .outcome(EventOutcome::Success)
+        .risk_level(RiskLevel::Low)
+        .with_actor("api_caller", "unauthenticated")
+        .detail("endpoint", "/oauth/revoke")
+        .detail(
+            "token_fingerprint",
+            crate::utils::redact::fingerprint(&req.token).to_string(),
+        );
+        if let Some(subject) = revoked_subject {
+            event = event.user_id(subject);
+        }
+        if let Some(jti) = revoked_jti {
+            event = event.detail("jti", jti);
+        }
+        state.auth_framework.record_audit_event(event.build()).await;
+    }
 
     ApiResponse::success(serde_json::json!({
         "message": "Token revoked successfully"

@@ -1444,6 +1444,18 @@ pub struct AuditOperations<'a> {
 }
 
 impl AuditOperations<'_> {
+    /// Query the recorded audit events: logins, permission checks and, from the OAuth2
+    /// endpoints, token introspection and revocation requests.
+    ///
+    /// Fails if the configured audit storage cannot be read back (for example
+    /// `AuditStorage::Tracing`, which is write-only).
+    pub async fn query_events(
+        &self,
+        query: &crate::audit::AuditQuery,
+    ) -> Result<Vec<crate::audit::AuditEvent>> {
+        self.framework.query_audit_events(query).await
+    }
+
     /// Query permission-related audit log entries using an [`AuditLogQuery`].
     ///
     /// # Example
