@@ -697,9 +697,11 @@ impl AuthStorage for PostgresStorage {
     }
 
     async fn list_user_sessions(&self, user_id: &str) -> Result<Vec<SessionData>> {
+        // `data` holds the whole session (as `store_session` writes it and `get_session` reads
+        // it); the table has no `last_activity`, `ip_address` or `user_agent` columns.
         let rows = sqlx::query(
             r#"
-            SELECT session_id, user_id, data, expires_at, created_at, last_activity, ip_address, user_agent
+            SELECT data
             FROM sessions
             WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())
             "#,
@@ -714,28 +716,22 @@ impl AuthStorage for PostgresStorage {
             )))
         })?;
 
-        let sessions = rows
-            .into_iter()
-            .map(|row| SessionData {
-                session_id: row.try_get("session_id").unwrap_or_default(),
-                user_id: row.try_get("user_id").unwrap_or_default(),
-                created_at: row.try_get("created_at").unwrap_or_default(),
-                data: {
-                    let json_value: serde_json::Value = row.try_get("data").unwrap_or_default();
-                    if let serde_json::Value::Object(map) = json_value {
-                        map.into_iter().collect()
-                    } else {
-                        std::collections::HashMap::new()
-                    }
-                },
-                expires_at: row.try_get("expires_at").unwrap_or_default(),
-                last_activity: row.try_get("last_activity").unwrap_or_default(),
-                ip_address: row.try_get("ip_address").ok(),
-                user_agent: row.try_get("user_agent").ok(),
+        rows.into_iter()
+            .map(|row| {
+                let data: serde_json::Value = row.try_get("data").map_err(|e| {
+                    AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                        "Failed to read session data: {}",
+                        e
+                    )))
+                })?;
+                serde_json::from_value::<SessionData>(data).map_err(|e| {
+                    AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                        "Failed to parse session data: {}",
+                        e
+                    )))
+                })
             })
-            .collect();
-
-        Ok(sessions)
+            .collect()
     }
 
     async fn count_active_sessions(&self) -> Result<u64> {
