@@ -11,6 +11,8 @@ Rule applied: overlap on every element of an independent claim = `needs-review`;
 
 ## 1. US9397990B1 (Google LLC): Methods and systems of generating and using authentication credentials for decentralized authorization in the cloud
 
+**Update 2026-10-26: this chart compares the claims with `src/protocols/macaroons.rs` at `5aefc7b8`. Third-party caveats and discharge verification were removed in 0.6.0-rc148 (#302) and 0.5.0-rc65 (`release/0.4.x` has no macaroons module), so at main the elements these claims need are absent and the overlap below no longer exists. The comparison is kept as the record of what the swept commit did.**
+
 Independent claims: 1 (method), 10 (method, adds "disjunctive authentication credentials"), 18 (client-side method), 25 and 26 (systems, mirror 1 and 10), 27 (client-side system, mirrors 18). Claims 1/25 chart below; 10/26 differ only by the disjunctive-credentials limitation noted at the end; 18/27 are charted separately.
 
 Code reviewed: `src/protocols/macaroons.rs` at `5aefc7b8`.
@@ -137,7 +139,7 @@ Claims fetched whole with `tools/patent-claims.py` on 2026-10-25; for the compar
 | US20120330925A1 | a database authorization index mapping a user id to the records the user may access, used in query rewrite or planning | no database query rewriting or authorization index | clear |
 | EP4092958B1 | reads user attributes from an ID token with a protected memory area and issues a verifiable credential into a wallet using an SSI infrastructure with a blockchain holding the data schema and issuer key | no ID-token hardware reading, no blockchain schema registry | clear |
 | CN112149156A | publisher signs an attribute message including a secret record identifier and signs each data entry separately; selector/receiver devices; anonymous certificate | SD-JWT uses salted digests in one signed JWT, not per-entry signatures with a secret record identifier | clear (claim 1 was only partly re-read) |
-| US12256020 | a device with an image sensor, a hardware security module / secure enclave and a signature engine producing attested image data | no image-sensor or enclave hardware | clear |
+| US12256020B1 (Purple Squid LLC) | a device with an image sensor, a hardware security module / secure enclave and a signature engine producing attested image data | no image-sensor or enclave hardware | clear |
 | US9843577B2 | on a credential-change indication, if a session token was issued before the change, signal an identity platform to revoke, "comprising synchronizing a password timestamp with the identity platform" | no synchronization of a password timestamp with an external identity platform (`password_changed_at` exists only in the user table, `migrations/001_create_users_table.sql:25`) | clear |
 | US10069859B2 | a distributed platform of distribution points, each with servers tracking request rate, thresholds at server, distribution point and platform levels, and attack-response control | no CDN distribution-point hierarchy or attack-response control | clear |
 | US9754311B2 | collect a set of device fingerprints at two locations of a website during a session whose id is generated from device information, and analyse them for non-matched data | session id is random (`secure_session.rs:290`); no collection of fingerprints at two site locations | clear (claim 1 was re-read only to the first clause) |
@@ -161,8 +163,8 @@ Result: all 19 move from `needs-review` to `clear`, each on a named absent eleme
 
 | patent | class before | class after (charts) | what must stay absent |
 |---|---|---|---|
-| US9397990B1 | needs-review (priority) | claims 1/25 overlap in design (decision with the PM); claims 10/26 and 18/27 have absent elements | third-party caveats and discharge credentials |
-| US11349844B2 | needs-review | design-around candidate (redirect to IdP for re-authentication absent in every independent claim; subscription absent in claim 7) | an event-driven "revoke and redirect to the IdP" instruction; `RequireStepUp` wired to an IdP redirect |
+| US9397990B1 | needs-review (priority) | claims 1/25 overlapped in design at `5aefc7b8`; **at main (2026-10-26) outside the claims: third-party caveat and discharge removed in rc148** | third-party caveats and discharge credentials (keep removed) |
+| US11349844B2 | needs-review | design-around candidate (redirect to IdP for re-authentication absent in every independent claim; subscription absent in claim 7); rated **arguable** (low-medium) on the 2026-10-26 re-read | an event-driven "revoke and redirect to the IdP" instruction; `RequireStepUp` wired to an IdP redirect; keep CAEP handlers caller-supplied, never ship a relying-party handler that revokes AND redirects to the IdP |
 | US8959650B1 | needs-review | design-around (device identifier in the client-held token absent) | a fingerprint-bearing token recomputed and compared per request |
 | US9369456B2 | needs-review | design-around (cross-tenant prior-authentication reuse absent) | cross-tenant single sign-on |
 | 19 unread items | needs-review | clear | see table |
