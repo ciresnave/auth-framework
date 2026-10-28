@@ -1276,8 +1276,8 @@ pub async fn revoke(
                 .as_ref()
                 .and_then(|record| record["client_id"].as_str().map(String::from))
         });
-    if let Some(owner) = owner_client
-        && !revocation_caller_is(&state, &headers, &req, &owner).await
+    if let Some(owner) = owner_client.as_deref()
+        && !revocation_caller_is(&state, &headers, &req, owner).await
     {
         return ApiResponse::error_typed("invalid_client", "Client authentication failed");
     }
@@ -1359,8 +1359,8 @@ pub async fn revoke(
     );
 
     // Audit trail: that a token was revoked, which one (its fingerprint, and `jti` when it is a
-    // JWT) and whose it was; never the token itself. This endpoint does not authenticate the
-    // caller, so the actor is recorded as unauthenticated.
+    // JWT) and whose it was; never the token itself. The actor is the client the token was
+    // issued to (it authenticated above), or unauthenticated for a first-party token.
     {
         use crate::audit::{AuditEvent, AuditEventType, EventOutcome, RiskLevel};
         let mut event = AuditEvent::builder(
@@ -1369,7 +1369,7 @@ pub async fn revoke(
         )
         .outcome(EventOutcome::Success)
         .risk_level(RiskLevel::Low)
-        .with_actor("api_caller", "unauthenticated")
+        .with_actor("api_caller", owner_client.as_deref().unwrap_or("unauthenticated"))
         .detail("endpoint", "/oauth/revoke")
         .detail(
             "token_fingerprint",
