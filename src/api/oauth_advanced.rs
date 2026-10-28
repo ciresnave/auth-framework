@@ -285,7 +285,7 @@ pub async fn introspect_token(
     let auth_header = headers.get(axum::http::header::AUTHORIZATION);
 
     // Who the caller said it was, for the audit trail (never a secret).
-    let mut presented_client_id: Option<String> = None;
+    let presented_client_id: Option<String>;
     let authenticated = match auth_header {
         Some(value) => {
             let value_str = value.to_str().unwrap_or("");
