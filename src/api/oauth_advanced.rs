@@ -213,13 +213,37 @@ async fn verify_client_credentials(
     if super::client_secret::is_confidential(&client_data) {
         // A hashed secret is verified against its hash; a legacy plain one is compared in
         // constant time and then replaced by its hash.
-        return Ok(super::client_secret::authenticate(
+        let authenticated = super::client_secret::authenticate(
             state.auth_framework.storage().as_ref(),
             client_id,
             &client_data,
             client_secret,
         )
-        .await);
+        .await;
+        // An authenticated client is limited by its own identity, whatever address it uses
+        // (#92); a failed attempt is not counted against the client it names.
+        if authenticated
+            && let Err(limited) = super::client_rate_limit::check(state, client_id).await
+        {
+            return Err(match limited {
+                super::client_rate_limit::ClientLimited::Exceeded { retry_after_secs } => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({
+                        "error": "rate_limit_exceeded",
+                        "error_description": "This client is making too many requests",
+                        "retry_after": retry_after_secs
+                    })),
+                ),
+                super::client_rate_limit::ClientLimited::Unavailable => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({
+                        "error": "temporarily_unavailable",
+                        "error_description": "Rate limiting is temporarily unavailable"
+                    })),
+                ),
+            });
+        }
+        return Ok(authenticated);
     }
     // A client registered without a secret (a public client) has nothing to authenticate with,
     // so it cannot call the introspection endpoint (RFC 7662 section 2.1); an empty presented
