@@ -149,6 +149,12 @@ pub struct RevokeRequest {
     pub token: String,
     #[serde(default)]
     pub token_type_hint: Option<String>, // "access_token" or "refresh_token"
+    /// The client making the request, when it does not use HTTP Basic (RFC 7009 section 2.1).
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// The client's secret, when it does not use HTTP Basic.
+    #[serde(default)]
+    pub client_secret: Option<String>,
 }
 
 impl std::fmt::Debug for RevokeRequest {
@@ -156,6 +162,11 @@ impl std::fmt::Debug for RevokeRequest {
         let mut d = f.debug_struct("RevokeRequest");
         d.field("token", &crate::utils::redact::redacted(&self.token));
         d.field("token_type_hint", &self.token_type_hint);
+        d.field("client_id", &self.client_id);
+        d.field(
+            "client_secret",
+            &crate::utils::redact::redacted(&self.client_secret),
+        );
         d.finish()
     }
 }
@@ -1132,6 +1143,61 @@ async fn handle_refresh_token_grant(
     ApiResponse::success(response)
 }
 
+/// Whether the caller of `/oauth/revoke` is the client `owner`, who the token was issued to:
+/// it names itself with HTTP Basic or the `client_id` / `client_secret` body fields, and a
+/// client that has a secret must present it.
+async fn revocation_caller_is(
+    state: &ApiState,
+    headers: &HeaderMap,
+    req: &RevokeRequest,
+    owner: &str,
+) -> bool {
+    use base64::engine::general_purpose::STANDARD;
+    let basic = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Basic "))
+        .and_then(|encoded| STANDARD.decode(encoded).ok())
+        .and_then(|decoded| String::from_utf8(decoded).ok())
+        .map(|decoded| match decoded.split_once(':') {
+            Some((id, secret)) => (id.to_string(), Some(secret.to_string())),
+            None => (decoded, None),
+        });
+    let (presented_id, presented_secret) = match basic {
+        Some(pair) => pair,
+        None => match &req.client_id {
+            Some(id) => (id.clone(), req.client_secret.clone()),
+            None => return false,
+        },
+    };
+    if presented_id != owner {
+        return false;
+    }
+    let key = format!("oauth2_client:{owner}");
+    let record: serde_json::Value = match state.auth_framework.storage().get_kv(&key).await {
+        Ok(Some(data)) => match serde_json::from_slice(&data) {
+            Ok(record) => record,
+            Err(_) => return false,
+        },
+        _ => return false,
+    };
+    if !super::client_secret::is_confidential(&record) {
+        return true;
+    }
+    match presented_secret {
+        Some(secret) => {
+            super::client_secret::authenticate(
+                state.auth_framework.storage().as_ref(),
+                owner,
+                &record,
+                &secret,
+            )
+            .await
+        }
+        None => false,
+    }
+}
+
 /// POST /api/v1/oauth/revoke — revoke an access or refresh token.
 ///
 /// Stores a revocation marker in KV (`oauth2_revoked_token:{token}`,
@@ -1146,21 +1212,74 @@ async fn handle_refresh_token_grant(
 /// there), so revocation is effective for the marker's full TTL even if
 /// the delete itself fails.
 ///
+/// Only a token this server issued is acted on; anything else is a no-op that answers like
+/// success (RFC 7009 section 2.2) and stores nothing. A token issued to an OAuth client
+/// (it carries a `client_id`) is revoked only by that client (RFC 7009 section 2.1): a
+/// confidential client authenticates with HTTP Basic or `client_id` / `client_secret` in the
+/// body, a public one names itself with `client_id`; otherwise `invalid_client`. A token
+/// with no client (a first-party session token) is revoked by whoever holds it.
+///
 /// # Example
 /// ```rust,ignore
-/// let resp = revoke(State(state), Json(RevokeRequest {
+/// let resp = revoke(State(state), HeaderMap::new(), Json(RevokeRequest {
 ///     token: "access_token_value".into(),
 ///     token_type_hint: Some("access_token".into()),
+///     client_id: None,
+///     client_secret: None,
 /// })).await;
 /// assert!(resp.success);
 /// ```
 pub async fn revoke(
     State(state): State<ApiState>,
+    headers: HeaderMap,
     Json(req): Json<RevokeRequest>,
 ) -> ApiResponse<serde_json::Value> {
     // The token becomes part of a storage key: bound its size.
     if req.token.is_empty() || req.token.len() > 8192 {
         return ApiResponse::error_typed("invalid_request", "Invalid token");
+    }
+
+    // Only a token this server issued is revoked. Anything else (a guess, junk, an expired
+    // or foreign JWT) is a no-op that answers like success (RFC 7009 section 2.2): the request
+    // must not make the server store a marker for an arbitrary string.
+    let issued_jwt = state
+        .auth_framework
+        .token_manager()
+        .validate_jwt_token(&req.token)
+        .ok();
+    let refresh_record: Option<serde_json::Value> = match state
+        .auth_framework
+        .storage()
+        .get_kv(&format!("oauth2_refresh_token:{}", req.token))
+        .await
+    {
+        Ok(Some(data)) => serde_json::from_slice(&data).ok(),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::error!("Failed to look up the token to revoke: {:?}", e);
+            return ApiResponse::error_typed("server_error", "Failed to revoke token");
+        }
+    };
+    if issued_jwt.is_none() && refresh_record.is_none() {
+        return ApiResponse::success(serde_json::json!({
+            "message": "Token revoked successfully"
+        }));
+    }
+
+    // A token issued to an OAuth client is revoked only by that client (RFC 7009 section 2.1):
+    // a confidential client authenticates, a public one identifies itself.
+    let owner_client = issued_jwt
+        .as_ref()
+        .and_then(|claims| claims.client_id.clone())
+        .or_else(|| {
+            refresh_record
+                .as_ref()
+                .and_then(|record| record["client_id"].as_str().map(String::from))
+        });
+    if let Some(owner) = owner_client.as_deref()
+        && !revocation_caller_is(&state, &headers, &req, owner).await
+    {
+        return ApiResponse::error_typed("invalid_client", "Client authentication failed");
     }
 
     // Store the revoked token in a blacklist for immediate invalidation.
@@ -1240,8 +1359,8 @@ pub async fn revoke(
     );
 
     // Audit trail: that a token was revoked, which one (its fingerprint, and `jti` when it is a
-    // JWT) and whose it was; never the token itself. This endpoint does not authenticate the
-    // caller, so the actor is recorded as unauthenticated.
+    // JWT) and whose it was; never the token itself. The actor is the client the token was
+    // issued to (it authenticated above), or unauthenticated for a first-party token.
     {
         use crate::audit::{AuditEvent, AuditEventType, EventOutcome, RiskLevel};
         let mut event = AuditEvent::builder(
@@ -1250,7 +1369,10 @@ pub async fn revoke(
         )
         .outcome(EventOutcome::Success)
         .risk_level(RiskLevel::Low)
-        .with_actor("api_caller", "unauthenticated")
+        .with_actor(
+            "api_caller",
+            owner_client.as_deref().unwrap_or("unauthenticated"),
+        )
         .detail("endpoint", "/oauth/revoke")
         .detail(
             "token_fingerprint",

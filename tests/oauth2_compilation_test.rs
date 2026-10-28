@@ -29,6 +29,8 @@ async fn test_oauth2_module_compilation() {
     let _revoke_req = RevokeRequest {
         token: "token123".to_string(),
         token_type_hint: Some("access_token".to_string()),
+        client_id: None,
+        client_secret: None,
     };
 
     println!("✅ OAuth2 module types compile successfully");

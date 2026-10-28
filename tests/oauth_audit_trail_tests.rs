@@ -152,9 +152,12 @@ mod oauth_audit_trail_tests {
 
         let resp = revoke(
             State(env.state.clone()),
+            HeaderMap::new(),
             axum::Json(RevokeRequest {
                 token: jwt.clone(),
                 token_type_hint: Some("access_token".to_string()),
+                client_id: None,
+                client_secret: None,
             }),
         )
         .await;

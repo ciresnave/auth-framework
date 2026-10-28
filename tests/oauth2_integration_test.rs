@@ -357,11 +357,24 @@ mod oauth2_integration_tests {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
 
+        // Only a token this server issued is revoked (and logged), so use a real one.
+        let jwt = state
+            .auth_framework
+            .token_manager()
+            .create_jwt_token(
+                "leak-check-user",
+                vec!["read".into()],
+                Some(std::time::Duration::from_secs(300)),
+            )
+            .unwrap();
         let response = oauth2::revoke(
             State(state),
+            HeaderMap::new(),
             Json(RevokeRequest {
-                token: "LEAKCHECK-0123456789-tail".to_string(),
+                token: jwt.clone(),
                 token_type_hint: None,
+                client_id: None,
+                client_secret: None,
             }),
         )
         .await;
@@ -370,7 +383,7 @@ mod oauth2_integration_tests {
         let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
         assert!(logged.contains("OAuth2 token revoked"), "log: {logged}");
         assert!(logged.contains("sha256:"), "log: {logged}");
-        assert!(!logged.contains("LEAKCHECK"), "log: {logged}");
+        assert!(!logged.contains(&jwt), "log: {logged}");
     }
 
     #[tokio::test]
@@ -380,9 +393,12 @@ mod oauth2_integration_tests {
         let revoke_request = RevokeRequest {
             token: "test_token_to_revoke".to_string(),
             token_type_hint: Some("access_token".to_string()),
+            client_id: None,
+            client_secret: None,
         };
 
-        let revoke_response = oauth2::revoke(State(state), Json(revoke_request)).await;
+        let revoke_response =
+            oauth2::revoke(State(state), HeaderMap::new(), Json(revoke_request)).await;
 
         // Should be successful
         assert!(revoke_response.success);
@@ -589,8 +605,12 @@ mod oauth2_integration_tests {
         let revoke_request = RevokeRequest {
             token: refresh_token.clone(),
             token_type_hint: Some("refresh_token".to_string()),
+            // The refresh token was issued to this client, so it is the one revoking it.
+            client_id: Some("test_client".to_string()),
+            client_secret: None,
         };
-        let revoke_response = oauth2::revoke(State(state.clone()), Json(revoke_request)).await;
+        let revoke_response =
+            oauth2::revoke(State(state.clone()), HeaderMap::new(), Json(revoke_request)).await;
         assert!(revoke_response.success);
 
         // Pin the delete specifically, not just the end-to-end outcome.
