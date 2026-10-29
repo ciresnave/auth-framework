@@ -9,8 +9,50 @@ use auth_framework::{
 use std::sync::Arc;
 use tracing::info;
 
+const USAGE: &str = "Usage: test_oauth2 serve\n       test_oauth2 --help | --version\n\n\
+Starts an OAuth2 authorization server with CORS for http://localhost:3000, for testing the authorization flow.\n\
+It binds http://127.0.0.1:8080 with a fixed, publicly known test secret: use it on a development\n\
+machine only. Nothing starts unless you give the `serve` subcommand.\n";
+
+/// What the command line asked for.
+enum Command {
+    Serve,
+    Help,
+    Version,
+}
+
+fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
+    let mut args = args.into_iter();
+    let command = match args.next().as_deref() {
+        None | Some("-h" | "--help") => Command::Help,
+        Some("-V" | "--version") => Command::Version,
+        Some("serve") => Command::Serve,
+        Some(other) => return Err(format!("unknown argument '{other}'")),
+    };
+    match args.next() {
+        Some(extra) => Err(format!("unexpected argument '{extra}'")),
+        None => Ok(command),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    match parse_args(std::env::args().skip(1)) {
+        Ok(Command::Serve) => {}
+        Ok(Command::Help) => {
+            print!("{USAGE}");
+            return Ok(());
+        }
+        Ok(Command::Version) => {
+            println!("test_oauth2 {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Err(message) => {
+            eprintln!("error: {message}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    }
+
     // Initialize tracing
     tracing_subscriber::fmt::init();
 

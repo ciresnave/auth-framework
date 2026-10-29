@@ -310,7 +310,7 @@ def main():
     except requests.exceptions.RequestException:
         print(f"❌ OAuth2 server not accessible at {BASE_URL}")
         print("   Please start the OAuth2 test server first:")
-        print("   cargo run --bin oauth2_test_server --features api-server")
+        print("   cargo run --bin oauth2_test_server --features api-server -- serve")
         return
     
     # Run security tests
