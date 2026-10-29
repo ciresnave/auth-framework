@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc75] - Unreleased
+
+### Security
+
+- **Token introspection reports a client's token only to that client.** `TokenIntrospectionService::introspect_token` and `POST /oauth/introspect` authenticated the caller but never compared it with the client a token was issued to, so any authenticated client could read the subject, scope, `jti`, expiry and client of any other client's token. A token issued to client X is now active only for X; any other authenticated client gets `active: false` and nothing else (the opaque-token path of the library service now also reports the token's client). On this line the HTTP route's own JWTs carry no client, so the route is unchanged for tokens it issues and the check guards tokens made elsewhere; the library service is the part that was reachable. A token that carries no client (a first-party token) is still introspectable by any authenticated client: there is no resource-server role yet to restrict it to.
+
 ## [0.5.0-rc74] - Unreleased
 
 ### Fixed
