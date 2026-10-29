@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.44] - Unreleased
+
+### Security
+
+- **Token introspection reports a client's token only to that client.** `TokenIntrospectionService::introspect_token` authenticated the caller but never compared it with the client a token was issued to, so any authenticated client could read the subject, scope, `jti`, expiry and client of any other client's token, and the opaque-token path reported no client at all. A token issued to client X is now active only for X; any other authenticated client gets `active: false` and nothing else, and the opaque-token path reports the token's client (`AuthToken.client_id`). A token that carries no client is still introspectable by any authenticated client: there is no resource-server role yet to restrict it to. This line has no HTTP introspection route, only the library service. (GHSA-hhwx-5pp4-v89f; fixed on the 0.5 line in 0.5.0-rc75 and on 0.6 in 0.6.0-rc167.)
+
 ## [0.4.43] - Unreleased
 
 ### Fixed
