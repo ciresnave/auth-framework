@@ -247,6 +247,8 @@ pub async fn introspect_token(
     // --- Authentication enforcement (RFC 7662 §2.1) ---
     let auth_header = headers.get(axum::http::header::AUTHORIZATION);
 
+    // The client the caller proved to be.
+    let caller_client: String;
     let authenticated = match auth_header {
         Some(value) => {
             let value_str = value.to_str().unwrap_or("");
@@ -268,6 +270,7 @@ pub async fn introspect_token(
                         let mut parts = decoded.splitn(2, ':');
                         let basic_client_id = parts.next().unwrap_or("").to_string();
                         let basic_client_secret = parts.next().unwrap_or("").to_string();
+                        caller_client = basic_client_id.clone();
                         verify_client_credentials(&state, &basic_client_id, &basic_client_secret)
                             .await?
                     }
@@ -297,7 +300,10 @@ pub async fn introspect_token(
         None => {
             // No Authorization header — verify using POST body client_id + client_secret.
             match (&form.client_id, &form.client_secret) {
-                (Some(id), Some(secret)) => verify_client_credentials(&state, id, secret).await?,
+                (Some(id), Some(secret)) => {
+                    caller_client = id.clone();
+                    verify_client_credentials(&state, id, secret).await?
+                }
                 _ => {
                     debug!("Introspect rejected: missing client credentials");
                     return Err((
@@ -328,6 +334,32 @@ pub async fn introspect_token(
 
     match token_manager.validate_jwt_token(&form.token) {
         Ok(claims) => {
+            // A token issued to a client is reported only to that client (RFC 7662 section 4):
+            // another authenticated client learns nothing about it, not even that it is valid.
+            // A token with no client (a first-party token) is not restricted: the framework has
+            // no resource-server role yet to restrict it to. (This line mints no client-bound
+            // JWT, so the check guards tokens made elsewhere.)
+            if claims
+                .client_id
+                .as_deref()
+                .is_some_and(|owner| owner != caller_client)
+            {
+                debug!("Token introspection: token was issued to another client");
+                return Ok(Json(IntrospectResponse {
+                    active: false,
+                    sub: None,
+                    client_id: None,
+                    scope: None,
+                    exp: None,
+                    iat: None,
+                    nbf: None,
+                    iss: None,
+                    aud: None,
+                    jti: None,
+                    token_type: None,
+                    username: None,
+                }));
+            }
             // Cross-check the revocation list before reporting the token as active.
             // Tokens revoked via POST /oauth/revoke or POST /auth/logout are stored
             // under revoked_token:{jti}; return active=false without revealing why.
