@@ -12,7 +12,7 @@ use auth_framework::config::StorageConfig;
 use auth_framework::methods::AuthMethodEnum;
 
 const DEFAULT_ENV_PREFIX: &str = "AUTH_FRAMEWORK";
-const HELP_TEXT: &str = "auth-framework standalone server\n\nUsage:\n  auth-framework [--config <path>] [--env-prefix <prefix>] [--host <host>] [--port <port>]\n\nOptions:\n  -c, --config <path>        Load an explicit configuration file\n      --env-prefix <prefix>  Environment prefix for layered config (default: AUTH_FRAMEWORK)\n      --host <host>          Override the bind host\n  -p, --port <port>          Override the bind port\n  -h, --help                 Show this help text\n\nEnvironment:\n  JWT_SECRET, DATABASE_URL, REDIS_URL, AUTH_ISSUER, AUTH_AUDIENCE\n  AUTH_FRAMEWORK_API_SERVER__HOST\n  AUTH_FRAMEWORK_API_SERVER__PORT\n  AUTH_FRAMEWORK_API_SERVER__MAX_BODY_SIZE\n  AUTH_FRAMEWORK_API_SERVER__ENABLE_TRACING\n";
+const HELP_TEXT: &str = "auth-framework standalone server\n\nUsage:\n  auth-framework [--config <path>] [--env-prefix <prefix>] [--host <host>] [--port <port>]\n\nOptions:\n  -c, --config <path>        Load an explicit configuration file\n      --env-prefix <prefix>  Environment prefix for layered config (default: AUTH_FRAMEWORK)\n      --host <host>          Override the bind host\n  -p, --port <port>          Override the bind port\n  -h, --help                 Show this help text\n  -V, --version              Print the version\n\nEnvironment:\n  JWT_SECRET, DATABASE_URL, REDIS_URL, AUTH_ISSUER, AUTH_AUDIENCE\n  AUTH_FRAMEWORK_API_SERVER__HOST\n  AUTH_FRAMEWORK_API_SERVER__PORT\n  AUTH_FRAMEWORK_API_SERVER__MAX_BODY_SIZE\n  AUTH_FRAMEWORK_API_SERVER__ENABLE_TRACING\n";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ServerCliArgs {
@@ -36,6 +36,7 @@ impl Default for ServerCliArgs {
 enum ServerCommand {
     Run(ServerCliArgs),
     Help,
+    Version,
 }
 
 #[tokio::main]
@@ -45,6 +46,10 @@ async fn main() -> Result<()> {
     match parse_cli_args(env::args())? {
         ServerCommand::Help => {
             print!("{HELP_TEXT}");
+            Ok(())
+        }
+        ServerCommand::Version => {
+            println!("auth-framework {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         ServerCommand::Run(args) => run_server(args).await,
@@ -95,6 +100,7 @@ where
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => return Ok(ServerCommand::Help),
+            "-V" | "--version" => return Ok(ServerCommand::Version),
             "-c" | "--config" => {
                 parsed.config = Some(PathBuf::from(next_value(&mut args, "--config")?));
             }
@@ -244,6 +250,14 @@ fn register_default_methods(framework: &mut AuthFramework) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_version_flag() {
+        for flag in ["--version", "-V"] {
+            let command = parse_cli_args(["auth-framework", flag]).expect("version should parse");
+            assert!(matches!(command, ServerCommand::Version), "{flag}");
+        }
+    }
 
     #[test]
     fn parse_help_flag() {
