@@ -332,9 +332,12 @@ mod oauth2_integration_tests {
         let revoke_request = RevokeRequest {
             token: "test_token_to_revoke".to_string(),
             token_type_hint: Some("access_token".to_string()),
+            client_id: None,
+            client_secret: None,
         };
 
-        let revoke_response = oauth2::revoke(State(state), Json(revoke_request)).await;
+        let revoke_response =
+            oauth2::revoke(State(state), HeaderMap::new(), Json(revoke_request)).await;
 
         // Should be successful
         assert!(revoke_response.success);
@@ -456,8 +459,12 @@ mod oauth2_integration_tests {
         let revoke_request = RevokeRequest {
             token: refresh_token.clone(),
             token_type_hint: Some("refresh_token".to_string()),
+            // The refresh token was issued to this client, so it is the one revoking it.
+            client_id: Some("test_client".to_string()),
+            client_secret: None,
         };
-        let revoke_response = oauth2::revoke(State(state.clone()), Json(revoke_request)).await;
+        let revoke_response =
+            oauth2::revoke(State(state.clone()), HeaderMap::new(), Json(revoke_request)).await;
         assert!(revoke_response.success);
 
         // Pin the delete specifically, not just the end-to-end outcome.

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc74] - Unreleased
+
+### Fixed
+
+- **`/oauth/revoke` acts only on tokens this server issued, and only for the client a refresh token was issued to (RFC 7009).** It used to store a 30-day `oauth2_revoked_token:<string>` marker for any string a caller posted, authenticated or not (there was no size limit on this line): 200 junk strings left 200 markers in storage. Now a string that is not a token this server issued (not one of its JWTs, not a stored refresh token) is a no-op that still answers success and stores nothing, and the token is bounded to 8192 bytes. A refresh token issued to an OAuth client is revoked only by that client: a confidential client authenticates with HTTP Basic or `client_id` / `client_secret` in the body, a public client names itself with `client_id`; anything else is `invalid_client` and revokes nothing. A JWT, which carries no client on this line, is still revoked by whoever holds it. **Breaking:** `api::oauth2::revoke` takes the request headers as a second argument, and `RevokeRequest` gains optional `client_id` and `client_secret` fields. Fixed on the 0.6 line in 0.6.0-rc164.
+
 ## [0.5.0-rc73] - Unreleased
 
 ### Fixed
