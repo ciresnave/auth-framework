@@ -80,6 +80,22 @@ impl PostgresStorage {
             })?;
         }
 
+        // `AuthToken` derives `FromRow` and `get_token` selects `*`, so a row must carry a column
+        // for every field or the read fails ("no column found for name: user_profile"). These
+        // columns upgrade existing tables too. (Main persists the values as well, #93; this line
+        // only makes the read work, the three fields come back as their defaults.)
+        for stmt in [
+            "ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS user_profile JSONB",
+            "ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS permissions TEXT[] NOT NULL DEFAULT '{}'",
+            "ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS roles TEXT[] NOT NULL DEFAULT '{}'",
+        ] {
+            sqlx::query(stmt).execute(&self.pool).await.map_err(|e| {
+                AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                    "Migration failed (auth_tokens column): {e}"
+                )))
+            })?;
+        }
+
         // --- sessions table ---
         sqlx::query(
             r#"
@@ -197,7 +213,8 @@ impl AuthStorage for PostgresStorage {
                         e
                     )))
                 })?;
-        Ok(row)
+        // An expired token is not returned (the trait asks backends to honour expiry).
+        Ok(row.filter(|t| !t.is_expired()))
     }
 
     async fn get_token_by_access_token(&self, access_token: &str) -> Result<Option<AuthToken>> {
@@ -212,7 +229,7 @@ impl AuthStorage for PostgresStorage {
                         e
                     )))
                 })?;
-        Ok(row)
+        Ok(row.filter(|t| !t.is_expired()))
     }
 
     async fn update_token(&self, token: &AuthToken) -> Result<()> {
@@ -342,7 +359,7 @@ impl AuthStorage for PostgresStorage {
                         e
                     )))
                 })?;
-            Ok(Some(session))
+            Ok(Some(session).filter(|s| s.expires_at > chrono::Utc::now()))
         } else {
             Ok(None)
         }

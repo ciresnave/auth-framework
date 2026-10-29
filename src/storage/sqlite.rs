@@ -113,11 +113,13 @@ impl AuthStorage for SqliteStorage {
             .await
             .map_err(storage_err)?;
 
+        // An expired token is not returned (the trait asks backends to honour expiry).
         row.map(|row| {
             let data: String = row.get("data");
-            serde_json::from_str(&data).map_err(|e| AuthError::internal(e.to_string()))
+            serde_json::from_str::<AuthToken>(&data).map_err(|e| AuthError::internal(e.to_string()))
         })
         .transpose()
+        .map(|token| token.filter(|t| !t.is_expired()))
     }
 
     async fn get_token_by_access_token(&self, access_token: &str) -> Result<Option<AuthToken>> {
@@ -129,9 +131,10 @@ impl AuthStorage for SqliteStorage {
 
         row.map(|row| {
             let data: String = row.get("data");
-            serde_json::from_str(&data).map_err(|e| AuthError::internal(e.to_string()))
+            serde_json::from_str::<AuthToken>(&data).map_err(|e| AuthError::internal(e.to_string()))
         })
         .transpose()
+        .map(|token| token.filter(|t| !t.is_expired()))
     }
 
     async fn update_token(&self, token: &AuthToken) -> Result<()> {
@@ -194,9 +197,11 @@ impl AuthStorage for SqliteStorage {
 
         row.map(|row| {
             let json: String = row.get("data");
-            serde_json::from_str(&json).map_err(|e| AuthError::internal(e.to_string()))
+            serde_json::from_str::<SessionData>(&json)
+                .map_err(|e| AuthError::internal(e.to_string()))
         })
         .transpose()
+        .map(|session| session.filter(|s| s.expires_at > chrono::Utc::now()))
     }
 
     async fn delete_session(&self, session_id: &str) -> Result<()> {

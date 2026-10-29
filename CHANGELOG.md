@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc72] - Unreleased
+
+### Fixed
+
+- **Storage backends no longer return expired tokens or sessions (#144).** `get_token`, `get_token_by_access_token` and `get_session` on the SQLite, PostgreSQL and in-memory (`MemoryStorage`, `DashMapMemoryStorage`) backends now return `None` for a token or session whose `expires_at` has passed, as the `AuthStorage` docs ask; before, only the in-memory sessions honoured it and the SQL backends pruned only in `cleanup_expired`. The framework's own validation already checked the presented token's expiry, so this was a storage-contract defect for code that calls storage directly, not a way past authentication. `list_user_tokens` and `list_user_sessions` are unchanged. Redis expires keys itself. Fixed on the 0.6 line in 0.6.0-rc161.
+- **PostgreSQL `get_token`, `get_token_by_access_token` and `list_user_tokens` work on a database made by `migrate()`.** `migrate()` created `auth_tokens` without `user_profile`, `permissions` and `roles`, and those three calls `SELECT *` into `AuthToken` (which derives `FromRow` with all of them), so each failed with `no column found for name: user_profile`. `migrate()` now adds the three columns (`ADD COLUMN IF NOT EXISTS`, so existing tables are upgraded). Affected, read from the published crates (`src/storage/postgres.rs` has the `SELECT *` read and no `ALTER TABLE auth_tokens ADD COLUMN ... user_profile`): 0.5.0-rc1, rc18, rc19, rc25, rc26, rc27, rc31, rc45, rc49, rc51, rc53, rc60, rc62, rc63, rc65 and rc71 (all 16 published 0.5.0-rc versions; every one of the crate's 73 published versions was read); the same holds for 20 published 0.4.x and 16 published 0.6.0-rc41 through rc92 versions, and 0.6.0-rc97 and later carry the columns. A database whose table was made another way may already have them. This line only makes the reads work: the three fields are not stored yet and come back as their defaults. The full backport of the main-line fix (#93) lands separately.
+
 ## [0.5.0-rc71] - Unreleased
 
 ### Fixed
