@@ -120,11 +120,64 @@ fn parse_record(data: &[u8]) -> Result<Value> {
         .map_err(|e| AuthError::internal(format!("Failed to deserialize client: {}", e)))
 }
 
+/// Set in a migrated record from the moment it is stored until the old record is gone. A read
+/// that finds it removes the old record again, so a failed removal is retried instead of
+/// leaving a plain-text secret behind for good.
+const CLEANUP_MARKER: &str = "legacy_record_pending_removal";
+
+/// Remove the old record of a client. When it cannot be deleted, its secret is at least
+/// overwritten (the record is stored again without it); the delete's error is still returned.
+async fn remove_legacy_record(storage: &dyn AuthStorage, legacy_key: &str) -> Result<()> {
+    let Err(delete_error) = storage.delete_kv(legacy_key).await else {
+        return Ok(());
+    };
+    if let Ok(Some(data)) = storage.get_kv(legacy_key).await
+        && let Ok(mut old) = parse_record(&data)
+        && let Some(fields) = old.as_object_mut()
+    {
+        fields.remove("client_secret");
+        if let Err(e) = storage
+            .store_kv(legacy_key, old.to_string().as_bytes(), None)
+            .await
+        {
+            tracing::error!("Could not remove the secret from the old client record: {e}");
+        }
+    }
+    Err(delete_error)
+}
+
+/// Finish a migration: remove the old record, and when that worked clear the marker. A failure
+/// leaves the marker, so the next read tries again.
+async fn finish_migration(storage: &dyn AuthStorage, client_id: &str, record: &mut Value) {
+    match remove_legacy_record(storage, &format!("{LEGACY_RECORD_PREFIX}{client_id}")).await {
+        Ok(()) => {
+            if let Some(fields) = record.as_object_mut() {
+                fields.remove(CLEANUP_MARKER);
+            }
+            if let Err(e) = storage
+                .store_kv(
+                    &format!("{RECORD_PREFIX}{client_id}"),
+                    record.to_string().as_bytes(),
+                    None,
+                )
+                .await
+            {
+                tracing::warn!("Could not clear the migration marker of client {client_id}: {e}");
+            }
+        }
+        Err(e) => tracing::error!(
+            "Could not remove the old record of client {client_id}, it will be retried: {e}"
+        ),
+    }
+}
+
 /// Load the stored record of a client from `oauth2_client:{client_id}`.
 ///
 /// A record the registry wrote before the unification (`oauth_client:{client_id}`, secret in
-/// plain text) is moved here first: it is stored under the new key with its secret hashed, and
-/// only then is the old record removed, so a failure never loses a client.
+/// plain text) is moved here first: it is stored under the new key with its secret hashed and a
+/// marker, and only then is the old record removed, so a failure never loses a client. If the
+/// removal fails the marker stays and every later read tries it again (and the old record's
+/// secret is overwritten at once where it can be).
 pub(crate) async fn load_record(
     storage: &dyn AuthStorage,
     client_id: &str,
@@ -133,7 +186,11 @@ pub(crate) async fn load_record(
         .get_kv(&format!("{RECORD_PREFIX}{client_id}"))
         .await?
     {
-        return parse_record(&data).map(Some);
+        let mut record = parse_record(&data)?;
+        if record.get(CLEANUP_MARKER).is_some() {
+            finish_migration(storage, client_id, &mut record).await;
+        }
+        return Ok(Some(record));
     }
 
     let legacy_key = format!("{LEGACY_RECORD_PREFIX}{client_id}");
@@ -147,7 +204,8 @@ pub(crate) async fn load_record(
         .and_then(Value::as_str)
         .filter(|secret| !secret.is_empty())
         .map(String::from);
-    let record = config_to_record(&config).await?;
+    let mut record = config_to_record(&config).await?;
+    record[CLEANUP_MARKER] = Value::Bool(true);
     storage
         .store_kv(
             &format!("{RECORD_PREFIX}{client_id}"),
@@ -155,9 +213,7 @@ pub(crate) async fn load_record(
             None,
         )
         .await?;
-    if let Err(e) = storage.delete_kv(&legacy_key).await {
-        tracing::warn!("Could not remove the old record of client {client_id}: {e}");
-    }
+    finish_migration(storage, client_id, &mut record).await;
     Ok(Some(record))
 }
 
