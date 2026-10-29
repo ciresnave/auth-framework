@@ -203,6 +203,10 @@ pub use server::oauth::oauth2_server;
 /// OAuth 2.0 client type definitions (RFC 6749 §2.1).
 pub mod client;
 
+/// How a client's secret is kept in its `oauth2_client:{id}` record (shared by the HTTP API and
+/// the library registry).
+pub(crate) mod client_secret;
+
 // ────────────────────────────────────────────────────────────────────────────
 // Integrations, providers & transport
 // ────────────────────────────────────────────────────────────────────────────
