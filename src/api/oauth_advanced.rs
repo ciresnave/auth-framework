@@ -405,6 +405,40 @@ pub async fn introspect_token(
 
     match token_manager.validate_jwt_token(&form.token) {
         Ok(claims) => {
+            // A token issued to a client is reported only to that client (RFC 7662 section 4):
+            // another authenticated client learns nothing about it, not even that it is valid.
+            // A token with no client (a first-party token) is not restricted: the framework has
+            // no resource-server role yet to restrict it to.
+            if claims
+                .client_id
+                .as_deref()
+                .is_some_and(|owner| owner != audit_client)
+            {
+                audit_introspection(
+                    &state,
+                    &audit_client,
+                    true,
+                    "inactive_not_issued_to_caller",
+                    None,
+                    None,
+                )
+                .await;
+                debug!("Token introspection: token was issued to another client");
+                return Ok(Json(IntrospectResponse {
+                    active: false,
+                    sub: None,
+                    client_id: None,
+                    scope: None,
+                    exp: None,
+                    iat: None,
+                    nbf: None,
+                    iss: None,
+                    aud: None,
+                    jti: None,
+                    token_type: None,
+                    username: None,
+                }));
+            }
             // Cross-check the revocation list before reporting the token as active.
             // Tokens revoked via POST /oauth/revoke or POST /auth/logout are stored
             // under revoked_token:{jti}; return active=false without revealing why.

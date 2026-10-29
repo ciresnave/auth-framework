@@ -280,6 +280,7 @@ impl TokenIntrospectionService {
         }
 
         // Validate client credentials if required
+        let mut caller: Option<String> = None;
         if self.config.require_client_authentication {
             let credentials = client_credentials.ok_or_else(|| {
                 AuthError::access_denied("Client authentication required for token introspection")
@@ -289,16 +290,28 @@ impl TokenIntrospectionService {
 
             // Check rate limiting
             self.check_rate_limit(&credentials.client_id).await?;
+            caller = Some(credentials.client_id);
         }
 
         // Determine token type and introspect accordingly
         let token_type = request.token_type_hint.as_deref().unwrap_or("access_token");
 
-        match token_type {
+        let response = match token_type {
             "access_token" => self.introspect_access_token(&request.token).await,
             "refresh_token" => self.introspect_refresh_token(&request.token).await,
             _ => self.introspect_unknown_token(&request.token).await,
+        }?;
+
+        // A token issued to a client is reported only to that client (RFC 7662 section 4);
+        // another authenticated client learns nothing about it. A token with no client is not
+        // restricted: there is no resource-server role yet to restrict it to.
+        if let (Some(owner), Some(caller)) = (response.client_id.as_deref(), caller.as_deref())
+            && !owner.is_empty()
+            && owner != caller
+        {
+            return Ok(TokenIntrospectionResponse::inactive());
         }
+        Ok(response)
     }
 
     /// Introspect an access token
@@ -332,7 +345,7 @@ impl TokenIntrospectionService {
                 } else {
                     Ok(TokenIntrospectionResponse::from_auth_token(
                         &auth_token,
-                        None, // Would need client ID from token metadata
+                        auth_token.client_id.clone(),
                         Some(self.config.issuer.clone()),
                     ))
                 }
@@ -353,7 +366,7 @@ impl TokenIntrospectionService {
                     if token_matches && !auth_token.is_expired() {
                         let mut response = TokenIntrospectionResponse::from_auth_token(
                             &auth_token,
-                            None,
+                            auth_token.client_id.clone(),
                             Some(self.config.issuer.clone()),
                         );
                         response.token_type = Some("refresh_token".to_string());
@@ -650,6 +663,76 @@ mod tests {
         ));
 
         TokenIntrospectionService::new(config, storage, token_manager, None)
+    }
+
+    /// A token issued to a client is reported only to that client; another authenticated client
+    /// gets an inactive answer. A token with no client stays introspectable by any of them.
+    #[tokio::test]
+    async fn a_token_issued_to_a_client_is_reported_only_to_that_client() {
+        let service = create_test_service();
+        for (id, secret) in [("lib-a", "secret-a"), ("lib-b", "secret-b")] {
+            service
+                .storage
+                .store_kv(
+                    &format!("oauth_client:{id}"),
+                    serde_json::json!({"client_id": id, "client_secret": secret})
+                        .to_string()
+                        .as_bytes(),
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+        let mut bound = AuthToken::new(
+            "alice",
+            "access-bound",
+            std::time::Duration::from_secs(300),
+            "test",
+        )
+        .with_client_id("lib-a");
+        bound.token_id = "opaque-bound".to_string();
+        let mut unbound = AuthToken::new(
+            "alice",
+            "access-unbound",
+            std::time::Duration::from_secs(300),
+            "test",
+        );
+        unbound.token_id = "opaque-unbound".to_string();
+        service.storage.store_token(&bound).await.unwrap();
+        service.storage.store_token(&unbound).await.unwrap();
+
+        let ask = |caller: &'static str, secret: &'static str, token: &'static str| {
+            let service = &service;
+            async move {
+                service
+                    .introspect_token(
+                        TokenIntrospectionRequest {
+                            token: token.to_string(),
+                            token_type_hint: Some("access_token".to_string()),
+                            additional_params: HashMap::new(),
+                        },
+                        Some(IntrospectionClientCredentials {
+                            client_id: caller.to_string(),
+                            client_secret: Some(secret.to_string()),
+                            client_assertion: None,
+                            auth_method: ClientAuthMethod::ClientSecretBasic,
+                        }),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let owner = ask("lib-a", "secret-a", "opaque-bound").await;
+        assert!(owner.active);
+        assert_eq!(owner.client_id.as_deref(), Some("lib-a"));
+
+        let other = ask("lib-b", "secret-b", "opaque-bound").await;
+        assert!(!other.active, "another client must not see the token");
+        assert!(other.sub.is_none() && other.scope.is_none() && other.client_id.is_none());
+
+        // The limit: a token with no client is introspectable by any authenticated client.
+        assert!(ask("lib-b", "secret-b", "opaque-unbound").await.active);
     }
 
     /// A JWT-based client assertion is not an access/session token that happens to name the client.
