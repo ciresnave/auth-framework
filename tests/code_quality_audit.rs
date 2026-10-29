@@ -262,9 +262,8 @@ fn test_no_hardcoded_secrets() {
     let mut unexplained = Vec::new();
     let mut used = [false; SECRET_LITERAL_ALLOWLIST.len()];
     for file in &files {
-        let Ok(content) = fs::read_to_string(file) else {
-            continue;
-        };
+        let content = fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("the secrets scan cannot read {file}: {e}"));
         for (line_num, line) in secret_literal_hits(file, &content) {
             let listed = SECRET_LITERAL_ALLOWLIST
                 .iter()
