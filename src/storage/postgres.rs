@@ -26,6 +26,14 @@ impl PostgresStorage {
         Self { pool }
     }
 
+    /// The token's profile as a JSONB value; `None` is stored as SQL NULL.
+    fn profile_json(token: &AuthToken) -> Option<serde_json::Value> {
+        token
+            .user_profile
+            .as_ref()
+            .and_then(|profile| serde_json::to_value(profile).ok())
+    }
+
     /// Initialize database tables.
     ///
     /// Creates the `auth_tokens`, `sessions`, and `kv_store` tables together with
@@ -82,8 +90,7 @@ impl PostgresStorage {
 
         // `AuthToken` derives `FromRow` and `get_token` selects `*`, so a row must carry a column
         // for every field or the read fails ("no column found for name: user_profile"). These
-        // columns upgrade existing tables too. (Main persists the values as well, #93; this line
-        // only makes the read work, the three fields come back as their defaults.)
+        // columns upgrade existing tables, and `store_token` and `update_token` write them (#93).
         for stmt in [
             "ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS user_profile JSONB",
             "ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS permissions TEXT[] NOT NULL DEFAULT '{}'",
@@ -167,12 +174,15 @@ impl AuthStorage for PostgresStorage {
             INSERT INTO auth_tokens (
                 token_id, user_id, access_token, refresh_token, token_type,
                 expires_at, scopes, issued_at, auth_method, subject, issuer,
-                client_id, metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                client_id, metadata, user_profile, permissions, roles
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT (token_id) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
-                expires_at = EXCLUDED.expires_at
+                expires_at = EXCLUDED.expires_at,
+                user_profile = EXCLUDED.user_profile,
+                permissions = EXCLUDED.permissions,
+                roles = EXCLUDED.roles
             "#,
         )
         .bind(&token.token_id)
@@ -188,6 +198,9 @@ impl AuthStorage for PostgresStorage {
         .bind(&token.issuer)
         .bind(&token.client_id)
         .bind(serde_json::to_value(&token.metadata).unwrap_or_default())
+        .bind(Self::profile_json(token))
+        .bind(&token.permissions)
+        .bind(&token.roles)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -246,8 +259,11 @@ impl AuthStorage for PostgresStorage {
                 subject = $8,
                 issuer = $9,
                 client_id = $10,
-                metadata = $11
-            WHERE token_id = $12
+                metadata = $11,
+                user_profile = $12,
+                permissions = $13,
+                roles = $14
+            WHERE token_id = $15
             "#,
         )
         .bind(&token.access_token)
@@ -261,6 +277,9 @@ impl AuthStorage for PostgresStorage {
         .bind(&token.issuer)
         .bind(&token.client_id)
         .bind(serde_json::to_value(&token.metadata).unwrap_or_default())
+        .bind(Self::profile_json(token))
+        .bind(&token.permissions)
+        .bind(&token.roles)
         .bind(&token.token_id)
         .execute(&self.pool)
         .await
