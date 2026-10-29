@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`/oauth/revoke` acts only on tokens this server issued, and only for the client a refresh token was issued to (RFC 7009).** It used to store a 30-day `oauth2_revoked_token:<string>` marker for any string a caller posted, authenticated or not (there was no size limit on this line): 200 junk strings left 200 markers in storage. Now a string that is not a token this server issued (not one of its JWTs, not a stored refresh token) is a no-op that still answers success and stores nothing, and the token is bounded to 8192 bytes. A refresh token issued to an OAuth client is revoked only by that client: a confidential client authenticates with HTTP Basic or `client_id` / `client_secret` in the body, a public client names itself with `client_id`; anything else is `invalid_client` and revokes nothing. A JWT, which carries no client on this line, is still revoked by whoever holds it. **Breaking:** `api::oauth2::revoke` takes the request headers as a second argument, and `RevokeRequest` gains optional `client_id` and `client_secret` fields. Fixed on the 0.6 line in 0.6.0-rc164.
 
+## [0.5.0-rc73] - Unreleased
+
+### Fixed
+
+- **PostgreSQL `list_user_sessions` works on a database made by `migrate()` (#147).** It selected `last_activity`, `ip_address` and `user_agent`, columns the `sessions` table (as `migrate()` creates it) does not have, so every call failed, and it rebuilt the session's `data` from the whole JSON object. It now reads the one `data` column, the whole `SessionData` that `store_session` wrote and `get_session` reads. The other `sessions` table definitions named in #147 are not changed here. Fixed on the 0.6 line in 0.6.0-rc162.
+
 ## [0.5.0-rc72] - Unreleased
 
 ### Fixed
