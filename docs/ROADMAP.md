@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc168`
+- Current crate version: `0.6.0-rc170`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -315,7 +315,7 @@ operations, P3 = hygiene, Blocked = waiting on someone else.
 | #120 | Clippy errors under `cli,admin-binary,postgres-storage,redis-storage,sqlite-storage` | S | P2 | Open: 7 errors in the lib, 16 in lib tests, mostly `src/admin/web.rs` and `src/admin/cli.rs` |
 | #103 | `cargo clippy --all-targets --all-features -D warnings` fails; decide which feature sets CI lints, then fix to that list | M | P2 | Open: 14 errors in the lib, 23 in lib tests |
 | #116 | No test proves the TOTP facade (`AuthFramework`) and the modular `TotpManager` verify each other's secrets | S | P2 | Open: no test generates through one and verifies through the other |
-| #18 | Audit tests read source paths that moved, and every read failure means "no problem found" | S | P3 | Open: `final_comprehensive_security_audit.rs` now fails on a moved file (rc151); `critical_security_detection.rs` still needs repointing and `code_quality_audit` still prints where it should panic |
+| #18 | Audit tests read source paths that moved, and every read failure means "no problem found" | S | P3 | Fixed: `final_comprehensive_security_audit.rs` (rc151) and `critical_security_detection.rs` (rc166) fail on a moved or unreadable subject; `code_quality_audit.rs` fails on its findings. Closes with evidence once confirmed on a published release |
 | #106 | SAML on Windows: `kryptering` hard-gates its `aws-lc` backend to Linux and macOS | - | Blocked | Upstream (`kryptering`); CireSnave's ruling 2026-10-04: accept for now, keep looking |
 | #282 | `cargo check --no-default-features` fails: bin `oauth2_test_server` has no `required-features` | S | P2 | Fixed by the PR that adds this table: the bin, one example and five tests that import `auth_framework::api` declare `required-features = ["api-server"]`; `cargo check --locked --no-default-features --all-targets` finishes |
 
@@ -356,6 +356,7 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 | A9 | `docs/DEPLOYMENT_GUIDE.md:559-560` | `sdks/go/` and `sdks/java/` are "coming soon"; neither directory exists (only `sdks/javascript` and `sdks/python`). Covered by the Go and Java SDK rows in Phase 3; the guide should say "not started" | Open (doc wording) |
 | A10 | `docs/api/REST_API_DESIGN_RATIONALE.md` | Webhooks for user, role and auth-failure events | Dropped 2026-10-24 (PM ruling): no consumer has asked and no route exists; removed from the design doc. Reopen when a consumer asks |
 | A11 | `docs/api/REST_API_DESIGN_RATIONALE.md` "Planned Additions" | Admin batch operations, advanced filtering, export/import. The other "planned" items (WebAuthn, OIDC discovery, API keys) have routes in `src/api/server.rs` | Open; the note at the top of that document marks it historical |
+| A12 | CodeRipper rule OPS-011 `cli-basics` (2026-10-29) | Every shipped binary answers `--help`, `--version` and a bad flag, and none starts serving unasked: `oauth2_test_server` / `test_oauth2` hung on any argument, `auth-framework` had no `--version`, `security_audit` ignored its arguments and printed a fixed `v0.4.0` | Done (rc169): test servers need `serve`; `tests/bin_cli_basics.rs` probes each binary |
 
 ### Do not build otherwise (patent sweep, 2026-10-25)
 

@@ -1,12 +1,40 @@
-//! Security Audit Tool for AuthFramework v0.4.0
+//! Security Audit Tool for AuthFramework
 //!
 //! This script analyzes the AuthFramework codebase for security configurations,
 //! potential vulnerabilities, and compliance with security best practices.
 
 use std::process::Command;
 
+const USAGE: &str = "Usage: security_audit [--help] [--version]\n\n\
+Greps the AuthFramework source tree under ./src for security-relevant patterns and prints a report.\n\
+Run it from the repository root; it takes no other arguments.\n";
+
 fn main() {
-    println!("🔒 AuthFramework v0.4.0 Security Audit");
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        None => {}
+        Some("-h" | "--help") => {
+            print!("{USAGE}");
+            return;
+        }
+        Some("-V" | "--version") => {
+            println!("security_audit {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Some(other) => {
+            eprintln!("error: unknown argument '{other}'\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    }
+    if let Some(extra) = args.next() {
+        eprintln!("error: unexpected argument '{extra}'\n\n{USAGE}");
+        std::process::exit(2);
+    }
+
+    println!(
+        "🔒 AuthFramework v{} Security Audit",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("=====================================\n");
 
     // 1. Check for hardcoded secrets
