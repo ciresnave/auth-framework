@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc81] - Unreleased
+
+### Changed
+
+- **Dependency: `orion` 0.17.11 -> 0.17.16** (with `cmov` 0.5.3 -> 0.5.4), in `Cargo.lock` only: the versions `cargo audit` and `cargo deny` accept for RUSTSEC-2026-0426 and RUSTSEC-2026-0428. No source change.
+
 ## [0.5.0-rc79] - Unreleased
 
 ### Security
