@@ -719,13 +719,13 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                     println!("  {} {}", "✅".green(), "No threats detected.".green());
                 } else {
                     if is_malicious {
-                        println!("  {} {}", "🚨", "Malicious IP detected!".red().bold());
+                        println!("  🚨 {}", "Malicious IP detected!".red().bold());
                     }
                     if is_tor {
-                        println!("  {} {}", "🧅", "Tor exit node detected.".yellow());
+                        println!("  🧅 {}", "Tor exit node detected.".yellow());
                     }
                     if is_vpn {
-                        println!("  {} {}", "🛡️", "VPN/Proxy detected.".yellow());
+                        println!("  🛡️ {}", "VPN/Proxy detected.".yellow());
                     }
                 }
 
@@ -735,8 +735,7 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                     .filter(|s| !matches!(s, crate::threat_intelligence::FeedStatus::Disabled))
                     .count();
                 println!(
-                    "  {} active threat feeds: {}",
-                    "ℹ️",
+                    "  ℹ️ active threat feeds: {}",
                     enabled_count.to_string().cyan()
                 );
                 if enabled_count == 0 {

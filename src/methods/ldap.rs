@@ -343,15 +343,15 @@ impl LdapAuthMethod {
                 AuthError::invalid_credential("ldap", "User not found in directory")
             })?;
 
-        if search_results.is_empty() {
+        let Some(first_result) = search_results.into_iter().next() else {
             debug!("LDAP: No user found matching filter: {}", search_filter);
             return Err(AuthError::invalid_credential(
                 "ldap",
                 "Invalid username or password",
             ));
-        }
+        };
 
-        let entry = SearchEntry::construct(search_results.into_iter().next().unwrap());
+        let entry = SearchEntry::construct(first_result);
         let user_dn = entry.dn.clone();
 
         debug!("LDAP: Found user DN: {}", user_dn);

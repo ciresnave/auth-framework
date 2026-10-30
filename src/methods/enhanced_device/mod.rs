@@ -161,7 +161,7 @@ impl EnhancedDeviceFlowMethod {
             .map_err(AuthError::Network)?;
 
         if !res.status().is_success() {
-            return Err(AuthError::config(&format!(
+            return Err(AuthError::config(format!(
                 "Device auth request failed: {}",
                 res.status()
             )));

@@ -862,13 +862,10 @@ impl X509CertificateManager {
             }
 
             // Find the certificate object by label
-            let mut search_template: Vec<cryptoki::object::Attribute> = Vec::new();
-            search_template.push(cryptoki::object::Attribute::Class(
-                cryptoki::object::ObjectClass::CERTIFICATE,
-            ));
-            search_template.push(cryptoki::object::Attribute::Label(
-                _label.clone().into_bytes(),
-            ));
+            let search_template: Vec<cryptoki::object::Attribute> = vec![
+                cryptoki::object::Attribute::Class(cryptoki::object::ObjectClass::CERTIFICATE),
+                cryptoki::object::Attribute::Label(_label.clone().into_bytes()),
+            ];
 
             let objects = session.find_objects(&search_template).map_err(|e| {
                 AuthError::config(format!("Failed to search PKCS#11 objects: {}", e))
