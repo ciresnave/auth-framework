@@ -322,14 +322,14 @@ async fn handle_key_event(
                 let input_value = app.input.value().to_string();
                 if !input_value.is_empty() {
                     // Handle config value updates
-                    if app.current_tab == Tab::Configuration {
-                        if let Some(ref config_key) = app.selected_config_key {
-                            tracing::info!(
-                                key = %config_key,
-                                value = %input_value,
-                                "Config edit requested via TUI (in-memory only, does not persist)"
-                            );
-                        }
+                    if app.current_tab == Tab::Configuration
+                        && let Some(ref config_key) = app.selected_config_key
+                    {
+                        tracing::info!(
+                            key = %config_key,
+                            value = %input_value,
+                            "Config edit requested via TUI (in-memory only, does not persist)"
+                        );
                     }
                 }
                 app.show_input_dialog = false;

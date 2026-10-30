@@ -372,10 +372,10 @@ async fn require_admin_session(
 #[cfg(feature = "web-gui")]
 fn extract_csrf_token_from_request(request: &Request) -> Option<String> {
     // 1. X-CSRF-Token header (preferred for API calls).
-    if let Some(val) = request.headers().get("X-CSRF-Token") {
-        if let Ok(s) = val.to_str() {
-            return Some(s.to_string());
-        }
+    if let Some(val) = request.headers().get("X-CSRF-Token")
+        && let Ok(s) = val.to_str()
+    {
+        return Some(s.to_string());
     }
 
     // 2. CSRF tokens are NOT extracted from query strings.
@@ -963,7 +963,7 @@ async fn load_users(state: &AppState) -> Vec<User> {
                 active,
                 created,
                 last_login,
-                roles: roles,
+                roles,
             });
         }
     }
@@ -1607,14 +1607,16 @@ async fn api_security_handler(State(state): State<AppState>) -> impl IntoRespons
     axum::Json(load_security_events(&state, 50).await)
 }
 
-#[cfg(all(test, feature = "web-gui"))]
+#[cfg(test)]
+#[cfg(feature = "web-gui")]
 mod tests {
     use super::*;
     use axum::{
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, OnceLock};
+    use tokio::sync::Mutex;
     use tower::ServiceExt;
 
     fn login_env_guard() -> &'static Mutex<()> {
@@ -1689,7 +1691,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_success_sets_admin_cookie() {
-        let _guard = login_env_guard().lock().unwrap();
+        let _guard = login_env_guard().lock().await;
         // SAFETY: `_guard` holds `login_env_guard()`'s lock for this test's
         // duration, serializing these env-var mutations against every other
         // test that touches ADMIN_GUI_USERNAME/ADMIN_GUI_PASSWORD.

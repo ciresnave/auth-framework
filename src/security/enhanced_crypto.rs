@@ -227,18 +227,13 @@ impl X25519KeyPair {
 // ─── Algorithm selection helper ──────────────────────────────────────
 
 /// Available AEAD algorithms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AeadAlgorithm {
     /// AES-256-GCM (hardware-accelerated on modern x86/ARM)
+    #[default]
     Aes256Gcm,
     /// ChaCha20-Poly1305 (fast in software, constant-time by design)
     ChaCha20Poly1305,
-}
-
-impl Default for AeadAlgorithm {
-    fn default() -> Self {
-        Self::Aes256Gcm
-    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────
