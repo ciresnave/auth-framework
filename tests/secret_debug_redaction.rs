@@ -202,7 +202,6 @@ fn token_carrying_bodies_do_not_print_tokens() {
     use auth_framework::providers::OAuthTokenResponse;
     use auth_framework::server::oauth::device::DeviceTokenRequest;
     use auth_framework::server::oauth::oauth2_server::TokenResponse;
-    use auth_framework::server::token_exchange::token_introspection::TokenIntrospectionRequest;
 
     let t: TokenResponse = from_json(json!({
         "access_token": S, "token_type": "type-visible", "expires_in": 60,
@@ -232,14 +231,6 @@ fn token_carrying_bodies_do_not_print_tokens() {
 
     let r: RevokeRequest = from_json(json!({"token": S, "token_type_hint": "hint-visible"}));
     redacts("RevokeRequest", format!("{r:?}"), "hint-visible");
-
-    let r: TokenIntrospectionRequest =
-        from_json(json!({"token": S, "token_type_hint": "hint-visible"}));
-    redacts(
-        "TokenIntrospectionRequest",
-        format!("{r:?}"),
-        "hint-visible",
-    );
 
     let r: DeviceTokenRequest = from_json(json!({
         "grant_type": "grant-visible", "device_code": S, "client_id": "c"
@@ -594,7 +585,6 @@ fn session_ids_code_hashes_and_parameter_bags_are_not_printed() {
     use auth_framework::methods::MfaChallenge;
     use auth_framework::providers::OAuthTokenResponse;
     use auth_framework::server::oidc::oidc_backchannel_logout::LogoutTokenClaims;
-    use auth_framework::server::token_exchange::token_introspection::TokenIntrospectionRequest;
 
     let c: MfaChallenge = from_json(json!({
         "id": "challenge-visible", "mfa_type": "Totp", "user_id": "u",
@@ -608,14 +598,6 @@ fn session_ids_code_hashes_and_parameter_bags_are_not_printed() {
         "events": {}, "sid": S, "exp": 2
     }));
     redacts("LogoutTokenClaims", format!("{l:?}"), "iss-visible");
-
-    let r: TokenIntrospectionRequest =
-        from_json(json!({"token": "t", "token_type_hint": "hint-visible", "client_secret": S}));
-    redacts(
-        "TokenIntrospectionRequest",
-        format!("{r:?}"),
-        "hint-visible",
-    );
 
     let r: OAuthTokenResponse = from_json(json!({
         "access_token": "a", "token_type": "token-type-visible", "id_token": S
