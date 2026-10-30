@@ -10,7 +10,6 @@ pub mod advanced_token_exchange;
 pub mod core;
 pub mod token_exchange_common;
 pub mod token_exchange_factory;
-pub mod token_introspection;
 
 // Re-export commonly used types
 pub use advanced_token_exchange::{
@@ -22,4 +21,3 @@ pub use core::{
 };
 pub use token_exchange_common::*;
 pub use token_exchange_factory::*;
-pub use token_introspection::*;

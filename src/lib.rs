@@ -431,8 +431,6 @@ pub use server::OAuth2Server as ServerOAuth2Server;
 pub use server::PARManager;
 #[doc(hidden)]
 pub use server::PrivateKeyJwtManager;
-#[doc(hidden)]
-pub use server::TokenIntrospectionService;
 
 // Security and authentication module re-exports
 pub use audit::{AuditEvent, AuditEventType, AuditLogger, EventOutcome, RiskLevel};
