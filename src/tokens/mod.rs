@@ -584,7 +584,25 @@ impl TokenManager {
         scopes: Vec<String>,
         lifetime: Option<Duration>,
     ) -> Result<String> {
-        self.encode_jwt(user_id.into(), scopes, lifetime, None)
+        self.encode_jwt(user_id.into(), scopes, lifetime, None, None)
+    }
+
+    /// Create a JWT for a token issued to an OAuth client on a user's behalf: it carries the
+    /// `client_id` claim, which marks it as delegated access and not as the user's own session.
+    pub fn create_client_jwt_token(
+        &self,
+        user_id: impl Into<String>,
+        client_id: impl AsRef<str>,
+        scopes: Vec<String>,
+        lifetime: Option<Duration>,
+    ) -> Result<String> {
+        self.encode_jwt(
+            user_id.into(),
+            scopes,
+            lifetime,
+            None,
+            Some(client_id.as_ref()),
+        )
     }
 
     /// Create a JWT that is a refresh token: it carries `token_use: "refresh"`, which
@@ -599,6 +617,7 @@ impl TokenManager {
             vec!["refresh".to_string()],
             lifetime,
             Some(JwtClaims::TOKEN_USE_REFRESH),
+            None,
         )
     }
 
@@ -608,6 +627,7 @@ impl TokenManager {
         scopes: Vec<String>,
         lifetime: Option<Duration>,
         token_use: Option<&str>,
+        client_id: Option<&str>,
     ) -> Result<String> {
         let lifetime = lifetime.unwrap_or(self.default_lifetime);
         let now = Utc::now();
@@ -631,7 +651,7 @@ impl TokenManager {
             scope: scopes.join(" "),
             permissions: None,
             roles: None,
-            client_id: None,
+            client_id: client_id.map(String::from),
             custom,
         };
 
@@ -639,6 +659,20 @@ impl TokenManager {
 
         encode(&header, &claims, &self.encoding_key)
             .map_err(|e| TokenError::creation_failed(format!("JWT encoding failed: {e}")).into())
+    }
+
+    /// Validate a JWT that stands for a user's own session: like
+    /// [`validate_jwt_token`](Self::validate_jwt_token), but a token issued to an OAuth client
+    /// (one that carries a `client_id` claim) is refused.
+    pub fn validate_session_jwt_token(&self, token: &str) -> Result<JwtClaims> {
+        let claims = self.validate_jwt_token(token)?;
+        if claims.client_id.is_some() {
+            return Err(AuthError::Token(TokenError::Invalid {
+                message: "Token was issued to an OAuth client and is not a user session"
+                    .to_string(),
+            }));
+        }
+        Ok(claims)
     }
 
     /// Validate and decode a JWT token.
@@ -686,6 +720,30 @@ impl TokenManager {
         Ok(token)
     }
 
+    /// Create a complete authentication token for a token issued to an OAuth client
+    /// (see [`create_client_jwt_token`](Self::create_client_jwt_token)).
+    pub fn create_client_auth_token(
+        &self,
+        user_id: impl Into<String>,
+        client_id: impl Into<String>,
+        scopes: Vec<String>,
+        auth_method: impl Into<String>,
+        lifetime: Option<std::time::Duration>,
+    ) -> Result<AuthToken> {
+        let user_id_str = user_id.into();
+        let client_id = client_id.into();
+        let lifetime = lifetime.unwrap_or(self.default_lifetime);
+
+        let jwt_token =
+            self.create_client_jwt_token(&user_id_str, &client_id, scopes.clone(), Some(lifetime))?;
+
+        Ok(
+            AuthToken::new(user_id_str, jwt_token, lifetime, auth_method)
+                .with_scopes(scopes)
+                .with_client_id(client_id),
+        )
+    }
+
     /// Validate an authentication token.
     pub fn validate_auth_token(&self, token: &AuthToken) -> Result<()> {
         // Check if token is expired
@@ -723,6 +781,15 @@ impl TokenManager {
         }
 
         // Create a new token with the same properties but new expiry
+        if let Some(client_id) = &token.client_id {
+            return self.create_client_auth_token(
+                &token.user_id,
+                client_id,
+                token.scopes.clone(),
+                &token.auth_method,
+                Some(self.default_lifetime),
+            );
+        }
         self.create_auth_token(
             &token.user_id,
             token.scopes.clone(),

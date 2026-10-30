@@ -546,8 +546,10 @@ impl OAuth2Server {
         scopes: &[String],
     ) -> Result<AuthToken> {
         let subject = user_id.unwrap_or(client_id);
-        let mut token = self.token_manager.create_auth_token(
+        // The JWT carries the client: it is delegated access, not the user's own session.
+        let mut token = self.token_manager.create_client_auth_token(
             subject,
+            client_id,
             scopes.iter().map(|s| s.to_string()).collect(),
             "oauth2",
             Some(self.config.access_token_lifetime),

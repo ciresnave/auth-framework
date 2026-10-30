@@ -75,7 +75,10 @@ pub async fn validate_api_token(
     token: &str,
 ) -> Result<crate::tokens::AuthToken, AuthError> {
     // Use the existing token validation from AuthFramework
-    let token_obj = auth_framework.token_manager().validate_jwt_token(token)?;
+    // A token issued to an OAuth client is delegated access, never the user's own session.
+    let token_obj = auth_framework
+        .token_manager()
+        .validate_session_jwt_token(token)?;
 
     // Convert the validated token claims to AuthToken
     Ok(crate::tokens::AuthToken {
