@@ -708,8 +708,10 @@ impl OAuth2Server {
         let client_id = request
             .client_id
             .ok_or_else(|| AuthError::auth_method("oauth2", "client_id is required"))?;
+        // One write lock from the validity check to the revoke: a refresh token rotates exactly
+        // once even when many requests present it at the same time (RFC 6749 section 10.4).
+        let mut storage = self.token_storage.write().await;
         // Validate client credentials
-        let storage = self.token_storage.read().await;
         if !storage
             .validate_client_credentials(&client_id, request.client_secret.as_deref())
             .await?
@@ -754,8 +756,6 @@ impl OAuth2Server {
             self.validate_scope_subset(&stored_token.scopes, &requested_scopes)?
         };
 
-        drop(storage);
-
         // Generate new access token
         let access_token = self
             .generate_access_token(
@@ -766,7 +766,6 @@ impl OAuth2Server {
             .await?;
 
         // Generate new refresh token
-        let mut storage = self.token_storage.write().await;
         storage.revoke_refresh_token(&refresh_token_id).await?; // Revoke old token
 
         let new_refresh_token = RefreshToken::new(

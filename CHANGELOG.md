@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc79] - Unreleased
+
+### Security
+
+- **`OAuth2Server`: a refresh token now rotates exactly once under concurrent requests.** Validity check and revoke happen under one write lock. Regression test `tests/oauth2_server_single_use_tests.rs`.
+
 ## [0.5.0-rc78] - Unreleased
 
 ### Security
