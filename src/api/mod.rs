@@ -106,7 +106,10 @@ pub async fn validate_api_token(
     token: &str,
 ) -> Result<crate::tokens::AuthToken, AuthError> {
     // Validate the JWT signature and expiry
-    let token_obj = auth_framework.token_manager().validate_jwt_token(token)?;
+    // A token issued to an OAuth client is delegated access, never the user's own session.
+    let token_obj = auth_framework
+        .token_manager()
+        .validate_session_jwt_token(token)?;
 
     // Check whether this token has been explicitly revoked (e.g. via logout)
     let revocation_key = format!("revoked_token:{}", token_obj.jti);

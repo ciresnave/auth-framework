@@ -163,7 +163,7 @@ where
                     // Parse and validate JWT token using AuthFramework
                     match auth_framework
                         .token_manager()
-                        .validate_jwt_token(&token_str)
+                        .validate_session_jwt_token(&token_str)
                     {
                         Ok(claims) => {
                             // Convert claims to AuthToken and insert into extensions
@@ -353,7 +353,7 @@ impl<S: AuthorizationStorage + 'static> RequirePermission<S> {
         // Validate the JWT token signature before trusting any claims
         let claims = match auth_framework
             .token_manager()
-            .validate_jwt_token(&token.access_token)
+            .validate_session_jwt_token(&token.access_token)
         {
             Ok(validated_claims) => validated_claims,
             Err(e) => {
@@ -420,7 +420,7 @@ impl<S: AuthorizationStorage + 'static> FromRequest for RequirePermission<S> {
                 let claims = match app_data
                     .auth_framework
                     .token_manager()
-                    .validate_jwt_token(&token.access_token)
+                    .validate_session_jwt_token(&token.access_token)
                 {
                     Ok(validated_claims) => validated_claims,
                     Err(e) => {

@@ -517,7 +517,14 @@ impl AuthFramework {
             return Ok(AuthResult::Failure("JWT token cannot be empty".to_string()));
         }
 
-        match self.token_manager.validate_jwt_token(token) {
+        // The "jwt" method authenticates a user's own session: a token issued to an OAuth client
+        // is refused there.
+        let validated = if auth_method == "jwt" {
+            self.token_manager.validate_session_jwt_token(token)
+        } else {
+            self.token_manager.validate_jwt_token(token)
+        };
+        match validated {
             Ok(claims) => {
                 let token =
                     Self::build_validated_jwt_auth_token(token, claims, metadata, auth_method);

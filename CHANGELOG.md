@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc82] - Unreleased
+
+### Changed
+
+- **Tokens issued to an OAuth client carry its `client_id` and are not accepted as a user session; a client is granted only its registered scopes.** `TokenManager::create_client_jwt_token` / `create_client_auth_token` issue them from the authorization-code and refresh grants; `TokenManager::validate_session_jwt_token` and the session validators refuse them, `/oauth/userinfo` and `/users/me` accept them. `/oauth/authorize` answers `invalid_scope` for a scope the client is not registered for, and the token grants clamp to the registration. Behaviour change: validate such a token with `TokenManager::validate_jwt_token`. Tests: `tests/oauth_client_token_delegated_tests.rs`.
+
 ## [0.5.0-rc81] - Unreleased
 
 ### Changed
