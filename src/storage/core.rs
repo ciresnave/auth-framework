@@ -141,6 +141,31 @@ pub trait AuthStorage: Send + Sync {
     /// Store arbitrary key-value data with expiration.
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()>;
 
+    /// Store `value` under `key` only if no live entry exists. Returns whether it was stored.
+    ///
+    /// This is a compare-and-set: of several simultaneous callers exactly one gets `true`.
+    /// Single-use markers (authorization-code and refresh-token redemption)
+    /// depend on that, so a backend **must** implement it atomically; there is no default that
+    /// could be correct for every store (a `get_kv` followed by `store_kv` is not atomic).
+    /// The default therefore fails with an error, and the paths that need a claim fail with it
+    /// rather than run without the guarantee. The memory, SQLite (both crates), PostgreSQL,
+    /// Redis, unified and encrypted-wrapper backends and the test-only `MockStorage` implement it.
+    async fn store_kv_if_absent(
+        &self,
+        _key: &str,
+        _value: &[u8],
+        _ttl: Option<Duration>,
+    ) -> Result<bool> {
+        Err(crate::errors::AuthError::Storage(
+            crate::errors::StorageError::operation_failed(
+                "this storage backend does not implement store_kv_if_absent, which the \
+                 single-use claims (authorization-code and refresh-token redemption) \
+                 require to be atomic; implement it as a compare-and-set"
+                    .to_string(),
+            ),
+        ))
+    }
+
     /// Retrieve arbitrary key-value data.
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>>;
 
@@ -453,6 +478,15 @@ impl AuthStorage for MemoryStorage {
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
         // Delegate to DashMap implementation for deadlock-free operations
         self.inner.store_kv(key, value, ttl).await
+    }
+
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        self.inner.store_kv_if_absent(key, value, ttl).await
     }
 
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
@@ -925,6 +959,27 @@ impl AuthStorage for RedisStorage {
         }
 
         Ok(())
+    }
+
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        let mut conn = self.get_connection().await?;
+        let storage_key = self.key(&format!("kv:{key}"));
+        // SET ... NX [PX ms]: atomic; the reply is OK when set and nil when the key exists.
+        let mut cmd = redis::cmd("SET");
+        cmd.arg(&storage_key).arg(value).arg("NX");
+        if let Some(ttl) = ttl {
+            let millis = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX).max(1);
+            cmd.arg("PX").arg(millis);
+        }
+        let reply: Option<String> = cmd.query_async(&mut conn).await.map_err(|e| {
+            StorageError::operation_failed(format!("Failed to store KV if absent: {e}"))
+        })?;
+        Ok(reply.is_some())
     }
 
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {

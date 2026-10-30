@@ -461,6 +461,28 @@ impl AuthStorage for MockStorage {
         Ok(())
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        _ttl: Option<Duration>,
+    ) -> Result<bool> {
+        use dashmap::mapref::entry::Entry;
+
+        if self.should_fail {
+            return Err(AuthError::internal("Mock storage configured to fail"));
+        }
+
+        // `entry` holds the shard lock across the check and the insert: atomic.
+        match self.kv_store.entry(key.to_string()) {
+            Entry::Occupied(_) => Ok(false),
+            Entry::Vacant(slot) => {
+                slot.insert(value.to_vec());
+                Ok(true)
+            }
+        }
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         if self.should_fail {
             return Err(AuthError::internal("Mock storage configured to fail"));

@@ -231,6 +231,18 @@ where
         self.inner.store_kv(key, &encrypted_value, ttl).await
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool> {
+        let encrypted_value = self.encryption.encrypt_for_storage(value)?;
+        self.inner
+            .store_kv_if_absent(key, &encrypted_value, ttl)
+            .await
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         if let Some(encrypted_data) = self.inner.get_kv(key).await? {
             let decrypted_data = self.encryption.decrypt_from_storage(&encrypted_data)?;
