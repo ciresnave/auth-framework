@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc78] - Unreleased
+
+### Security
+
+- **An authorization code and a refresh token are each redeemed exactly once, also under concurrent requests (RFC 6749 section 4.1.2).** The claim is now one atomic set-if-absent and is released when nothing was issued. New `AuthStorage::store_kv_if_absent`, implemented atomically by the in-memory, unified, encrypted-wrapper, SQLite (both crates), PostgreSQL and Redis backends and `MockStorage`. **Breaking for custom `AuthStorage` implementations:** the default fails with an error (a `get_kv` + `store_kv` default would not be atomic), so a custom backend must implement `store_kv_if_absent` or the authorization-code and refresh grants return `server_error`. New tests: `simultaneous_redemptions_of_one_code_succeed_once`, `presenting_a_code_that_does_not_exist_stores_no_marker`, `tests/storage_if_absent_tests.rs`, `tests/storage_if_absent_default_tests.rs`.
+
 ## [0.5.0-rc77] - Unreleased
 
 ### Security

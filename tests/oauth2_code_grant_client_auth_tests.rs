@@ -248,4 +248,103 @@ mod code_grant_client_auth_tests {
         assert!(!resp.success);
         assert_eq!(error_code(&resp), "invalid_client");
     }
+
+    /// Of many simultaneous redemptions of one authorization code exactly one succeeds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn simultaneous_redemptions_of_one_code_succeed_once() {
+        let state = state().await;
+        register_client(&state, "pub-1", None).await;
+        for round in 0..5 {
+            let code = issue_code(&state, "pub-1", true).await;
+            let mut tasks = Vec::new();
+            for _ in 0..16 {
+                let state = state.clone();
+                let code = code.clone();
+                tasks.push(tokio::spawn(async move {
+                    exchange(&state, request(&code, "pub-1", None, Some(VERIFIER)))
+                        .await
+                        .success
+                }));
+            }
+            let mut ok = 0;
+            for t in tasks {
+                if t.await.unwrap() {
+                    ok += 1;
+                }
+            }
+            assert_eq!(ok, 1, "round {round}: {ok} redemptions succeeded");
+        }
+    }
+
+    /// Of many simultaneous redemptions of one stored refresh token exactly one succeeds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn simultaneous_redemptions_of_one_oauth_refresh_token_succeed_once() {
+        let state = state().await;
+        register_client(&state, "pub-1", None).await;
+        let user = state
+            .auth_framework
+            .register_user(
+                &format!("cg_{}", uuid::Uuid::new_v4().simple()),
+                &format!("{}@test.example.com", uuid::Uuid::new_v4().simple()),
+                "SecurePass123!",
+            )
+            .await
+            .unwrap();
+        for round in 0..5 {
+            let rt = format!("rt_concurrent_{round}");
+            put(
+                &state,
+                &format!("oauth2_refresh_token:{rt}"),
+                serde_json::json!({"user_id": user, "client_id": "pub-1", "scopes": "openid"}),
+            )
+            .await;
+            let mut tasks = Vec::new();
+            for _ in 0..16 {
+                let state = state.clone();
+                let rt = rt.clone();
+                tasks.push(tokio::spawn(async move {
+                    auth_framework::api::oauth2::token(
+                        State(state),
+                        Json(TokenRequest {
+                            grant_type: "refresh_token".to_string(),
+                            refresh_token: Some(rt),
+                            client_id: Some("pub-1".to_string()),
+                            ..Default::default()
+                        }),
+                    )
+                    .await
+                    .success
+                }));
+            }
+            let mut ok = 0;
+            for t in tasks {
+                if t.await.unwrap() {
+                    ok += 1;
+                }
+            }
+            assert_eq!(ok, 1, "round {round}: {ok} redemptions succeeded");
+        }
+    }
+
+    /// Made-up codes leave nothing behind in storage.
+    #[tokio::test]
+    async fn presenting_a_code_that_does_not_exist_stores_no_marker() {
+        let state = state().await;
+        register_client(&state, "pub-1", None).await;
+        let resp = exchange(
+            &state,
+            request("made-up-code", "pub-1", None, Some(VERIFIER)),
+        )
+        .await;
+        assert!(!resp.success);
+        assert!(
+            state
+                .auth_framework
+                .storage()
+                .get_kv("oauth2_code_consumed:made-up-code")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 }
