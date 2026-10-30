@@ -748,6 +748,79 @@ async fn authenticate_token_client(
     }
 }
 
+/// RFC 6749 §6 / §10.4: a refresh token issued to `stored_client` is
+/// redeemable only by that client.
+///
+/// * A **confidential** client (its record holds a secret) must authenticate,
+///   and the client that authenticated must be `stored_client`:
+///   missing/invalid credentials are `invalid_client`, a different (validly
+///   authenticated) client is `invalid_grant`.
+/// * A **public** client must present a `client_id` equal to `stored_client`:
+///   missing or different is `invalid_grant`.
+///
+/// There is no "check it only if it is present" path, and a token whose
+/// client is no longer registered fails closed.
+async fn authorize_refresh_client(
+    state: &ApiState,
+    stored_client: &str,
+    presented_id: Option<&str>,
+    presented_secret: Option<&str>,
+) -> std::result::Result<(), Box<ApiResponse<TokenResponse>>> {
+    let not_issued_to_you = || {
+        refusal(
+            "invalid_grant",
+            "Refresh token was not issued to this client",
+        )
+    };
+
+    let Some(stored_record) = load_client_record(state, stored_client).await? else {
+        return Err(refusal(
+            "invalid_grant",
+            "Refresh token was issued to a client that is no longer registered",
+        ));
+    };
+
+    if !super::client_secret::is_confidential(&stored_record) {
+        // Public client: it identifies itself, nothing more.
+        return match presented_id {
+            Some(id) if id == stored_client => Ok(()),
+            _ => Err(not_issued_to_you()),
+        };
+    }
+
+    // Confidential client: authenticate whoever is asking against THEIR record.
+    let (Some(presented_id), Some(presented_secret)) = (presented_id, presented_secret) else {
+        return Err(refusal(
+            "invalid_client",
+            "Client authentication is required",
+        ));
+    };
+    let presented_record = if presented_id == stored_client {
+        Some(stored_record)
+    } else {
+        load_client_record(state, presented_id).await?
+    };
+    let authenticated = match presented_record.as_ref() {
+        Some(record) => {
+            super::client_secret::authenticate(
+                state.auth_framework.storage().as_ref(),
+                presented_id,
+                record,
+                presented_secret,
+            )
+            .await
+        }
+        None => false,
+    };
+    if !authenticated {
+        return Err(refusal("invalid_client", "Client authentication failed"));
+    }
+    if presented_id != stored_client {
+        return Err(not_issued_to_you());
+    }
+    Ok(())
+}
+
 async fn handle_refresh_token_grant(
     state: ApiState,
     req: TokenRequest,
@@ -813,7 +886,44 @@ async fn handle_refresh_token_grant(
         Some(u) => u.to_string(),
         None => return ApiResponse::error_typed("invalid_grant", "Malformed refresh token data"),
     };
-    let client_id = stored["client_id"].as_str().map(|s| s.to_string());
+    let client_id = match &stored["client_id"] {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.clone()),
+        // A client_id of some other type cannot be checked: fail closed
+        // instead of silently skipping the binding.
+        _ => {
+            let _ = state
+                .auth_framework
+                .storage()
+                .delete_kv(&consumed_key)
+                .await;
+            return ApiResponse::error_typed("invalid_grant", "Malformed refresh token data");
+        }
+    };
+
+    // A token issued to a client is redeemable only by that client. A refused
+    // attempt releases the consumed marker set above, so merely seeing a
+    // refresh token (and presenting it wrongly) cannot burn it.
+    if let Some(stored_client) = client_id.as_deref()
+        && let Err(refusal) = authorize_refresh_client(
+            &state,
+            stored_client,
+            req.client_id.as_deref(),
+            req.client_secret.as_deref(),
+        )
+        .await
+    {
+        if let Err(e) = state
+            .auth_framework
+            .storage()
+            .delete_kv(&consumed_key)
+            .await
+        {
+            tracing::warn!("Failed to release refresh consumed marker: {:?}", e);
+        }
+        return *refusal;
+    }
+
     let scope = stored["scopes"]
         .as_str()
         .unwrap_or("openid profile email")

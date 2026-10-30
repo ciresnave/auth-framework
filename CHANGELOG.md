@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc77] - Unreleased
+
+### Security
+
+- **The `refresh_token` grant authenticates the client, and a refresh token can be redeemed only by the client it was issued to (RFC 6749 section 6).** A refused attempt does not consume the token; tokens stored without a client are unchanged. New `tests/oauth2_refresh_client_binding_tests.rs`.
+
 ## [0.5.0-rc76] - Unreleased
 
 ### Fixed
