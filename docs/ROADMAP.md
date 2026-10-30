@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc175`
+- Current crate version: `0.6.0-rc179`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -310,7 +310,7 @@ operations, P3 = hygiene, Blocked = waiting on someone else.
 | #99 | JARM JWE AES-256-GCM encrypt and decrypt pass no AAD, so the protected header is unauthenticated (RFC 7516 5.1/5.2 step 14) | S | P1 | Open: `oidc_advanced_jarm.rs` `cipher.encrypt(nonce, payload.as_bytes())` and `cipher.decrypt(nonce, ciphertext.as_slice())` |
 | #92 | The only rate limiter on the wired OAuth2 / introspection routes is per IP, not per client | M | P1 | Open: no `rate_limit` in `src/api/oauth_advanced.rs` or `src/api/oauth2.rs` (control: 11 in `src/api/middleware.rs`) |
 | #91 | No audit-trail record of client_credentials, introspection or revocation | M | P1 | Open: no `audit` in `src/api/oauth_advanced.rs`, `src/api/oauth2.rs`, `src/server/oauth/oauth2_server.rs` (control: 242 in `src/audit.rs`) |
-| #90 | Three divergent client-credential registries: in-memory `EnhancedTokenStorage`, KV `oauth2_client:` with the secret compared in plaintext, and the token-exchange client store | L | P1 | Open: `oauth_advanced.rs:213` compares the stored plaintext `client_secret` |
+| #90 | Three divergent client-credential registries: in-memory `EnhancedTokenStorage`, KV `oauth2_client:` with the secret compared in plaintext, and the token-exchange client store | L | P1 | Done: secrets are Argon2id hashes (#318), `ClientRegistry` and the introspection service moved onto `oauth2_client:` (#333), the unwired introspection module is deleted (rc178); `EnhancedTokenStorage` stays as `OAuth2Server`'s own in-process registry, documented as such |
 | #148 | Redis backend on the production path (`storage/core.rs`) uses `KEYS`, leaves the per-user token set without EXPIRE and writes in several round trips | M | P2 | Open: `KEYS` at `core.rs:844`, `:1334`; needs a Redis service in CI for tests |
 | #120 | Clippy errors under `cli,admin-binary,postgres-storage,redis-storage,sqlite-storage` | S | P2 | Open: 7 errors in the lib, 16 in lib tests, mostly `src/admin/web.rs` and `src/admin/cli.rs` |
 | #103 | `cargo clippy --all-targets --all-features -D warnings` fails; decide which feature sets CI lints, then fix to that list | M | P2 | Open: 14 errors in the lib, 23 in lib tests |
@@ -385,7 +385,7 @@ This phase is focused on making the project not just feature-rich, but the easie
 ### API Maturity Goals
 
 - [x] Replace duplicated public concepts with canonical types or explicit namespaces — `UserInfo` deduplicated across `methods`, `api`, and `auth_modular`; `api::auth::LoginUserInfo` renamed; `#[deprecated]` aliases added for legacy names
-- [x] Narrow the default public surface so auto-complete and docs steer users toward the right abstractions — advanced RFC types (`DpopManager`, `PARManager`, `PrivateKeyJwtManager`, `TokenIntrospectionService`, `ServerOAuth2Server`, WS-Security/WS-Trust, OIDC backchannel/frontchannel logout) now carry `#[doc(hidden)]` at root; fully accessible via sub-module paths
+- [x] Narrow the default public surface so auto-complete and docs steer users toward the right abstractions — advanced RFC types (`DpopManager`, `PARManager`, `PrivateKeyJwtManager`, `ServerOAuth2Server`, WS-Security/WS-Trust, OIDC backchannel/frontchannel logout) now carry `#[doc(hidden)]` at root; fully accessible via sub-module paths
 - [x] Establish a stable public API map with migration guidance for legacy entry points — canonical names, grouped accessors, deprecated aliases, and type disambiguation tables were completed as part of the API maturity work
 - [x] Keep advanced internals available without letting them dominate the onboarding path — `#[doc(hidden)]` on root re-exports keeps advanced types programmatically accessible while removing them from the default docs/autocomplete surface
 - [x] Ensure the canonical public API is fully usable on the default build without requiring users to discover extra feature flags first — `AuthFramework`, `prelude::*`, grouped accessors, and all core types work on default features

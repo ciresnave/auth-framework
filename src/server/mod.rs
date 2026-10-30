@@ -129,7 +129,6 @@ pub use token_exchange::{
         ValidationUtils,
     },
     token_exchange_factory::{PerformanceCharacteristics, SetupGuide, TokenExchangeManagerFactory},
-    token_introspection::{TokenIntrospectionHandler, TokenIntrospectionService},
 };
 
 // Security re-exports
