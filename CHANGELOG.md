@@ -64,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 0.6.0-rc177 -- **CI: the CodeRipper portfolio workflow is pinned to v0.15.0 (74996d75, was 0.9.24).** The old pin did not accept a list item as a changelog entry, so every pull request failed `version-and-changelog` on an entry that exists. No source change.
 - 0.6.0-rc176 -- **Dependency: `orion` 0.18.0 -> 0.18.1** (`Cargo.lock`), which takes the fixes for RUSTSEC-2026-0426 and RUSTSEC-2026-0428 that `cargo audit` and `cargo deny` report on 0.18.0. No source change.
 - 0.6.0-rc174 -- **Clippy now also runs with `--all-features` in CI (stable), and the code is clean under it.** Fixes the latent lints in `admin`, `api/saml`, `methods`, `security`, `server/security/x509_signing` and `storage/unified`; the LDAP bind no longer `unwrap`s an empty-checked result, and two test locks are `tokio::sync::Mutex` so no guard is held across an `.await`. (#103, #120).
 - 0.6.0-rc171 -- **`OAuth2Server`: a refresh token now rotates exactly once under concurrent requests.** Validity check and revoke happen under one write lock. Regression test `tests/oauth2_server_single_use_tests.rs`.
