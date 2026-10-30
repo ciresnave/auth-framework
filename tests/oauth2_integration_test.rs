@@ -395,7 +395,7 @@ mod oauth2_integration_tests {
             .refresh_token
             .expect("authorization_code grant must issue a refresh token");
 
-        let refresh_request = TokenRequest::refresh(&refresh_token);
+        let refresh_request = TokenRequest::refresh(&refresh_token).client_id("test_client");
         let refresh_response = oauth2::token(State(state), Json(refresh_request)).await;
         assert!(
             refresh_response.success,
@@ -479,7 +479,7 @@ mod oauth2_integration_tests {
             "revoke must delete the refresh token's own storage entry"
         );
 
-        let refresh_request = TokenRequest::refresh(&refresh_token);
+        let refresh_request = TokenRequest::refresh(&refresh_token).client_id("test_client");
         let refresh_response = oauth2::token(State(state), Json(refresh_request)).await;
         assert!(
             !refresh_response.success,
@@ -554,7 +554,7 @@ mod oauth2_integration_tests {
             .await
             .unwrap();
 
-        let refresh_request = TokenRequest::refresh(&refresh_token);
+        let refresh_request = TokenRequest::refresh(&refresh_token).client_id("test_client");
         let refresh_response = oauth2::token(State(state), Json(refresh_request)).await;
         assert!(
             !refresh_response.success,
