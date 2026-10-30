@@ -266,7 +266,7 @@ pub async fn authorize(
     // SECURITY: Validate client_id and verify the redirect_uri is pre-registered.
     // Redirecting to an unregistered URI would let an attacker steal the authorization code.
     let client_key = format!("oauth2_client:{}", params.client_id);
-    match state.auth_framework.storage().get_kv(&client_key).await {
+    let granted_scope = match state.auth_framework.storage().get_kv(&client_key).await {
         Ok(Some(data)) => {
             let client_data: serde_json::Value = serde_json::from_slice(&data).unwrap_or_default();
             let registered_uris: Vec<String> = client_data["redirect_uris"]
@@ -301,6 +301,17 @@ pub async fn authorize(
                     .maybe_state(params.state);
                 return (StatusCode::BAD_REQUEST, Json(error)).into_response();
             }
+
+            // A client can be granted only the scopes it is registered for.
+            match effective_scope(&client_data, params.scope.as_deref()) {
+                Ok(scope) => scope,
+                Err(description) => {
+                    let error = OAuthError::new("invalid_scope")
+                        .description(description)
+                        .maybe_state(params.state);
+                    return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+                }
+            }
         }
         Ok(None) => {
             tracing::warn!(client_id = %params.client_id, "OAuth authorize: unknown client_id");
@@ -320,7 +331,7 @@ pub async fn authorize(
                 .maybe_state(params.state);
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
         }
-    }
+    };
 
     let auth_code = format!("ac_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
 
@@ -338,7 +349,7 @@ pub async fn authorize(
     let code_data = serde_json::json!({
         "client_id": params.client_id,
         "redirect_uri": params.redirect_uri,
-        "scope": params.scope.clone().unwrap_or_else(|| "openid profile email".to_string()),
+        "scope": granted_scope,
         "state": params.state.clone(),
         "code_challenge": params.code_challenge,
         "code_challenge_method": params.code_challenge_method,
@@ -617,10 +628,29 @@ async fn handle_authorization_code_grant(
     }
 
     // Create access and refresh tokens
-    let scope = code_data["scope"]
+    //
+    // The granted scope never exceeds what the client is registered for, whatever the
+    // code carries (e.g. a code issued before scopes were enforced).
+    let client_record = match load_client_record(&state, &client_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return ApiResponse::error_typed("invalid_client", "Unknown client"),
+        Err(refused) => return *refused,
+    };
+    let allowed = allowed_scopes(&client_record);
+    let scopes: Vec<String> = code_data["scope"]
         .as_str()
-        .unwrap_or("openid profile email");
-    let scopes: Vec<String> = scope.split_whitespace().map(|s| s.to_string()).collect();
+        .unwrap_or("openid profile email")
+        .split_whitespace()
+        .filter(|s| allowed.iter().any(|a| a == s))
+        .map(|s| s.to_string())
+        .collect();
+    if scopes.is_empty() {
+        return ApiResponse::error_typed(
+            "invalid_scope",
+            "No granted scope is allowed for this client",
+        );
+    }
+    let scope = scopes.join(" ");
 
     // Use the user_id that was recorded in the authorization code when the resource owner
     // authenticated via the /oauth/authorize endpoint.  This ensures tokens are bound to the
@@ -633,12 +663,12 @@ async fn handle_authorization_code_grant(
         }
     };
 
-    let token = match state.auth_framework.token_manager().create_auth_token(
-        &user_id,
-        scopes.clone(),
-        "oauth2",
-        None,
-    ) {
+    // The token is delegated access for this client, not the user's own session.
+    let token = match state
+        .auth_framework
+        .token_manager()
+        .create_client_auth_token(&user_id, &client_id, scopes.clone(), "oauth2", None)
+    {
         Ok(token) => token,
         Err(e) => {
             tracing::error!("Failed to create access token: {:?}", e);
@@ -752,6 +782,67 @@ async fn authenticate_token_client(
             }
         }
     }
+}
+
+/// Scopes granted to clients that were registered without any scope information.
+const DEFAULT_CLIENT_SCOPES: [&str; 3] = ["openid", "profile", "email"];
+
+/// The scopes a client may be granted: those it was registered for (the `scope` string
+/// and/or the `scopes` list). A record that names neither key predates scope registration
+/// and gets the OpenID defaults; a record that names a key but yields no scope (empty, or
+/// of an unexpected type) is granted nothing.
+fn allowed_scopes(record: &serde_json::Value) -> Vec<String> {
+    if record.get("scope").is_none_or(|v| v.is_null())
+        && record.get("scopes").is_none_or(|v| v.is_null())
+    {
+        return DEFAULT_CLIENT_SCOPES
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    }
+    let mut allowed: Vec<String> = Vec::new();
+    if let Some(s) = record["scope"].as_str() {
+        allowed.extend(s.split_whitespace().map(String::from));
+    }
+    if let Some(list) = record["scopes"].as_array() {
+        for item in list.iter().filter_map(|v| v.as_str()) {
+            allowed.extend(item.split_whitespace().map(String::from));
+        }
+    }
+    allowed.sort();
+    allowed.dedup();
+    allowed
+}
+
+/// The scope to grant for a request: the requested scopes if every one is allowed
+/// (RFC 6749 section 3.3), otherwise `Err(invalid_scope description)`. With no scope
+/// requested, the client gets everything it is registered for.
+fn effective_scope(
+    record: &serde_json::Value,
+    requested: Option<&str>,
+) -> std::result::Result<String, String> {
+    let allowed = allowed_scopes(record);
+    let requested: Vec<&str> = requested
+        .map(|s| s.split_whitespace().collect())
+        .unwrap_or_default();
+    if requested.is_empty() {
+        return if allowed.is_empty() {
+            Err("this client is not registered for any scope".to_string())
+        } else {
+            Ok(allowed.join(" "))
+        };
+    }
+    if let Some(bad) = requested.iter().find(|s| !allowed.iter().any(|a| a == **s)) {
+        let shown: String = bad.chars().take(64).collect();
+        return Err(format!("scope '{shown}' is not allowed for this client"));
+    }
+    let mut granted: Vec<&str> = Vec::with_capacity(requested.len());
+    for s in requested {
+        if !granted.contains(&s) {
+            granted.push(s);
+        }
+    }
+    Ok(granted.join(" "))
 }
 
 /// Lifetime of a stored refresh token, and of the marker that records it was redeemed.
@@ -943,17 +1034,42 @@ async fn handle_refresh_token_grant(
         return *refusal;
     }
 
-    let scope = stored["scopes"]
+    let mut scopes: Vec<String> = stored["scopes"]
         .as_str()
         .unwrap_or("openid profile email")
-        .to_string();
-    let scopes: Vec<String> = scope.split_whitespace().map(|s| s.to_string()).collect();
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+    // A refreshed token never exceeds what the client is registered for NOW, whatever the
+    // stored record carries (older records, or a registration narrowed since).
+    if let Some(client) = stored["client_id"].as_str() {
+        let record = match load_client_record(&state, client).await {
+            Ok(Some(record)) => record,
+            Ok(None) => return ApiResponse::error_typed("invalid_client", "Unknown client"),
+            Err(refused) => return *refused,
+        };
+        let allowed = allowed_scopes(&record);
+        scopes.retain(|s| allowed.iter().any(|a| a == s));
+        if scopes.is_empty() {
+            return ApiResponse::error_typed(
+                "invalid_scope",
+                "No granted scope is allowed for this client",
+            );
+        }
+    }
+    let scope = scopes.join(" ");
 
-    let token = match state
-        .auth_framework
-        .token_manager()
-        .create_auth_token(&user_id, scopes, "oauth2", None)
-    {
+    let issued = match &client_id {
+        Some(client) => state
+            .auth_framework
+            .token_manager()
+            .create_client_auth_token(&user_id, client, scopes, "oauth2", None),
+        None => state
+            .auth_framework
+            .token_manager()
+            .create_auth_token(&user_id, scopes, "oauth2", None),
+    };
+    let token = match issued {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to create access token on refresh: {:?}", e);

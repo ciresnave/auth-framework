@@ -381,7 +381,7 @@ async fn refresh_handler(
     // Validate current token to extract claims
     let claims = auth
         .token_manager()
-        .validate_jwt_token(&token_str)
+        .validate_session_jwt_token(&token_str)
         .map_err(|_| {
             AuthError::Token(crate::errors::TokenError::Invalid {
                 message: "Cannot refresh: current token is invalid or expired".to_string(),
@@ -453,7 +453,7 @@ pub async fn auth_middleware(
     let token_str = extract_bearer_token(&request)?;
 
     // Validate token using AuthFramework
-    match auth.token_manager().validate_jwt_token(&token_str) {
+    match auth.token_manager().validate_session_jwt_token(&token_str) {
         Ok(_claims) => {
             // Store token in request extensions for later extraction
             request.extensions_mut().insert(token_str);
@@ -496,7 +496,9 @@ where
         let token_str = extract_bearer_token_from_parts(parts)?;
 
         // Validate JWT and extract real claims
-        let claims = auth.token_manager().validate_jwt_token(&token_str)?;
+        let claims = auth
+            .token_manager()
+            .validate_session_jwt_token(&token_str)?;
 
         let user_id = claims.sub.clone();
         let permissions = claims.permissions.unwrap_or_default();

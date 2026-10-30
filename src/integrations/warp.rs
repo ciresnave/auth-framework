@@ -57,7 +57,7 @@ pub fn with_auth(
             // Validate using the framework's TokenManager (full HMAC/RSA signature verification)
             let claims = auth_framework
                 .token_manager()
-                .validate_jwt_token(&token_str)
+                .validate_session_jwt_token(&token_str)
                 .map_err(|e| warp::reject::custom(AuthRejection { error: e }))?;
 
             // Convert the validated JwtClaims into an AuthToken
