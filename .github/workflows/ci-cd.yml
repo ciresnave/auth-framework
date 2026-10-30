@@ -82,6 +82,12 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --locked --all-targets --features enhanced-rbac,postgres-storage,redis-storage,openid-connect,axum-integration -- -D warnings
 
+      # Every feature at once: the surface the narrower list above never lints (#103, #120).
+      # Stable only: beta's newer lints would fail this job for reasons unrelated to the change.
+      - name: Run Clippy (all features)
+        if: matrix.rust == 'stable'
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
       - name: Run all tests (lib + integration)
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/auth_framework_test

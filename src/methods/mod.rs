@@ -375,11 +375,9 @@ impl AuthMethod for AuthMethodEnum {
                 ),
             },
             #[cfg(feature = "ldap-auth")]
-            AuthMethodEnum::Ldap(_) => {
-                return Self::failure(
-                    "LDAP authentication requires a concrete LDAP integration and cannot use the generic AuthMethodEnum fallback",
-                );
-            }
+            AuthMethodEnum::Ldap(_) => Self::failure(
+                "LDAP authentication requires a concrete LDAP integration and cannot use the generic AuthMethodEnum fallback",
+            ),
             AuthMethodEnum::HardwareOtpToken(_) => Self::failure(
                 "Hardware token authentication requires the concrete hardware token flow rather than the generic AuthMethodEnum fallback",
             ),

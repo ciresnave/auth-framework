@@ -221,7 +221,7 @@ impl UnifiedStorage {
             .collect();
 
         // Sort by last accessed time (oldest first)
-        entries.sort_by(|a, b| a.1.cmp(&b.1));
+        entries.sort_by_key(|a| a.1);
 
         let mut memory_freed = 0usize;
         let target_memory = max_memory * 3 / 4; // Free to 75% capacity

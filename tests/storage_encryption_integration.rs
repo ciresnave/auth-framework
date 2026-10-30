@@ -8,18 +8,19 @@
 //! in-memory backend has nothing on disk to inspect.
 
 #![cfg(feature = "sqlite-storage")]
+#![allow(clippy::unwrap_used)] // clippy only recognises `#[test]`, not `#[tokio::test]`
 
 use auth_framework::AuthFramework;
 use auth_framework::config::{AuthConfig, StorageConfig, StorageEncryptionConfig};
 use auth_framework::storage::AuthStorage;
 use auth_framework::storage::encryption::StorageEncryption;
 use sqlx::sqlite::SqlitePoolOptions;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 /// `AUTH_STORAGE_ENCRYPTION_KEY` is process-global state. Serialize every
 /// test in this file so one test's env var doesn't leak into another
 /// running concurrently on a different thread.
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 fn sqlite_config(path: &std::path::Path) -> StorageConfig {
     StorageConfig::Sqlite {
@@ -35,7 +36,7 @@ fn base_config(storage: StorageConfig) -> AuthConfig {
 
 #[tokio::test]
 async fn sqlite_backend_fails_closed_without_a_key() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe {
         std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
         std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
@@ -60,7 +61,7 @@ async fn sqlite_backend_fails_closed_without_a_key() {
 
 #[tokio::test]
 async fn sqlite_backend_succeeds_when_encryption_explicitly_disabled() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe {
         std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
         std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");
@@ -82,7 +83,7 @@ async fn sqlite_backend_succeeds_when_encryption_explicitly_disabled() {
 
 #[tokio::test]
 async fn sqlite_backend_encrypts_kv_values_on_disk_when_enabled() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     let key = StorageEncryption::generate_key();
     unsafe {
         std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEY", &key);
@@ -144,7 +145,7 @@ async fn sqlite_backend_encrypts_kv_values_on_disk_when_enabled() {
 
 #[tokio::test]
 async fn memory_backend_is_exempt_from_the_key_requirement() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe {
         std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEY");
         std::env::remove_var("AUTH_STORAGE_ENCRYPTION_KEYS_FILE");

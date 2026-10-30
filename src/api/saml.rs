@@ -672,10 +672,10 @@ pub async fn handle_saml_slo_response(
             }
 
             // Handle RelayState redirect if provided
-            if let Some(relay_state) = params.get("RelayState") {
-                if !relay_state.is_empty() {
-                    tracing::debug!(relay_state = %relay_state, "SAML SLO: RelayState provided");
-                }
+            if let Some(relay_state) = params.get("RelayState")
+                && !relay_state.is_empty()
+            {
+                tracing::debug!(relay_state = %relay_state, "SAML SLO: RelayState provided");
             }
 
             Json(ApiResponse::<()>::ok_with_message(
