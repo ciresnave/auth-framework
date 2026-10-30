@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.46] - Unreleased
+
+### Changed
+
+- **`OAuth2Server` access tokens carry the client (`client_id` claim) and are not accepted as a user session.** `TokenManager::create_client_jwt_token` / `create_client_auth_token` issue them; `TokenManager::validate_session_jwt_token` and `validate_api_token`, the axum middleware and the actix extractors refuse them. Behaviour change: validate such a token with `TokenManager::validate_jwt_token`. Test: `tests/oauth2_server_client_token_tests.rs`.
+
 ## [0.4.45] - Unreleased
 
 ### Security

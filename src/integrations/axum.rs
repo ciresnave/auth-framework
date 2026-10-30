@@ -384,7 +384,7 @@ pub async fn auth_middleware(
     let token_str = extract_bearer_token(&request)?;
 
     // Validate token using AuthFramework
-    match auth.token_manager().validate_jwt_token(&token_str) {
+    match auth.token_manager().validate_session_jwt_token(&token_str) {
         Ok(_claims) => {
             // Store token in request extensions for later extraction
             request.extensions_mut().insert(token_str);
