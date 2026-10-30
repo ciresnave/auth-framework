@@ -405,31 +405,30 @@ impl TokenIntrospectionService {
         match credentials.auth_method {
             ClientAuthMethod::ClientSecretBasic | ClientAuthMethod::ClientSecretPost => {
                 if let Some(client_secret) = &credentials.client_secret {
-                    // Validate against client registry if available
-                    let client_key = format!("oauth_client:{}", credentials.client_id);
-                    if let Some(client_data) = self.storage.get_kv(&client_key).await? {
-                        let client_str = std::str::from_utf8(&client_data).map_err(|e| {
-                            AuthError::internal(format!("Invalid UTF-8 in client data: {}", e))
-                        })?;
-                        let client: serde_json::Value =
-                            serde_json::from_str(client_str).map_err(|e| {
-                                AuthError::internal(format!("Failed to deserialize client: {}", e))
-                            })?;
-
-                        if let Some(stored_secret) =
-                            client.get("client_secret").and_then(|v| v.as_str())
-                        {
-                            if !crate::security::secure_utils::constant_time_compare(
-                                client_secret.as_bytes(),
-                                stored_secret.as_bytes(),
-                            ) {
+                    // Validate against the client registry (`oauth2_client:{id}`, with the
+                    // old `oauth_client:{id}` key still read and moved)
+                    match crate::server::core::client_registry::load_record(
+                        self.storage.as_ref(),
+                        &credentials.client_id,
+                    )
+                    .await?
+                    {
+                        Some(record) if crate::client_secret::is_confidential(&record) => {
+                            if !crate::client_secret::authenticate(
+                                self.storage.as_ref(),
+                                &credentials.client_id,
+                                &record,
+                                client_secret,
+                            )
+                            .await
+                            {
                                 return Err(AuthError::access_denied("Invalid client secret"));
                             }
-                        } else {
+                        }
+                        Some(_) => {
                             return Err(AuthError::access_denied("Client secret not found"));
                         }
-                    } else {
-                        return Err(AuthError::access_denied("Client not found"));
+                        None => return Err(AuthError::access_denied("Client not found")),
                     }
                 } else {
                     return Err(AuthError::access_denied("Client secret required"));

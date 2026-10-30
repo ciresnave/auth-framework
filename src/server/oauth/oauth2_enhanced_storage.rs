@@ -213,6 +213,12 @@ impl EnhancedClientCredentials {
 }
 
 /// Enhanced token storage with proper validation
+///
+/// Everything here, the client credentials included, lives in this process's memory: nothing is
+/// persisted and another instance does not see it. The clients that the HTTP API and
+/// [`ClientRegistry`](crate::server::core::client_registry::ClientRegistry) manage are kept in
+/// the shared storage (`oauth2_client:{id}`) and are a separate registry from the
+/// `client_credentials` map below, which only `OAuth2Server`'s client-credentials grant reads.
 #[derive(Clone)]
 pub struct EnhancedTokenStorage {
     refresh_tokens: HashMap<String, RefreshToken>,
