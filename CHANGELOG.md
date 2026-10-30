@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc76] - Unreleased
+
+### Fixed
+
+- **`PostgresStorage` stores and returns a token's `user_profile`, `permissions` and `roles` (#93).** rc72 added the three columns so reads stopped failing, but `store_token` and `update_token` never wrote them, so every token came back with no profile and empty roles and permissions. They are written now, and `update_token` changes all three. New `pg_token_round_trips_profile_roles_and_permissions`; the other `storage_postgres` tests are no longer `#[ignore]` (CI's Postgres service runs them).
+
 ## [0.5.0-rc75] - Unreleased
 
 ### Security

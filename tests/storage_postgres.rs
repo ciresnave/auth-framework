@@ -1,18 +1,21 @@
 //! Integration tests for the PostgreSQL storage backend.
 //!
-//! These tests require a running PostgreSQL server. Set the `DATABASE_URL`
+//! These tests require a running PostgreSQL server (CI's test job provides one) and are not
+//! `#[ignore]`d: a missing server fails them instead of hiding them. Set the `DATABASE_URL`
 //! environment variable to a valid connection string before running:
 //!
 //! ```sh
 //! export DATABASE_URL="postgres://user:password@localhost/auth_test"
-//! cargo test --test storage_postgres --features postgres-storage -- --ignored
+//! cargo test --test storage_postgres --features postgres-storage
 //! ```
 
 #![cfg(feature = "postgres-storage")]
 
+use auth_framework::providers::ProviderProfile;
 use auth_framework::storage::postgres::PostgresStorage;
 use auth_framework::storage::{AuthStorage, SessionData};
 use auth_framework::tokens::AuthToken;
+use auth_framework::types::{Permissions, Roles};
 use sqlx::PgPool;
 use std::time::Duration;
 
@@ -30,7 +33,6 @@ async fn setup() -> PostgresStorage {
 }
 
 #[tokio::test]
-#[ignore]
 async fn pg_token_crud() {
     let storage = setup().await;
     let token = AuthToken::new("pg_user1", "pg_access1", Duration::from_secs(3600), "test");
@@ -57,7 +59,43 @@ async fn pg_token_crud() {
 }
 
 #[tokio::test]
-#[ignore]
+async fn pg_token_round_trips_profile_roles_and_permissions() {
+    let storage = setup().await;
+    let mut token = AuthToken::new(
+        "pg_rt_user",
+        "pg_rt_access",
+        Duration::from_secs(3600),
+        "test",
+    );
+    let mut profile = ProviderProfile::new();
+    profile.email = Some("ann@example.com".to_string());
+    profile.name = Some("Ann".to_string());
+    token.user_profile = Some(profile);
+    token.roles = Roles(vec!["admin".to_string(), "user".to_string()]);
+    token.permissions = Permissions(vec!["read".to_string(), "write".to_string()]);
+
+    storage.store_token(&token).await.unwrap();
+    let got = storage.get_token(&token.token_id).await.unwrap().unwrap();
+    let got_profile = got.user_profile.expect("user_profile must round-trip");
+    assert_eq!(got_profile.email.as_deref(), Some("ann@example.com"));
+    assert_eq!(got_profile.name.as_deref(), Some("Ann"));
+    assert_eq!(got.roles.0, vec!["admin", "user"]);
+    assert_eq!(got.permissions.0, vec!["read", "write"]);
+
+    // A token without a profile reads back without one, and update_token changes all three.
+    token.user_profile = None;
+    token.roles = Roles(vec!["guest".to_string()]);
+    token.permissions = Permissions(Vec::new());
+    storage.update_token(&token).await.unwrap();
+    let got = storage.get_token(&token.token_id).await.unwrap().unwrap();
+    assert!(got.user_profile.is_none());
+    assert_eq!(got.roles.0, vec!["guest"]);
+    assert!(got.permissions.0.is_empty());
+
+    storage.delete_token(&token.token_id).await.unwrap();
+}
+
+#[tokio::test]
 async fn pg_token_update() {
     let storage = setup().await;
     let mut token = AuthToken::new("pg_upd_user", "pg_upd_at", Duration::from_secs(3600), "pw");
@@ -72,7 +110,6 @@ async fn pg_token_update() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn pg_session_crud() {
     let storage = setup().await;
     let session = SessionData::new("pg_sess1", "pg_user_s", Duration::from_secs(3600))
@@ -91,7 +128,6 @@ async fn pg_session_crud() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn pg_kv_crud() {
     let storage = setup().await;
 
@@ -107,7 +143,6 @@ async fn pg_kv_crud() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn pg_kv_list_keys_prefix() {
     let storage = setup().await;
     storage
@@ -133,7 +168,6 @@ async fn pg_kv_list_keys_prefix() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn pg_count_active_sessions() {
     let storage = setup().await;
     let s1 = SessionData::new("pg_cnt1", "u1", Duration::from_secs(3600));
@@ -149,7 +183,6 @@ async fn pg_count_active_sessions() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn pg_cleanup_expired() {
     let storage = setup().await;
 
