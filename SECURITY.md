@@ -32,14 +32,20 @@ were relying on MySQL support.
 
 ## Supported Versions
 
-Security fixes are released on all three active lines, so use the newest release of the line you are on:
+Security fixes land on `main` first and are then backported to the older lines below, so use the
+newest release of the line you are on:
 
-| Line                      | Supported          | Notes                                              |
-| ------------------------- | ------------------ | -------------------------------------------------- |
-| 0.6.x (release candidates) | :white_check_mark: | development line (`main`); fixes land here first   |
-| 0.5.x (release candidates) | :white_check_mark: | `release/0.5.x`                                    |
-| 0.4.x                      | :white_check_mark: | the newest stable line (`release/0.4.x`)           |
-| < 0.4                      | :x:                | not maintained; yanked from crates.io              |
+| Line                       | Supported          | Notes                                                           |
+| -------------------------- | ------------------ | --------------------------------------------------------------- |
+| 0.6.x (release candidates) | :white_check_mark: | development line (`main`); fixes land here first                |
+| 0.5.x (release candidates) | :white_check_mark: | `release/0.5.x`; fixes are backported                           |
+| 0.4.x                      | :white_check_mark: | newest stable line (`release/0.4.x`); fixes are backported; current release 0.4.45 |
+| < 0.4                      | :x:                | no security fixes; yanked from crates.io                        |
+
+What we promise: a fix is backported to a supported line unless the backport is a large piece of work. In
+that case we end security support for that line instead, say so in the advisory (the affected range, no
+patched version for that line, and "upgrade to <version>"), in this table and in the release notes, and
+recommend that projects stop using it. We make no promise of a support period beyond that.
 
 Versions that fall inside a published advisory are yanked from crates.io. Do not pin a yanked
 version, and do not pin one older than the first fixed release listed in the advisory that applies
