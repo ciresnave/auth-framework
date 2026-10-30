@@ -431,6 +431,41 @@ impl AuthStorage for PostgresStorage {
         Ok(())
     }
 
+    async fn store_kv_if_absent(
+        &self,
+        key: &str,
+        value: &[u8],
+        ttl: Option<std::time::Duration>,
+    ) -> Result<bool> {
+        let expires_at = ttl.map(|d| {
+            chrono::Utc::now()
+                + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::seconds(0))
+        });
+        // One statement: insert, or take over an EXPIRED row; a live row is left alone.
+        let result = sqlx::query(
+            r#"
+            INSERT INTO kv_store (key, value, expires_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (key) DO UPDATE SET
+                value = EXCLUDED.value,
+                expires_at = EXCLUDED.expires_at
+            WHERE kv_store.expires_at IS NOT NULL AND kv_store.expires_at <= NOW()
+            "#,
+        )
+        .bind(key)
+        .bind(value)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                "Failed to store kv if absent: {}",
+                e
+            )))
+        })?;
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let row = sqlx::query(
             r#"SELECT value FROM kv_store WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())"#
