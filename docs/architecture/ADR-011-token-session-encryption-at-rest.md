@@ -330,7 +330,7 @@ The audit showed read-through alone is unsound, so the rules are explicit:
 * Whether `session::SessionManager<S>` has any non-test `SessionStorage` implementation outside this
   repo; none shipped (`manager.rs:1746` is a test impl).
 * Redis `KEYS` behaviour under load; index use by `LIKE 'prefix%'` on each SQL backend (collation).
-* Whether the views/triggers in `src/migrations/003_create_sessions_table.sql` are executed anywhere, and
+* Whether the views/triggers in `src/migrations/003_create_sessions_table.sql` (deleted at rc181: it was referenced nowhere) were executed anywhere, and
   whether anything outside `src/storage`, `auth-storage-sqlite` and migration SQL reads
   `auth_tokens`/`sessions` directly (a `git grep` at the ref found nothing else; not exhaustive).
 * That `token_id` is logged anywhere (a same-line macro search found none; multi-line calls would be
