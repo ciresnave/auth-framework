@@ -239,6 +239,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc187 -- Docs: `SECURITY.md` no longer says Kerberos AP-REQ validation checks ASN.1 tags only and needs a KDC; it describes what `validate_ap_req` does (keytab decryption, HMAC, realm/name match, expiry, clock skew, replay; no KDC, no PAC). `COMPATIBILITY.md` rates Kerberos Substantial, not Full. ROADMAP A6 done, A13 added for the gaps measured. No code change.
 - 0.6.0-rc186 -- Calls that dropped a return value now say so with `let _ =` (CodeRipper unused-return-values): `SessionStore::create_session`, `UserAttributesString::insert`, a test CA helper, and two test call sites. No behaviour change.
 - 0.6.0-rc185 -- Every `#[allow(...)]` now carries a `reason = "..."` (CodeRipper lint-suppression); one unneeded `dead_code` allow removed from a test. No behaviour change.
 - 0.6.0-rc184 -- JavaScript SDK lockfile: `follow-redirects` 1.16.1 -> 1.16.2 (GHSA-mrwp-f3q8-3g9p), the fix `npm audit --omit=dev` asks for; the SDK job in CI was red on it. Supersedes the Dependabot PR #357. No source change.
