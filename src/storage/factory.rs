@@ -222,7 +222,10 @@ async fn build_storage_backend_inner(
         StorageConfig::Custom(name) => Err(AuthError::configuration(format!(
             "Custom storage backend '{name}' requires AuthFramework::new_with_storage() or replace_storage()",
         ))),
-        #[allow(unreachable_patterns)]
+        #[allow(
+            unreachable_patterns,
+            reason = "the wildcard is reachable only when a storage feature is disabled"
+        )]
         _ => Err(AuthError::configuration(
             "Requested storage backend is unavailable in this build. Enable the matching storage feature.",
         )),

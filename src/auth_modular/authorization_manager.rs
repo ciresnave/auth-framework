@@ -366,7 +366,10 @@ impl AuthorizationManager {
     ) -> Result<bool> {
         let permission = Permission::new(action, resource);
         let mut c = self.checker.write().await;
-        #[allow(deprecated)]
+        #[allow(
+            deprecated,
+            reason = "this method is itself deprecated since 0.6.0 and delegates to the deprecated checker method"
+        )]
         c.check_token_permission(token, &permission)
     }
 

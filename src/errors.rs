@@ -1047,7 +1047,10 @@ impl AuthError {
             Self::Metrics(_) => 500,
 
             // Deprecated variants
-            #[allow(deprecated)]
+            #[allow(
+                deprecated,
+                reason = "matches deprecated variants so old errors still classify until removal"
+            )]
             Self::InvalidToken(_)
             | Self::NetworkError(_)
             | Self::ParseError(_)
@@ -1137,13 +1140,25 @@ impl AuthError {
             Self::UnsupportedProvider(_) => "unsupported_provider",
             #[cfg(feature = "prometheus")]
             Self::Metrics(_) => "metrics",
-            #[allow(deprecated)]
+            #[allow(
+                deprecated,
+                reason = "matches a deprecated variant so old errors still map until removal"
+            )]
             Self::InvalidToken(_) => "invalid_token",
-            #[allow(deprecated)]
+            #[allow(
+                deprecated,
+                reason = "matches a deprecated variant so old errors still map until removal"
+            )]
             Self::NetworkError(_) => "network",
-            #[allow(deprecated)]
+            #[allow(
+                deprecated,
+                reason = "matches a deprecated variant so old errors still map until removal"
+            )]
             Self::ParseError(_) => "parse",
-            #[allow(deprecated)]
+            #[allow(
+                deprecated,
+                reason = "matches a deprecated variant so old errors still map until removal"
+            )]
             Self::ConfigurationError(_) => "configuration",
         }
     }

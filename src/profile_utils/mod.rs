@@ -8,7 +8,10 @@ use serde_json::Value;
 // HashMap is used for token metadata
 
 /// Trait for converting tokens to user profiles
-#[allow(async_fn_in_trait)]
+#[allow(
+    async_fn_in_trait,
+    reason = "the trait does not promise that the returned future is `Send`; changing that is a public API change"
+)]
 pub trait TokenToProfile {
     /// Convert a token to a user profile
     async fn to_profile(&self, provider: &OAuthProvider) -> Result<ProviderProfile>;

@@ -164,7 +164,10 @@ pub trait AuthMethod: Send + Sync {
 pub type UserInfo = crate::auth::UserInfo;
 
 /// Enum wrapper for all supported authentication methods (for registry)
-#[allow(clippy::large_enum_variant)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one value per registered method, held behind the registry; boxing would change the public variants"
+)]
 pub enum AuthMethodEnum {
     Password(PasswordMethod),
     Jwt(JwtMethod),

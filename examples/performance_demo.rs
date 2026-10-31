@@ -382,7 +382,10 @@ async fn demo_integrated_performance() -> Result<()> {
 }
 
 /// Utility function to format durations nicely
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "never called; kept as a reference snippet for readers of the example"
+)]
 fn format_duration(duration: Duration) -> String {
     let millis = duration.as_millis();
     if millis < 1000 {

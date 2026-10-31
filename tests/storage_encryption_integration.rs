@@ -8,7 +8,10 @@
 //! in-memory backend has nothing on disk to inspect.
 
 #![cfg(feature = "sqlite-storage")]
-#![allow(clippy::unwrap_used)] // clippy only recognises `#[test]`, not `#[tokio::test]`
+#![allow(
+    clippy::unwrap_used,
+    reason = "clippy only recognises `#[test]`, not `#[tokio::test]`"
+)]
 
 use auth_framework::AuthFramework;
 use auth_framework::config::{AuthConfig, StorageConfig, StorageEncryptionConfig};

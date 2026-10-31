@@ -284,7 +284,6 @@ async fn test_all_integrations_comprehensive() {
 }
 
 #[tokio::test]
-#[allow(dead_code)]
 async fn test_comprehensive_integration() {
     println!("🔍 Testing Core Integration Surface");
 
