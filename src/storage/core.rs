@@ -841,16 +841,45 @@ impl RedisStorage {
     ) -> Result<Vec<String>> {
         let mut keys = Vec::new();
         for pattern in [self.key("session_h:*"), self.key("session:*")] {
-            let found: Vec<String> = redis::cmd("KEYS")
-                .arg(&pattern)
+            keys.extend(Self::scan_keys(conn, &pattern, "sessions").await?);
+        }
+        Ok(keys)
+    }
+
+    /// Every key matching `pattern`, by cursor `SCAN` (`KEYS` is O(N) in one
+    /// blocking command). `SCAN` may return a key more than once, so the result
+    /// is de-duplicated; a key that expires mid-scan may be missed or listed,
+    /// as with any non-atomic listing.
+    async fn scan_keys(
+        conn: &mut redis::aio::MultiplexedConnection,
+        pattern: &str,
+        what: &str,
+    ) -> Result<Vec<String>> {
+        let mut seen = std::collections::HashSet::new();
+        let mut keys = Vec::new();
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(500)
                 .query_async(&mut *conn)
                 .await
                 .map_err(|e| {
-                    StorageError::operation_failed(format!("Failed to scan sessions: {e}"))
+                    StorageError::operation_failed(format!("Failed to scan {what}: {e}"))
                 })?;
-            keys.extend(found);
+            for key in batch {
+                if seen.insert(key.clone()) {
+                    keys.push(key);
+                }
+            }
+            if next == 0 {
+                return Ok(keys);
+            }
+            cursor = next;
         }
-        Ok(keys)
     }
 
     /// Read `new_key`; on a miss, move a row stored under `legacy_key` (the raw
@@ -952,39 +981,34 @@ impl AuthStorage for RedisStorage {
         // Calculate TTL
         let ttl = token.time_until_expiry().as_secs().max(1);
 
-        // Store token data
-        let _: () = redis::cmd("SETEX")
-            .arg(&token_key)
+        // One script, so a failure between the writes cannot leave a token with no
+        // lookup (or a lookup with no token), and the user's set lives as long as
+        // its longest-lived member (an earlier, longer-lived token is not cut short
+        // by a later, shorter one; a set with no expiry gets one).
+        const STORE: &str = r#"
+            redis.call('SETEX', KEYS[1], ARGV[1], ARGV[2])
+            redis.call('SETEX', KEYS[2], ARGV[1], ARGV[3])
+            redis.call('SADD', KEYS[3], ARGV[3])
+            local t = redis.call('TTL', KEYS[3])
+            if t < tonumber(ARGV[1]) then
+                redis.call('EXPIRE', KEYS[3], ARGV[1])
+            end
+            return 1
+        "#;
+        redis::Script::new(STORE)
+            .key(&token_key)
+            .key(&access_token_key)
+            .key(&user_tokens_key)
             .arg(ttl)
             .arg(&token_json)
-            .query_async(&mut conn)
+            .arg(&token.token_id)
+            .invoke_async::<i64>(&mut conn)
             .await
             .map_err(|e| StorageError::operation_failed(format!("Failed to store token: {e}")))?;
-
-        // Store access token mapping
-        let _: () = redis::cmd("SETEX")
-            .arg(&access_token_key)
-            .arg(ttl)
-            .arg(&token.token_id)
-            .query_async(&mut conn)
-            .await
-            .map_err(|e| {
-                StorageError::operation_failed(format!("Failed to store access token mapping: {e}"))
-            })?;
 
         // Drop a mapping left under the pre-fix name (it held the raw token).
         self.del_legacy(&self.legacy_access_mapping_key(&token.access_token))
             .await?;
-
-        // Add to user tokens set
-        let _: () = redis::cmd("SADD")
-            .arg(&user_tokens_key)
-            .arg(&token.token_id)
-            .query_async(&mut conn)
-            .await
-            .map_err(|e| {
-                StorageError::operation_failed(format!("Failed to add token to user set: {e}"))
-            })?;
 
         Ok(())
     }
@@ -1040,36 +1064,23 @@ impl AuthStorage for RedisStorage {
             self.del_legacy(&self.legacy_access_mapping_key(&token.access_token))
                 .await?;
 
-            // Delete token data
-            let _: () = redis::cmd("DEL")
+            // One transaction: the token, its lookup and its set entry go together.
+            let _: () = redis::pipe()
+                .atomic()
+                .cmd("DEL")
                 .arg(&token_key)
+                .ignore()
+                .cmd("DEL")
+                .arg(&access_token_key)
+                .ignore()
+                .cmd("SREM")
+                .arg(&user_tokens_key)
+                .arg(token_id)
+                .ignore()
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     StorageError::operation_failed(format!("Failed to delete token: {e}"))
-                })?;
-
-            // Delete access token mapping
-            let _: () = redis::cmd("DEL")
-                .arg(&access_token_key)
-                .query_async(&mut conn)
-                .await
-                .map_err(|e| {
-                    StorageError::operation_failed(format!(
-                        "Failed to delete access token mapping: {e}"
-                    ))
-                })?;
-
-            // Remove from user tokens set
-            let _: () = redis::cmd("SREM")
-                .arg(&user_tokens_key)
-                .arg(token_id)
-                .query_async(&mut conn)
-                .await
-                .map_err(|e| {
-                    StorageError::operation_failed(format!(
-                        "Failed to remove token from user set: {e}"
-                    ))
                 })?;
         }
 
@@ -1331,11 +1342,7 @@ impl AuthStorage for RedisStorage {
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         let mut conn = self.get_connection().await?;
         let pattern = self.key(&format!("kv:{prefix}*"));
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg(&pattern)
-            .query_async(&mut conn)
-            .await
-            .map_err(|e| StorageError::operation_failed(format!("Failed to list KV keys: {e}")))?;
+        let keys = Self::scan_keys(&mut conn, &pattern, "KV keys").await?;
 
         Ok(keys
             .into_iter()
@@ -1352,7 +1359,7 @@ impl AuthStorage for RedisStorage {
     async fn count_active_sessions(&self) -> Result<u64> {
         let mut conn = self.get_connection().await?;
 
-        // Use KEYS to find all session keys (consider SCAN for production with many keys)
+        // Cursor-scan for every session key.
         let keys = self.session_keys(&mut conn).await?;
         // A session present under both names is one session.
         let keys = crate::storage::key_names::without_shadowed_legacy(
