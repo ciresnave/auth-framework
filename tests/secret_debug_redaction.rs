@@ -568,7 +568,7 @@ async fn maps_keyed_by_tokens_and_session_ids_are_not_printed() {
     let mut sessions = SessionStore::new();
     let mut ctx = UserContext::new("user-visible".to_string(), "name".to_string(), None);
     ctx.session_id = S.to_string();
-    sessions.create_session(ctx);
+    let _ = sessions.create_session(ctx);
     let shown = format!("{sessions:?}");
     assert!(
         !shown.contains(S),

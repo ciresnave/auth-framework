@@ -4029,7 +4029,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = TestCa::root("Root");
         let mut config = config_for(&dir.path().join("root.crt"), &dir.path().join("root.key"));
-        root.write(dir.path(), "root");
+        let _ = root.write(dir.path(), "root"); // only the files matter: `config` points at them
         config.certificate_profiles.insert(
             "ca".to_string(),
             CertificateProfile {
