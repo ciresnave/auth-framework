@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc182`
+- Current crate version: `0.6.0-rc183`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -307,7 +307,7 @@ operations, P3 = hygiene, Blocked = waiting on someone else.
 | --- | --- | --- | --- | --- |
 | #147 | PostgreSQL `list_user_sessions` selects `last_activity`, `ip_address`, `user_agent`, which `migrate()` never creates; four incompatible `sessions` schemas in the tree | M | P1 | Fixed at rc181: the column mismatch at rc162 (`b1a05516`), the schema split at rc181 (`migrate()` owns `sessions`; CLI migration 3 runs its `SESSIONS_SCHEMA_SQL`, migration 6 reconciles old databases; `tests/postgres_sessions_schema.rs`). Close the issue when rc181 is on main |
 | #144 | `get_token` / `get_token_by_access_token` return expired tokens on SQLite and both in-memory backends; SQLite also returns expired sessions | M | P1 | Open, re-measured: expired token returned by Memory, DashMap and SQLite on both lookups; expired session returned by SQLite (control: live token returned on all three) |
-| #99 | JARM JWE AES-256-GCM encrypt and decrypt pass no AAD, so the protected header is unauthenticated (RFC 7516 5.1/5.2 step 14) | S | P1 | Open: `oidc_advanced_jarm.rs` `cipher.encrypt(nonce, payload.as_bytes())` and `cipher.decrypt(nonce, ciphertext.as_slice())` |
+| #99 | JARM JWE AES-256-GCM encrypt and decrypt pass no AAD, so the protected header is unauthenticated (RFC 7516 5.1/5.2 step 14) | S | P1 | Fixed at rc157 (#316, `457dad43`): `encrypt_payload` / `decrypt_rsa_oaep_a256gcm` pass the base64url protected header as AAD; `test_jwe_protected_header_is_authenticated` and `test_jwe_content_decrypts_with_the_header_as_aad` (under `rsa-private-key-ops`, which CI's `--all-features` Coverage run enables). Issue closed |
 | #92 | The only rate limiter on the wired OAuth2 / introspection routes is per IP, not per client | M | P1 | Partly done (rc165): an authenticated client has its own bucket (`src/api/client_rate_limit.rs`, used at `src/api/oauth2.rs:841` and `src/api/oauth_advanced.rs:226`). The rest is held under the Ant-first rule; decision due 2026-11-08 |
 | #91 | No audit-trail record of client_credentials, introspection or revocation | M | P1 | Open: no `audit` in `src/api/oauth_advanced.rs`, `src/api/oauth2.rs`, `src/server/oauth/oauth2_server.rs` (control: 242 in `src/audit.rs`) |
 | #90 | Three divergent client-credential registries: in-memory `EnhancedTokenStorage`, KV `oauth2_client:` with the secret compared in plaintext, and the token-exchange client store | L | P1 | Done: secrets are Argon2id hashes (#318), `ClientRegistry` and the introspection service moved onto `oauth2_client:` (#333), the unwired introspection module is deleted (rc178); `EnhancedTokenStorage` stays as `OAuth2Server`'s own in-process registry, documented as such |
