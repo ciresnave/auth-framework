@@ -4,6 +4,38 @@
 #[cfg(any(feature = "cli", feature = "postgres-storage"))]
 use tokio_postgres::{Client, Error as PgError};
 
+/// The one `sessions` table: what `PostgresStorage::migrate()` creates and what the storage reads
+/// and writes. The CLI's migrations 3 and 6 run the same text, so whichever path reaches a
+/// database first it ends with this table (issue #147). A `sessions` table of any other shape (the
+/// pre-fix CLI one) is renamed to `sessions_legacy_v3`, with its indexes, rather than dropped:
+/// those rows were never readable through the storage, but they are the operator's to discard.
+/// Idempotent; run it in one transaction.
+#[cfg(any(feature = "cli", feature = "postgres-storage"))]
+pub(crate) const SESSIONS_SCHEMA_SQL: &str = r#"
+DO $$
+BEGIN
+    IF to_regclass('sessions') IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'sessions' AND column_name = 'session_id'
+    ) THEN
+        ALTER TABLE sessions RENAME TO sessions_legacy_v3;
+        ALTER INDEX IF EXISTS sessions_pkey RENAME TO sessions_legacy_v3_pkey;
+        ALTER INDEX IF EXISTS idx_sessions_user_id RENAME TO idx_sessions_legacy_v3_user_id;
+        ALTER INDEX IF EXISTS idx_sessions_expires_at RENAME TO idx_sessions_legacy_v3_expires_at;
+    END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id VARCHAR(255) PRIMARY KEY,
+    user_id    VARCHAR(255) NOT NULL,
+    data       JSONB        NOT NULL,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
+"#;
+
 /// Migration manager for database schema changes
 #[cfg(any(feature = "cli", feature = "postgres-storage"))]
 pub struct MigrationManager {
@@ -122,22 +154,7 @@ impl MigrationManager {
             Migration {
                 version: 3,
                 name: "create_sessions_table".to_string(),
-                sql: r#"
-                    CREATE TABLE IF NOT EXISTS sessions (
-                        id VARCHAR(36) PRIMARY KEY,
-                        user_id VARCHAR(36) REFERENCES users(id),
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                        last_accessed TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                        state VARCHAR(20) DEFAULT 'active',
-                        device_fingerprint TEXT,
-                        ip_address INET,
-                        user_agent TEXT,
-                        security_flags TEXT[]
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-                    CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
-                "#.to_string(),
+                sql: SESSIONS_SCHEMA_SQL.to_string(),
             },
             Migration {
                 version: 4,
@@ -185,6 +202,11 @@ impl MigrationManager {
                     );
                     CREATE INDEX IF NOT EXISTS idx_mfa_challenges_expires_at ON mfa_challenges(expires_at);
                 "#.to_string(),
+            },
+            Migration {
+                version: 6,
+                name: "reconcile_sessions_schema".to_string(),
+                sql: SESSIONS_SCHEMA_SQL.to_string(),
             },
         ]
     }

@@ -126,36 +126,15 @@ impl PostgresStorage {
             })?;
         }
 
-        // --- sessions table ---
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id VARCHAR(255) PRIMARY KEY,
-                user_id    VARCHAR(255) NOT NULL,
-                data       JSONB        NOT NULL,
-                expires_at TIMESTAMPTZ,
-                created_at TIMESTAMPTZ  DEFAULT NOW()
-            )
-            "#,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
-                "Migration failed (sessions): {e}"
-            )))
-        })?;
-
-        for stmt in [
-            "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at)",
-        ] {
-            sqlx::query(stmt).execute(&mut *tx).await.map_err(|e| {
+        // --- sessions table (one definition, shared with the CLI's migrations; issue #147) ---
+        sqlx::raw_sql(crate::migrations::SESSIONS_SCHEMA_SQL)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
                 AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
-                    "Migration failed (index): {e}"
+                    "Migration failed (sessions): {e}"
                 )))
             })?;
-        }
 
         // --- kv_store table ---
         sqlx::query(
