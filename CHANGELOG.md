@@ -239,6 +239,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc180 -- **Docs: the ROADMAP "Tracked Issues" rows for #92, #103, #116, #120 and #18 state what is done (they still read "Open" or "confirm on a release").** No source change.
 - 0.6.0-rc179 -- **Test: the `AuthFramework` TOTP facade and `TotpManager` are proven to cross-verify.** `tests/totp_cross_verify.rs` generates a secret through one path and verifies a code through the other, both ways, over one `MemoryStorage`, and asserts the stored row is `user:{id}:totp_secret` holding the returned base32 secret; also a code outside the skew window and a user with no secret are rejected on both paths. No library code changed. Part of #116.
 - 0.6.0-rc173 -- **`SECURITY.md` supported-versions table rewritten:** what is supported on each line, and that a line whose security backport is a large piece of work is ended with a notice rather than left silently unsupported.
 - 0.6.0-rc178 -- **Breaking: removed `server::token_exchange::token_introspection` (`TokenIntrospectionService`, `TokenIntrospectionHandler`, `TokenIntrospectionRequest`/`Response`/`Config`, `IntrospectionClientCredentials`, `ClientAuthMethod`) and the root re-export `TokenIntrospectionService` (#90, last step).** Nothing served `/oauth/introspect` with it (the route is `api::oauth_advanced`), and since the registry was unified it only duplicated that route. `EnhancedTokenStorage` stays: `OAuth2Server`'s client-credentials grant reads it.
