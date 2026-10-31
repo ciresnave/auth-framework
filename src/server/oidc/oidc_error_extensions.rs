@@ -200,7 +200,10 @@ impl OidcErrorResponse {
     // Intentional builder-entry-point naming: `new` starts the fluent chain shown in the
     // doc example above and in existing callers; renaming to `builder` would be a breaking
     // public API change out of scope for a lint cleanup.
-    #[allow(clippy::new_ret_no_self)]
+    #[allow(
+        clippy::new_ret_no_self,
+        reason = "new returns the builder; renaming is a public API change"
+    )]
     pub fn new(error: OidcErrorCode) -> OidcErrorResponseBuilder {
         OidcErrorResponseBuilder {
             inner: OidcErrorResponse {

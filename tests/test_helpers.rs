@@ -1,7 +1,10 @@
 //! Common test helpers and macros for better error handling
 
 /// Macro to replace unwrap() with expect() that provides context
-#[allow(unused_macros)]
+#[allow(
+    unused_macros,
+    reason = "each test binary includes this file and uses only some macros"
+)]
 macro_rules! expect_ok {
     ($result:expr, $msg:expr) => {
         $result.expect($msg)
@@ -12,7 +15,10 @@ macro_rules! expect_ok {
 }
 
 /// Macro to replace unwrap() on Option with expect() that provides context
-#[allow(unused_macros)]
+#[allow(
+    unused_macros,
+    reason = "each test binary includes this file and uses only some macros"
+)]
 macro_rules! expect_some {
     ($option:expr, $msg:expr) => {
         $option.expect($msg)
@@ -23,7 +29,10 @@ macro_rules! expect_some {
 }
 
 /// Macro for asserting async operations succeed with better error messages
-#[allow(unused_macros)]
+#[allow(
+    unused_macros,
+    reason = "each test binary includes this file and uses only some macros"
+)]
 macro_rules! assert_async_ok {
     ($async_result:expr, $msg:expr) => {
         assert!($async_result.await.is_ok(), $msg);
@@ -37,7 +46,10 @@ macro_rules! assert_async_ok {
 }
 
 /// Macro for asserting async operations fail with better error messages
-#[allow(unused_macros)]
+#[allow(
+    unused_macros,
+    reason = "each test binary includes this file and uses only some macros"
+)]
 macro_rules! assert_async_err {
     ($async_result:expr, $msg:expr) => {
         assert!($async_result.await.is_err(), $msg);
@@ -47,5 +59,8 @@ macro_rules! assert_async_err {
     };
 }
 
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "each test binary includes this file and re-exports only what it uses"
+)]
 pub(crate) use {assert_async_err, assert_async_ok, expect_ok, expect_some};

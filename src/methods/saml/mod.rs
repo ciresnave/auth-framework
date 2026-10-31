@@ -545,7 +545,10 @@ impl AuthMethod for SamlAuthMethod {
         Ok(())
     }
 
-    #[allow(clippy::manual_async_fn)]
+    #[allow(
+        clippy::manual_async_fn,
+        reason = "the signature states that the returned future is `Send`, which a plain async fn does not"
+    )]
     fn authenticate(
         &self,
         credential: Credential,

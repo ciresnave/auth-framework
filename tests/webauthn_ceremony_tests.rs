@@ -232,7 +232,10 @@ mod webauthn_ceremony_tests {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test helper takes each ceremony input as its own argument"
+    )]
     async fn authenticate_custom(
         env: &Env,
         username: &str,

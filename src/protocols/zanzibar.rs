@@ -208,7 +208,10 @@ impl ZanzibarStore {
             .await
     }
 
-    #[allow(clippy::only_used_in_recursion)]
+    #[allow(
+        clippy::only_used_in_recursion,
+        reason = "self is used only by the recursive call; it stays a method of the checker"
+    )]
     fn check_internal<'a>(
         &'a self,
         object: &'a str,

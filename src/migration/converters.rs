@@ -207,7 +207,10 @@ impl RoleConverter {
     }
 
     /// Visit role dependencies recursively
-    #[allow(clippy::only_used_in_recursion)]
+    #[allow(
+        clippy::only_used_in_recursion,
+        reason = "self is used only by the recursive call; it stays a method of the converter"
+    )]
     fn visit_role_dependencies<'a>(
         &self,
         role: &'a LegacyRole,
