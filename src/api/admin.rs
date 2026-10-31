@@ -29,7 +29,10 @@ use serde::{Deserialize, Serialize};
 /// Checks that `auth_token` carries the `admin` role. Returns `Ok(())` on
 /// success or an `ApiResponse::forbidden_typed()` error suitable for early
 /// return from any admin handler.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "the Err arm is the API response an admin handler returns as-is; boxing it would change every caller"
+)]
 fn verify_admin_role<T: Serialize>(auth_token: &AuthToken) -> Result<(), ApiResponse<T>> {
     if auth_token.roles.contains("admin") {
         Ok(())

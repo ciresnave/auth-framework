@@ -17,7 +17,10 @@ use tracing::{debug, info, warn};
 // Boxing the Err variant would require `Box<Response>` to implement Axum's
 // `IntoResponse`, which it does not by default; both arms are already the
 // same `Response` type this middleware pattern requires.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "the Err arm is the axum Response this middleware pattern requires"
+)]
 pub async fn rbac_middleware(
     State(state): State<ApiState>,
     request: Request,
@@ -69,7 +72,10 @@ pub async fn rbac_middleware(
 
 /// Conditional permission middleware for time/location-based access
 // See the allow rationale on `rbac_middleware` above.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "the Err arm is the axum Response this middleware pattern requires"
+)]
 pub async fn conditional_permission_middleware(
     State(state): State<ApiState>,
     request: Request,
@@ -114,7 +120,10 @@ pub async fn conditional_permission_middleware(
 
 /// Role elevation middleware for administrative actions
 // See the allow rationale on `rbac_middleware` above.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "the Err arm is the axum Response this middleware pattern requires"
+)]
 pub async fn role_elevation_middleware(
     State(state): State<ApiState>,
     request: Request,

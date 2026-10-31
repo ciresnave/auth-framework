@@ -96,7 +96,10 @@ fn parse_forwarded_addr(entry: &str) -> Option<IpAddr> {
 // Boxing the Err variant would require `Box<Response>` to implement Axum's
 // `IntoResponse`, which it does not by default; both arms are already the
 // same `Response` type this middleware pattern requires.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "the Err arm is the axum Response this middleware pattern requires"
+)]
 pub async fn rate_limit_middleware_with_state(
     state: ApiState,
     request: Request,
@@ -289,7 +292,10 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
 
 /// Request timeout middleware
 // See the allow rationale on `rate_limit_middleware_with_state` above.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "the Err arm is the axum Response this middleware pattern requires"
+)]
 pub async fn timeout_middleware(request: Request, next: Next) -> Result<Response, Response> {
     // Set a 30-second timeout for all requests
     match tokio::time::timeout(Duration::from_secs(30), next.run(request)).await {

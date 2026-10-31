@@ -299,7 +299,10 @@ fn validate_jwt_secret(secret: &str) -> AuthFrameworkResult<()> {
 }
 
 /// Demo showing different ways to configure auth for different use cases
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "never called; kept as a reference snippet for readers of the example"
+)]
 async fn demonstrate_use_case_presets() -> AuthFrameworkResult<()> {
     println!("🎯 Use Case Presets");
     println!("===================");
