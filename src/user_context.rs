@@ -52,7 +52,7 @@ impl UserContext {
     }
 
     pub fn add_attribute(&mut self, key: String, value: String) {
-        self.attributes.insert(key, value);
+        let _ = self.attributes.insert(key, value); // a setter: the replaced value is not wanted
     }
 
     pub fn has_scope(&self, scope: &str) -> bool {

@@ -1071,7 +1071,7 @@ impl OAuth2Server {
         .with_scopes(authorized_scopes);
 
         let mut session_store = self.session_store.write().await;
-        session_store.create_session(user_context.clone());
+        let _ = session_store.create_session(user_context.clone()); // the id is already in `user_context`
 
         Ok(user_context)
     }
