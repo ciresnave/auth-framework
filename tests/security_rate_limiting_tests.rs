@@ -549,7 +549,7 @@ async fn test_rate_limit_cleanup() {
     // Create entries for multiple keys
     for i in 0..10 {
         let key = format!("cleanup_key_{}", i);
-        limiter.is_allowed(&key);
+        let _ = limiter.is_allowed(&key);
     }
 
     // Wait for window expiry
