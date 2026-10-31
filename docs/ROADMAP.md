@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc181`
+- Current crate version: `0.6.0-rc182`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -311,7 +311,7 @@ operations, P3 = hygiene, Blocked = waiting on someone else.
 | #92 | The only rate limiter on the wired OAuth2 / introspection routes is per IP, not per client | M | P1 | Partly done (rc165): an authenticated client has its own bucket (`src/api/client_rate_limit.rs`, used at `src/api/oauth2.rs:841` and `src/api/oauth_advanced.rs:226`). The rest is held under the Ant-first rule; decision due 2026-11-08 |
 | #91 | No audit-trail record of client_credentials, introspection or revocation | M | P1 | Open: no `audit` in `src/api/oauth_advanced.rs`, `src/api/oauth2.rs`, `src/server/oauth/oauth2_server.rs` (control: 242 in `src/audit.rs`) |
 | #90 | Three divergent client-credential registries: in-memory `EnhancedTokenStorage`, KV `oauth2_client:` with the secret compared in plaintext, and the token-exchange client store | L | P1 | Done: secrets are Argon2id hashes (#318), `ClientRegistry` and the introspection service moved onto `oauth2_client:` (#333), the unwired introspection module is deleted (rc178); `EnhancedTokenStorage` stays as `OAuth2Server`'s own in-process registry, documented as such |
-| #148 | Redis backend on the production path (`storage/core.rs`) uses `KEYS`, leaves the per-user token set without EXPIRE and writes in several round trips | M | P2 | Open: `KEYS` at `core.rs:844`, `:1334`; needs a Redis service in CI for tests |
+| #148 | Redis backend on the production path (`storage/core.rs`) uses `KEYS`, leaves the per-user token set without EXPIRE and writes in several round trips | M | P2 | Fixed at rc182: `SCAN` replaces `KEYS`, `store_token` is one script that also sets the user set's TTL to its longest member, `delete_token` is one transaction (`tests/redis_core_storage.rs`; CI's test job already has a Redis service). Close the issue when rc182 is on main |
 | #120 | Clippy errors under `cli,admin-binary,postgres-storage,redis-storage,sqlite-storage` | S | P2 | Fixed (rc174, #346): clippy is clean under `--all-features`, which CI now runs; closed with evidence |
 | #103 | `cargo clippy --all-targets --all-features -D warnings` fails; decide which feature sets CI lints, then fix to that list | M | P2 | Fixed (rc174, #346): CI lints `--all-features` as well as the feature list, and both are clean; closed with evidence |
 | #116 | No test proves the TOTP facade (`AuthFramework`) and the modular `TotpManager` verify each other's secrets | S | P2 | Fixed (rc179, #347): `tests/totp_cross_verify.rs`, 4 tests; closed with evidence |
