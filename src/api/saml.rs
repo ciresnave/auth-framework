@@ -351,7 +351,11 @@ pub async fn initiate_saml_sso(
 }
 
 /// Handle SAML ACS (Assertion Consumer Service) - where IdP sends response
-#[allow(unreachable_code, unused_variables)]
+#[allow(
+    unreachable_code,
+    unused_variables,
+    reason = "without the `saml` feature the handler returns SAML_SIGNATURE_UNAVAILABLE early, leaving the rest unreachable and `state` and `saml_response_xml` unused"
+)]
 pub async fn handle_saml_acs(
     State(state): State<ApiState>,
     axum::Form(form_data): axum::Form<SamlAcsRequest>,

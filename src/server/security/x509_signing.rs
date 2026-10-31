@@ -5706,7 +5706,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::vec_init_then_push)] // the cases are built up in groups, with setup between
+    #[allow(
+        clippy::vec_init_then_push,
+        reason = "the cases are built up in groups, with setup between"
+    )]
     async fn malformed_or_unusable_subject_keys_are_refused() {
         let dir = tempfile::tempdir().unwrap();
         let (manager, _) = manager_with_profiles(dir.path(), vec![]).await;
