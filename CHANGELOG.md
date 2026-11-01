@@ -239,6 +239,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc188 -- **docs: the SAML signature section of `SECURITY.md` describes what the verifier does (ROADMAP A5).** It said no full C14N or signature-chain validation was implemented and that SHA-1 was used for canonicalization. Measured: verification runs on `bergshamra` (canonicalization, every reference digest recomputed, a signed reference required, the certificate pinned per issuer, `KeyInfo` ignored); no certificate chain is built and revocation is not consulted; SHA-1 digests and signatures are accepted by the library. Documentation only.
 - 0.6.0-rc187 -- Docs: `SECURITY.md` no longer says Kerberos AP-REQ validation checks ASN.1 tags only and needs a KDC; it describes what `validate_ap_req` does (keytab decryption, HMAC, realm/name match, expiry, clock skew, replay; no KDC, no PAC). `COMPATIBILITY.md` rates Kerberos Substantial, not Full. ROADMAP A6 done, A13 added for the gaps measured. No code change.
 - 0.6.0-rc186 -- Calls that dropped a return value now say so with `let _ =` (CodeRipper unused-return-values): `SessionStore::create_session`, `UserAttributesString::insert`, a test CA helper, and two test call sites. No behaviour change.
 - 0.6.0-rc185 -- Every `#[allow(...)]` now carries a `reason = "..."` (CodeRipper lint-suppression); one unneeded `dead_code` allow removed from a test. No behaviour change.

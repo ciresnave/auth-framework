@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc187`
+- Current crate version: `0.6.0-rc188`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -349,7 +349,7 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 | A2 | `SECURITY.md` "Protocol Stubs" | GNAP: validate DPoP proofs and bind the key. `src/protocols/gnap.rs:550` and `:620` accept the method name `dpop` and check nothing else | Open (limitation now stated in `SECURITY.md`) |
 | A3 | `SECURITY.md` "Protocol Stubs" | WS-Trust: issued tokens are held in memory only, lost on restart and unshared across instances; persist them through the `AuthStorage` KV layer | Open |
 | A4 | `SECURITY.md` "Protocol Stubs" | UMA 2.0: the claims-gathering interaction flow is missing | Open |
-| A5 | `SECURITY.md` "Protocol Stubs" | SAML assertions: the doc says no full C14N or signature-chain validation. Re-measure against `src/methods/saml/xml_signature.rs`, then either implement or correct the sentence | Open, needs measuring |
+| A5 | `SECURITY.md` "Protocol Stubs" | SAML assertions: the doc says no full C14N or signature-chain validation. Measured at f4c512fd: `xml_signature.rs` is a shim; `dsig.rs` verifies on `bergshamra` (real C14N, every reference digest recomputed, pinned certificate, no chain building). Sentence corrected, and the SHA-1 paragraph with it | Done (rc188) |
 | A6 | `SECURITY.md` vs `COMPATIBILITY.md` | Kerberos: `SECURITY.md` says AP-REQ validation checks ASN.1 tags only and needs a KDC; `COMPATIBILITY.md` says "Full". `KerberosConfig.kdc_addresses` exists (`kerberos.rs:969`). One of the two docs is wrong; measure and reconcile | Done (rc187), measured at `kerberos.rs` `validate_ap_req` (main 84baa504+): it decrypts the ticket (keytab key) and authenticator (session key), verifies the HMAC, matches realm and client name, and checks expiry, skew and replay; no KDC is contacted. `SECURITY.md` was wrong; `COMPATIBILITY.md` now says Substantial |
 | A7 | `COMPATIBILITY.md` "Deprecated" | `AppConfigBuilder` and `ModularAuthFramework` are documented as `#[deprecated]` but `src/lib.rs:328` and `:334` carry no attribute. Add the attribute and remove both in `0.7.0` | Open; CireSnave/PM ruled 2026-10-24: removal moves from `0.6.0` to `0.7.0` (`COMPATIBILITY.md` fixed in this PR) |
 | A8 | `COMPATIBILITY.md` "Deprecated" | Remove the monolithic `AuthFramework` method surface in `0.7.0` in favour of grouped accessors | Held until `0.7.0` planning |
