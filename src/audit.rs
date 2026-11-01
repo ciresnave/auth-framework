@@ -592,6 +592,11 @@ pub struct AuditLogger<S: AuditStorage> {
 }
 
 impl<S: AuditStorage> AuditLogger<S> {
+    /// The storage this logger writes to.
+    pub fn storage(&self) -> &S {
+        &self.storage
+    }
+
     /// Create a new audit logger
     pub fn new(storage: S) -> Self {
         Self {
