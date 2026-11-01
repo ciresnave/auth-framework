@@ -26,7 +26,7 @@ fn value_of(text: &str, key: &str) -> String {
 #[test]
 fn member_crate_and_sdks_carry_the_cargo_version() {
     let cargo = env!("CARGO_PKG_VERSION");
-    // PEP 440 spells the pre-release `0.6.0rc189`.
+    // PEP 440 spells the pre-release `0.6.0rc191`.
     let pep440 = cargo.replace("-rc", "rc");
 
     assert_eq!(
