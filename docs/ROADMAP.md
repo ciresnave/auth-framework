@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc189`
+- Current crate version: `0.6.0-rc190`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -357,7 +357,7 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 | A10 | `docs/api/REST_API_DESIGN_RATIONALE.md` | Webhooks for user, role and auth-failure events | Dropped 2026-10-24 (PM ruling): no consumer has asked and no route exists; removed from the design doc. Reopen when a consumer asks |
 | A11 | `docs/api/REST_API_DESIGN_RATIONALE.md` "Planned Additions" | Admin batch operations, advanced filtering, export/import. The other "planned" items (WebAuthn, OIDC discovery, API keys) have routes in `src/api/server.rs` | Open; the note at the top of that document marks it historical |
 | A12 | CodeRipper rule OPS-011 `cli-basics` (2026-10-29) | Every shipped binary answers `--help`, `--version` and a bad flag, and none starts serving unasked: `oauth2_test_server` / `test_oauth2` hung on any argument, `auth-framework` had no `--version`, `security_audit` ignored its arguments and printed a fixed `v0.4.0` | Done (rc169): test servers need `serve`; `tests/bin_cli_basics.rs` probes each binary |
-| A13 | A6 measurement (2026-10-31) | Kerberos: no test builds a valid AP-REQ end to end (the 25 tests cover primitives, replay and config); `KerberosConfig.kdc_addresses` / `add_kdc` are stored and never used by validation; a keytab entry matching only realm and encryption type is accepted when the service principal matches none. Add an end-to-end AP-REQ test (valid, expired, wrong key, replayed), then either use `kdc_addresses` or remove it, and decide whether the realm-only fallback stays | Open, M |
+| A13 | A6 measurement (2026-10-31) | Kerberos: no test builds a valid AP-REQ end to end (the 25 tests cover primitives, replay and config); `KerberosConfig.kdc_addresses` / `add_kdc` are stored and never used by validation. Add an end-to-end AP-REQ test (valid, expired, wrong key, replayed), then either use `kdc_addresses` or remove it. The realm-only keytab fallback is removed (rc190): the entry is chosen by service principal and key type, with a unit test that a ticket for another service in the realm matches nothing | Open, M (fallback done) |
 
 ### Do not build otherwise (patent sweep, 2026-10-25)
 

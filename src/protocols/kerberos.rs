@@ -1358,24 +1358,12 @@ impl KerberosManager {
             ap_req.ticket.realm
         );
 
-        let entry = keytab
-            .iter()
-            .find(|e| {
-                e.principal == ticket_sname
-                    && e.key_type == ticket_etype as u32
-                    && ticket_kvno.is_none_or(|v| e.kvno == v)
-            })
-            .or_else(|| {
-                // Fallback: match by realm and key type only
-                keytab
-                    .iter()
-                    .find(|e| e.realm == ap_req.ticket.realm && e.key_type == ticket_etype as u32)
-            })
+        let entry = select_keytab_entry(&keytab, &ticket_sname, ticket_etype as u32, ticket_kvno)
             .ok_or_else(|| {
-                AuthError::config(format!(
-                    "No keytab entry for principal={ticket_sname} etype={ticket_etype}"
-                ))
-            })?;
+            AuthError::config(format!(
+                "No keytab entry for principal={ticket_sname} etype={ticket_etype}"
+            ))
+        })?;
 
         // ── Step 3: Decrypt the ticket ──
         let ticket_plaintext = decrypt_aes_cts(
@@ -1592,6 +1580,26 @@ fn parse_keytab(data: &[u8]) -> Result<Vec<KeytabEntry>> {
     }
 
     Ok(entries)
+}
+
+/// The keytab entry that holds the key for the service the ticket names.
+///
+/// The principal must match: a ticket issued for another service in the same realm is not ours to
+/// accept, even when its key type is the same and our keytab happens to hold that service's key.
+/// An exact key version wins; failing that, the same principal and key type under any version
+/// (a ticket issued before the service key was rotated).
+fn select_keytab_entry<'a>(
+    keytab: &'a [KeytabEntry],
+    service_principal: &str,
+    etype: u32,
+    kvno: Option<u32>,
+) -> Option<&'a KeytabEntry> {
+    let same_service = |e: &&KeytabEntry| e.principal == service_principal && e.key_type == etype;
+    keytab
+        .iter()
+        .filter(same_service)
+        .find(|e| kvno.is_none_or(|v| e.kvno == v))
+        .or_else(|| keytab.iter().find(same_service))
 }
 
 /// Parse a single keytab entry.
@@ -1982,5 +1990,39 @@ mod tests {
 
         assert!(config.allow_delegation);
         assert_eq!(config.replay_cache_max_entries, 500);
+    }
+
+    fn key(principal: &str, kvno: u32, etype: u32, tag: u8) -> KeytabEntry {
+        KeytabEntry {
+            principal: principal.to_string(),
+            realm: principal.rsplit('@').next().unwrap().to_string(),
+            kvno,
+            key_type: etype,
+            key_data: vec![tag; 16],
+        }
+    }
+
+    #[test]
+    fn a_ticket_for_another_service_in_the_realm_selects_no_key() {
+        // The keytab holds the key of host/a, so a ticket issued for HTTP/b (same realm, same key
+        // type) must not be matched to it.
+        let keytab = [key("host/a@EXAMPLE.COM", 3, 17, 1)];
+        assert!(select_keytab_entry(&keytab, "HTTP/b@EXAMPLE.COM", 17, Some(3)).is_none());
+        // Positive control: the same call for the service the keytab holds finds it.
+        assert!(select_keytab_entry(&keytab, "host/a@EXAMPLE.COM", 17, Some(3)).is_some());
+    }
+
+    #[test]
+    fn the_exact_key_version_wins_and_an_older_ticket_still_finds_its_service() {
+        let keytab = [
+            key("HTTP/b@EXAMPLE.COM", 4, 17, 4),
+            key("HTTP/b@EXAMPLE.COM", 3, 17, 3),
+        ];
+        let exact = select_keytab_entry(&keytab, "HTTP/b@EXAMPLE.COM", 17, Some(3)).unwrap();
+        assert_eq!(exact.kvno, 3);
+        // A ticket naming a version we no longer hold falls back to the same service, not another.
+        let rotated = select_keytab_entry(&keytab, "HTTP/b@EXAMPLE.COM", 17, Some(2)).unwrap();
+        assert_eq!(rotated.principal, "HTTP/b@EXAMPLE.COM");
+        assert!(select_keytab_entry(&keytab, "HTTP/b@EXAMPLE.COM", 18, Some(3)).is_none());
     }
 }
