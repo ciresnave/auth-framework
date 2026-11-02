@@ -965,7 +965,13 @@ pub struct KerberosConfig {
     /// Path to the keytab file.
     pub keytab_path: Option<String>,
 
-    /// KDC addresses for ticket verification.
+    /// KDC addresses. **Deprecated and unused:** AP-REQ validation is offline
+    /// (it decrypts with the keytab) and no KDC is contacted, so this value is
+    /// stored and never read. It will be removed at the next breaking release.
+    #[deprecated(
+        since = "0.6.0-rc194",
+        note = "never read: Kerberos validation is offline and contacts no KDC; will be removed at the next breaking release"
+    )]
     pub kdc_addresses: Vec<String>,
 
     /// Maximum allowed clock skew (default: 300 seconds / 5 minutes).
@@ -978,6 +984,7 @@ pub struct KerberosConfig {
     pub replay_cache_max_entries: usize,
 }
 
+#[allow(deprecated)] // initialises the deprecated, unused `kdc_addresses`
 impl Default for KerberosConfig {
     fn default() -> Self {
         Self {
@@ -1008,8 +1015,6 @@ impl KerberosConfig {
     ///         "EXAMPLE.COM",
     ///     )
     ///     .keytab_path("/etc/krb5.keytab")
-    ///     .add_kdc("kdc1.example.com:88")
-    ///     .add_kdc("kdc2.example.com:88")
     ///     .build();
     /// ```
     pub fn builder(
@@ -1064,8 +1069,14 @@ impl KerberosConfigBuilder {
         self
     }
 
-    /// Append a KDC address (e.g. `"kdc.example.com:88"`).
+    /// Append a KDC address. **Deprecated and unused:** validation is offline and
+    /// contacts no KDC, so the address is stored and never read.
+    #[deprecated(
+        since = "0.6.0-rc194",
+        note = "never read: Kerberos validation is offline and contacts no KDC; will be removed at the next breaking release"
+    )]
     pub fn add_kdc(mut self, addr: impl Into<String>) -> Self {
+        #[allow(deprecated)]
         self.config.kdc_addresses.push(addr.into());
         self
     }
@@ -1954,6 +1965,7 @@ mod tests {
     // ── Builder & preset tests ───────────────────────────────────────────
 
     #[test]
+    #[allow(deprecated)] // the deprecated, unused KDC list is still stored
     fn test_kerberos_config_builder() {
         let config = KerberosConfig::builder("HTTP/srv@REALM", "REALM")
             .keytab_path("/etc/krb5.keytab")

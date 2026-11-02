@@ -1,6 +1,6 @@
 {
   "name": "@authframework/js-sdk",
-  "version": "0.6.0-rc192",
+  "version": "0.6.0-rc194",
   "description": "Official JavaScript/TypeScript SDK for AuthFramework REST API",
   "main": "dist/index.cjs.js",
   "types": "dist/index.d.ts",
