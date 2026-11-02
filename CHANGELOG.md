@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc85] - Unreleased
+
+### Fixed
+
+- **fix(dpop): RS256, RS384, RS512 and PS256, PS384, PS512 DPoP proofs are accepted for RSA keys of 2048 bits and more.** The RSA public key handed to the signature check was built with a one-byte length for the modulus, which wraps at 256, so every proof from a 2048-bit key failed verification (it failed closed). A DER length encoder replaces it. Backport of main's 0.6.0-rc201 (ROADMAP A17).
+
 ## [0.5.0-rc84] - Unreleased
 
 ### Fixed
