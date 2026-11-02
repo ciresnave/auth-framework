@@ -81,7 +81,7 @@ pub struct DpopValidationResult {
 #[derive(Debug)]
 pub(crate) struct VerifiedDpopProof {
     result: DpopValidationResult,
-    key: String,
+    replay_id: String,
     keep_until: DateTime<Utc>,
 }
 
@@ -315,7 +315,7 @@ impl DpopManager {
                 public_key_jwk: Some(public_key_jwk),
                 jwk_thumbprint: Some(jwk_thumbprint),
             },
-            key,
+            replay_id: key,
             keep_until,
         })
     }
@@ -363,7 +363,7 @@ impl DpopManager {
                     .unwrap_or(DateTime::<Utc>::MAX_UTC);
             }
         }
-        if used.contains_key(&verified.key) {
+        if used.contains_key(&verified.replay_id) {
             return Err(Self::rejected(&["DPoP proof JTI already used".to_string()]));
         }
         if used.len() >= self.max_replay_entries {
@@ -376,7 +376,7 @@ impl DpopManager {
                 .unwrap_or_else(|e| e.into_inner());
             *earliest = (*earliest).min(verified.keep_until);
         }
-        used.insert(verified.key, verified.keep_until);
+        used.insert(verified.replay_id, verified.keep_until);
         Ok(verified.result)
     }
 
