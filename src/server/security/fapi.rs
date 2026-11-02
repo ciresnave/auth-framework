@@ -569,6 +569,11 @@ impl std::fmt::Debug for FapiTokenResponse {
     }
 }
 
+/// Is a request object issued at `iat` older than `max_age` seconds at `now`?
+fn request_object_too_old(now: i64, iat: i64, max_age: i64) -> bool {
+    now.checked_sub(iat).is_none_or(|age| age > max_age)
+}
+
 impl FapiManager {
     /// Create a new FAPI manager
     pub fn new(
@@ -662,24 +667,33 @@ impl FapiManager {
                 .await?;
         }
 
-        // Validate DPoP if required
-        if self.config.require_dpop {
+        // Validate DPoP if required; the proof is recorded only once the request has been accepted.
+        let pending_proof = if self.config.require_dpop {
             let proof = dpop_proof.ok_or_else(|| {
                 AuthError::auth_method("dpop", "DPoP proof required for FAPI 2.0")
             })?;
-            self.dpop_manager
-                .validate_dpop_proof(
-                    proof,
-                    "POST",
-                    &format!("{}/authorize", self.config.issuer),
-                    None,
-                    None,
-                )
-                .await?;
-        }
+            Some(
+                self.dpop_manager
+                    .verify_dpop_proof(
+                        proof,
+                        "POST",
+                        &format!("{}/authorize", self.config.issuer),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
 
         // Validate request object claims
         self.validate_request_claims(&claims).await?;
+
+        if let Some(pending) = pending_proof {
+            self.dpop_manager.commit_dpop_proof(pending).await?;
+        }
 
         Ok(claims)
     }
@@ -754,7 +768,7 @@ impl FapiManager {
                 let now = Utc::now().timestamp();
 
                 // Check request object age
-                if now - fapi_claims.iat > self.config.max_request_age {
+                if request_object_too_old(now, fapi_claims.iat, self.config.max_request_age) {
                     return Err(AuthError::token("Request object too old".to_string()));
                 }
 
@@ -866,7 +880,7 @@ impl FapiManager {
         client_assertion: Option<&str>,
         client_cert: Option<&str>,
         dpop_proof: Option<&str>,
-        authorization_code: &str,
+        _authorization_code: &str,
     ) -> Result<String> {
         // Client authentication - prefer private key JWT for FAPI 2.0
         let client_id = if let Some(assertion) = client_assertion {
@@ -907,7 +921,7 @@ impl FapiManager {
                     proof,
                     "POST",
                     &format!("{}/token", self.config.issuer),
-                    Some(authorization_code), // Include authorization code in DPoP validation
+                    None, // an authorization code is not an access token: no `ath` at this endpoint
                     None,
                 )
                 .await?;
@@ -1016,17 +1030,45 @@ impl FapiManager {
         cert_thumbprint: &Option<String>,
         dpop_jkt: &Option<String>,
     ) -> Result<String> {
+        let claims =
+            self.access_token_claims(client_id, user_id, scopes, cert_thumbprint, dpop_jkt);
+
+        // Create JWT header
+        let header = Header::new(Algorithm::RS256);
+
+        // Sign the token
+        let token =
+            jsonwebtoken::encode(&header, &claims, &self.config.private_key).map_err(|e| {
+                AuthError::TokenGeneration(format!("Failed to generate access token: {}", e))
+            })?;
+
+        Ok(token)
+    }
+
+    /// The claims of a FAPI access token.
+    fn access_token_claims(
+        &self,
+        client_id: &str,
+        user_id: &str,
+        scopes: &[String],
+        cert_thumbprint: &Option<String>,
+        dpop_jkt: &Option<String>,
+    ) -> Value {
         let now = Utc::now();
         let exp = now + Duration::hours(1);
 
         let mut claims = json!({
             "iss": self.config.issuer,
-            "aud": client_id,
+            // This server is the audience the resource check accepts; the client is `client_id`.
+            "aud": self.config.issuer,
+            "client_id": client_id,
             "sub": user_id,
             "iat": now.timestamp(),
+            "nbf": now.timestamp(),
             "exp": exp.timestamp(),
             "scope": scopes.join(" "),
             "jti": Uuid::new_v4().to_string(),
+            "typ": "access",
         });
 
         // Add confirmation claims
@@ -1044,16 +1086,7 @@ impl FapiManager {
             claims["cnf"] = cnf;
         }
 
-        // Create JWT header
-        let header = Header::new(Algorithm::RS256);
-
-        // Sign the token
-        let token =
-            jsonwebtoken::encode(&header, &claims, &self.config.private_key).map_err(|e| {
-                AuthError::TokenGeneration(format!("Failed to generate access token: {}", e))
-            })?;
-
-        Ok(token)
+        claims
     }
 
     /// Generate refresh token
@@ -1297,17 +1330,46 @@ impl FapiManager {
             AuthError::token("Token is not sender-constrained (missing cnf claim)".to_string())
         })?;
 
-        // Validate DPoP binding if cnf contains jkt
-        if let Some(expected_jkt) = cnf.get("jkt").and_then(|v| v.as_str()) {
+        // A `cnf` that names no binding we can check, or names one of the wrong type, is not a
+        // binding: refuse it rather than skip the checks below.
+        let jkt_member = cnf.get("jkt");
+        let x5t_member = cnf.get("x5t#S256");
+        for (name, member) in [("jkt", jkt_member), ("x5t#S256", x5t_member)] {
+            if member.is_some_and(|v| !v.is_string()) {
+                return Err(AuthError::token(format!(
+                    "Token's cnf.{name} is not a string"
+                )));
+            }
+        }
+        if jkt_member.is_none() && x5t_member.is_none() {
+            return Err(AuthError::token(
+                "Token's cnf claim names no supported key binding".to_string(),
+            ));
+        }
+
+        // Validate DPoP binding if cnf contains jkt. The proof is verified here and recorded
+        // only after the certificate binding below has passed too.
+        let pending_proof = if let Some(expected_jkt) = cnf.get("jkt").and_then(|v| v.as_str()) {
             let proof = dpop_proof.ok_or_else(|| {
                 AuthError::token(
                     "Token is DPoP-bound but no DPoP proof header provided".to_string(),
                 )
             })?;
-            self.dpop_manager
-                .validate_dpop_proof(proof, http_method, http_uri, None, Some(expected_jkt))
-                .await?;
-        }
+            Some(
+                self.dpop_manager
+                    .verify_dpop_proof(
+                        proof,
+                        http_method,
+                        http_uri,
+                        Some(access_token),
+                        None,
+                        Some(expected_jkt),
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
 
         // Validate mTLS certificate binding if cnf contains x5t#S256
         if let Some(expected_thumbprint) = cnf.get("x5t#S256").and_then(|v| v.as_str()) {
@@ -1330,6 +1392,10 @@ impl FapiManager {
                     "Certificate thumbprint does not match token binding".to_string(),
                 ));
             }
+        }
+
+        if let Some(pending) = pending_proof {
+            self.dpop_manager.commit_dpop_proof(pending).await?;
         }
 
         // Return the validated token claims
@@ -1956,5 +2022,562 @@ mod tests {
         let nameless = params.self_signed(&key).unwrap();
         assert!(client_id_from_certificate(nameless.der()).is_err());
         assert!(client_id_from_certificate(b"not a certificate").is_err());
+    }
+}
+
+#[cfg(test)]
+mod request_object_age {
+    use super::*;
+    use crate::security::secure_jwt::SecureJwtConfig;
+
+    const ISS: &str = "https://fapi.example.com";
+    const CLIENT: &str = "client-1";
+
+    fn request_object(enc: &EncodingKey, iat: i64) -> String {
+        let now = Utc::now().timestamp();
+        let claims = json!({
+            "iss": CLIENT, "sub": CLIENT, "aud": ISS, "exp": now + 300, "nbf": now - 1,
+            "iat": iat, "jti": Uuid::new_v4().to_string(), "scope": "read", "typ": "access",
+            "response_type": "code", "client_id": CLIENT,
+            "redirect_uri": "https://client.example/cb",
+            "code_challenge": "abc", "code_challenge_method": "S256",
+        });
+        jsonwebtoken::encode(&Header::new(Algorithm::ES256), &claims, enc).unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_age_of_a_request_object_cannot_wrap() {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let pem = key.serialize_pem();
+        let enc = EncodingKey::from_ec_pem(pem.as_bytes()).unwrap();
+        let config = FapiConfig {
+            issuer: ISS.to_string(),
+            private_key: EncodingKey::from_ec_pem(pem.as_bytes()).unwrap(),
+            public_key: DecodingKey::from_ec_der(key.public_key_raw()),
+            ..FapiConfig::default()
+        };
+        let validator = || SecureJwtValidator::new(SecureJwtConfig::default()).unwrap();
+        let secure = SecureJwtValidator::new(SecureJwtConfig {
+            allowed_algorithms: vec![Algorithm::ES256],
+            required_issuers: [CLIENT.to_string()].into_iter().collect(),
+            ec_public_key_pem: Some(key.public_key_pem()),
+            require_secure_transport: false,
+            ..SecureJwtConfig::default()
+        })
+        .unwrap();
+        let m = FapiManager::new(
+            config,
+            Arc::new(DpopManager::new(validator())),
+            Arc::new(MutualTlsManager::new()),
+            Arc::new(PARManager::new(Arc::new(
+                crate::storage::MemoryStorage::new(),
+            ))),
+            Arc::new(PrivateKeyJwtManager::new(validator())),
+            Arc::new(secure),
+        );
+        let now = Utc::now().timestamp();
+        m.validate_request_object(&request_object(&enc, now))
+            .await
+            .expect("a fresh request object is accepted");
+        // Old enough to be refused for its age, young enough for the token checks before it.
+        match m
+            .validate_request_object(&request_object(&enc, now - 3000))
+            .await
+        {
+            Ok(_) => panic!("a request object 50 minutes old: ACCEPTED"),
+            Err(e) => assert!(e.to_string().contains("too old"), "refused with {e:?}"),
+        }
+        // An iat that cannot be a request object's, whatever stops it first.
+        assert!(
+            m.validate_request_object(&request_object(&enc, i64::MIN))
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn an_age_that_cannot_be_represented_is_too_old() {
+        let now = Utc::now().timestamp();
+        assert!(!request_object_too_old(now, now, 60));
+        assert!(!request_object_too_old(now, now - 60, 60));
+        assert!(request_object_too_old(now, now - 61, 60));
+        // now - iat overflows: it must read as too old, not wrap (or panic).
+        assert!(request_object_too_old(now, i64::MIN, 60));
+        assert!(request_object_too_old(now, i64::MIN + 1, 60));
+        assert!(request_object_too_old(i64::MAX, -1, 60));
+    }
+}
+
+#[cfg(test)]
+mod dpop_regression {
+    //! DPoP proofs at the FAPI resource check: every way a proof can be wrong is refused, with its
+    //! own reason, and a correct proof is accepted. Each refusal is paired with the accepted case
+    //! built the same way, so a test cannot pass because every proof fails for one shared reason.
+    use super::*;
+    use crate::security::secure_jwt::SecureJwtConfig;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+    use sha2::{Digest, Sha256};
+
+    const ISS: &str = "https://fapi.example.com";
+    const URI: &str = "https://rs.example.com/resource";
+
+    fn ec_key() -> (EncodingKey, serde_json::Value) {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let raw = key.public_key_raw();
+        let point = &raw[raw.len() - 65..];
+        let jwk = json!({
+            "kty": "EC", "crv": "P-256",
+            "x": B64.encode(&point[1..33]),
+            "y": B64.encode(&point[33..65]),
+        });
+        (
+            EncodingKey::from_ec_pem(key.serialize_pem().as_bytes()).unwrap(),
+            jwk,
+        )
+    }
+
+    fn ath_of(token: &str) -> String {
+        B64.encode(Sha256::digest(token.as_bytes()))
+    }
+
+    /// How to build a proof: everything a correct one has, each field overridable.
+    struct Proof<'a> {
+        key: &'a (EncodingKey, serde_json::Value),
+        htm: &'a str,
+        htu: &'a str,
+        iat: i64,
+        jti: &'a str,
+        ath: Option<String>,
+        der: bool,
+        jwk_extra: Option<(&'a str, &'a str)>,
+    }
+
+    impl Proof<'_> {
+        fn build(&self) -> String {
+            let mut jwk = self.key.1.clone();
+            if let Some((k, v)) = self.jwk_extra {
+                jwk[k] = json!(v);
+            }
+            let header = json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": jwk});
+            let mut claims =
+                json!({"jti": self.jti, "htm": self.htm, "htu": self.htu, "iat": self.iat});
+            if let Some(a) = &self.ath {
+                claims["ath"] = json!(a);
+            }
+            let si = format!(
+                "{}.{}",
+                B64.encode(header.to_string()),
+                B64.encode(claims.to_string())
+            );
+            // jsonwebtoken signs in the JWS form: r || s.
+            let sig =
+                jsonwebtoken::crypto::sign(si.as_bytes(), &self.key.0, Algorithm::ES256).unwrap();
+            if !self.der {
+                return format!("{si}.{sig}");
+            }
+            let raw = B64.decode(sig).unwrap();
+            let int = |v: &[u8]| {
+                let mut v: Vec<u8> = v.iter().copied().skip_while(|&x| x == 0).collect();
+                if v.is_empty() || v[0] & 0x80 != 0 {
+                    v.insert(0, 0);
+                }
+                let mut o = vec![0x02, v.len() as u8];
+                o.extend(v);
+                o
+            };
+            let mut body = int(&raw[..32]);
+            body.extend(int(&raw[32..]));
+            let mut der = vec![0x30, body.len() as u8];
+            der.extend(body);
+            format!("{si}.{}", B64.encode(der))
+        }
+    }
+
+    fn manager() -> (FapiManager, Arc<DpopManager>, Vec<u8>) {
+        let secret = b"0123456789abcdef0123456789abcdef".to_vec();
+        let validator = || SecureJwtValidator::new(SecureJwtConfig::default()).unwrap();
+        let dpop = Arc::new(DpopManager::new(validator()));
+        let config = FapiConfig::builder(
+            ISS,
+            EncodingKey::from_secret(&secret),
+            DecodingKey::from_secret(&secret),
+        )
+        .build();
+        let m = FapiManager::new(
+            config,
+            dpop.clone(),
+            Arc::new(MutualTlsManager::new()),
+            Arc::new(PARManager::new(Arc::new(
+                crate::storage::MemoryStorage::new(),
+            ))),
+            Arc::new(PrivateKeyJwtManager::new(validator())),
+            Arc::new(
+                SecureJwtValidator::new(SecureJwtConfig {
+                    required_issuers: [ISS.to_string()].into_iter().collect(),
+                    require_secure_transport: false,
+                    ..SecureJwtConfig::default()
+                })
+                .unwrap(),
+            ),
+        );
+        (m, dpop, secret)
+    }
+
+    fn sign_hs256(secret: &[u8], claims: &serde_json::Value) -> String {
+        jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            claims,
+            &EncodingKey::from_secret(secret),
+        )
+        .unwrap()
+    }
+
+    /// A bound access token written out by hand, so the proof cases do not depend on how the
+    /// manager mints tokens (that has its own test below).
+    fn token_for(secret: &[u8], jkt: &str) -> String {
+        let now = Utc::now().timestamp();
+        sign_hs256(
+            secret,
+            &json!({
+                "iss": ISS, "aud": ISS, "sub": "user-1", "iat": now, "nbf": now - 1,
+                "exp": now + 3600, "jti": Uuid::new_v4().to_string(), "scope": "read",
+                "typ": "access", "cnf": {"jkt": jkt},
+            }),
+        )
+    }
+
+    async fn check(m: &FapiManager, tok: &str, proof: Option<&str>, method: &str) -> Result<()> {
+        m.validate_sender_constrained_token(tok, proof, None, method, URI)
+            .await
+            .map(|_| ())
+    }
+
+    fn refused(r: Result<()>, reason: &str, what: &str) {
+        match r {
+            Ok(()) => panic!("{what}: ACCEPTED"),
+            Err(e) => assert!(
+                e.to_string().contains(reason),
+                "{what}: refused with {e:?}, expected a reason containing {reason:?}"
+            ),
+        }
+    }
+
+    /// One bound token, the key it is bound to, and another key.
+    struct Fixture {
+        m: FapiManager,
+        tok: String,
+        key_a: (EncodingKey, serde_json::Value),
+        key_b: (EncodingKey, serde_json::Value),
+        now: i64,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let (m, dpop, secret) = manager();
+            let key_a = ec_key();
+            let key_b = ec_key();
+            let jkt = dpop.create_dpop_confirmation(&key_a.1).unwrap().jkt;
+            let tok = token_for(&secret, &jkt);
+            Fixture {
+                m,
+                tok,
+                key_a,
+                key_b,
+                now: Utc::now().timestamp(),
+            }
+        }
+
+        /// The correct proof for the bound key; tests override one field.
+        fn good<'a>(&'a self, jti: &'a str) -> Proof<'a> {
+            Proof {
+                key: &self.key_a,
+                htm: "GET",
+                htu: URI,
+                iat: self.now,
+                jti,
+                ath: Some(ath_of(&self.tok)),
+                der: false,
+                jwk_extra: None,
+            }
+        }
+
+        async fn present(&self, proof: &str) -> Result<()> {
+            check(&self.m, &self.tok, Some(proof), "GET").await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_correct_proof_from_the_bound_key_is_accepted() {
+        let f = Fixture::new();
+        f.present(&f.good("j-ok").build())
+            .await
+            .expect("a correct proof from the bound key is accepted");
+    }
+
+    #[tokio::test]
+    async fn a_proof_from_another_key_is_refused_though_otherwise_correct() {
+        let f = Fixture::new();
+        let p = Proof {
+            key: &f.key_b,
+            ..f.good("j-other")
+        }
+        .build();
+        refused(f.present(&p).await, "key binding", "other key");
+    }
+
+    #[tokio::test]
+    async fn a_proof_for_another_method_url_or_time_is_refused() {
+        let f = Fixture::new();
+        let p = Proof {
+            htm: "DELETE",
+            ..f.good("j-htm")
+        }
+        .build();
+        refused(f.present(&p).await, "HTTP method", "wrong htm");
+        let p = Proof {
+            htu: "https://evil.example/x",
+            ..f.good("j-htu")
+        }
+        .build();
+        refused(f.present(&p).await, "HTTP URI", "wrong htu");
+        let p = Proof {
+            iat: f.now - 86_400,
+            ..f.good("j-old")
+        }
+        .build();
+        refused(f.present(&p).await, "too old", "one-day-old iat");
+        let p = Proof {
+            iat: f.now + 86_400,
+            ..f.good("j-future")
+        }
+        .build();
+        refused(f.present(&p).await, "in the future", "future iat");
+    }
+
+    #[tokio::test]
+    async fn a_proof_used_twice_is_refused_the_second_time() {
+        let f = Fixture::new();
+        let once = f.good("j-replay").build();
+        f.present(&once).await.expect("first use");
+        refused(f.present(&once).await, "already used", "replayed proof");
+    }
+
+    #[tokio::test]
+    async fn no_proof_is_refused_for_a_bound_token() {
+        let f = Fixture::new();
+        refused(
+            check(&f.m, &f.tok, None, "GET").await,
+            "no DPoP proof header",
+            "no proof",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_proof_must_name_this_access_token() {
+        let f = Fixture::new();
+        let p = Proof {
+            ath: None,
+            ..f.good("j-no-ath")
+        }
+        .build();
+        refused(f.present(&p).await, "'ath'", "no ath");
+        let p = Proof {
+            ath: Some(ath_of("another-token")),
+            ..f.good("j-bad-ath")
+        }
+        .build();
+        refused(f.present(&p).await, "access token hash", "wrong ath");
+    }
+
+    #[tokio::test]
+    async fn a_der_signature_or_a_private_key_in_the_header_is_refused() {
+        let f = Fixture::new();
+        let p = Proof {
+            der: true,
+            ..f.good("j-der")
+        }
+        .build();
+        refused(f.present(&p).await, "r||s", "DER-encoded ES256 signature");
+        let p = Proof {
+            jwk_extra: Some(("d", "AAAA")),
+            ..f.good("j-priv")
+        }
+        .build();
+        refused(f.present(&p).await, "private key", "private key in jwk");
+    }
+
+    #[tokio::test]
+    async fn a_token_minted_by_the_manager_passes_its_own_resource_check() {
+        let (m, dpop, secret) = manager();
+        let key = ec_key();
+        let jkt = dpop.create_dpop_confirmation(&key.1).unwrap().jkt;
+        // generate_access_token signs with the configured RSA key; here the claims it signs are
+        // signed with the test's HMAC secret, which is what the resource check reads them with.
+        let claims =
+            m.access_token_claims("client-1", "user-1", &["read".into()], &None, &Some(jkt));
+        for field in ["typ", "nbf", "client_id"] {
+            assert!(claims.get(field).is_some(), "minted claims lack {field}");
+        }
+        assert_eq!(claims["aud"], json!(ISS));
+        let tok = sign_hs256(&secret, &claims);
+        let proof = Proof {
+            key: &key,
+            htm: "GET",
+            htu: URI,
+            iat: Utc::now().timestamp(),
+            jti: "j-minted",
+            ath: Some(ath_of(&tok)),
+            der: false,
+            jwk_extra: None,
+        }
+        .build();
+        check(&m, &tok, Some(&proof), "GET")
+            .await
+            .expect("a token built from the manager's own claims is accepted");
+    }
+
+    #[tokio::test]
+    async fn a_cnf_that_names_no_checkable_binding_is_refused() {
+        let (m, _dpop, secret) = manager();
+        let now = Utc::now().timestamp();
+        for (cnf, what) in [
+            (json!({}), "empty cnf"),
+            (json!({"foo": "bar"}), "unknown member only"),
+            (json!({"jkt": 5}), "jkt that is not a string"),
+        ] {
+            let tok = sign_hs256(
+                &secret,
+                &json!({
+                    "iss": ISS, "aud": ISS, "sub": "user-1", "iat": now, "nbf": now - 1,
+                    "exp": now + 3600, "jti": Uuid::new_v4().to_string(), "scope": "read",
+                    "typ": "access", "cnf": cnf,
+                }),
+            );
+            refused(check(&m, &tok, None, "GET").await, "cnf", what);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_proof_from_the_wrong_key_leaves_no_replay_record() {
+        let f = Fixture::new();
+        let p = Proof {
+            key: &f.key_b,
+            ..f.good("j-wrong-key")
+        }
+        .build();
+        refused(f.present(&p).await, "key binding", "other key");
+        assert_eq!(
+            f.m.dpop_manager.replay_record_count().await,
+            0,
+            "a proof refused for its key must not take a cache slot"
+        );
+        f.present(&f.good("j-right-key").build())
+            .await
+            .expect("the bound key");
+        assert_eq!(f.m.dpop_manager.replay_record_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn an_rs256_token_minted_by_the_manager_passes_the_resource_check() {
+        // Production signs access tokens with RS256 and an RSA key.
+        let key =
+            rcgen::KeyPair::generate_rsa_for(&rcgen::PKCS_RSA_SHA256, rcgen::RsaKeySize::_2048)
+                .unwrap();
+        let validator = || SecureJwtValidator::new(SecureJwtConfig::default()).unwrap();
+        let dpop = Arc::new(DpopManager::new(validator()));
+        let config = FapiConfig::builder(
+            ISS,
+            EncodingKey::from_rsa_pem(key.serialize_pem().as_bytes()).unwrap(),
+            DecodingKey::from_rsa_der(key.public_key_raw()),
+        )
+        .build();
+        let m = FapiManager::new(
+            config,
+            dpop.clone(),
+            Arc::new(MutualTlsManager::new()),
+            Arc::new(PARManager::new(Arc::new(
+                crate::storage::MemoryStorage::new(),
+            ))),
+            Arc::new(PrivateKeyJwtManager::new(validator())),
+            Arc::new(
+                SecureJwtValidator::new(SecureJwtConfig {
+                    allowed_algorithms: vec![Algorithm::RS256],
+                    required_issuers: [ISS.to_string()].into_iter().collect(),
+                    rsa_public_key_pem: Some(key.public_key_pem()),
+                    require_secure_transport: false,
+                    ..SecureJwtConfig::default()
+                })
+                .unwrap(),
+            ),
+        );
+        let client = ec_key();
+        let jkt = dpop.create_dpop_confirmation(&client.1).unwrap().jkt;
+        let tok = m
+            .generate_access_token("client-1", "user-1", &["read".into()], &None, &Some(jkt))
+            .await
+            .unwrap();
+        let proof = Proof {
+            key: &client,
+            htm: "GET",
+            htu: URI,
+            iat: Utc::now().timestamp(),
+            jti: "j-rs256",
+            ath: Some(ath_of(&tok)),
+            der: false,
+            jwk_extra: None,
+        }
+        .build();
+        check(&m, &tok, Some(&proof), "GET")
+            .await
+            .expect("an RS256 token minted by the manager is accepted");
+    }
+
+    #[tokio::test]
+    async fn a_wrong_certificate_does_not_use_up_the_proof() {
+        let (m, dpop, secret) = manager();
+        let key_a = ec_key();
+        let jkt = dpop.create_dpop_confirmation(&key_a.1).unwrap().jkt;
+        let cert = rcgen::CertificateParams::default()
+            .self_signed(&rcgen::KeyPair::generate().unwrap())
+            .unwrap();
+        let other = rcgen::CertificateParams::default()
+            .self_signed(&rcgen::KeyPair::generate().unwrap())
+            .unwrap();
+        let x5t = B64.encode(Sha256::digest(cert.der().as_ref()));
+        let now = Utc::now().timestamp();
+        // A token bound to both a key and a certificate.
+        let tok = sign_hs256(
+            &secret,
+            &json!({
+                "iss": ISS, "aud": ISS, "sub": "user-1", "iat": now, "nbf": now - 1,
+                "exp": now + 3600, "jti": Uuid::new_v4().to_string(), "scope": "read",
+                "typ": "access", "cnf": {"jkt": jkt, "x5t#S256": x5t},
+            }),
+        );
+        let proof = Proof {
+            key: &key_a,
+            htm: "GET",
+            htu: URI,
+            iat: now,
+            jti: "j-both",
+            ath: Some(ath_of(&tok)),
+            der: false,
+            jwk_extra: None,
+        }
+        .build();
+        let wrong = m
+            .validate_sender_constrained_token(&tok, Some(&proof), Some(&other.pem()), "GET", URI)
+            .await
+            .map(|_| ());
+        refused(wrong, "Certificate thumbprint", "wrong certificate");
+        assert_eq!(
+            m.dpop_manager.replay_record_count().await,
+            0,
+            "a proof was recorded although the certificate was refused"
+        );
+        m.validate_sender_constrained_token(&tok, Some(&proof), Some(&cert.pem()), "GET", URI)
+            .await
+            .expect("both bindings satisfied");
+        assert_eq!(m.dpop_manager.replay_record_count().await, 1);
     }
 }
