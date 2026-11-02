@@ -456,23 +456,40 @@ impl DpopManager {
     /// Validate a DPoP-bound JWT access token and the proof presented with it.
     ///
     /// The token is validated first, with `key`: signature, expiry and the other standard
-    /// claims, by the [`SecureJwtValidator`] this manager was built with. Only then is its `cnf`
-    /// claim read, and the proof must be signed by the key with the `jkt` it names, carry the
-    /// token's hash (`ath`), and match the request. The proof is recorded last.
+    /// claims, by the [`SecureJwtValidator`] this manager was built with. It must be an access
+    /// token (`typ` of `access`; a refresh token, or a token with no `typ`, is refused) issued for
+    /// `audience`, which is required: the validator checks an audience only when it is configured
+    /// with one. Only then is its `cnf` claim read, and the proof must be signed by the key with
+    /// the `jkt` it names, carry the token's hash (`ath`), and match the request. The proof is
+    /// recorded last.
     pub async fn validate_dpop_bound_jwt(
         &self,
         access_token: &str,
         key: &DecodingKey,
+        audience: &str,
         dpop_proof: &str,
         http_method: &str,
         http_uri: &str,
     ) -> Result<()> {
-        self.jwt_validator
+        let claims = self
+            .jwt_validator
             .validate_token(access_token, key)
             .map_err(|e| {
                 tracing::warn!("DPoP-bound access token refused: {e}");
                 AuthError::token("Invalid DPoP-bound access token".to_string())
             })?;
+
+        // The validator skips its token-type check for an empty `typ` and, by default, allows
+        // refresh tokens: this function takes access tokens only.
+        if claims.typ != "access" {
+            return Err(AuthError::token("Not an access token".to_string()));
+        }
+        // And it checks an audience only if it was configured with one.
+        if claims.aud != audience {
+            return Err(AuthError::token(
+                "Access token is for another audience".to_string(),
+            ));
+        }
 
         // The signature has been checked, so the payload can be read.
         let payload = access_token
@@ -1611,30 +1628,6 @@ mod dpop_regression {
         );
     }
 
-    #[tokio::test]
-    #[allow(deprecated)]
-    async fn a_proof_is_recorded_only_after_the_token_is_accepted() {
-        let f = Fixture::new();
-        let confirmation = f.dpop.create_dpop_confirmation(&f.key.1).unwrap();
-        // An opaque token this function cannot validate: refused, and nothing recorded.
-        let opaque = "opaque-token-1";
-        let p = Proof {
-            ath: Some(ath_of(opaque)),
-            ..f.good("j-opaque")
-        }
-        .build();
-        let r = f
-            .dpop
-            .validate_dpop_bound_access_token(opaque, &confirmation, &p, "GET", URI)
-            .await;
-        assert!(r.is_err(), "an opaque token was reported valid: {r:?}");
-        assert_eq!(
-            f.dpop.used_nonces.read().await.len(),
-            0,
-            "a proof was recorded although its token was refused"
-        );
-    }
-
     #[test]
     fn an_rsa_jwk_with_a_leading_zero_octet_has_no_thumbprint() {
         let f = Fixture::new();
@@ -1743,10 +1736,10 @@ mod dpop_regression {
 
     #[tokio::test]
     #[allow(deprecated)]
-    async fn a_forged_jwt_is_not_accepted_as_a_bound_token() {
+    async fn the_deprecated_function_always_refuses_even_a_forged_jwt() {
         let f = Fixture::new();
         let confirmation = f.dpop.create_dpop_confirmation(&f.key.1).unwrap();
-        // A JWT nobody signed, whose claims name the proof's key.
+        // A JWT nobody signed, whose claims name the proof's key: the old function said Ok(true).
         let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#);
         let claims = URL_SAFE_NO_PAD
             .encode(json!({"sub": "admin", "cnf": {"jkt": confirmation.jkt}}).to_string());
@@ -1769,16 +1762,18 @@ mod dpop_regression {
         );
     }
 
-    fn bound_jwt(secret: &[u8], jkt: &str, with_cnf: bool) -> String {
+    const AUD: &str = "https://api.example.com";
+    const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    /// An access token as the validator wants it; `edit` changes one thing about it.
+    fn jwt_with(secret: &[u8], jkt: &str, edit: impl FnOnce(&mut serde_json::Value)) -> String {
         let now = Utc::now().timestamp();
         let mut claims = json!({
-            "iss": "auth-framework", "sub": "user-1", "aud": "api", "exp": now + 300,
+            "iss": "auth-framework", "sub": "user-1", "aud": AUD, "exp": now + 300,
             "nbf": now - 1, "iat": now, "jti": uuid::Uuid::new_v4().to_string(),
-            "scope": "read", "typ": "access",
+            "scope": "read", "typ": "access", "cnf": {"jkt": jkt},
         });
-        if with_cnf {
-            claims["cnf"] = json!({"jkt": jkt});
-        }
+        edit(&mut claims);
         jsonwebtoken::encode(
             &jsonwebtoken::Header::new(Algorithm::HS256),
             &claims,
@@ -1787,72 +1782,232 @@ mod dpop_regression {
         .unwrap()
     }
 
-    #[tokio::test]
-    async fn a_genuine_bound_jwt_is_accepted_and_every_other_is_not() {
-        let secret = b"0123456789abcdef0123456789abcdef";
-        let key = jsonwebtoken::DecodingKey::from_secret(secret);
-        let f = Fixture::new();
-        let dpop = DpopManager::new(
+    fn jwt_manager() -> DpopManager {
+        DpopManager::new(
             SecureJwtValidator::new(SecureJwtConfig {
                 require_secure_transport: false,
                 ..SecureJwtConfig::default()
             })
             .unwrap(),
-        );
-        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
-        let other = ec_key();
-        let proof_for = |tok: &str, jti: &str, signer: &(EncodingKey, serde_json::Value)| {
-            Proof {
-                key: signer,
-                ath: Some(ath_of(tok)),
-                ..f.good(jti)
-            }
-            .build()
-        };
+        )
+    }
 
-        // The token the key is bound to, with a proof from that key: accepted, once.
-        let tok = bound_jwt(secret, &jkt, true);
-        let p = proof_for(&tok, "j-genuine", &f.key);
-        dpop.validate_dpop_bound_jwt(&tok, &key, &p, "GET", URI)
+    #[tokio::test]
+    async fn a_genuine_bound_jwt_is_accepted_once() {
+        let key = jsonwebtoken::DecodingKey::from_secret(SECRET);
+        let f = Fixture::new();
+        let dpop = jwt_manager();
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        let tok = jwt_with(SECRET, &jkt, |_| {});
+        let p = Proof {
+            ath: Some(ath_of(&tok)),
+            ..f.good("j-genuine")
+        }
+        .build();
+        dpop.validate_dpop_bound_jwt(&tok, &key, AUD, &p, "GET", URI)
             .await
             .expect("a genuine bound token with its key's proof");
         let again = dpop
-            .validate_dpop_bound_jwt(&tok, &key, &p, "GET", URI)
+            .validate_dpop_bound_jwt(&tok, &key, AUD, &p, "GET", URI)
             .await;
         assert!(again.unwrap_err().to_string().contains("already used"));
+        assert_eq!(dpop.used_nonces.read().await.len(), 1);
+    }
 
-        let says = |r: Result<()>, what: &str, needle: &str| match r {
-            Ok(()) => panic!("{what}: ACCEPTED"),
-            Err(e) => assert!(e.to_string().contains(needle), "{what}: refused with {e:?}"),
+    /// Each of these is a token or proof that must be refused for its own reason, and none of
+    /// them may take a replay-cache slot. Removing the check each one exercises turns exactly
+    /// that case green-to-red (run as mutations in the PR).
+    #[tokio::test]
+    async fn a_bound_jwt_that_is_not_a_valid_access_token_for_this_request_is_refused() {
+        let key = jsonwebtoken::DecodingKey::from_secret(SECRET);
+        let f = Fixture::new();
+        let dpop = jwt_manager();
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        let other = ec_key();
+        let now = Utc::now().timestamp();
+
+        // (token, signer of the proof, ath override, audience asked for, reason)
+        let cases = vec![
+            (
+                "signed by someone else",
+                jwt_with(b"another-secret-another-secret-1234", &jkt, |_| {}),
+                &f.key,
+                None,
+                AUD,
+                "Invalid DPoP-bound access token",
+            ),
+            (
+                "expired",
+                jwt_with(SECRET, &jkt, |c| {
+                    c["exp"] = json!(now - 3600);
+                    c["iat"] = json!(now - 3700);
+                    c["nbf"] = json!(now - 3700);
+                }),
+                &f.key,
+                None,
+                AUD,
+                "Invalid DPoP-bound access token",
+            ),
+            (
+                "a refresh token",
+                jwt_with(SECRET, &jkt, |c| c["typ"] = json!("refresh")),
+                &f.key,
+                None,
+                AUD,
+                "Not an access token",
+            ),
+            (
+                "an empty typ",
+                jwt_with(SECRET, &jkt, |c| c["typ"] = json!("")),
+                &f.key,
+                None,
+                AUD,
+                "Not an access token",
+            ),
+            (
+                "issued for another audience",
+                jwt_with(SECRET, &jkt, |c| {
+                    c["aud"] = json!("https://other.example.com")
+                }),
+                &f.key,
+                None,
+                AUD,
+                "another audience",
+            ),
+            (
+                "no cnf.jkt",
+                jwt_with(SECRET, &jkt, |c| {
+                    c.as_object_mut().unwrap().remove("cnf");
+                }),
+                &f.key,
+                None,
+                AUD,
+                "no DPoP key binding",
+            ),
+            (
+                "a proof from another key",
+                jwt_with(SECRET, &jkt, |_| {}),
+                &other,
+                None,
+                AUD,
+                "key binding",
+            ),
+            (
+                "a proof for another token",
+                jwt_with(SECRET, &jkt, |_| {}),
+                &f.key,
+                Some(ath_of("another-token")),
+                AUD,
+                "access token hash",
+            ),
+        ];
+        for (i, (what, tok, signer, ath, aud, reason)) in cases.into_iter().enumerate() {
+            let jti = format!("j-case-{i}");
+            let p = Proof {
+                key: signer,
+                ath: Some(ath.unwrap_or_else(|| ath_of(&tok))),
+                ..f.good(&jti)
+            }
+            .build();
+            match dpop
+                .validate_dpop_bound_jwt(&tok, &key, aud, &p, "GET", URI)
+                .await
+            {
+                Ok(()) => panic!("{what}: ACCEPTED"),
+                Err(e) => assert!(
+                    e.to_string().contains(reason),
+                    "{what}: refused with {e:?}, expected {reason:?}"
+                ),
+            }
+        }
+        assert_eq!(
+            dpop.used_nonces.read().await.len(),
+            0,
+            "a refused token must not use a replay-cache slot"
+        );
+
+        // The same manager, key and request still accept the genuine token afterwards.
+        let tok = jwt_with(SECRET, &jkt, |_| {});
+        let p = Proof {
+            ath: Some(ath_of(&tok)),
+            ..f.good("j-after")
+        }
+        .build();
+        dpop.validate_dpop_bound_jwt(&tok, &key, AUD, &p, "GET", URI)
+            .await
+            .expect("a genuine token after the refusals");
+        assert_eq!(dpop.used_nonces.read().await.len(), 1);
+    }
+
+    /// The validator's algorithm allow-list decides, whatever the key: an HS256 token "signed"
+    /// with the RSA public key's bytes (the classic confusion) is refused when only RS256 is
+    /// allowed, and a genuine RS256 token is accepted.
+    #[tokio::test]
+    async fn an_algorithm_outside_the_allow_list_is_refused() {
+        let rsa =
+            rcgen::KeyPair::generate_rsa_for(&rcgen::PKCS_RSA_SHA256, rcgen::RsaKeySize::_2048)
+                .unwrap();
+        let dpop = DpopManager::new(
+            SecureJwtValidator::new(SecureJwtConfig {
+                allowed_algorithms: vec![Algorithm::RS256],
+                rsa_public_key_pem: Some(rsa.public_key_pem()),
+                require_secure_transport: false,
+                ..SecureJwtConfig::default()
+            })
+            .unwrap(),
+        );
+        let dec = jsonwebtoken::DecodingKey::from_rsa_der(rsa.public_key_raw());
+        let f = Fixture::new();
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        let claims = |jti: &str| {
+            let now = Utc::now().timestamp();
+            json!({
+                "iss": "auth-framework", "sub": "user-1", "aud": AUD, "exp": now + 300,
+                "nbf": now - 1, "iat": now, "jti": jti, "scope": "read", "typ": "access",
+                "cnf": {"jkt": jkt},
+            })
         };
-        // A token signed by someone else, naming the same key.
-        let forged = bound_jwt(b"another-secret-another-secret-1234", &jkt, true);
-        let p = proof_for(&forged, "j-forged", &f.key);
-        says(
-            dpop.validate_dpop_bound_jwt(&forged, &key, &p, "GET", URI)
-                .await,
-            "forged token",
-            "Invalid DPoP-bound access token",
-        );
-        // A genuine token with no key binding.
-        let unbound = bound_jwt(secret, &jkt, false);
-        let p = proof_for(&unbound, "j-unbound", &f.key);
-        says(
-            dpop.validate_dpop_bound_jwt(&unbound, &key, &p, "GET", URI)
-                .await,
-            "token without cnf.jkt",
-            "no DPoP key binding",
-        );
-        // A genuine token with a proof from another key.
-        let tok2 = bound_jwt(secret, &jkt, true);
-        let p = proof_for(&tok2, "j-other", &other);
-        says(
-            dpop.validate_dpop_bound_jwt(&tok2, &key, &p, "GET", URI)
-                .await,
-            "proof from another key",
-            "key binding",
-        );
-        // Only the one genuine proof was recorded.
+        let genuine = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(Algorithm::RS256),
+            &claims("t-rs256"),
+            &EncodingKey::from_rsa_pem(rsa.serialize_pem().as_bytes()).unwrap(),
+        )
+        .unwrap();
+        let p = Proof {
+            ath: Some(ath_of(&genuine)),
+            ..f.good("j-rs")
+        }
+        .build();
+        dpop.validate_dpop_bound_jwt(&genuine, &dec, AUD, &p, "GET", URI)
+            .await
+            .expect("a genuine RS256 token");
+
+        for (secret, what) in [
+            (
+                rsa.public_key_pem().into_bytes(),
+                "HS256 keyed with the public key PEM",
+            ),
+            (
+                rsa.public_key_raw().to_vec(),
+                "HS256 keyed with the public key DER",
+            ),
+        ] {
+            let confused = jsonwebtoken::encode(
+                &jsonwebtoken::Header::new(Algorithm::HS256),
+                &claims("t-hs256"),
+                &EncodingKey::from_secret(&secret),
+            )
+            .unwrap();
+            let p = Proof {
+                ath: Some(ath_of(&confused)),
+                ..f.good("j-conf")
+            }
+            .build();
+            let r = dpop
+                .validate_dpop_bound_jwt(&confused, &dec, AUD, &p, "GET", URI)
+                .await;
+            assert!(r.is_err(), "{what}: ACCEPTED");
+        }
         assert_eq!(dpop.used_nonces.read().await.len(), 1);
     }
 }
