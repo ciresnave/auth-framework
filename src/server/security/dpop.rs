@@ -9,6 +9,7 @@ use crate::errors::{AuthError, Result};
 use crate::security::secure_jwt::SecureJwtValidator;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
+use jsonwebtoken::DecodingKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -85,13 +86,6 @@ pub(crate) struct VerifiedDpopProof {
     keep_until: DateTime<Utc>,
 }
 
-impl VerifiedDpopProof {
-    /// What the proof established: the key it was signed with and its thumbprint.
-    pub(crate) fn result(&self) -> &DpopValidationResult {
-        &self.result
-    }
-}
-
 /// Append a DER length: one byte below 128, otherwise `0x80 | n` and the `n` length bytes.
 fn der_push_length(out: &mut Vec<u8>, len: usize) {
     if len < 0x80 {
@@ -138,6 +132,9 @@ pub struct DpopManager {
     /// The earliest time any held record expires (the far future when none is held).
     earliest_expiry: std::sync::Mutex<DateTime<Utc>>,
 
+    /// Validates the signature and standard claims of JWT access tokens.
+    jwt_validator: SecureJwtValidator,
+
     /// Maximum clock skew allowed (default: 30 seconds)
     clock_skew: Duration,
 }
@@ -183,7 +180,7 @@ impl DpopManager {
 
 impl DpopManager {
     /// Create a new DPoP manager
-    pub fn new(_jwt_validator: SecureJwtValidator) -> Self {
+    pub fn new(jwt_validator: SecureJwtValidator) -> Self {
         Self {
             used_nonces: tokio::sync::RwLock::new(HashMap::new()),
             proof_expiration: Duration::seconds(60),
@@ -191,6 +188,7 @@ impl DpopManager {
             sweep_interval: Duration::seconds(1),
             last_sweep: std::sync::Mutex::new(DateTime::<Utc>::UNIX_EPOCH),
             earliest_expiry: std::sync::Mutex::new(DateTime::<Utc>::MAX_UTC),
+            jwt_validator,
             clock_skew: Duration::seconds(30),
         }
     }
@@ -455,80 +453,95 @@ impl DpopManager {
         }
     }
 
-    /// Comprehensive validation of DPoP-bound access token with JWT validation
-    pub async fn validate_dpop_bound_access_token(
+    /// Validate a DPoP-bound JWT access token and the proof presented with it.
+    ///
+    /// The token is validated first, with `key`: signature, expiry and the other standard
+    /// claims, by the [`SecureJwtValidator`] this manager was built with. It must be an access
+    /// token (`typ` of `access`; a refresh token, or a token with no `typ`, is refused) issued for
+    /// `audience`, which is required: the validator checks an audience only when it is configured
+    /// with one. Only then is its `cnf` claim read, and the proof must be signed by the key with
+    /// the `jkt` it names, carry the token's hash (`ath`), and match the request. The proof is
+    /// recorded last.
+    pub async fn validate_dpop_bound_jwt(
         &self,
         access_token: &str,
-        token_confirmation: &DpopConfirmation,
+        key: &DecodingKey,
+        audience: &str,
         dpop_proof: &str,
         http_method: &str,
         http_uri: &str,
-    ) -> Result<bool> {
-        // First verify the DPoP proof itself; it is recorded only once the token has passed too.
-        let verified = self
-            .verify_dpop_proof(
-                dpop_proof,
-                http_method,
-                http_uri,
-                Some(access_token),
-                None, // No nonce required for this validation
-                None,
-            )
-            .await?;
-        let dpop_result = verified.result();
-
-        if !dpop_result.is_valid {
-            return Err(Self::rejected(&dpop_result.errors));
+    ) -> Result<()> {
+        // An empty audience would match a token whose `aud` is empty: refuse it outright.
+        if audience.is_empty() {
+            return Err(AuthError::token("An audience is required".to_string()));
         }
 
-        // Validate that the DPoP proof JWK matches the token confirmation
-        if let Some(dpop_jwk) = &dpop_result.public_key_jwk {
-            let thumbprint_matches =
-                self.validate_dpop_bound_token(token_confirmation, dpop_jwk)?;
-            debug_assert!(thumbprint_matches, "a mismatch is an error above");
-        } else {
-            return Err(AuthError::auth_method(
-                "dpop",
-                "DPoP proof carried no public key",
-            ));
+        let claims = self
+            .jwt_validator
+            .validate_token(access_token, key)
+            .map_err(|e| {
+                tracing::warn!("DPoP-bound access token refused: {e}");
+                AuthError::token("Invalid DPoP-bound access token".to_string())
+            })?;
+
+        // The validator skips its token-type check for an empty `typ` and, by default, allows
+        // refresh tokens: this function takes access tokens only.
+        if claims.typ != "access" {
+            return Err(AuthError::token("Not an access token".to_string()));
         }
-
-        // Additional validation: if the access token is also a JWT, validate it too
-        // This demonstrates another use of the jwt_validator field
-        if access_token.contains('.') && access_token.split('.').count() == 3 {
-            tracing::debug!("Access token appears to be a JWT, validating structure");
-
-            // For a DPoP-bound JWT access token, validate with proper signing key
-            match self.validate_access_token_jwt(access_token, dpop_proof) {
-                Ok(token_claims) => {
-                    tracing::debug!(
-                        "Access token JWT validated successfully with DPoP binding: {:?}",
-                        token_claims
-                            .get("sub")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("unknown")
-                    );
-                    // Verify DPoP proof matches token binding
-                    self.verify_dpop_token_binding(&token_claims, dpop_proof)?;
-                }
-                Err(e) => {
-                    tracing::warn!("Access token JWT validation failed: {}", e);
-                    return Err(AuthError::token(
-                        "Invalid DPoP-bound access token".to_string(),
-                    ));
-                }
-            }
-        } else {
-            // An opaque token can only be validated by introspection, which this function does
-            // not do: it must not report a token it never looked at as valid.
+        // And it checks an audience only if it was configured with one.
+        if claims.aud != audience {
             return Err(AuthError::token(
-                "An opaque access token cannot be validated here; introspect it before relying on its DPoP binding"
-                    .to_string(),
+                "Access token is for another audience".to_string(),
             ));
         }
 
-        self.commit_dpop_proof(verified).await?;
-        Ok(true)
+        // The signature has been checked, so the payload can be read.
+        let payload = access_token
+            .split('.')
+            .nth(1)
+            .and_then(|p| URL_SAFE_NO_PAD.decode(p).ok())
+            .and_then(|p| serde_json::from_slice::<serde_json::Value>(&p).ok())
+            .ok_or_else(|| AuthError::token("Invalid access token payload".to_string()))?;
+        let jkt = payload
+            .get("cnf")
+            .and_then(|c| c.get("jkt"))
+            .and_then(|j| j.as_str())
+            .ok_or_else(|| {
+                AuthError::token("Access token carries no DPoP key binding (cnf.jkt)".to_string())
+            })?;
+
+        self.validate_dpop_proof_for_key(
+            dpop_proof,
+            http_method,
+            http_uri,
+            Some(access_token),
+            None,
+            Some(jkt),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Formerly "validated" a DPoP-bound access token. It never checked the token's signature:
+    /// it read the claims of a JWT as they stood, so a forged token naming the proof's key was
+    /// accepted, and it could not look at an opaque token at all. It now always refuses.
+    #[deprecated(
+        since = "0.6.0-rc202",
+        note = "it could not establish that the access token is genuine; use `validate_dpop_bound_jwt`, or validate the token yourself and call `validate_dpop_proof_for_key` with its `jkt`"
+    )]
+    pub async fn validate_dpop_bound_access_token(
+        &self,
+        _access_token: &str,
+        _token_confirmation: &DpopConfirmation,
+        _dpop_proof: &str,
+        _http_method: &str,
+        _http_uri: &str,
+    ) -> Result<bool> {
+        Err(AuthError::token(
+            "validate_dpop_bound_access_token cannot establish that the access token is genuine; use validate_dpop_bound_jwt, or validate the token and call validate_dpop_proof_for_key"
+                .to_string(),
+        ))
     }
 
     /// Generate a nonce for DPoP proof
@@ -1025,87 +1038,6 @@ impl DpopManager {
         };
 
         Ok(normalized)
-    }
-
-    /// Validate JWT access token with DPoP binding
-    fn validate_access_token_jwt(
-        &self,
-        access_token: &str,
-        dpop_proof_jwt: &str,
-    ) -> Result<serde_json::Value> {
-        // Parse the access token as a JWT to extract claims
-        let token_parts: Vec<&str> = access_token.split('.').collect();
-        if token_parts.len() != 3 {
-            return Err(AuthError::token("Invalid JWT format".to_string()));
-        }
-
-        // Decode the payload (claims) section
-        let payload = URL_SAFE_NO_PAD
-            .decode(token_parts[1])
-            .map_err(|_| AuthError::token("Invalid JWT payload encoding".to_string()))?;
-
-        let claims: serde_json::Value = serde_json::from_slice(&payload)
-            .map_err(|_| AuthError::token("Invalid JWT claims format".to_string()))?;
-
-        // Parse the DPoP proof to get the JWK
-        let (dpop_header, _dpop_claims) = self.parse_dpop_proof(dpop_proof_jwt)?;
-
-        // Verify the access token is properly bound to the DPoP proof
-        if let Some(cnf) = claims.get("cnf").and_then(|c| c.as_object())
-            && let Some(jkt) = cnf.get("jkt").and_then(|j| j.as_str())
-            && let Some(jwk) = dpop_header.get("jwk")
-        {
-            let dpop_jkt = self.calculate_jwk_thumbprint(jwk)?;
-            if jkt == dpop_jkt {
-                tracing::debug!(
-                    "Access token DPoP binding verified for subject: {:?}",
-                    claims
-                        .get("sub")
-                        .and_then(|s| s.as_str())
-                        .unwrap_or("unknown")
-                );
-                return Ok(claims);
-            }
-        }
-
-        Err(AuthError::token(
-            "Access token not bound to DPoP key".to_string(),
-        ))
-    }
-
-    /// Verify DPoP proof matches token binding
-    fn verify_dpop_token_binding(
-        &self,
-        token_claims: &serde_json::Value,
-        dpop_proof_jwt: &str,
-    ) -> Result<()> {
-        // Extract confirmation claim from access token
-        let cnf = token_claims
-            .get("cnf")
-            .and_then(|c| c.as_object())
-            .ok_or_else(|| {
-                AuthError::token("Access token missing confirmation claim".to_string())
-            })?;
-
-        let token_jkt = cnf
-            .get("jkt")
-            .and_then(|j| j.as_str())
-            .ok_or_else(|| AuthError::token("Access token missing JWK thumbprint".to_string()))?;
-
-        // Calculate thumbprint from DPoP proof JWK
-        let (dpop_header, _dpop_claims) = self.parse_dpop_proof(dpop_proof_jwt)?;
-        let jwk = dpop_header
-            .get("jwk")
-            .ok_or_else(|| AuthError::token("DPoP proof missing JWK".to_string()))?;
-        let dpop_jkt = self.calculate_jwk_thumbprint(jwk)?;
-
-        if token_jkt != dpop_jkt {
-            return Err(AuthError::token(
-                "DPoP proof JWK does not match access token binding".to_string(),
-            ));
-        }
-
-        Ok(())
     }
 }
 
@@ -1701,29 +1633,6 @@ mod dpop_regression {
         );
     }
 
-    #[tokio::test]
-    async fn a_proof_is_recorded_only_after_the_token_is_accepted() {
-        let f = Fixture::new();
-        let confirmation = f.dpop.create_dpop_confirmation(&f.key.1).unwrap();
-        // An opaque token this function cannot validate: refused, and nothing recorded.
-        let opaque = "opaque-token-1";
-        let p = Proof {
-            ath: Some(ath_of(opaque)),
-            ..f.good("j-opaque")
-        }
-        .build();
-        let r = f
-            .dpop
-            .validate_dpop_bound_access_token(opaque, &confirmation, &p, "GET", URI)
-            .await;
-        assert!(r.is_err(), "an opaque token was reported valid: {r:?}");
-        assert_eq!(
-            f.dpop.used_nonces.read().await.len(),
-            0,
-            "a proof was recorded although its token was refused"
-        );
-    }
-
     #[test]
     fn an_rsa_jwk_with_a_leading_zero_octet_has_no_thumbprint() {
         let f = Fixture::new();
@@ -1828,5 +1737,305 @@ mod dpop_regression {
                 &format!("{name}: a signature over other claims"),
             );
         }
+    }
+
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn the_deprecated_function_always_refuses_even_a_forged_jwt() {
+        let f = Fixture::new();
+        let confirmation = f.dpop.create_dpop_confirmation(&f.key.1).unwrap();
+        // A JWT nobody signed, whose claims name the proof's key: the old function said Ok(true).
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#);
+        let claims = URL_SAFE_NO_PAD
+            .encode(json!({"sub": "admin", "cnf": {"jkt": confirmation.jkt}}).to_string());
+        let forged = format!(
+            "{header}.{claims}.{}",
+            URL_SAFE_NO_PAD.encode(b"not a signature")
+        );
+        let p = Proof {
+            ath: Some(ath_of(&forged)),
+            ..f.good("j-forged")
+        }
+        .build();
+        let r = f
+            .dpop
+            .validate_dpop_bound_access_token(&forged, &confirmation, &p, "GET", URI)
+            .await;
+        assert!(
+            r.is_err(),
+            "a forged JWT was reported as a valid bound token: {r:?}"
+        );
+    }
+
+    const AUD: &str = "https://api.example.com";
+    const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    /// An access token as the validator wants it; `edit` changes one thing about it.
+    fn jwt_with(secret: &[u8], jkt: &str, edit: impl FnOnce(&mut serde_json::Value)) -> String {
+        let now = Utc::now().timestamp();
+        let mut claims = json!({
+            "iss": "auth-framework", "sub": "user-1", "aud": AUD, "exp": now + 300,
+            "nbf": now - 1, "iat": now, "jti": uuid::Uuid::new_v4().to_string(),
+            "scope": "read", "typ": "access", "cnf": {"jkt": jkt},
+        });
+        edit(&mut claims);
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(secret),
+        )
+        .unwrap()
+    }
+
+    fn jwt_manager() -> DpopManager {
+        DpopManager::new(
+            SecureJwtValidator::new(SecureJwtConfig {
+                require_secure_transport: false,
+                ..SecureJwtConfig::default()
+            })
+            .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_genuine_bound_jwt_is_accepted_once() {
+        let key = jsonwebtoken::DecodingKey::from_secret(SECRET);
+        let f = Fixture::new();
+        let dpop = jwt_manager();
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        let tok = jwt_with(SECRET, &jkt, |_| {});
+        let p = Proof {
+            ath: Some(ath_of(&tok)),
+            ..f.good("j-genuine")
+        }
+        .build();
+        dpop.validate_dpop_bound_jwt(&tok, &key, AUD, &p, "GET", URI)
+            .await
+            .expect("a genuine bound token with its key's proof");
+        let again = dpop
+            .validate_dpop_bound_jwt(&tok, &key, AUD, &p, "GET", URI)
+            .await;
+        assert!(again.unwrap_err().to_string().contains("already used"));
+        assert_eq!(dpop.used_nonces.read().await.len(), 1);
+    }
+
+    /// Each of these is a token or proof that must be refused for its own reason, and none of
+    /// them may take a replay-cache slot. Removing the check each one exercises turns exactly
+    /// that case green-to-red (run as mutations in the PR).
+    #[tokio::test]
+    async fn a_bound_jwt_that_is_not_a_valid_access_token_for_this_request_is_refused() {
+        let key = jsonwebtoken::DecodingKey::from_secret(SECRET);
+        let f = Fixture::new();
+        let dpop = jwt_manager();
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        let other = ec_key();
+        let now = Utc::now().timestamp();
+
+        // (token, signer of the proof, ath override, audience asked for, reason)
+        let cases = vec![
+            (
+                "signed by someone else",
+                jwt_with(b"another-secret-another-secret-1234", &jkt, |_| {}),
+                &f.key,
+                None,
+                AUD,
+                "Invalid DPoP-bound access token",
+            ),
+            (
+                "expired",
+                jwt_with(SECRET, &jkt, |c| {
+                    c["exp"] = json!(now - 3600);
+                    c["iat"] = json!(now - 3700);
+                    c["nbf"] = json!(now - 3700);
+                }),
+                &f.key,
+                None,
+                AUD,
+                "Invalid DPoP-bound access token",
+            ),
+            (
+                "a refresh token",
+                jwt_with(SECRET, &jkt, |c| c["typ"] = json!("refresh")),
+                &f.key,
+                None,
+                AUD,
+                "Not an access token",
+            ),
+            (
+                "an empty typ",
+                jwt_with(SECRET, &jkt, |c| c["typ"] = json!("")),
+                &f.key,
+                None,
+                AUD,
+                "Not an access token",
+            ),
+            (
+                "issued for another audience",
+                jwt_with(SECRET, &jkt, |c| {
+                    c["aud"] = json!("https://other.example.com")
+                }),
+                &f.key,
+                None,
+                AUD,
+                "another audience",
+            ),
+            (
+                "no cnf.jkt",
+                jwt_with(SECRET, &jkt, |c| {
+                    c.as_object_mut().unwrap().remove("cnf");
+                }),
+                &f.key,
+                None,
+                AUD,
+                "no DPoP key binding",
+            ),
+            (
+                "a proof from another key",
+                jwt_with(SECRET, &jkt, |_| {}),
+                &other,
+                None,
+                AUD,
+                "key binding",
+            ),
+            (
+                "a proof for another token",
+                jwt_with(SECRET, &jkt, |_| {}),
+                &f.key,
+                Some(ath_of("another-token")),
+                AUD,
+                "access token hash",
+            ),
+        ];
+        for (i, (what, tok, signer, ath, aud, reason)) in cases.into_iter().enumerate() {
+            let jti = format!("j-case-{i}");
+            let p = Proof {
+                key: signer,
+                ath: Some(ath.unwrap_or_else(|| ath_of(&tok))),
+                ..f.good(&jti)
+            }
+            .build();
+            match dpop
+                .validate_dpop_bound_jwt(&tok, &key, aud, &p, "GET", URI)
+                .await
+            {
+                Ok(()) => panic!("{what}: ACCEPTED"),
+                Err(e) => assert!(
+                    e.to_string().contains(reason),
+                    "{what}: refused with {e:?}, expected {reason:?}"
+                ),
+            }
+        }
+        assert_eq!(
+            dpop.used_nonces.read().await.len(),
+            0,
+            "a refused token must not use a replay-cache slot"
+        );
+
+        // The same manager, key and request still accept the genuine token afterwards.
+        let tok = jwt_with(SECRET, &jkt, |_| {});
+        let p = Proof {
+            ath: Some(ath_of(&tok)),
+            ..f.good("j-after")
+        }
+        .build();
+        dpop.validate_dpop_bound_jwt(&tok, &key, AUD, &p, "GET", URI)
+            .await
+            .expect("a genuine token after the refusals");
+        assert_eq!(dpop.used_nonces.read().await.len(), 1);
+    }
+
+    /// The validator's algorithm allow-list decides, whatever the key: an HS256 token "signed"
+    /// with the RSA public key's bytes (the classic confusion) is refused when only RS256 is
+    /// allowed, and a genuine RS256 token is accepted.
+    #[tokio::test]
+    async fn an_algorithm_outside_the_allow_list_is_refused() {
+        let rsa =
+            rcgen::KeyPair::generate_rsa_for(&rcgen::PKCS_RSA_SHA256, rcgen::RsaKeySize::_2048)
+                .unwrap();
+        let dpop = DpopManager::new(
+            SecureJwtValidator::new(SecureJwtConfig {
+                allowed_algorithms: vec![Algorithm::RS256],
+                rsa_public_key_pem: Some(rsa.public_key_pem()),
+                require_secure_transport: false,
+                ..SecureJwtConfig::default()
+            })
+            .unwrap(),
+        );
+        let dec = jsonwebtoken::DecodingKey::from_rsa_der(rsa.public_key_raw());
+        let f = Fixture::new();
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        let claims = |jti: &str| {
+            let now = Utc::now().timestamp();
+            json!({
+                "iss": "auth-framework", "sub": "user-1", "aud": AUD, "exp": now + 300,
+                "nbf": now - 1, "iat": now, "jti": jti, "scope": "read", "typ": "access",
+                "cnf": {"jkt": jkt},
+            })
+        };
+        let genuine = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(Algorithm::RS256),
+            &claims("t-rs256"),
+            &EncodingKey::from_rsa_pem(rsa.serialize_pem().as_bytes()).unwrap(),
+        )
+        .unwrap();
+        let p = Proof {
+            ath: Some(ath_of(&genuine)),
+            ..f.good("j-rs")
+        }
+        .build();
+        dpop.validate_dpop_bound_jwt(&genuine, &dec, AUD, &p, "GET", URI)
+            .await
+            .expect("a genuine RS256 token");
+
+        for (secret, what) in [
+            (
+                rsa.public_key_pem().into_bytes(),
+                "HS256 keyed with the public key PEM",
+            ),
+            (
+                rsa.public_key_raw().to_vec(),
+                "HS256 keyed with the public key DER",
+            ),
+        ] {
+            let confused = jsonwebtoken::encode(
+                &jsonwebtoken::Header::new(Algorithm::HS256),
+                &claims("t-hs256"),
+                &EncodingKey::from_secret(&secret),
+            )
+            .unwrap();
+            let p = Proof {
+                ath: Some(ath_of(&confused)),
+                ..f.good("j-conf")
+            }
+            .build();
+            let r = dpop
+                .validate_dpop_bound_jwt(&confused, &dec, AUD, &p, "GET", URI)
+                .await;
+            assert!(r.is_err(), "{what}: ACCEPTED");
+        }
+        assert_eq!(dpop.used_nonces.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_empty_audience_is_refused() {
+        let key = jsonwebtoken::DecodingKey::from_secret(SECRET);
+        let f = Fixture::new();
+        let dpop = jwt_manager();
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        // A token whose aud is empty, and an empty audience asked for: they must not match.
+        let tok = jwt_with(SECRET, &jkt, |c| c["aud"] = json!(""));
+        let p = Proof {
+            ath: Some(ath_of(&tok)),
+            ..f.good("j-empty-aud")
+        }
+        .build();
+        let r = dpop
+            .validate_dpop_bound_jwt(&tok, &key, "", &p, "GET", URI)
+            .await;
+        assert!(
+            r.unwrap_err().to_string().contains("audience is required"),
+            "an empty audience was not refused for that reason"
+        );
+        assert_eq!(dpop.used_nonces.read().await.len(), 0);
     }
 }
