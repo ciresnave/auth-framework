@@ -471,6 +471,11 @@ impl DpopManager {
         http_method: &str,
         http_uri: &str,
     ) -> Result<()> {
+        // An empty audience would match a token whose `aud` is empty: refuse it outright.
+        if audience.is_empty() {
+            return Err(AuthError::token("An audience is required".to_string()));
+        }
+
         let claims = self
             .jwt_validator
             .validate_token(access_token, key)
@@ -2009,5 +2014,28 @@ mod dpop_regression {
             assert!(r.is_err(), "{what}: ACCEPTED");
         }
         assert_eq!(dpop.used_nonces.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_empty_audience_is_refused() {
+        let key = jsonwebtoken::DecodingKey::from_secret(SECRET);
+        let f = Fixture::new();
+        let dpop = jwt_manager();
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        // A token whose aud is empty, and an empty audience asked for: they must not match.
+        let tok = jwt_with(SECRET, &jkt, |c| c["aud"] = json!(""));
+        let p = Proof {
+            ath: Some(ath_of(&tok)),
+            ..f.good("j-empty-aud")
+        }
+        .build();
+        let r = dpop
+            .validate_dpop_bound_jwt(&tok, &key, "", &p, "GET", URI)
+            .await;
+        assert!(
+            r.unwrap_err().to_string().contains("audience is required"),
+            "an empty audience was not refused for that reason"
+        );
+        assert_eq!(dpop.used_nonces.read().await.len(), 0);
     }
 }
