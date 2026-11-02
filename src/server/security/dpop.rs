@@ -72,6 +72,26 @@ pub struct DpopValidationResult {
     pub jwk_thumbprint: Option<String>,
 }
 
+/// A DPoP proof that passed every check but has not been recorded yet.
+///
+/// Recording a proof's `jti` uses a cache slot, so a caller that still has to authenticate
+/// something else (the access token, the request) holds the proof here and commits it with
+/// `commit_dpop_proof` only once that has succeeded.
+#[must_use = "a verified proof is not recorded until it is committed"]
+#[derive(Debug)]
+pub(crate) struct VerifiedDpopProof {
+    result: DpopValidationResult,
+    replay_id: String,
+    keep_until: DateTime<Utc>,
+}
+
+impl VerifiedDpopProof {
+    /// What the proof established: the key it was signed with and its thumbprint.
+    pub(crate) fn result(&self) -> &DpopValidationResult {
+        &self.result
+    }
+}
+
 /// DPoP manager for handling proof-of-possession
 pub struct DpopManager {
     /// Used nonces to prevent replay attacks
@@ -79,6 +99,18 @@ pub struct DpopManager {
 
     /// DPoP proof expiration time (default: 60 seconds)
     proof_expiration: Duration,
+
+    /// Most replay records kept at once.
+    max_replay_entries: usize,
+
+    /// The shortest time between two sweeps of a full cache.
+    sweep_interval: Duration,
+
+    /// When the cache was last swept.
+    last_sweep: std::sync::Mutex<DateTime<Utc>>,
+
+    /// The earliest time any held record expires (the far future when none is held).
+    earliest_expiry: std::sync::Mutex<DateTime<Utc>>,
 
     /// Maximum clock skew allowed (default: 30 seconds)
     clock_skew: Duration,
@@ -97,12 +129,42 @@ impl std::fmt::Debug for DpopManager {
     }
 }
 
+#[cfg(test)]
+impl DpopManager {
+    /// How many replay records are held (tests).
+    pub(crate) async fn replay_record_count(&self) -> usize {
+        self.used_nonces.read().await.len()
+    }
+}
+
+#[cfg(test)]
+impl DpopManager {
+    /// Put a replay record in place, valid until `until` (tests).
+    pub(crate) async fn insert_record_for_test(&self, key: &str, until: DateTime<Utc>) {
+        {
+            let mut earliest = self
+                .earliest_expiry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *earliest = (*earliest).min(until);
+        }
+        self.used_nonces
+            .write()
+            .await
+            .insert(key.to_string(), until);
+    }
+}
+
 impl DpopManager {
     /// Create a new DPoP manager
     pub fn new(_jwt_validator: SecureJwtValidator) -> Self {
         Self {
             used_nonces: tokio::sync::RwLock::new(HashMap::new()),
             proof_expiration: Duration::seconds(60),
+            max_replay_entries: 100_000,
+            sweep_interval: Duration::seconds(1),
+            last_sweep: std::sync::Mutex::new(DateTime::<Utc>::UNIX_EPOCH),
+            earliest_expiry: std::sync::Mutex::new(DateTime::<Utc>::MAX_UTC),
             clock_skew: Duration::seconds(30),
         }
     }
@@ -116,6 +178,54 @@ impl DpopManager {
         access_token: Option<&str>,
         expected_nonce: Option<&str>,
     ) -> Result<DpopValidationResult> {
+        self.validate_dpop_proof_for_key(
+            dpop_proof,
+            http_method,
+            http_uri,
+            access_token,
+            expected_nonce,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`Self::validate_dpop_proof`]; when `expected_jkt` is given, the proof must also be
+    /// signed by the key with that thumbprint. That is checked before the proof's `jti` is
+    /// recorded, so a proof from any other key leaves no record behind.
+    pub async fn validate_dpop_proof_for_key(
+        &self,
+        dpop_proof: &str,
+        http_method: &str,
+        http_uri: &str,
+        access_token: Option<&str>,
+        expected_nonce: Option<&str>,
+        expected_jkt: Option<&str>,
+    ) -> Result<DpopValidationResult> {
+        let verified = self
+            .verify_dpop_proof(
+                dpop_proof,
+                http_method,
+                http_uri,
+                access_token,
+                expected_nonce,
+                expected_jkt,
+            )
+            .await?;
+        self.commit_dpop_proof(verified).await
+    }
+
+    /// Check a proof without recording it: signature, key binding, claims and a read-only look
+    /// at the replay cache. The caller commits it with `commit_dpop_proof` after it has
+    /// authenticated whatever else the request carries.
+    pub(crate) async fn verify_dpop_proof(
+        &self,
+        dpop_proof: &str,
+        http_method: &str,
+        http_uri: &str,
+        access_token: Option<&str>,
+        expected_nonce: Option<&str>,
+        expected_jkt: Option<&str>,
+    ) -> Result<VerifiedDpopProof> {
         let mut errors = Vec::new();
 
         // Parse the DPoP proof JWT
@@ -124,20 +234,48 @@ impl DpopManager {
             e
         })?;
 
-        // Validate JWT header
+        // Validate JWT header; a header that is not a DPoP header stops here.
         self.validate_dpop_header(&header, &mut errors)?;
+        if !errors.is_empty() {
+            return Err(Self::rejected(&errors));
+        }
 
         // Extract public key from header
         let public_key_jwk = header
             .get("jwk")
-            .ok_or_else(|| {
-                errors.push("DPoP proof missing 'jwk' in header".to_string());
-                AuthError::auth_method("dpop", "Missing JWK in DPoP proof header")
-            })?
+            .ok_or_else(|| AuthError::auth_method("dpop", "Missing JWK in DPoP proof header"))?
             .clone();
+
+        // RFC 9449 section 4.2: the jwk header MUST NOT contain a private key.
+        if let Some(obj) = public_key_jwk.as_object() {
+            for private_member in ["d", "p", "q", "dp", "dq", "qi", "oth", "k"] {
+                if obj.contains_key(private_member) {
+                    return Err(AuthError::auth_method(
+                        "dpop",
+                        "DPoP proof jwk header contains private key material",
+                    ));
+                }
+            }
+        }
 
         // Calculate JWK thumbprint
         let jwk_thumbprint = self.calculate_jwk_thumbprint(&public_key_jwk)?;
+
+        // Verify the signature first: nothing unsigned reaches the replay cache.
+        self.verify_dpop_signature(dpop_proof, &public_key_jwk, &mut errors)?;
+
+        // The key the token is bound to, compared before anything is recorded.
+        if let Some(expected) = expected_jkt
+            && !bool::from(subtle::ConstantTimeEq::ct_eq(
+                jwk_thumbprint.as_bytes(),
+                expected.as_bytes(),
+            ))
+        {
+            return Err(AuthError::auth_method(
+                "dpop",
+                "DPoP proof key does not match the token's key binding",
+            ));
+        }
 
         // Validate DPoP proof claims
         self.validate_dpop_claims(
@@ -150,15 +288,114 @@ impl DpopManager {
         )
         .await?;
 
-        // Verify JWT signature using public key from header
-        self.verify_dpop_signature(dpop_proof, &public_key_jwk, &mut errors)?;
+        // The jti is the replay key: bound its size before it is used for anything.
+        if claims.jti.is_empty() || claims.jti.len() > 256 {
+            errors.push("DPoP proof jti must be 1 to 256 bytes".to_string());
+        }
 
-        Ok(DpopValidationResult {
-            is_valid: errors.is_empty(),
-            errors,
-            public_key_jwk: Some(public_key_jwk),
-            jwk_thumbprint: Some(jwk_thumbprint),
+        // A claim that fails is a refusal, not a result for the caller to remember to read.
+        if !errors.is_empty() {
+            return Err(Self::rejected(&errors));
+        }
+
+        // Only now, with an iat inside the clock skew, is there arithmetic to do on it.
+        let keep_until = chrono::TimeZone::timestamp_opt(&Utc, claims.iat, 0)
+            .single()
+            .and_then(|iat| iat.checked_add_signed(self.proof_expiration + self.clock_skew))
+            .ok_or_else(|| AuthError::auth_method("dpop", "DPoP proof iat is out of range"))?;
+        let key = Self::replay_key(&jwk_thumbprint, &claims.jti);
+        if self.used_nonces.read().await.contains_key(&key) {
+            return Err(Self::rejected(&["DPoP proof JTI already used".to_string()]));
+        }
+
+        Ok(VerifiedDpopProof {
+            result: DpopValidationResult {
+                is_valid: true,
+                errors,
+                public_key_jwk: Some(public_key_jwk),
+                jwk_thumbprint: Some(jwk_thumbprint),
+            },
+            replay_id: key,
+            keep_until,
         })
+    }
+
+    /// Record a verified proof so it cannot be used again.
+    ///
+    /// A record is kept until the proof could no longer be accepted (iat + lifetime + skew), is
+    /// keyed by a hash of the proof key and the jti (a fixed size, and one client cannot spend
+    /// another's jti), and the cache is bounded: when it is full of live records the proof is
+    /// refused rather than an older record evicted, since an evicted record could be replayed.
+    /// A full cache is swept at most once per sweep interval.
+    pub(crate) async fn commit_dpop_proof(
+        &self,
+        verified: VerifiedDpopProof,
+    ) -> Result<DpopValidationResult> {
+        let now = Utc::now();
+        let mut used = self.used_nonces.write().await;
+        let full = used.len() >= self.max_replay_entries;
+        if full || used.len().is_multiple_of(256) {
+            let due = {
+                let mut last = self.last_sweep.lock().unwrap_or_else(|e| e.into_inner());
+                if now - *last >= self.sweep_interval {
+                    *last = now;
+                    true
+                } else {
+                    false
+                }
+            };
+            // A full cache that holds an expired record is swept whatever the interval: the
+            // proof in hand must not be refused for room that expired records are taking.
+            let expired_waiting = *self
+                .earliest_expiry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                <= now;
+            if due || (full && expired_waiting) {
+                used.retain(|_, until| *until > now);
+                *self
+                    .earliest_expiry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = used
+                    .values()
+                    .min()
+                    .copied()
+                    .unwrap_or(DateTime::<Utc>::MAX_UTC);
+            }
+        }
+        if used.contains_key(&verified.replay_id) {
+            return Err(Self::rejected(&["DPoP proof JTI already used".to_string()]));
+        }
+        if used.len() >= self.max_replay_entries {
+            return Err(Self::rejected(&["DPoP replay cache is full".to_string()]));
+        }
+        {
+            let mut earliest = self
+                .earliest_expiry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *earliest = (*earliest).min(verified.keep_until);
+        }
+        used.insert(verified.replay_id, verified.keep_until);
+        Ok(verified.result)
+    }
+
+    /// The replay record key: a fixed-size hash of the proof key and the jti.
+    fn replay_key(jwk_thumbprint: &str, jti: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(jwk_thumbprint.as_bytes());
+        hasher.update([0x1f]);
+        hasher.update(jti.as_bytes());
+        URL_SAFE_NO_PAD.encode(hasher.finalize())
+    }
+
+    /// The error returned when a proof fails any check.
+    fn rejected(errors: &[String]) -> AuthError {
+        AuthError::auth_method(
+            "dpop",
+            format!("DPoP proof rejected: {}", errors.join("; ")),
+        )
     }
 
     /// Create DPoP confirmation for access token
@@ -179,7 +416,17 @@ impl DpopManager {
     ) -> Result<bool> {
         let proof_thumbprint = self.calculate_jwk_thumbprint(dpop_proof_jwk)?;
 
-        Ok(token_confirmation.jkt == proof_thumbprint)
+        if bool::from(subtle::ConstantTimeEq::ct_eq(
+            token_confirmation.jkt.as_bytes(),
+            proof_thumbprint.as_bytes(),
+        )) {
+            Ok(true)
+        } else {
+            Err(AuthError::auth_method(
+                "dpop",
+                "DPoP proof key does not match the token's key binding",
+            ))
+        }
     }
 
     /// Comprehensive validation of DPoP-bound access token with JWT validation
@@ -191,30 +438,33 @@ impl DpopManager {
         http_method: &str,
         http_uri: &str,
     ) -> Result<bool> {
-        // First validate the DPoP proof itself
-        let dpop_result = self
-            .validate_dpop_proof(
+        // First verify the DPoP proof itself; it is recorded only once the token has passed too.
+        let verified = self
+            .verify_dpop_proof(
                 dpop_proof,
                 http_method,
                 http_uri,
                 Some(access_token),
                 None, // No nonce required for this validation
+                None,
             )
             .await?;
+        let dpop_result = verified.result();
 
         if !dpop_result.is_valid {
-            return Ok(false);
+            return Err(Self::rejected(&dpop_result.errors));
         }
 
         // Validate that the DPoP proof JWK matches the token confirmation
         if let Some(dpop_jwk) = &dpop_result.public_key_jwk {
             let thumbprint_matches =
                 self.validate_dpop_bound_token(token_confirmation, dpop_jwk)?;
-            if !thumbprint_matches {
-                return Ok(false);
-            }
+            debug_assert!(thumbprint_matches, "a mismatch is an error above");
         } else {
-            return Ok(false);
+            return Err(AuthError::auth_method(
+                "dpop",
+                "DPoP proof carried no public key",
+            ));
         }
 
         // Additional validation: if the access token is also a JWT, validate it too
@@ -243,25 +493,15 @@ impl DpopManager {
                 }
             }
         } else {
-            // For opaque tokens, validate through token introspection
-            match self.validate_opaque_access_token(access_token) {
-                Ok((header, _claims)) => {
-                    tracing::debug!(
-                        "Access token validated via introspection: {:?}",
-                        header
-                            .get("typ")
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("unknown")
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!("Access token JWT validation failed: {}", e);
-                    // Don't fail the validation just because we can't parse the access token as JWT
-                    // It might be an opaque token
-                }
-            }
+            // An opaque token can only be validated by introspection, which this function does
+            // not do: it must not report a token it never looked at as valid.
+            return Err(AuthError::token(
+                "An opaque access token cannot be validated here; introspect it before relying on its DPoP binding"
+                    .to_string(),
+            ));
         }
 
+        self.commit_dpop_proof(verified).await?;
         Ok(true)
     }
 
@@ -276,15 +516,21 @@ impl DpopManager {
 
     /// Clean up expired nonces
     pub async fn cleanup_expired_nonces(&self) {
-        let mut nonces = self.used_nonces.write().await;
-        let now = Utc::now();
-        let expiration_threshold = now - self.proof_expiration - self.clock_skew;
+        self.sweep(Utc::now()).await;
+    }
 
-        nonces.retain(|_, timestamp| *timestamp > expiration_threshold);
+    /// Drop the replay records that no longer matter at time `at`.
+    async fn sweep(&self, at: DateTime<Utc>) {
+        let mut nonces = self.used_nonces.write().await;
+        // Each record is the time until which its proof could still be accepted.
+        nonces.retain(|_, until| *until > at);
     }
 
     /// Parse DPoP proof JWT and extract header and claims
     fn parse_dpop_proof(&self, dpop_proof: &str) -> Result<(serde_json::Value, DpopProofClaims)> {
+        if dpop_proof.len() > 16 * 1024 {
+            return Err(AuthError::auth_method("dpop", "DPoP proof is too large"));
+        }
         // Split JWT into parts
         let parts: Vec<&str> = dpop_proof.split('.').collect();
         if parts.len() != 3 {
@@ -366,7 +612,7 @@ impl DpopManager {
         }
 
         // Validate HTTP method and URI
-        if claims.htm.to_uppercase() != http_method.to_uppercase() {
+        if claims.htm != http_method {
             errors.push(format!(
                 "DPoP proof HTTP method '{}' does not match request method '{}'",
                 claims.htm, http_method
@@ -384,40 +630,33 @@ impl DpopManager {
             ));
         }
 
-        // Validate access token hash if provided
-        if let (Some(token), Some(ath)) = (access_token, &claims.ath) {
+        // RFC 9449 section 4.2/7.1: a proof presented with an access token MUST carry its hash.
+        if let Some(token) = access_token {
             let expected_ath = self.calculate_access_token_hash(token)?;
-            if *ath != expected_ath {
-                errors.push("DPoP proof access token hash does not match".to_string());
+            match &claims.ath {
+                Some(ath) => {
+                    use subtle::ConstantTimeEq as _;
+                    if !bool::from(ath.as_bytes().ct_eq(expected_ath.as_bytes())) {
+                        errors.push("DPoP proof access token hash does not match".to_string());
+                    }
+                }
+                None => errors.push(
+                    "DPoP proof is missing the 'ath' claim required with an access token"
+                        .to_string(),
+                ),
             }
         }
 
         // Validate nonce if expected
         if let Some(expected) = expected_nonce {
             match &claims.nonce {
-                Some(nonce) if nonce == expected => {
-                    // Check if nonce was already used
-                    let mut used_nonces = self.used_nonces.write().await;
-                    if used_nonces.contains_key(&claims.jti) {
-                        errors.push("DPoP proof nonce already used".to_string());
-                    } else {
-                        used_nonces.insert(claims.jti.clone(), now);
-                    }
-                }
+                Some(nonce) if nonce == expected => {}
                 Some(_) => {
                     errors.push("DPoP proof nonce does not match expected value".to_string());
                 }
                 None => {
                     errors.push("DPoP proof missing required nonce".to_string());
                 }
-            }
-        } else {
-            // Even without expected nonce, check for replay protection
-            let mut used_nonces = self.used_nonces.write().await;
-            if used_nonces.contains_key(&claims.jti) {
-                errors.push("DPoP proof JTI already used".to_string());
-            } else {
-                used_nonces.insert(claims.jti.clone(), now);
             }
         }
 
@@ -482,6 +721,10 @@ impl DpopManager {
                 let e_bytes = URL_SAFE_NO_PAD.decode(e.as_bytes()).map_err(|e| {
                     AuthError::validation(format!("Invalid base64url 'e' parameter: {}", e))
                 })?;
+
+                if n_bytes.is_empty() || e_bytes.is_empty() {
+                    return Err(AuthError::validation("Empty RSA JWK parameter"));
+                }
 
                 // Create RSA public key in DER format for Ring
                 // Full ASN.1 DER encoding: SEQUENCE { modulus INTEGER, exponent INTEGER }
@@ -603,8 +846,8 @@ impl DpopManager {
 
                 // Select verification algorithm and coordinate length
                 let (verification_algorithm, expected_coord_len) = match (curve, alg_str) {
-                    ("P-256", "ES256") => (&signature::ECDSA_P256_SHA256_ASN1, 32),
-                    ("P-384", "ES384") => (&signature::ECDSA_P384_SHA384_ASN1, 48),
+                    ("P-256", "ES256") => (&signature::ECDSA_P256_SHA256_FIXED, 32),
+                    ("P-384", "ES384") => (&signature::ECDSA_P384_SHA384_FIXED, 48),
                     _ => {
                         return Err(AuthError::validation(format!(
                             "Unsupported EC curve/algorithm combination: {}/{}",
@@ -621,6 +864,16 @@ impl DpopManager {
                         expected_coord_len,
                         x_bytes.len(),
                         y_bytes.len()
+                    )));
+                }
+
+                // A JWS ECDSA signature is exactly r || s, two coordinates wide (RFC 7518 3.4);
+                // a DER-encoded signature is not one.
+                if signature_bytes.len() != expected_coord_len * 2 {
+                    return Err(AuthError::validation(format!(
+                        "DPoP {alg_str} signature must be the {}-byte r||s form (RFC 7518 section 3.4), got {} bytes",
+                        expected_coord_len * 2,
+                        signature_bytes.len()
                     )));
                 }
 
@@ -696,33 +949,55 @@ impl DpopManager {
     fn calculate_jwk_thumbprint(&self, jwk: &serde_json::Value) -> Result<String> {
         use sha2::{Digest, Sha256};
 
-        // Create canonical JWK representation for thumbprint
-        let mut canonical_jwk = serde_json::Map::new();
-
-        // Add required fields in lexicographic order
-        if let Some(crv) = jwk.get("crv") {
-            canonical_jwk.insert("crv".to_string(), crv.clone());
+        // RFC 7638 section 3: only the required members, in lexicographic order, no whitespace.
+        let text = |name: &str| -> Result<String> {
+            let value = jwk.get(name).and_then(|v| v.as_str()).ok_or_else(|| {
+                AuthError::auth_method("dpop", format!("JWK is missing the '{name}' member"))
+            })?;
+            Ok(serde_json::Value::String(value.to_string()).to_string())
+        };
+        let kty = jwk
+            .get("kty")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AuthError::auth_method("dpop", "JWK is missing the 'kty' member"))?;
+        if kty == "RSA" {
+            for name in ["n", "e"] {
+                let raw = jwk
+                    .get(name)
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| URL_SAFE_NO_PAD.decode(s).ok());
+                // A leading zero octet would give the same key a second thumbprint.
+                if raw
+                    .as_deref()
+                    .is_none_or(|r| r.first().is_none_or(|&b| b == 0))
+                {
+                    return Err(AuthError::auth_method(
+                        "dpop",
+                        format!("RSA JWK member '{name}' is not a minimal base64url integer"),
+                    ));
+                }
+            }
         }
-        if let Some(kty) = jwk.get("kty") {
-            canonical_jwk.insert("kty".to_string(), kty.clone());
-        }
-        if let Some(x) = jwk.get("x") {
-            canonical_jwk.insert("x".to_string(), x.clone());
-        }
-        if let Some(y) = jwk.get("y") {
-            canonical_jwk.insert("y".to_string(), y.clone());
-        }
-        if let Some(n) = jwk.get("n") {
-            canonical_jwk.insert("n".to_string(), n.clone());
-        }
-        if let Some(e) = jwk.get("e") {
-            canonical_jwk.insert("e".to_string(), e.clone());
-        }
-
-        // Serialize to JSON without spaces
-        let canonical_json = serde_json::to_string(&canonical_jwk).map_err(|_| {
-            AuthError::auth_method("dpop", "Failed to serialize JWK for thumbprint")
-        })?;
+        let canonical_json = match kty {
+            "EC" => format!(
+                r#"{{"crv":{},"kty":"EC","x":{},"y":{}}}"#,
+                text("crv")?,
+                text("x")?,
+                text("y")?
+            ),
+            "RSA" => format!(r#"{{"e":{},"kty":"RSA","n":{}}}"#, text("e")?, text("n")?),
+            "OKP" => format!(
+                r#"{{"crv":{},"kty":"OKP","x":{}}}"#,
+                text("crv")?,
+                text("x")?
+            ),
+            other => {
+                return Err(AuthError::auth_method(
+                    "dpop",
+                    format!("Unsupported JWK key type for a thumbprint: {other}"),
+                ));
+            }
+        };
 
         // Calculate SHA-256 hash
         let mut hasher = Sha256::new();
@@ -749,12 +1024,21 @@ impl DpopManager {
             .map_err(|_| AuthError::auth_method("dpop", "Invalid URI format"))?;
 
         // Reconstruct URL without query and fragment
-        let normalized = format!(
-            "{}://{}{}",
-            url.scheme(),
-            url.host_str().unwrap_or(""),
-            url.path()
-        );
+        let normalized = match url.port() {
+            Some(port) => format!(
+                "{}://{}:{}{}",
+                url.scheme(),
+                url.host_str().unwrap_or(""),
+                port,
+                url.path()
+            ),
+            None => format!(
+                "{}://{}{}",
+                url.scheme(),
+                url.host_str().unwrap_or(""),
+                url.path()
+            ),
+        };
 
         Ok(normalized)
     }
@@ -839,33 +1123,6 @@ impl DpopManager {
 
         Ok(())
     }
-
-    /// Validate opaque access token through introspection
-    fn validate_opaque_access_token(
-        &self,
-        access_token: &str,
-    ) -> Result<(serde_json::Value, serde_json::Value)> {
-        // For opaque tokens, we would typically call the token introspection endpoint
-        // For now, create a mock response that demonstrates the structure
-        let header = serde_json::json!({
-            "typ": "token+jwt",
-            "alg": "none"
-        });
-
-        let claims = serde_json::json!({
-            "active": true,
-            "token_type": "Bearer",
-            "scope": "read write",
-            "sub": "user123",
-            "aud": ["resource-server"],
-            "exp": (chrono::Utc::now().timestamp() + 3600),
-            "iat": chrono::Utc::now().timestamp(),
-            "jti": access_token
-        });
-
-        tracing::debug!("Validated opaque access token through introspection");
-        Ok((header, claims))
-    }
 }
 
 #[cfg(test)]
@@ -933,10 +1190,8 @@ mod tests {
             "alg": "ES256"
         });
 
-        let is_valid = manager
-            .validate_dpop_bound_token(&confirmation, &different_jwk)
-            .unwrap();
-        assert!(!is_valid);
+        let mismatch = manager.validate_dpop_bound_token(&confirmation, &different_jwk);
+        assert!(mismatch.is_err(), "another key is an error, not Ok(false)");
     }
 
     #[test]
@@ -973,7 +1228,10 @@ mod tests {
         {
             let mut nonces = manager.used_nonces.write().await;
             nonces.insert("old_nonce".to_string(), Utc::now() - Duration::hours(1));
-            nonces.insert("recent_nonce".to_string(), Utc::now());
+            nonces.insert(
+                "recent_nonce".to_string(),
+                Utc::now() + Duration::seconds(60),
+            );
         }
 
         // Cleanup should remove old nonces
@@ -982,5 +1240,540 @@ mod tests {
         let nonces = manager.used_nonces.read().await;
         assert!(!nonces.contains_key("old_nonce"));
         assert!(nonces.contains_key("recent_nonce"));
+    }
+}
+
+#[cfg(test)]
+mod dpop_regression {
+    //! `validate_dpop_proof` refuses every wrong proof, with its own reason, and accepts the right
+    //! one. Each refusal is paired with the accepted case built the same way, so a test cannot
+    //! pass because every proof fails for one shared reason.
+    use super::*;
+    use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
+    use jsonwebtoken::{Algorithm, EncodingKey};
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+
+    const URI: &str = "https://rs.example.com/resource";
+    const TOKEN: &str = "access-token-1";
+
+    fn ec_key() -> (EncodingKey, serde_json::Value) {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let raw = key.public_key_raw();
+        let point = &raw[raw.len() - 65..];
+        let jwk = json!({
+            "kty": "EC", "crv": "P-256",
+            "x": URL_SAFE_NO_PAD.encode(&point[1..33]),
+            "y": URL_SAFE_NO_PAD.encode(&point[33..65]),
+        });
+        (
+            EncodingKey::from_ec_pem(key.serialize_pem().as_bytes()).unwrap(),
+            jwk,
+        )
+    }
+
+    fn ath_of(token: &str) -> String {
+        URL_SAFE_NO_PAD.encode(Sha256::digest(token.as_bytes()))
+    }
+
+    struct Proof<'a> {
+        key: &'a (EncodingKey, serde_json::Value),
+        htm: &'a str,
+        htu: &'a str,
+        iat: i64,
+        jti: &'a str,
+        ath: Option<String>,
+        der: bool,
+        jwk_extra: Option<(&'a str, &'a str)>,
+    }
+
+    impl Proof<'_> {
+        fn build(&self) -> String {
+            let mut jwk = self.key.1.clone();
+            if let Some((k, v)) = self.jwk_extra {
+                jwk[k] = json!(v);
+            }
+            let header = json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": jwk});
+            let mut claims =
+                json!({"jti": self.jti, "htm": self.htm, "htu": self.htu, "iat": self.iat});
+            if let Some(a) = &self.ath {
+                claims["ath"] = json!(a);
+            }
+            let si = format!(
+                "{}.{}",
+                URL_SAFE_NO_PAD.encode(header.to_string()),
+                URL_SAFE_NO_PAD.encode(claims.to_string())
+            );
+            // jsonwebtoken signs in the JWS form: r || s.
+            let sig =
+                jsonwebtoken::crypto::sign(si.as_bytes(), &self.key.0, Algorithm::ES256).unwrap();
+            if !self.der {
+                return format!("{si}.{sig}");
+            }
+            let raw = URL_SAFE_NO_PAD.decode(sig).unwrap();
+            let int = |v: &[u8]| {
+                let mut v: Vec<u8> = v.iter().copied().skip_while(|&x| x == 0).collect();
+                if v.is_empty() || v[0] & 0x80 != 0 {
+                    v.insert(0, 0);
+                }
+                let mut o = vec![0x02, v.len() as u8];
+                o.extend(v);
+                o
+            };
+            let mut body = int(&raw[..32]);
+            body.extend(int(&raw[32..]));
+            let mut der = vec![0x30, body.len() as u8];
+            der.extend(body);
+            format!("{si}.{}", URL_SAFE_NO_PAD.encode(der))
+        }
+    }
+
+    struct Fixture {
+        dpop: DpopManager,
+        key: (EncodingKey, serde_json::Value),
+        now: i64,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Fixture {
+                dpop: DpopManager::new(
+                    SecureJwtValidator::new(SecureJwtConfig::default()).unwrap(),
+                ),
+                key: ec_key(),
+                now: Utc::now().timestamp(),
+            }
+        }
+
+        fn good<'a>(&'a self, jti: &'a str) -> Proof<'a> {
+            Proof {
+                key: &self.key,
+                htm: "GET",
+                htu: URI,
+                iat: self.now,
+                jti,
+                ath: Some(ath_of(TOKEN)),
+                der: false,
+                jwk_extra: None,
+            }
+        }
+
+        async fn present(&self, proof: &str) -> Result<DpopValidationResult> {
+            self.dpop
+                .validate_dpop_proof(proof, "GET", URI, Some(TOKEN), None)
+                .await
+        }
+    }
+
+    fn refused(r: Result<DpopValidationResult>, reason: &str, what: &str) {
+        match r {
+            Ok(v) => panic!(
+                "{what}: ACCEPTED (is_valid={}, errors={:?})",
+                v.is_valid, v.errors
+            ),
+            Err(e) => assert!(
+                e.to_string().contains(reason),
+                "{what}: refused with {e:?}, expected a reason containing {reason:?}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_correct_proof_is_accepted() {
+        let f = Fixture::new();
+        let ok = f
+            .present(&f.good("j-ok").build())
+            .await
+            .expect("a correct proof is accepted");
+        assert!(ok.is_valid && ok.errors.is_empty());
+        assert_eq!(
+            ok.jwk_thumbprint.as_deref(),
+            Some(
+                f.dpop
+                    .create_dpop_confirmation(&f.key.1)
+                    .unwrap()
+                    .jkt
+                    .as_str()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn a_proof_for_another_method_url_or_time_is_refused() {
+        let f = Fixture::new();
+        let p = Proof {
+            htm: "DELETE",
+            ..f.good("j-htm")
+        }
+        .build();
+        refused(f.present(&p).await, "HTTP method", "wrong htm");
+        let p = Proof {
+            htu: "https://evil.example/x",
+            ..f.good("j-htu")
+        }
+        .build();
+        refused(f.present(&p).await, "HTTP URI", "wrong htu");
+        let p = Proof {
+            iat: f.now - 86_400,
+            ..f.good("j-old")
+        }
+        .build();
+        refused(f.present(&p).await, "too old", "one-day-old iat");
+        let p = Proof {
+            iat: f.now + 86_400,
+            ..f.good("j-future")
+        }
+        .build();
+        refused(f.present(&p).await, "in the future", "future iat");
+    }
+
+    #[tokio::test]
+    async fn a_proof_without_an_access_token_needs_no_ath() {
+        // The token endpoint: a proof is presented before any access token exists.
+        let f = Fixture::new();
+        let p = Proof {
+            ath: None,
+            ..f.good("j-endpoint")
+        }
+        .build();
+        f.dpop
+            .validate_dpop_proof(&p, "GET", URI, None, None)
+            .await
+            .expect("no access token, so no ath is required");
+    }
+
+    #[tokio::test]
+    async fn a_proof_used_twice_is_refused_the_second_time() {
+        let f = Fixture::new();
+        let once = f.good("j-replay").build();
+        f.present(&once).await.expect("first use");
+        refused(f.present(&once).await, "already used", "replayed proof");
+    }
+
+    #[tokio::test]
+    async fn a_proof_must_name_the_access_token() {
+        let f = Fixture::new();
+        let p = Proof {
+            ath: None,
+            ..f.good("j-no-ath")
+        }
+        .build();
+        refused(f.present(&p).await, "'ath'", "no ath");
+        let p = Proof {
+            ath: Some(ath_of("another-token")),
+            ..f.good("j-bad-ath")
+        }
+        .build();
+        refused(f.present(&p).await, "access token hash", "wrong ath");
+    }
+
+    #[tokio::test]
+    async fn a_der_signature_or_a_private_key_in_the_header_is_refused() {
+        let f = Fixture::new();
+        let p = Proof {
+            der: true,
+            ..f.good("j-der")
+        }
+        .build();
+        refused(f.present(&p).await, "r||s", "DER-encoded ES256 signature");
+        let p = Proof {
+            jwk_extra: Some(("d", "AAAA")),
+            ..f.good("j-priv")
+        }
+        .build();
+        refused(f.present(&p).await, "private key", "private key in jwk");
+    }
+
+    #[tokio::test]
+    async fn a_proof_refused_for_another_reason_does_not_use_up_its_jti() {
+        let f = Fixture::new();
+        let p = f.good("j-keep").build();
+        // Presented for the wrong method: refused.
+        refused(
+            f.dpop
+                .validate_dpop_proof(&p, "POST", URI, Some(TOKEN), None)
+                .await,
+            "HTTP method",
+            "wrong method",
+        );
+        // The same proof, presented correctly afterwards, has not been spent.
+        f.present(&p)
+            .await
+            .expect("a proof refused earlier for its method is not spent");
+    }
+
+    #[tokio::test]
+    async fn a_replay_record_outlives_the_proof_it_guards() {
+        let f = Fixture::new();
+        // An iat 25 s ahead is inside the 30 s skew: the proof stays acceptable until
+        // iat + 60 s lifetime + 30 s skew.
+        let p = Proof {
+            iat: f.now + 25,
+            ..f.good("j-late")
+        }
+        .build();
+        f.present(&p).await.expect("within the clock skew");
+        let acceptable_until = chrono::TimeZone::timestamp_opt(&Utc, f.now + 25 + 90, 0)
+            .single()
+            .unwrap();
+        f.dpop.sweep(acceptable_until - Duration::seconds(1)).await;
+        assert_eq!(
+            f.dpop.used_nonces.read().await.len(),
+            1,
+            "record dropped while the proof could still be replayed"
+        );
+        f.dpop.sweep(acceptable_until + Duration::seconds(1)).await;
+        assert!(
+            f.dpop.used_nonces.read().await.is_empty(),
+            "record kept after the proof can no longer be accepted"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_replay_cache_is_swept_and_bounded() {
+        let mut f = Fixture::new();
+        f.dpop.max_replay_entries = 4;
+        let stale = Utc::now() - Duration::seconds(1);
+        let live = Utc::now() + Duration::seconds(600);
+        {
+            let mut used = f.dpop.used_nonces.write().await;
+            used.insert("stale-1".into(), stale);
+            used.insert("stale-2".into(), stale);
+            used.insert("live-1".into(), live);
+            used.insert("live-2".into(), live);
+        }
+        // Two stale and two live records fill it: the stale ones are swept and the proof fits.
+        f.present(&f.good("j-fits").build())
+            .await
+            .expect("a swept cache has room");
+        {
+            let used = f.dpop.used_nonces.read().await;
+            assert!(
+                !used.contains_key("stale-1") && !used.contains_key("stale-2"),
+                "stale records survive a full cache"
+            );
+            assert_eq!(used.len(), 3);
+        }
+        // Filled with live records, a further proof is refused rather than recorded past the bound.
+        f.dpop
+            .used_nonces
+            .write()
+            .await
+            .insert("live-3".into(), live);
+        refused(
+            f.present(&f.good("j-overflow").build()).await,
+            "replay cache is full",
+            "a full cache",
+        );
+    }
+
+    #[tokio::test]
+    async fn one_key_cannot_spend_anothers_jti() {
+        let f = Fixture::new();
+        let other = ec_key();
+        let mine = f.good("j-shared").build();
+        let theirs = Proof {
+            key: &other,
+            ..f.good("j-shared")
+        }
+        .build();
+        f.present(&mine).await.expect("first key");
+        f.present(&theirs)
+            .await
+            .expect("a different key may use the same jti");
+        refused(
+            f.present(&mine).await,
+            "already used",
+            "the first key again",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_method_in_another_case_is_refused() {
+        let f = Fixture::new();
+        let p = f.good("j-case").build();
+        refused(
+            f.dpop
+                .validate_dpop_proof(&p, "get", URI, Some(TOKEN), None)
+                .await,
+            "HTTP method",
+            "lower-case method",
+        );
+    }
+
+    #[test]
+    fn a_key_that_is_not_the_bound_key_is_an_error() {
+        let f = Fixture::new();
+        let other = ec_key();
+        let bound = f.dpop.create_dpop_confirmation(&f.key.1).unwrap();
+        assert!(f.dpop.validate_dpop_bound_token(&bound, &f.key.1).unwrap());
+        assert!(
+            f.dpop.validate_dpop_bound_token(&bound, &other.1).is_err(),
+            "another key must be an error, not Ok(false)"
+        );
+    }
+
+    #[test]
+    fn thumbprints_match_rfc_7638_and_an_independent_hash() {
+        let f = Fixture::new();
+        // RFC 7638 section 3.1.
+        let rsa = json!({
+            "kty": "RSA", "alg": "RS256", "kid": "2011-04-29", "e": "AQAB",
+            "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw"
+        });
+        assert_eq!(
+            f.dpop.calculate_jwk_thumbprint(&rsa).unwrap(),
+            "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+        );
+        // SHA-256 of {"crv":"P-256","kty":"EC","x":...,"y":...}, computed with Python's hashlib.
+        let ec = json!({
+            "kty": "EC", "crv": "P-256", "use": "sig", "alg": "ES256",
+            "x": "MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4",
+            "y": "4Etl6SRW2YiLUrN5vfvVHuhp7x8PxltmWWlbbM4IFyM"
+        });
+        assert_eq!(
+            f.dpop.calculate_jwk_thumbprint(&ec).unwrap(),
+            "cn-I_WNMClehiVp51i_0VpOENW1upEerA8sEam5hn-s"
+        );
+        // A key without all its required members has no thumbprint.
+        assert!(
+            f.dpop
+                .calculate_jwk_thumbprint(&json!({"kty": "EC", "crv": "P-256", "x": "AA"}))
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_iat_at_the_end_of_time_is_refused_not_a_panic() {
+        let f = Fixture::new();
+        // The largest timestamp chrono can represent, and one a minute short of it.
+        for iat in [8_210_298_412_799_i64, 8_210_298_412_740] {
+            let p = Proof {
+                iat,
+                ..f.good("j-forever")
+            }
+            .build();
+            // Out of chrono's range counts as too old, in range but far ahead as in the future:
+            // either way it is refused, and nothing panics on the way.
+            refused(f.present(&p).await, "rejected", "iat at the end of time");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_jti_that_is_empty_or_too_long_is_refused() {
+        let f = Fixture::new();
+        let long = "a".repeat(257);
+        for (jti, what) in [("", "empty jti"), (long.as_str(), "257-byte jti")] {
+            let p = f.good(jti).build();
+            refused(f.present(&p).await, "jti", what);
+        }
+        let ok = "a".repeat(256);
+        f.present(&f.good(&ok).build())
+            .await
+            .expect("256 bytes is allowed");
+    }
+
+    #[tokio::test]
+    async fn replay_records_have_a_fixed_size() {
+        let f = Fixture::new();
+        let jti = "j".repeat(200);
+        f.present(&f.good(&jti).build()).await.expect("a long jti");
+        f.present(&f.good("short").build())
+            .await
+            .expect("a short jti");
+        let used = f.dpop.used_nonces.read().await;
+        assert_eq!(used.len(), 2);
+        assert!(
+            used.keys().all(|k| k.len() == 43),
+            "record keys are not a fixed-size hash: {:?}",
+            used.keys().map(String::len).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_full_cache_is_swept_at_most_once_per_interval() {
+        let mut f = Fixture::new();
+        f.dpop.max_replay_entries = 2;
+        f.dpop.sweep_interval = Duration::hours(1);
+        let stale = Utc::now() - Duration::seconds(1);
+        {
+            let mut used = f.dpop.used_nonces.write().await;
+            used.insert("stale-1".into(), stale);
+            used.insert("stale-2".into(), stale);
+        }
+        f.present(&f.good("j-first").build())
+            .await
+            .expect("the first full cache is swept");
+        f.dpop
+            .used_nonces
+            .write()
+            .await
+            .insert("stale-3".into(), stale);
+        // Full again, and the last sweep was moments ago: no new sweep, so the proof is refused.
+        refused(
+            f.present(&f.good("j-second").build()).await,
+            "replay cache is full",
+            "a cache swept a moment ago",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_proof_is_recorded_only_after_the_token_is_accepted() {
+        let f = Fixture::new();
+        let confirmation = f.dpop.create_dpop_confirmation(&f.key.1).unwrap();
+        // An opaque token this function cannot validate: refused, and nothing recorded.
+        let opaque = "opaque-token-1";
+        let p = Proof {
+            ath: Some(ath_of(opaque)),
+            ..f.good("j-opaque")
+        }
+        .build();
+        let r = f
+            .dpop
+            .validate_dpop_bound_access_token(opaque, &confirmation, &p, "GET", URI)
+            .await;
+        assert!(r.is_err(), "an opaque token was reported valid: {r:?}");
+        assert_eq!(
+            f.dpop.used_nonces.read().await.len(),
+            0,
+            "a proof was recorded although its token was refused"
+        );
+    }
+
+    #[test]
+    fn an_rsa_jwk_with_a_leading_zero_octet_has_no_thumbprint() {
+        let f = Fixture::new();
+        // "AAEAAQ" is 00 01 00 01: the exponent 65537 with a leading zero.
+        for jwk in [
+            json!({"kty": "RSA", "n": "AQAB", "e": "AAEAAQ"}),
+            json!({"kty": "RSA", "n": "AP8", "e": "AQAB"}),
+        ] {
+            assert!(f.dpop.calculate_jwk_thumbprint(&jwk).is_err(), "{jwk}");
+        }
+        assert!(
+            f.dpop
+                .calculate_jwk_thumbprint(&json!({"kty": "RSA", "n": "_w", "e": "AQAB"}))
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_full_cache_of_expired_records_does_not_refuse_a_proof() {
+        let mut f = Fixture::new();
+        f.dpop.max_replay_entries = 2;
+        f.dpop.sweep_interval = Duration::hours(1);
+        // The first proof uses the sweep that has been due since the epoch.
+        f.present(&f.good("j-warm").build()).await.expect("warm-up");
+        // The cache is now full, one record of it expired, and the next sweep is an hour away.
+        f.dpop
+            .insert_record_for_test("expired-1", Utc::now() - Duration::seconds(5))
+            .await;
+        f.present(&f.good("j-after").build())
+            .await
+            .expect("room taken by an expired record must not refuse a proof");
+        assert!(
+            !f.dpop.used_nonces.read().await.contains_key("expired-1"),
+            "the expired record was not swept"
+        );
     }
 }
