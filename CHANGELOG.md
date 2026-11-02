@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.49] - Unreleased
+
+### Fixed
+
+- **Breaking: `DpopManager::validate_dpop_bound_access_token` no longer reports an unverified token as valid.** It read a JWT access token's claims without checking the token's signature, and could not look at an opaque token. It is now `#[deprecated]` and always refuses. New `validate_dpop_bound_jwt(token, key, audience, proof, method, uri)` validates the token with the manager's `SecureJwtValidator` first (signature, expiry, issuer), requires it to be an access token (`typ` of `access`; a refresh token or a token with no `typ` is refused) issued for `audience`, then reads its `cnf.jkt` and checks the proof against that key and the token's hash. `DpopManager::new` now keeps the validator it was given. Backport of main's 0.6.0-rc202 (ROADMAP A18).
+
 ## [0.4.48] - Unreleased
 
 ### Fixed
