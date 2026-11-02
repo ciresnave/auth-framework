@@ -150,7 +150,6 @@ rustls-pki-types = "1.12"
 prometheus = { version = "0.14", optional = true }
 opentelemetry = { version = "0.30", features = ["trace"], optional = true }
 opentelemetry_sdk = { version = "0.30", features = ["trace"], optional = true }
-opentelemetry-jaeger = { version = "0.22", optional = true }
 opentelemetry-prometheus = { version = "0.29", optional = true }
 opentelemetry-otlp = { version = "0.30", optional = true }
 tracing-opentelemetry = { version = "0.31", optional = true }
@@ -310,7 +309,6 @@ performance-optimization = [
 ]
 enhanced-observability = [
   "opentelemetry",
-  "opentelemetry-jaeger",
   "opentelemetry-prometheus",
   "opentelemetry-otlp",
   "tracing-opentelemetry",
