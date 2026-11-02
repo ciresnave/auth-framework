@@ -540,7 +540,6 @@ use auth_framework::protocols::kerberos::KerberosConfig;
 
 let config = KerberosConfig::builder("HTTP/server@EXAMPLE.COM", "EXAMPLE.COM")
     .keytab_path("/etc/krb5.keytab")
-    .add_kdc("kdc.example.com:88")
     .build();
 
 // Active Directory shorthand:

@@ -19,7 +19,7 @@ This guide covers deploying AuthFramework with Kerberos (SPNEGO) authentication 
 | `service_principal`        | `String`         | —        | Service principal name, e.g. `HTTP/auth.example.com@EXAMPLE.COM` |
 | `realm`                    | `String`         | —        | Kerberos realm, e.g. `EXAMPLE.COM`                               |
 | `keytab_path`              | `Option<String>` | `None`   | Path to the keytab file on disk                                  |
-| `kdc_addresses`            | `Vec<String>`    | `[]`     | KDC hostnames or IPs for ticket validation                       |
+| `kdc_addresses`            | `Vec<String>`    | `[]`     | **Deprecated, unused.** Validation is offline; no KDC is contacted |
 | `max_clock_skew_secs`      | `u64`            | `300`    | Maximum clock skew tolerance in seconds                          |
 | `allow_delegation`         | `bool`           | `false`  | Allow forwarded/delegated tickets                                |
 | `replay_cache_max_entries` | `usize`          | `100000` | Maximum entries in the replay cache                              |
@@ -36,8 +36,6 @@ let config = KerberosConfig::builder(
         "EXAMPLE.COM",
     )
     .keytab_path("/etc/krb5/auth-framework.keytab")
-    .add_kdc("kdc1.example.com")
-    .add_kdc("kdc2.example.com")
     .build();
 ```
 
@@ -59,7 +57,6 @@ let config = KerberosConfig {
     service_principal: "HTTP/auth.example.com@EXAMPLE.COM".to_string(),
     realm: "EXAMPLE.COM".to_string(),
     keytab_path: Some("/etc/krb5/auth-framework.keytab".to_string()),
-    kdc_addresses: vec!["kdc1.example.com".to_string(), "kdc2.example.com".to_string()],
     max_clock_skew_secs: 300,
     allow_delegation: false,
     replay_cache_max_entries: 100_000,
