@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc83] - Unreleased
+
+### Fixed
+
+- **fix(kerberos): AES-CTS decryption handles a ciphertext whose length is a multiple of 16.** RFC 3962 swaps the last two blocks for those lengths as well; the code treated them as plain CBC, so a ticket or authenticator whose body was a multiple of 16 bytes (about one in sixteen) failed the HMAC check and was refused. A false rejection, not an acceptance path. A new test decrypts the RFC 3962 Appendix B vectors (17, 31, 32, 47, 48 and 64 bytes); before the fix the 32, 48 and 64 byte ones failed. Present since 0.5.0-rc18. Backport of main's 0.6.0-rc195 (ROADMAP A15).
+
 ## [0.5.0-rc82] - Unreleased
 
 ### Changed
