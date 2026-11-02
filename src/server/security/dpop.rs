@@ -9,6 +9,7 @@ use crate::errors::{AuthError, Result};
 use crate::security::secure_jwt::SecureJwtValidator;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
+use jsonwebtoken::DecodingKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -85,13 +86,6 @@ pub(crate) struct VerifiedDpopProof {
     keep_until: DateTime<Utc>,
 }
 
-impl VerifiedDpopProof {
-    /// What the proof established: the key it was signed with and its thumbprint.
-    pub(crate) fn result(&self) -> &DpopValidationResult {
-        &self.result
-    }
-}
-
 /// Append a DER length: one byte below 128, otherwise `0x80 | n` and the `n` length bytes.
 fn der_push_length(out: &mut Vec<u8>, len: usize) {
     if len < 0x80 {
@@ -138,6 +132,9 @@ pub struct DpopManager {
     /// The earliest time any held record expires (the far future when none is held).
     earliest_expiry: std::sync::Mutex<DateTime<Utc>>,
 
+    /// Validates the signature and standard claims of JWT access tokens.
+    jwt_validator: SecureJwtValidator,
+
     /// Maximum clock skew allowed (default: 30 seconds)
     clock_skew: Duration,
 }
@@ -183,7 +180,7 @@ impl DpopManager {
 
 impl DpopManager {
     /// Create a new DPoP manager
-    pub fn new(_jwt_validator: SecureJwtValidator) -> Self {
+    pub fn new(jwt_validator: SecureJwtValidator) -> Self {
         Self {
             used_nonces: tokio::sync::RwLock::new(HashMap::new()),
             proof_expiration: Duration::seconds(60),
@@ -191,6 +188,7 @@ impl DpopManager {
             sweep_interval: Duration::seconds(1),
             last_sweep: std::sync::Mutex::new(DateTime::<Utc>::UNIX_EPOCH),
             earliest_expiry: std::sync::Mutex::new(DateTime::<Utc>::MAX_UTC),
+            jwt_validator,
             clock_skew: Duration::seconds(30),
         }
     }
@@ -455,80 +453,73 @@ impl DpopManager {
         }
     }
 
-    /// Comprehensive validation of DPoP-bound access token with JWT validation
-    pub async fn validate_dpop_bound_access_token(
+    /// Validate a DPoP-bound JWT access token and the proof presented with it.
+    ///
+    /// The token is validated first, with `key`: signature, expiry and the other standard
+    /// claims, by the [`SecureJwtValidator`] this manager was built with. Only then is its `cnf`
+    /// claim read, and the proof must be signed by the key with the `jkt` it names, carry the
+    /// token's hash (`ath`), and match the request. The proof is recorded last.
+    pub async fn validate_dpop_bound_jwt(
         &self,
         access_token: &str,
-        token_confirmation: &DpopConfirmation,
+        key: &DecodingKey,
         dpop_proof: &str,
         http_method: &str,
         http_uri: &str,
+    ) -> Result<()> {
+        self.jwt_validator
+            .validate_token(access_token, key)
+            .map_err(|e| {
+                tracing::warn!("DPoP-bound access token refused: {e}");
+                AuthError::token("Invalid DPoP-bound access token".to_string())
+            })?;
+
+        // The signature has been checked, so the payload can be read.
+        let payload = access_token
+            .split('.')
+            .nth(1)
+            .and_then(|p| URL_SAFE_NO_PAD.decode(p).ok())
+            .and_then(|p| serde_json::from_slice::<serde_json::Value>(&p).ok())
+            .ok_or_else(|| AuthError::token("Invalid access token payload".to_string()))?;
+        let jkt = payload
+            .get("cnf")
+            .and_then(|c| c.get("jkt"))
+            .and_then(|j| j.as_str())
+            .ok_or_else(|| {
+                AuthError::token("Access token carries no DPoP key binding (cnf.jkt)".to_string())
+            })?;
+
+        self.validate_dpop_proof_for_key(
+            dpop_proof,
+            http_method,
+            http_uri,
+            Some(access_token),
+            None,
+            Some(jkt),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Formerly "validated" a DPoP-bound access token. It never checked the token's signature:
+    /// it read the claims of a JWT as they stood, so a forged token naming the proof's key was
+    /// accepted, and it could not look at an opaque token at all. It now always refuses.
+    #[deprecated(
+        since = "0.6.0-rc202",
+        note = "it could not establish that the access token is genuine; use `validate_dpop_bound_jwt`, or validate the token yourself and call `validate_dpop_proof_for_key` with its `jkt`"
+    )]
+    pub async fn validate_dpop_bound_access_token(
+        &self,
+        _access_token: &str,
+        _token_confirmation: &DpopConfirmation,
+        _dpop_proof: &str,
+        _http_method: &str,
+        _http_uri: &str,
     ) -> Result<bool> {
-        // First verify the DPoP proof itself; it is recorded only once the token has passed too.
-        let verified = self
-            .verify_dpop_proof(
-                dpop_proof,
-                http_method,
-                http_uri,
-                Some(access_token),
-                None, // No nonce required for this validation
-                None,
-            )
-            .await?;
-        let dpop_result = verified.result();
-
-        if !dpop_result.is_valid {
-            return Err(Self::rejected(&dpop_result.errors));
-        }
-
-        // Validate that the DPoP proof JWK matches the token confirmation
-        if let Some(dpop_jwk) = &dpop_result.public_key_jwk {
-            let thumbprint_matches =
-                self.validate_dpop_bound_token(token_confirmation, dpop_jwk)?;
-            debug_assert!(thumbprint_matches, "a mismatch is an error above");
-        } else {
-            return Err(AuthError::auth_method(
-                "dpop",
-                "DPoP proof carried no public key",
-            ));
-        }
-
-        // Additional validation: if the access token is also a JWT, validate it too
-        // This demonstrates another use of the jwt_validator field
-        if access_token.contains('.') && access_token.split('.').count() == 3 {
-            tracing::debug!("Access token appears to be a JWT, validating structure");
-
-            // For a DPoP-bound JWT access token, validate with proper signing key
-            match self.validate_access_token_jwt(access_token, dpop_proof) {
-                Ok(token_claims) => {
-                    tracing::debug!(
-                        "Access token JWT validated successfully with DPoP binding: {:?}",
-                        token_claims
-                            .get("sub")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("unknown")
-                    );
-                    // Verify DPoP proof matches token binding
-                    self.verify_dpop_token_binding(&token_claims, dpop_proof)?;
-                }
-                Err(e) => {
-                    tracing::warn!("Access token JWT validation failed: {}", e);
-                    return Err(AuthError::token(
-                        "Invalid DPoP-bound access token".to_string(),
-                    ));
-                }
-            }
-        } else {
-            // An opaque token can only be validated by introspection, which this function does
-            // not do: it must not report a token it never looked at as valid.
-            return Err(AuthError::token(
-                "An opaque access token cannot be validated here; introspect it before relying on its DPoP binding"
-                    .to_string(),
-            ));
-        }
-
-        self.commit_dpop_proof(verified).await?;
-        Ok(true)
+        Err(AuthError::token(
+            "validate_dpop_bound_access_token cannot establish that the access token is genuine; use validate_dpop_bound_jwt, or validate the token and call validate_dpop_proof_for_key"
+                .to_string(),
+        ))
     }
 
     /// Generate a nonce for DPoP proof
@@ -1025,87 +1016,6 @@ impl DpopManager {
         };
 
         Ok(normalized)
-    }
-
-    /// Validate JWT access token with DPoP binding
-    fn validate_access_token_jwt(
-        &self,
-        access_token: &str,
-        dpop_proof_jwt: &str,
-    ) -> Result<serde_json::Value> {
-        // Parse the access token as a JWT to extract claims
-        let token_parts: Vec<&str> = access_token.split('.').collect();
-        if token_parts.len() != 3 {
-            return Err(AuthError::token("Invalid JWT format".to_string()));
-        }
-
-        // Decode the payload (claims) section
-        let payload = URL_SAFE_NO_PAD
-            .decode(token_parts[1])
-            .map_err(|_| AuthError::token("Invalid JWT payload encoding".to_string()))?;
-
-        let claims: serde_json::Value = serde_json::from_slice(&payload)
-            .map_err(|_| AuthError::token("Invalid JWT claims format".to_string()))?;
-
-        // Parse the DPoP proof to get the JWK
-        let (dpop_header, _dpop_claims) = self.parse_dpop_proof(dpop_proof_jwt)?;
-
-        // Verify the access token is properly bound to the DPoP proof
-        if let Some(cnf) = claims.get("cnf").and_then(|c| c.as_object())
-            && let Some(jkt) = cnf.get("jkt").and_then(|j| j.as_str())
-            && let Some(jwk) = dpop_header.get("jwk")
-        {
-            let dpop_jkt = self.calculate_jwk_thumbprint(jwk)?;
-            if jkt == dpop_jkt {
-                tracing::debug!(
-                    "Access token DPoP binding verified for subject: {:?}",
-                    claims
-                        .get("sub")
-                        .and_then(|s| s.as_str())
-                        .unwrap_or("unknown")
-                );
-                return Ok(claims);
-            }
-        }
-
-        Err(AuthError::token(
-            "Access token not bound to DPoP key".to_string(),
-        ))
-    }
-
-    /// Verify DPoP proof matches token binding
-    fn verify_dpop_token_binding(
-        &self,
-        token_claims: &serde_json::Value,
-        dpop_proof_jwt: &str,
-    ) -> Result<()> {
-        // Extract confirmation claim from access token
-        let cnf = token_claims
-            .get("cnf")
-            .and_then(|c| c.as_object())
-            .ok_or_else(|| {
-                AuthError::token("Access token missing confirmation claim".to_string())
-            })?;
-
-        let token_jkt = cnf
-            .get("jkt")
-            .and_then(|j| j.as_str())
-            .ok_or_else(|| AuthError::token("Access token missing JWK thumbprint".to_string()))?;
-
-        // Calculate thumbprint from DPoP proof JWK
-        let (dpop_header, _dpop_claims) = self.parse_dpop_proof(dpop_proof_jwt)?;
-        let jwk = dpop_header
-            .get("jwk")
-            .ok_or_else(|| AuthError::token("DPoP proof missing JWK".to_string()))?;
-        let dpop_jkt = self.calculate_jwk_thumbprint(jwk)?;
-
-        if token_jkt != dpop_jkt {
-            return Err(AuthError::token(
-                "DPoP proof JWK does not match access token binding".to_string(),
-            ));
-        }
-
-        Ok(())
     }
 }
 
@@ -1702,6 +1612,7 @@ mod dpop_regression {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn a_proof_is_recorded_only_after_the_token_is_accepted() {
         let f = Fixture::new();
         let confirmation = f.dpop.create_dpop_confirmation(&f.key.1).unwrap();
@@ -1828,5 +1739,120 @@ mod dpop_regression {
                 &format!("{name}: a signature over other claims"),
             );
         }
+    }
+
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn a_forged_jwt_is_not_accepted_as_a_bound_token() {
+        let f = Fixture::new();
+        let confirmation = f.dpop.create_dpop_confirmation(&f.key.1).unwrap();
+        // A JWT nobody signed, whose claims name the proof's key.
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#);
+        let claims = URL_SAFE_NO_PAD
+            .encode(json!({"sub": "admin", "cnf": {"jkt": confirmation.jkt}}).to_string());
+        let forged = format!(
+            "{header}.{claims}.{}",
+            URL_SAFE_NO_PAD.encode(b"not a signature")
+        );
+        let p = Proof {
+            ath: Some(ath_of(&forged)),
+            ..f.good("j-forged")
+        }
+        .build();
+        let r = f
+            .dpop
+            .validate_dpop_bound_access_token(&forged, &confirmation, &p, "GET", URI)
+            .await;
+        assert!(
+            r.is_err(),
+            "a forged JWT was reported as a valid bound token: {r:?}"
+        );
+    }
+
+    fn bound_jwt(secret: &[u8], jkt: &str, with_cnf: bool) -> String {
+        let now = Utc::now().timestamp();
+        let mut claims = json!({
+            "iss": "auth-framework", "sub": "user-1", "aud": "api", "exp": now + 300,
+            "nbf": now - 1, "iat": now, "jti": uuid::Uuid::new_v4().to_string(),
+            "scope": "read", "typ": "access",
+        });
+        if with_cnf {
+            claims["cnf"] = json!({"jkt": jkt});
+        }
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(secret),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_genuine_bound_jwt_is_accepted_and_every_other_is_not() {
+        let secret = b"0123456789abcdef0123456789abcdef";
+        let key = jsonwebtoken::DecodingKey::from_secret(secret);
+        let f = Fixture::new();
+        let dpop = DpopManager::new(
+            SecureJwtValidator::new(SecureJwtConfig {
+                require_secure_transport: false,
+                ..SecureJwtConfig::default()
+            })
+            .unwrap(),
+        );
+        let jkt = dpop.create_dpop_confirmation(&f.key.1).unwrap().jkt;
+        let other = ec_key();
+        let proof_for = |tok: &str, jti: &str, signer: &(EncodingKey, serde_json::Value)| {
+            Proof {
+                key: signer,
+                ath: Some(ath_of(tok)),
+                ..f.good(jti)
+            }
+            .build()
+        };
+
+        // The token the key is bound to, with a proof from that key: accepted, once.
+        let tok = bound_jwt(secret, &jkt, true);
+        let p = proof_for(&tok, "j-genuine", &f.key);
+        dpop.validate_dpop_bound_jwt(&tok, &key, &p, "GET", URI)
+            .await
+            .expect("a genuine bound token with its key's proof");
+        let again = dpop
+            .validate_dpop_bound_jwt(&tok, &key, &p, "GET", URI)
+            .await;
+        assert!(again.unwrap_err().to_string().contains("already used"));
+
+        let says = |r: Result<()>, what: &str, needle: &str| match r {
+            Ok(()) => panic!("{what}: ACCEPTED"),
+            Err(e) => assert!(e.to_string().contains(needle), "{what}: refused with {e:?}"),
+        };
+        // A token signed by someone else, naming the same key.
+        let forged = bound_jwt(b"another-secret-another-secret-1234", &jkt, true);
+        let p = proof_for(&forged, "j-forged", &f.key);
+        says(
+            dpop.validate_dpop_bound_jwt(&forged, &key, &p, "GET", URI)
+                .await,
+            "forged token",
+            "Invalid DPoP-bound access token",
+        );
+        // A genuine token with no key binding.
+        let unbound = bound_jwt(secret, &jkt, false);
+        let p = proof_for(&unbound, "j-unbound", &f.key);
+        says(
+            dpop.validate_dpop_bound_jwt(&unbound, &key, &p, "GET", URI)
+                .await,
+            "token without cnf.jkt",
+            "no DPoP key binding",
+        );
+        // A genuine token with a proof from another key.
+        let tok2 = bound_jwt(secret, &jkt, true);
+        let p = proof_for(&tok2, "j-other", &other);
+        says(
+            dpop.validate_dpop_bound_jwt(&tok2, &key, &p, "GET", URI)
+                .await,
+            "proof from another key",
+            "key binding",
+        );
+        // Only the one genuine proof was recorded.
+        assert_eq!(dpop.used_nonces.read().await.len(), 1);
     }
 }
