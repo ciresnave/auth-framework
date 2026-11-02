@@ -413,6 +413,13 @@ impl AuthFramework {
         AuditOperations { framework: self }
     }
 
+    /// The storage the framework's audit log writes to. Hand it to a component that records its
+    /// own events, such as `OAuth2Server::with_audit_storage` or
+    /// `OidcProvider::with_audit_storage`, so they land in the same trail `audit()` queries.
+    pub fn audit_storage(&self) -> Arc<dyn crate::audit::AuditStorage> {
+        self.audit_manager.storage().clone()
+    }
+
     /// Record an audit event from a request handler. A failure to store the event is logged
     /// and does not fail the request that caused it.
     pub(crate) async fn record_audit_event(&self, event: crate::audit::AuditEvent) {

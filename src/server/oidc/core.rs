@@ -403,6 +403,14 @@ impl<S: ?Sized + AuthStorage> OidcProvider<S> {
         })
     }
 
+    /// Record the `client_credentials` grants this provider's OAuth 2.0 server handles in
+    /// `storage` (see [`OAuth2Server::with_audit_storage`]). Pass
+    /// `AuthFramework::audit_storage()` to put them in the framework's own audit trail.
+    pub fn with_audit_storage(mut self, storage: Arc<dyn crate::audit::AuditStorage>) -> Self {
+        self.oauth2_server = self.oauth2_server.with_audit_storage(storage);
+        self
+    }
+
     /// Get the underlying OAuth 2.0 server
     pub fn oauth2_server(&self) -> &OAuth2Server {
         &self.oauth2_server
