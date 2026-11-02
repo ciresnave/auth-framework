@@ -333,6 +333,11 @@ impl std::fmt::Debug for FapiTokenResponse {
     }
 }
 
+/// Is a request object issued at `iat` older than `max_age` seconds at `now`?
+fn request_object_too_old(now: i64, iat: i64, max_age: i64) -> bool {
+    now.checked_sub(iat).is_none_or(|age| age > max_age)
+}
+
 impl FapiManager {
     /// Create a new FAPI manager
     pub fn new(
@@ -426,29 +431,36 @@ impl FapiManager {
                 .await?;
         }
 
-        // Validate DPoP if required
-        if self.config.require_dpop {
-            if dpop_proof.is_none() {
+        // Validate DPoP if required; the proof is recorded only once the request has been accepted.
+        let pending_proof = if self.config.require_dpop {
+            let Some(proof) = dpop_proof else {
                 return Err(AuthError::auth_method(
                     "dpop",
                     "DPoP proof required for FAPI 2.0",
                 ));
-            }
-
-            let proof = dpop_proof.unwrap();
-            self.dpop_manager
-                .validate_dpop_proof(
-                    proof,
-                    "POST",
-                    &format!("{}/authorize", self.config.issuer),
-                    None,
-                    None,
-                )
-                .await?;
-        }
+            };
+            Some(
+                self.dpop_manager
+                    .verify_dpop_proof(
+                        proof,
+                        "POST",
+                        &format!("{}/authorize", self.config.issuer),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
 
         // Validate request object claims
         self.validate_request_claims(&claims).await?;
+
+        if let Some(pending) = pending_proof {
+            self.dpop_manager.commit_dpop_proof(pending).await?;
+        }
 
         Ok(claims)
     }
@@ -523,7 +535,7 @@ impl FapiManager {
                 let now = Utc::now().timestamp();
 
                 // Check request object age
-                if now - fapi_claims.iat > self.config.max_request_age {
+                if request_object_too_old(now, fapi_claims.iat, self.config.max_request_age) {
                     return Err(AuthError::InvalidToken(
                         "Request object too old".to_string(),
                     ));
@@ -637,7 +649,7 @@ impl FapiManager {
         client_assertion: Option<&str>,
         client_cert: Option<&str>,
         dpop_proof: Option<&str>,
-        authorization_code: &str,
+        _authorization_code: &str,
     ) -> Result<String> {
         // Client authentication - prefer private key JWT for FAPI 2.0
         let client_id = if let Some(assertion) = client_assertion {
@@ -683,7 +695,7 @@ impl FapiManager {
                     proof,
                     "POST",
                     &format!("{}/token", self.config.issuer),
-                    Some(authorization_code), // Include authorization code in DPoP validation
+                    None, // an authorization code is not an access token: no `ath` at this endpoint
                     None,
                 )
                 .await?;
@@ -1356,5 +1368,22 @@ mod tests {
         let nameless = params.self_signed(&key).unwrap();
         assert!(client_id_from_certificate(nameless.der()).is_err());
         assert!(client_id_from_certificate(b"not a certificate").is_err());
+    }
+}
+
+#[cfg(test)]
+mod request_object_age {
+    use super::*;
+
+    #[test]
+    fn an_age_that_cannot_be_represented_is_too_old() {
+        let now = Utc::now().timestamp();
+        assert!(!request_object_too_old(now, now, 60));
+        assert!(!request_object_too_old(now, now - 60, 60));
+        assert!(request_object_too_old(now, now - 61, 60));
+        // now - iat overflows: it must read as too old, not wrap (or panic).
+        assert!(request_object_too_old(now, i64::MIN, 60));
+        assert!(request_object_too_old(now, i64::MIN + 1, 60));
+        assert!(request_object_too_old(i64::MAX, -1, 60));
     }
 }
