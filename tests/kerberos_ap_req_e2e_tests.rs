@@ -225,6 +225,7 @@ mod fixture {
 
     /// Ticket flag bits are numbered from the most significant bit (RFC 4120 section 5.3).
     pub const FLAG_FORWARDABLE: u32 = 1;
+    pub const FLAG_FORWARDED: u32 = 2;
 
     #[derive(Clone)]
     pub struct Ticket {
@@ -493,9 +494,19 @@ const KEY128: [u8; 16] = [
 /// A manager holding the given keytab entries. The keytab goes through a real file, so
 /// `load_keytab` and the keytab parser are part of the path.
 async fn manager(tag: &str, entries: &[(u32, i32, Vec<u8>)]) -> KerberosManager {
+    manager_with(tag, entries, false).await
+}
+
+async fn manager_with(
+    tag: &str,
+    entries: &[(u32, i32, Vec<u8>)],
+    allow_delegation: bool,
+) -> KerberosManager {
     let path = std::env::temp_dir().join(format!("af-krb-e2e-{}-{tag}.keytab", std::process::id()));
     std::fs::write(&path, keytab(entries)).unwrap();
-    let config = KerberosConfig::builder(SERVICE_PRINCIPAL, REALM).build();
+    let config = KerberosConfig::builder(SERVICE_PRINCIPAL, REALM)
+        .allow_delegation(allow_delegation)
+        .build();
     let mgr = KerberosManager::new(config).unwrap();
     let loaded = mgr.load_keytab(path.to_str().unwrap()).await.unwrap();
     std::fs::remove_file(&path).ok();
@@ -566,4 +577,208 @@ async fn tickets_of_every_length_modulo_the_block_size_are_accepted() {
             );
         }
     }
+}
+
+// ── Negative cases: each differs from the valid token in exactly one input ──
+
+/// Well past the default 300 s clock skew, in either direction.
+const FAR: u64 = 1000;
+
+async fn expect_refused(mgr: &KerberosManager, token: &[u8], needle: &str, what: &str) {
+    match mgr.authenticate(&b64(token)).await {
+        Ok(r) => panic!("{what}: accepted as {}", r.client_principal),
+        Err(e) => assert!(
+            e.to_string().contains(needle),
+            "{what}: refused, but with {e:?} instead of one containing {needle:?}"
+        ),
+    }
+}
+
+fn valid_parts() -> (Ticket, u64) {
+    (Ticket::valid("alice", ETYPE_AES256, &KEY256), now())
+}
+
+#[tokio::test]
+async fn a_ticket_encrypted_under_another_key_is_refused() {
+    let mgr = manager("wrongkey", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let mut other = KEY256;
+    other[0] ^= 0xFF;
+    let ticket = Ticket::valid("alice", ETYPE_AES256, &other);
+    let token = ap_req(&ticket, &ticket.session_key, "alice", REALM, now(), 1);
+    expect_refused(
+        &mgr,
+        &token,
+        "HMAC verification failed",
+        "wrong service key",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_ticket_for_another_service_in_the_realm_is_refused() {
+    let mgr = manager("otherservice", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let (mut ticket, t) = valid_parts();
+    ticket.service = vec!["HTTP".into(), "other.example.test".into()];
+    let token = ap_req(&ticket, &ticket.session_key, "alice", REALM, t, 1);
+    expect_refused(&mgr, &token, "No keytab entry", "other service").await;
+}
+
+#[tokio::test]
+async fn an_expired_ticket_is_refused() {
+    let mgr = manager("expired", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let (mut ticket, t) = valid_parts();
+    ticket.auth_time = t - 2 * FAR;
+    ticket.start_time = Some(t - 2 * FAR);
+    ticket.end_time = t - FAR;
+    let token = ap_req(&ticket, &ticket.session_key, "alice", REALM, t, 1);
+    expect_refused(&mgr, &token, "has expired", "expired ticket").await;
+}
+
+#[tokio::test]
+async fn a_ticket_that_is_not_yet_valid_is_refused() {
+    let mgr = manager("notyet", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let (mut ticket, t) = valid_parts();
+    ticket.start_time = Some(t + FAR);
+    ticket.end_time = t + 2 * FAR;
+    let token = ap_req(&ticket, &ticket.session_key, "alice", REALM, t, 1);
+    expect_refused(&mgr, &token, "not yet valid", "post-dated ticket").await;
+}
+
+#[tokio::test]
+async fn an_authenticator_outside_the_clock_skew_is_refused() {
+    let mgr = manager("skew", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let (ticket, t) = valid_parts();
+    for (ctime, what) in [
+        (t - FAR, "authenticator in the past"),
+        (t + FAR, "authenticator in the future"),
+    ] {
+        let token = ap_req(&ticket, &ticket.session_key, "alice", REALM, ctime, 1);
+        expect_refused(&mgr, &token, "clock skew too large", what).await;
+    }
+}
+
+#[tokio::test]
+async fn an_authenticator_naming_another_client_or_realm_is_refused() {
+    let mgr = manager("names", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let (ticket, t) = valid_parts();
+    let other_client = ap_req(&ticket, &ticket.session_key, "mallory", REALM, t, 1);
+    expect_refused(&mgr, &other_client, "cname does not match", "other client").await;
+    let other_realm = ap_req(&ticket, &ticket.session_key, "alice", "OTHER.TEST", t, 2);
+    expect_refused(&mgr, &other_realm, "crealm does not match", "other realm").await;
+}
+
+#[tokio::test]
+async fn an_authenticator_under_another_session_key_is_refused() {
+    let mgr = manager("sessionkey", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let (ticket, t) = valid_parts();
+    let mut wrong = ticket.session_key.clone();
+    wrong[0] ^= 0xFF;
+    let token = ap_req(&ticket, &wrong, "alice", REALM, t, 1);
+    expect_refused(
+        &mgr,
+        &token,
+        "HMAC verification failed",
+        "wrong session key",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_corrupted_ticket_is_refused() {
+    let mgr = manager("corrupt", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let (ticket, t) = valid_parts();
+    let mut token = ap_req(&ticket, &ticket.session_key, "alice", REALM, t, 1);
+    // Flip a byte inside the ticket's encrypted part (the ticket comes before the authenticator).
+    let at = token.len() / 3;
+    token[at] ^= 0x01;
+    let outcome = mgr.authenticate(&b64(&token)).await;
+    assert!(
+        outcome.is_err(),
+        "a ticket with a flipped byte was accepted"
+    );
+}
+
+#[tokio::test]
+async fn a_replayed_ap_req_is_refused_the_second_time() {
+    let mgr = manager("replay", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    let (ticket, t) = valid_parts();
+    let token = ap_req(&ticket, &ticket.session_key, "alice", REALM, t, 9);
+    mgr.authenticate(&b64(&token)).await.expect("first use");
+    expect_refused(
+        &mgr,
+        &token,
+        "replay attack",
+        "second use of the same AP-REQ",
+    )
+    .await;
+    // A fresh authenticator (new cusec) from the same ticket is a new request, not a replay.
+    let fresh = ap_req(&ticket, &ticket.session_key, "alice", REALM, t, 10);
+    mgr.authenticate(&b64(&fresh))
+        .await
+        .expect("fresh authenticator");
+}
+
+#[tokio::test]
+async fn a_forwarded_ticket_needs_delegation_to_be_allowed() {
+    let (mut ticket, t) = valid_parts();
+    ticket.flag_bits = vec![FLAG_FORWARDABLE, FLAG_FORWARDED];
+    let token = ap_req(&ticket, &ticket.session_key, "alice", REALM, t, 1);
+
+    let strict = manager("fwd-off", &[(3, ETYPE_AES256, KEY256.to_vec())]).await;
+    expect_refused(
+        &strict,
+        &token,
+        "Delegated",
+        "forwarded ticket, delegation off",
+    )
+    .await;
+
+    let lenient = manager_with("fwd-on", &[(3, ETYPE_AES256, KEY256.to_vec())], true).await;
+    let ok = lenient
+        .authenticate(&b64(&token))
+        .await
+        .expect("delegation allowed");
+    assert!(ok.is_delegated);
+    assert!(ok.flags.forwarded);
+}
+
+#[tokio::test]
+async fn a_rotated_service_key_still_serves_tickets_issued_before_and_after() {
+    let key_old = KEY256.to_vec();
+    let mut key_new = KEY256.to_vec();
+    key_new[0] ^= 0xFF;
+    let both = [
+        (3, ETYPE_AES256, key_old.clone()),
+        (4, ETYPE_AES256, key_new.clone()),
+    ];
+    let mgr = manager("rot-both", &both).await;
+    let t = now();
+    for (kvno, key, cusec) in [(3u32, &key_old, 1u32), (4, &key_new, 2)] {
+        let mut ticket = Ticket::valid("alice", ETYPE_AES256, key);
+        ticket.kvno = kvno;
+        let token = ap_req(&ticket, &ticket.session_key, "alice", REALM, t, cusec);
+        mgr.authenticate(&b64(&token))
+            .await
+            .unwrap_or_else(|e| panic!("kvno {kvno} ticket refused: {e:?}"));
+    }
+
+    // Only the new key is held: a ticket naming a version the keytab lacks is still decrypted
+    // with the principal's key (any version of it), and one made with the old key is refused.
+    let mgr = manager("rot-new", &[(4, ETYPE_AES256, key_new.clone())]).await;
+    let mut ahead = Ticket::valid("alice", ETYPE_AES256, &key_new);
+    ahead.kvno = 5;
+    let token = ap_req(&ahead, &ahead.session_key, "alice", REALM, t, 3);
+    mgr.authenticate(&b64(&token))
+        .await
+        .expect("kvno 5 under the held key");
+    let mut stale = Ticket::valid("alice", ETYPE_AES256, &key_old);
+    stale.kvno = 3;
+    let token = ap_req(&stale, &stale.session_key, "alice", REALM, t, 4);
+    expect_refused(
+        &mgr,
+        &token,
+        "HMAC verification failed",
+        "ticket under a key no longer held",
+    )
+    .await;
 }

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AuthFramework Static OpenAPI Note (Bundled)
-  version: 0.6.0-rc196
+  version: 0.6.0-rc197
   description: |
     Older bundled snapshots in this repository had drifted substantially from the live router.
 
