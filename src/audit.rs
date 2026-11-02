@@ -24,6 +24,9 @@ pub enum AuditEventType {
     TokenRefresh,
     TokenExpired,
     TokenRevoked,
+    /// A client asked the token endpoint for an access token (`client_credentials` grant), or
+    /// was refused one.
+    TokenIssued,
     /// A client asked the introspection endpoint about a token (RFC 7662), or failed to
     /// authenticate to it.
     TokenIntrospected,
@@ -82,6 +85,7 @@ impl std::fmt::Display for AuditEventType {
             Self::TokenRefresh => write!(f, "token_refresh"),
             Self::TokenExpired => write!(f, "token_expired"),
             Self::TokenRevoked => write!(f, "token_revoked"),
+            Self::TokenIssued => write!(f, "token_issued"),
             Self::TokenIntrospected => write!(f, "token_introspected"),
             Self::MfaSetup => write!(f, "mfa_setup"),
             Self::MfaChallengeCreated => write!(f, "mfa_challenge_created"),

@@ -487,6 +487,7 @@ pub struct OAuth2Server {
     token_storage: Arc<RwLock<EnhancedTokenStorage>>,
     session_store: Arc<RwLock<SessionStore>>,
     token_manager: Arc<TokenManager>,
+    audit: Option<Arc<dyn crate::audit::AuditStorage>>,
 }
 
 impl OAuth2Server {
@@ -496,7 +497,16 @@ impl OAuth2Server {
             token_storage: Arc::new(RwLock::new(EnhancedTokenStorage::new())),
             session_store: Arc::new(RwLock::new(SessionStore::new())),
             token_manager,
+            audit: None,
         })
+    }
+
+    /// Record `client_credentials` grants (issued or refused) in `storage`. Without it the grant
+    /// leaves no audit record. The record names the client and the scopes asked for and granted,
+    /// and never a secret or a token.
+    pub fn with_audit_storage(mut self, storage: Arc<dyn crate::audit::AuditStorage>) -> Self {
+        self.audit = Some(storage);
+        self
     }
 
     /// Register a confidential client with proper secret validation
@@ -603,7 +613,14 @@ impl OAuth2Server {
         match request.grant_type.as_str() {
             "authorization_code" => self.handle_authorization_code_grant(request).await,
             "refresh_token" => self.handle_refresh_token_grant(request).await,
-            "client_credentials" => self.handle_client_credentials_grant(request).await,
+            "client_credentials" => {
+                let client_id = request.client_id.clone();
+                let requested = request.scope.clone();
+                let result = self.handle_client_credentials_grant(request).await;
+                self.audit_client_credentials(client_id.as_deref(), requested.as_deref(), &result)
+                    .await;
+                result
+            }
             _ => Err(AuthError::auth_method("oauth2", "Unsupported grant type")),
         }
     }
@@ -785,6 +802,55 @@ impl OAuth2Server {
             scope: Some(authorized_scopes.join(" ")),
             id_token: None,
         })
+    }
+
+    /// Record a `client_credentials` grant: who asked, for which scopes, and whether it was issued.
+    /// A failure to store the record is logged and does not change the grant's outcome. The client
+    /// secret and the token are never recorded, and neither is the reason text of a refusal, which
+    /// could echo what the caller sent.
+    async fn audit_client_credentials(
+        &self,
+        client_id: Option<&str>,
+        requested_scope: Option<&str>,
+        result: &Result<TokenResponse>,
+    ) {
+        use crate::audit::{AuditEvent, AuditEventType, EventOutcome, RiskLevel};
+        let Some(audit) = &self.audit else { return };
+        let granted = result.is_ok();
+        let mut event = AuditEvent::builder(
+            AuditEventType::TokenIssued,
+            if granted {
+                "client_credentials grant issued an access token"
+            } else {
+                "client_credentials grant refused"
+            },
+        )
+        .outcome(if granted {
+            EventOutcome::Success
+        } else {
+            EventOutcome::Failure
+        })
+        .risk_level(if granted {
+            RiskLevel::Low
+        } else {
+            RiskLevel::Medium
+        })
+        .with_actor("oauth_client", client_id.unwrap_or("unidentified"))
+        .detail("grant_type", "client_credentials")
+        .detail("requested_scope", requested_scope.unwrap_or(""));
+        if let Ok(response) = result {
+            event = event.detail("granted_scope", response.scope.clone().unwrap_or_default());
+        }
+        let mut event = event.build();
+        if event.id.is_empty() {
+            event.id = uuid::Uuid::new_v4().to_string();
+        }
+        if event.timestamp == std::time::SystemTime::UNIX_EPOCH {
+            event.timestamp = std::time::SystemTime::now();
+        }
+        if let Err(e) = audit.store_event(&event).await {
+            tracing::warn!("Could not record the client_credentials audit event: {e}");
+        }
     }
 
     /// Handle client credentials grant with proper validation
