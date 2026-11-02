@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.47] - Unreleased
+
+### Fixed
+
+- **fix(dpop): a DPoP proof that fails any check is refused.** `DpopManager::validate_dpop_proof` returned `Ok` with `is_valid = false` for a wrong method, URL, age, nonce, replayed `jti` or access-token hash, and the FAPI 2.0 call sites ignored the result. It now returns an error for every failed check, requires `ath` whenever an access token is supplied, verifies the signature before it records the `jti`, refuses a `jwk` header that carries private key members, compares the `htu` port, and verifies ES256/ES384 signatures in the JWS `r||s` form (RFC 7518 section 3.4); a DER-encoded signature is refused. The FAPI token endpoint no longer passes the authorization code to the proof check as an access token. A replayed `jti` is recorded only for a proof that passed every other check, kept until the proof could no longer be accepted, keyed by the proof key as well, swept, and bounded (100,000 records); `htm` is compared exactly; the JWK thumbprint is built in the RFC 7638 canonical form; `validate_dpop_bound_token` and `validate_dpop_bound_access_token` return an error for a key that is not the bound key instead of `Ok(false)`. The check is split into `DpopManager::verify_dpop_proof` and `commit_dpop_proof`, so a caller records the proof only after the token or request it came with was accepted; `validate_dpop_proof_for_key` also compares the proof key with the token's `jkt` before recording. A `jti` is limited to 256 bytes and a proof to 16 KiB, and replay records are fixed-size hashes. `validate_dpop_bound_access_token` refuses an opaque access token it cannot validate instead of reporting it valid. An RSA `jwk` member with a leading zero octet is refused. Limit: when 100,000 live replay records are held, new proofs are refused until records expire (about 90 seconds); a full cache is swept at most once a second. Known limits: one authenticated holder of a bound token can fill the global 100,000-record replay cache (a rate limit in front of the endpoints is the mitigation); at the authorization endpoint a pushed authorization request is consumed before the DPoP step; a full cache holding an expired record is swept whatever the sweep interval.
+
 ## [0.4.46] - Unreleased
 
 ### Changed
