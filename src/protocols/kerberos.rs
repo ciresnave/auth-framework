@@ -737,8 +737,9 @@ fn aes_cbc_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
 ///
 /// Handles three cases:
 ///   - Exactly 1 block: ECB decrypt with zero IV
-///   - Multiple of block size: standard CBC decrypt
-///   - Non-multiple: CBC-CTS with last-two-block swap
+///   - Anything longer: CBC-CTS (CBC-CS3) with the last two blocks swapped.
+///     RFC 3962 swaps them when the length is a multiple of the block size
+///     as well, so a multiple is *not* plain CBC (RFC 3962 Appendix B).
 fn aes_cts_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
     let n = ciphertext.len();
     if n < AES_BLOCK {
@@ -753,15 +754,14 @@ fn aes_cts_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
         return Ok(aes_ecb_decrypt(key, &ct).to_vec());
     }
 
-    if n.is_multiple_of(AES_BLOCK) {
-        // Exact multiple: standard CBC
-        return aes_cbc_decrypt(key, ciphertext);
-    }
-
-    // CTS case: non-multiple of block size
-    let partial_len = n % AES_BLOCK;
-    let num_full_blocks = n / AES_BLOCK; // at least 1
-    let preceding_len = (num_full_blocks - 1) * AES_BLOCK;
+    // CTS case. The final ciphertext piece holds `partial_len` bytes: the
+    // remainder, or a whole block when `n` is a multiple of the block size.
+    // `n > AES_BLOCK` here, so at least one full block precedes it.
+    let partial_len = match n % AES_BLOCK {
+        0 => AES_BLOCK,
+        r => r,
+    };
+    let preceding_len = n - partial_len - AES_BLOCK;
 
     let c_second_last: [u8; AES_BLOCK] = ciphertext[preceding_len..preceding_len + AES_BLOCK]
         .try_into()
@@ -1909,6 +1909,65 @@ mod tests {
         let ciphertext = aes_ecb_encrypt(&key, &plaintext);
         let decrypted = aes_cts_decrypt(&key, &ciphertext).unwrap();
         assert_eq!(&decrypted[..], &plaintext[..]);
+    }
+
+    /// RFC 3962 Appendix B, "Some test vectors for CBC with ciphertext
+    /// stealing" (key "chicken teriyaki", zero IV). The expected plaintexts are
+    /// prefixes of the RFC's input string; the ciphertexts are copied from the
+    /// RFC, not computed here. Every length must decrypt, including the ones
+    /// that are a multiple of the block size (32, 48, 64): RFC 3962 swaps the
+    /// last two blocks for those too.
+    #[test]
+    fn aes_cts_decrypt_rfc3962_vectors() {
+        fn unhex(s: &str) -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect()
+        }
+        let key = b"chicken teriyaki";
+        let input = b"I would like the General Gau's Chicken, please, and wonton soup.";
+        assert_eq!(input.len(), 64);
+        let vectors: [(usize, &str); 6] = [
+            (17, "c6353568f2bf8cb4d8a580362da7ff7f97"),
+            (
+                31,
+                "fc00783e0efdb2c1d445d4c8eff7ed2297687268d6ecccc0c07b25e25ecfe5",
+            ),
+            (
+                32,
+                "39312523a78662d5be7fcbcc98ebf5a897687268d6ecccc0c07b25e25ecfe584",
+            ),
+            (
+                47,
+                "97687268d6ecccc0c07b25e25ecfe584b3fffd940c16a18c1b5549d2f838029e39312523a78662d5be7fcbcc98ebf5",
+            ),
+            (
+                48,
+                "97687268d6ecccc0c07b25e25ecfe5849dad8bbb96c4cdc03bc103e1a194bbd839312523a78662d5be7fcbcc98ebf5a8",
+            ),
+            (
+                64,
+                "97687268d6ecccc0c07b25e25ecfe58439312523a78662d5be7fcbcc98ebf5a84807efe836ee89a526730dbc2f7bc8409dad8bbb96c4cdc03bc103e1a194bbd8",
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (len, ct_hex) in vectors {
+            let ct = unhex(ct_hex);
+            assert_eq!(
+                ct.len(),
+                len,
+                "vector {len} transcribed with the wrong length"
+            );
+            match aes_cts_decrypt(key, &ct) {
+                Ok(pt) if pt == input[..len] => {}
+                _ => wrong.push(len),
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "RFC 3962 vectors that did not decrypt, by length: {wrong:?}"
+        );
     }
 
     #[test]

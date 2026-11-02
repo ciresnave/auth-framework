@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc192`
+- Current crate version: `0.6.0-rc195`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -359,6 +359,7 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 | A12 | CodeRipper rule OPS-011 `cli-basics` (2026-10-29) | Every shipped binary answers `--help`, `--version` and a bad flag, and none starts serving unasked: `oauth2_test_server` / `test_oauth2` hung on any argument, `auth-framework` had no `--version`, `security_audit` ignored its arguments and printed a fixed `v0.4.0` | Done (rc169): test servers need `serve`; `tests/bin_cli_basics.rs` probes each binary |
 | A13 | A6 measurement (2026-10-31) | Kerberos: no test builds a valid AP-REQ end to end (the 25 tests cover primitives, replay and config); `KerberosConfig.kdc_addresses` / `add_kdc` are stored and never used by validation. Add an end-to-end AP-REQ test (valid, expired, wrong key, replayed), then either use `kdc_addresses` or remove it. The realm-only keytab fallback is removed (rc190): the entry is chosen by service principal and key type, with a unit test that a ticket for another service in the realm matches nothing | Open, M (fallback done) |
 | A14 | #91 remainder (2026-11-01, PM) | The OIDC provider builds its own `OAuth2Server` (`src/server/oidc/core.rs:395`) that audited nothing: add `AuthFramework::audit_storage()` and `OidcProvider::with_audit_storage`, test through `AuthFramework::audit()` | Done (rc192) |
+| A15 | A13 slice 2 finding (2026-11-02) | `aes_cts_decrypt` treated a ciphertext whose length is a multiple of 16 as plain CBC; RFC 3962 swaps the last two blocks for those lengths too, so about 1 in 16 valid tickets or authenticators failed the HMAC check and were refused (false rejection, no acceptance path). Found by decrypting the RFC 3962 Appendix B vectors (32, 48, 64 bytes failed; 17, 31, 47 passed). Present since 0.5.0-rc18; `release/0.4.x` has no Kerberos module; `release/0.5.x` (rc82) has the same code. Fixed on main (rc195) with the vector test. Backport to `release/0.5.x` is cheap (same function, same test) | Main: Done (rc195); 0.5.x backport: Open, S |
 
 ### Do not build otherwise (patent sweep, 2026-10-25)
 
