@@ -92,6 +92,32 @@ impl VerifiedDpopProof {
     }
 }
 
+/// Append a DER length: one byte below 128, otherwise `0x80 | n` and the `n` length bytes.
+fn der_push_length(out: &mut Vec<u8>, len: usize) {
+    if len < 0x80 {
+        out.push(len as u8);
+    } else {
+        let bytes = len.to_be_bytes();
+        let skip = bytes.iter().take_while(|&&b| b == 0).count();
+        let significant = &bytes[skip..];
+        out.push(0x80 | significant.len() as u8);
+        out.extend_from_slice(significant);
+    }
+}
+
+/// A DER INTEGER holding the unsigned big-endian number `value` (not empty).
+fn der_unsigned_integer(value: &[u8]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(value.len() + 1);
+    if value[0] & 0x80 != 0 {
+        body.push(0x00); // keep it positive
+    }
+    body.extend_from_slice(value);
+    let mut out = vec![0x02];
+    der_push_length(&mut out, body.len());
+    out.extend(body);
+    out
+}
+
 /// DPoP manager for handling proof-of-possession
 pub struct DpopManager {
     /// Used nonces to prevent replay attacks
@@ -726,54 +752,12 @@ impl DpopManager {
                     return Err(AuthError::validation("Empty RSA JWK parameter"));
                 }
 
-                // Create RSA public key in DER format for Ring
-                // Full ASN.1 DER encoding: SEQUENCE { modulus INTEGER, exponent INTEGER }
-                let mut public_key_der = Vec::new();
-
-                // SEQUENCE tag (0x30)
-                public_key_der.push(0x30);
-
-                // Calculate total content length
-                let mut content = Vec::new();
-
-                // Add modulus as INTEGER
-                content.push(0x02); // INTEGER tag
-                // Ensure positive number by adding leading zero if MSB is set
-                if n_bytes[0] & 0x80 != 0 {
-                    content.push((n_bytes.len() + 1) as u8);
-                    content.push(0x00); // Leading zero for positive
-                } else {
-                    content.push(n_bytes.len() as u8);
-                }
-                content.extend_from_slice(&n_bytes);
-
-                // Add exponent as INTEGER
-                content.push(0x02); // INTEGER tag
-                // Ensure positive number by adding leading zero if MSB is set
-                if e_bytes[0] & 0x80 != 0 {
-                    content.push((e_bytes.len() + 1) as u8);
-                    content.push(0x00); // Leading zero for positive
-                } else {
-                    content.push(e_bytes.len() as u8);
-                }
-                content.extend_from_slice(&e_bytes);
-
-                // Add sequence length
-                if content.len() < 128 {
-                    public_key_der.push(content.len() as u8);
-                } else {
-                    // Long form length encoding for content > 127 bytes
-                    if content.len() < 256 {
-                        public_key_der.push(0x81); // Long form, 1 byte
-                        public_key_der.push(content.len() as u8);
-                    } else {
-                        public_key_der.push(0x82); // Long form, 2 bytes
-                        public_key_der.push((content.len() >> 8) as u8);
-                        public_key_der.push((content.len() & 0xFF) as u8);
-                    }
-                }
-
-                // Add the content
+                // The key as a DER RSAPublicKey: SEQUENCE { modulus INTEGER, exponent INTEGER },
+                // lengths in the long form when they need it (a 2048-bit modulus does).
+                let mut content = der_unsigned_integer(&n_bytes);
+                content.extend(der_unsigned_integer(&e_bytes));
+                let mut public_key_der = vec![0x30];
+                der_push_length(&mut public_key_der, content.len());
                 public_key_der.extend_from_slice(&content);
 
                 // Select Ring verification algorithm
@@ -1775,5 +1759,74 @@ mod dpop_regression {
             !f.dpop.used_nonces.read().await.contains_key("expired-1"),
             "the expired record was not swept"
         );
+    }
+
+    /// The modulus and exponent (base64url, no leading zero) of an RSA key, read from its DER
+    /// `RSAPublicKey`.
+    fn rsa_parts(key: &rcgen::KeyPair) -> (String, String) {
+        fn int(b: &[u8]) -> (&[u8], &[u8]) {
+            assert_eq!(b[0], 0x02);
+            let (len, off) = if b[1] & 0x80 == 0 {
+                (b[1] as usize, 2)
+            } else {
+                let n = (b[1] & 0x7f) as usize;
+                let len = b[2..2 + n]
+                    .iter()
+                    .fold(0usize, |a, &x| (a << 8) | x as usize);
+                (len, 2 + n)
+            };
+            let v = &b[off..off + len];
+            (v.strip_prefix(&[0]).unwrap_or(v), &b[off + len..])
+        }
+        let raw = key.public_key_raw();
+        let body = if raw[1] & 0x80 == 0 {
+            &raw[2..]
+        } else {
+            &raw[2 + (raw[1] & 0x7f) as usize..]
+        };
+        let (n, rest) = int(body);
+        let (e, _) = int(rest);
+        (URL_SAFE_NO_PAD.encode(n), URL_SAFE_NO_PAD.encode(e))
+    }
+
+    #[tokio::test]
+    async fn rs256_and_ps256_proofs_from_a_2048_bit_key_are_accepted() {
+        let f = Fixture::new();
+        let key =
+            rcgen::KeyPair::generate_rsa_for(&rcgen::PKCS_RSA_SHA256, rcgen::RsaKeySize::_2048)
+                .unwrap();
+        let (n, e) = rsa_parts(&key);
+        assert_eq!(URL_SAFE_NO_PAD.decode(&n).unwrap().len(), 256);
+        let enc = EncodingKey::from_rsa_pem(key.serialize_pem().as_bytes()).unwrap();
+        for (alg, name) in [(Algorithm::RS256, "RS256"), (Algorithm::PS256, "PS256")] {
+            let header = json!({
+                "typ": "dpop+jwt", "alg": name,
+                "jwk": {"kty": "RSA", "n": n, "e": e},
+            });
+            let claims = |htm: &str| {
+                json!({
+                    "jti": format!("j-{name}-{htm}"), "htm": htm, "htu": URI,
+                    "iat": f.now, "ath": ath_of(TOKEN),
+                })
+            };
+            let b64 = |v: &serde_json::Value| URL_SAFE_NO_PAD.encode(v.to_string());
+            let si = format!("{}.{}", b64(&header), b64(&claims("GET")));
+            let sig = jsonwebtoken::crypto::sign(si.as_bytes(), &enc, alg).unwrap();
+            f.present(&format!("{si}.{sig}"))
+                .await
+                .unwrap_or_else(|err| panic!("{name}: a correct proof was refused: {err:?}"));
+
+            // The same signature over different claims is refused.
+            let forged = format!("{}.{}.{sig}", b64(&header), b64(&claims("POST")));
+            let r = f
+                .dpop
+                .validate_dpop_proof(&forged, "POST", URI, Some(TOKEN), None)
+                .await;
+            refused(
+                r,
+                "signature",
+                &format!("{name}: a signature over other claims"),
+            );
+        }
     }
 }
