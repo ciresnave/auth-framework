@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`AdvancedTokenExchangeManager::validate_token` reports every audience of a JWT.** It read `aud` as a string only, so a token whose `aud` is an array (RFC 7519 4.1.3) was reported with no audience at all; it now lists each string in the array. Validity checks are unchanged.
 - **`FapiManager` documents that the integrator must rate-limit the FAPI endpoints.** The type has no limiter and the crate serves no FAPI routes; the rustdoc now says so and points to `docs/FAPI_RATE_LIMIT_DESIGN.md` (ROADMAP A16, docs only, no code change).
 - 0.6.0-rc177 -- **CI: the CodeRipper portfolio workflow is pinned to v0.15.0 (74996d75, was 0.9.24).** The old pin did not accept a list item as a changelog entry, so every pull request failed `version-and-changelog` on an entry that exists. No source change.
 - 0.6.0-rc176 -- **Dependency: `orion` 0.18.0 -> 0.18.1** (`Cargo.lock`), which takes the fixes for RUSTSEC-2026-0426 and RUSTSEC-2026-0428 that `cargo audit` and `cargo deny` report on 0.18.0. No source change.
@@ -241,6 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc205 -- **`AdvancedTokenExchangeManager::validate_token` reports every audience of a JWT** (a JWT whose `aud` is an array was reported with no audience; validity was unchanged), plus a ROADMAP row (docs only).
 - 0.6.0-rc204 -- **FAPI rate limiting (ROADMAP A16 slices 2 and 3).** `FapiManager` documents that the integrator must rate-limit the FAPI endpoints, and gains `with_rate_limiter` plus the `_from` entry points (see Added). Additive public API; the existing methods are unchanged.
 - 0.6.0-rc203 -- **CIBA `id_token_hint` is now verified.** `EnhancedCibaManager::complete_auth_request` read the hint's subject from an ID token it never checked the signature of; it now validates the hint against the configured decoding key, issuer, audience, expiry and type, as token generation already did. The manager also adds its own `issuer` to the validator's accepted issuers, so an ID token it issued is accepted as a hint (its issuer, `auth-framework-ciba` by default, was refused by the validator). A hint that is unsigned, signed with another key or from another issuer is now refused.
 - 0.6.0-rc202 -- **Breaking: `DpopManager::validate_dpop_bound_access_token` no longer reports an unverified token as valid (ROADMAP A18).** It read a JWT access token's claims without checking the token's signature, so a forged token naming the proof's key was accepted, and it could not look at an opaque token. It is now `#[deprecated]` and always refuses. New `validate_dpop_bound_jwt(token, key, audience, proof, method, uri)` validates the token with the manager's `SecureJwtValidator` first (signature, expiry, issuer), requires it to be an access token (`typ` of `access`; a refresh token or a token with no `typ` is refused) issued for `audience`, then reads its `cnf.jkt` and checks the proof against that key and the token's hash. `DpopManager::new` now keeps the validator it was given.
