@@ -185,6 +185,13 @@ This phase begins once the release-readiness and DX stabilization work above is 
 
 ### Security and Operations
 
+- [ ] `release/0.5.x` does not pass `cargo clippy --all-targets --all-features -- -D warnings` (measured 2026-11-03 at origin/release/0.5.x
+      7743e1e5 with rust:latest, 1.99: 14 errors in the lib, 20 with the lib tests). Main is clean (#103, #120, rc174), so the fixes
+      were never taken back. Sites: `src/admin/web.rs` (unwrap in tests at 1627-1699, MutexGuard held across an await at 1693,
+      collapsible `if` at 373, redundant field name at 967), `src/admin/cli.rs` 721-738 (literals in format strings),
+      `src/admin/tui.rs:325`, `src/api/saml.rs:675`, `src/methods/ldap.rs:354`, `src/methods/mod.rs:379`,
+      `src/methods/enhanced_device/mod.rs:164`, `src/storage/unified.rs:224`, `src/security/enhanced_crypto.rs:238`,
+      `src/server/security/x509_signing.rs:865`. Either port main's lint fixes to the branch or stop linting `--all-features` there.
 - [x] Adaptive MFA and risk-based authentication improvements
 - [x] HSM and signing-key integration hardening
 - [x] Expanded audit-log querying and operator workflows
