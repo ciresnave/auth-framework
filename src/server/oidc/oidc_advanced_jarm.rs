@@ -471,11 +471,15 @@ impl AdvancedJarmManager {
             .await
     }
 
-    /// Validate JARM response token with transport security context
+    /// Validate JARM response token with transport security context.
+    ///
+    /// The token's signature is always verified. `_transport_secure` is kept for compatibility
+    /// and no longer changes validation (it used to be passed to the validator as
+    /// `verify_signature`, so `false` skipped the check).
     pub async fn validate_jarm_response_with_transport(
         &self,
         token: &str,
-        transport_secure: bool,
+        _transport_secure: bool,
     ) -> Result<JarmValidationResult> {
         if !self.config.enable_response_validation {
             return Ok(JarmValidationResult {
@@ -508,7 +512,9 @@ impl AdvancedJarmManager {
         // Use SecureJwtValidator for enhanced security validation
         match self
             .jwt_validator
-            .validate_token(&jwt_token, &self.decoding_key, transport_secure)
+            // The signature is always verified. `transport_secure` used to be passed here as the
+            // validator's `verify_signature`, so `false` turned the check off.
+            .validate_token(&jwt_token, &self.decoding_key, true)
         {
             Ok(secure_claims) => {
                 // Convert SecureJwtClaims to HashMap for compatibility

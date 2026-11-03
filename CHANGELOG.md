@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.50] - Unreleased
+
+### Fixed
+
+- **fix(jarm): `validate_jarm_response_with_transport` always verifies the token's signature.** Its `transport_secure` argument was passed to the validator as `verify_signature`, so calling it with `false` accepted a token signed with any key. The argument is kept for compatibility and no longer changes validation. `validate_jarm_response` was not affected.
+
 ## [0.4.49] - Unreleased
 
 ### Fixed
