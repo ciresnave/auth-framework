@@ -24,6 +24,7 @@
 //! - JWT Secured Authorization Response Mode (JARM)
 //! - Enhanced threat modeling and protection
 
+use crate::distributed::rate_limiting::{DistributedRateLimiter, RateLimitResult};
 use crate::errors::{AuthError, Result};
 use crate::security::secure_jwt::SecureJwtValidator;
 use crate::server::{DpopManager, MutualTlsManager, PARManager, PrivateKeyJwtManager};
@@ -37,6 +38,20 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// FAPI 2.0 Security Profile Manager
+///
+/// # Rate limiting
+///
+/// `FapiManager` has no rate limiter of its own, and the crate's HTTP router does not serve FAPI routes, so nothing in the crate
+/// limits `validate_authorization_request`, `validate_token_request`, `authenticate_client_jwt` or
+/// `validate_sender_constrained_token`. These do signature work and keep per-request state (a DPoP proof and its replay record)
+/// before the caller is authenticated, so put a limiter in front of the FAPI `/authorize` and `/token` endpoints yourself:
+/// one bucket per caller address, counted before any signature check, and one per authenticated client, counted after
+/// client authentication succeeded, with a separate allowance for each endpoint. If the limiter cannot be consulted, refuse
+/// the request rather than serve it unlimited. See `docs/FAPI_RATE_LIMIT_DESIGN.md`.
+///
+/// To have the manager count for you, give it a limiter with [`FapiManager::with_rate_limiter`] and call
+/// [`FapiManager::validate_authorization_request_from`] and [`FapiManager::validate_token_request_from`] with the caller's address;
+/// the methods without `_from` never consult it.
 #[derive(Clone)]
 pub struct FapiManager {
     /// DPoP manager for sender constraining
@@ -59,6 +74,9 @@ pub struct FapiManager {
 
     /// Active FAPI sessions
     sessions: Arc<RwLock<HashMap<String, FapiSession>>>,
+
+    /// Optional limiter used by the `_from` entry points (see [`FapiManager::with_rate_limiter`])
+    rate_limiter: Option<Arc<DistributedRateLimiter>>,
 }
 
 impl std::fmt::Debug for FapiManager {
@@ -71,6 +89,7 @@ impl std::fmt::Debug for FapiManager {
         d.field("jwt_validator", &self.jwt_validator);
         d.field("config", &self.config);
         d.field("sessions", &crate::utils::redact::redacted(&self.sessions));
+        d.field("rate_limiter", &self.rate_limiter.is_some());
         d.finish()
     }
 }
@@ -592,7 +611,75 @@ impl FapiManager {
             jwt_validator,
             config,
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            rate_limiter: None,
         }
+    }
+
+    /// Count requests made through [`validate_authorization_request_from`](Self::validate_authorization_request_from)
+    /// and [`validate_token_request_from`](Self::validate_token_request_from) against `limiter`.
+    ///
+    /// Two kinds of bucket live in the limiter: `fapi:<authorize|token>:<peer>` per caller address, counted before any
+    /// signature work, and `fapi_client:<client id>` per authenticated client, counted only after the client proved who it is,
+    /// so a third party cannot spend a client's allowance by naming it. The limiter's configuration sets the allowance. A limiter
+    /// that cannot be consulted refuses the request. The methods without `_from` never consult it.
+    #[must_use]
+    pub fn with_rate_limiter(mut self, limiter: Arc<DistributedRateLimiter>) -> Self {
+        self.rate_limiter = Some(limiter);
+        self
+    }
+
+    /// Map a limiter outcome to a request outcome: only `Allowed` serves the request.
+    fn limiter_outcome(what: &str, outcome: Result<RateLimitResult>) -> Result<()> {
+        match outcome {
+            Ok(RateLimitResult::Allowed { .. }) => Ok(()),
+            Ok(RateLimitResult::Denied { retry_after, .. }) => {
+                tracing::warn!(bucket = %what, "FAPI rate limit exceeded");
+                Err(AuthError::rate_limit(format!(
+                    "Rate limit exceeded; retry after {} seconds",
+                    retry_after.as_secs().max(1)
+                )))
+            }
+            Ok(RateLimitResult::Blocked { unblock_at, .. }) => {
+                tracing::warn!(bucket = %what, "FAPI rate limit: caller blocked");
+                let secs = unblock_at
+                    .checked_duration_since(std::time::Instant::now())
+                    .map_or(1, |d| d.as_secs().max(1));
+                Err(AuthError::rate_limit(format!(
+                    "Rate limit exceeded; retry after {secs} seconds"
+                )))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, bucket = %what, "FAPI rate limiter error");
+                Err(AuthError::internal("Rate limiter unavailable"))
+            }
+        }
+    }
+
+    /// Count one request against `key`; with no limiter configured nothing is counted.
+    async fn count(&self, key: String) -> Result<()> {
+        match &self.rate_limiter {
+            Some(limiter) => Self::limiter_outcome(&key, limiter.check_rate_limit(&key).await),
+            None => Ok(()),
+        }
+    }
+
+    /// Like [`validate_authorization_request`](Self::validate_authorization_request), counting the request against the
+    /// caller address `peer` first and, once the request object is valid, against its client.
+    pub async fn validate_authorization_request_from(
+        &self,
+        peer: &str,
+        request_object: &str,
+        client_cert: Option<&str>,
+        dpop_proof: Option<&str>,
+        request_uri: Option<&str>,
+    ) -> Result<FapiRequestObject> {
+        self.count(format!("fapi:authorize:{peer}")).await?;
+        let request = self
+            .validate_authorization_request(request_object, client_cert, dpop_proof, request_uri)
+            .await?;
+        self.count(format!("fapi_client:{}", request.client_id))
+            .await?;
+        Ok(request)
     }
 
     /// Validate FAPI 2.0 authorization request
@@ -882,6 +969,38 @@ impl FapiManager {
         dpop_proof: Option<&str>,
         _authorization_code: &str,
     ) -> Result<String> {
+        let client_id = self
+            .authenticate_token_client(client_assertion, client_cert)
+            .await?;
+        self.check_token_dpop(dpop_proof).await?;
+        Ok(client_id)
+    }
+
+    /// Like [`validate_token_request`](Self::validate_token_request), counting the request against the caller address `peer`
+    /// before any signature work, and against the client's own bucket once the client has authenticated (before the DPoP check).
+    pub async fn validate_token_request_from(
+        &self,
+        peer: &str,
+        client_assertion: Option<&str>,
+        client_cert: Option<&str>,
+        dpop_proof: Option<&str>,
+        _authorization_code: &str,
+    ) -> Result<String> {
+        self.count(format!("fapi:token:{peer}")).await?;
+        let client_id = self
+            .authenticate_token_client(client_assertion, client_cert)
+            .await?;
+        self.count(format!("fapi_client:{client_id}")).await?;
+        self.check_token_dpop(dpop_proof).await?;
+        Ok(client_id)
+    }
+
+    /// Authenticate the client of a token request: private key JWT, or mTLS when required.
+    async fn authenticate_token_client(
+        &self,
+        client_assertion: Option<&str>,
+        client_cert: Option<&str>,
+    ) -> Result<String> {
         // Client authentication - prefer private key JWT for FAPI 2.0
         let client_id = if let Some(assertion) = client_assertion {
             self.authenticate_client_jwt(assertion).await?
@@ -910,7 +1029,11 @@ impl FapiManager {
                 "FAPI 2.0 requires either private_key_jwt or mTLS client authentication",
             ));
         };
+        Ok(client_id)
+    }
 
+    /// Validate the DPoP proof of a token request when the configuration requires one.
+    async fn check_token_dpop(&self, dpop_proof: Option<&str>) -> Result<()> {
         // Validate DPoP if required
         if self.config.require_dpop {
             let proof = dpop_proof.ok_or_else(|| {
@@ -926,8 +1049,7 @@ impl FapiManager {
                 )
                 .await?;
         }
-
-        Ok(client_id)
+        Ok(())
     }
 
     /// Generate FAPI 2.0 authorization response (JARM)
@@ -2579,5 +2701,219 @@ mod dpop_regression {
             .await
             .expect("both bindings satisfied");
         assert_eq!(m.dpop_manager.replay_record_count().await, 1);
+    }
+
+    // ---- optional rate limiter on the `_from` entry points (ROADMAP A16 slice 3) ----
+
+    struct Limited {
+        manager: FapiManager,
+        assertions: Arc<PrivateKeyJwtManager>,
+        key: EncodingKey,
+    }
+
+    impl Limited {
+        /// A manager for one registered client `fapi-client`; `max` requests per bucket, or no limiter at all.
+        async fn new(max: Option<u32>) -> Self {
+            use crate::distributed::rate_limiting::{RateLimitConfig, RateLimitStrategy};
+            use crate::security::secure_jwt::SecureJwtConfig;
+            use crate::server::jwt::private_key_jwt::ClientJwtConfig;
+            use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+            let validator = || SecureJwtValidator::new(SecureJwtConfig::default()).unwrap();
+            let assertions = Arc::new(PrivateKeyJwtManager::new(validator()));
+            let mut manager = FapiManager::new(
+                FapiConfig {
+                    require_dpop: false,
+                    ..FapiConfig::default()
+                },
+                Arc::new(DpopManager::new(validator())),
+                Arc::new(MutualTlsManager::new()),
+                Arc::new(PARManager::new(Arc::new(
+                    crate::storage::MemoryStorage::new(),
+                ))),
+                assertions.clone(),
+                Arc::new(validator()),
+            );
+            if let Some(max_requests) = max {
+                let limiter = DistributedRateLimiter::new(RateLimitConfig {
+                    max_requests,
+                    window_duration: std::time::Duration::from_secs(600),
+                    strategy: RateLimitStrategy::FixedWindow,
+                    distributed: false,
+                    redis_url: None,
+                    burst_allowance: None,
+                    adaptive: false,
+                    penalty_duration: None,
+                })
+                .await
+                .unwrap();
+                manager = manager.with_rate_limiter(Arc::new(limiter));
+            }
+            let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+            let raw = key.public_key_raw();
+            let point = &raw[raw.len() - 65..];
+            let jwk = json!({
+                "kty": "EC", "crv": "P-256",
+                "x": URL_SAFE_NO_PAD.encode(&point[1..33]),
+                "y": URL_SAFE_NO_PAD.encode(&point[33..65]),
+            });
+            assertions
+                .register_client(
+                    ClientJwtConfig::builder("fapi-client", jwk)
+                        .algorithms(vec![Algorithm::ES256])
+                        .audience("https://auth.example.com/token")
+                        .build(),
+                )
+                .await
+                .unwrap();
+            Self {
+                manager,
+                assertions,
+                key: EncodingKey::from_ec_pem(key.serialize_pem().as_bytes()).unwrap(),
+            }
+        }
+
+        /// A fresh, genuine assertion (each is single-use).
+        fn assertion(&self) -> String {
+            self.assertions
+                .create_client_assertion(
+                    "fapi-client",
+                    "https://auth.example.com/token",
+                    &self.key,
+                    Algorithm::ES256,
+                )
+                .unwrap()
+        }
+
+        /// The right client naming itself with the wrong audience: authentication fails.
+        fn unauthenticated_assertion(&self) -> String {
+            self.assertions
+                .create_client_assertion(
+                    "fapi-client",
+                    "https://elsewhere.example/token",
+                    &self.key,
+                    Algorithm::ES256,
+                )
+                .unwrap()
+        }
+
+        async fn token_from(&self, peer: &str, assertion: &str) -> Result<String> {
+            self.manager
+                .validate_token_request_from(peer, Some(assertion), None, None, "code")
+                .await
+        }
+    }
+
+    fn is_rate_limited<T>(r: &Result<T>) -> bool {
+        matches!(r, Err(AuthError::RateLimit { .. }))
+    }
+
+    #[tokio::test]
+    async fn the_address_bucket_refuses_before_any_signature_work() {
+        let t = Limited::new(Some(2)).await;
+        // Under the limit (control): accepted.
+        assert_eq!(
+            t.token_from("203.0.113.1", &t.assertion()).await.unwrap(),
+            "fapi-client"
+        );
+        // Two more from the same peer exhaust nothing else; junk is counted too.
+        assert!(!is_rate_limited(&t.token_from("203.0.113.1", "junk").await));
+        // Over the address limit: refused...
+        let genuine = t.assertion();
+        let over = t.token_from("203.0.113.1", &genuine).await;
+        assert!(
+            is_rate_limited(&over),
+            "expected a rate-limit refusal, got {over:?}"
+        );
+        // ...and before the assertion was checked: it still works from another address (a replay
+        // record would have refused it), which also shows the address bucket is per peer.
+        assert_eq!(
+            t.token_from("203.0.113.2", &genuine).await.unwrap(),
+            "fapi-client"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_client_bucket_is_not_escaped_by_changing_address() {
+        let t = Limited::new(Some(2)).await;
+        for peer in ["198.51.100.1", "198.51.100.2"] {
+            assert_eq!(
+                t.token_from(peer, &t.assertion()).await.unwrap(),
+                "fapi-client"
+            );
+        }
+        let over = t.token_from("198.51.100.3", &t.assertion()).await;
+        assert!(
+            is_rate_limited(&over),
+            "expected a rate-limit refusal, got {over:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unauthenticated_request_naming_a_client_does_not_spend_its_bucket() {
+        let t = Limited::new(Some(2)).await;
+        for i in 0..6 {
+            let r = t
+                .token_from(&format!("192.0.2.{i}"), &t.unauthenticated_assertion())
+                .await;
+            assert!(r.is_err() && !is_rate_limited(&r), "round {i}: {r:?}");
+        }
+        // The client's own allowance is intact: two genuine requests still pass.
+        for peer in ["192.0.2.100", "192.0.2.101"] {
+            assert_eq!(
+                t.token_from(peer, &t.assertion()).await.unwrap(),
+                "fapi-client"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn authorize_and_token_do_not_share_an_address_allowance() {
+        let t = Limited::new(Some(1)).await;
+        assert_eq!(
+            t.token_from("203.0.113.9", &t.assertion()).await.unwrap(),
+            "fapi-client"
+        );
+        let r = t
+            .manager
+            .validate_authorization_request_from("203.0.113.9", "junk", None, None, None)
+            .await;
+        assert!(
+            r.is_err() && !is_rate_limited(&r),
+            "authorize bucket was spent by token: {r:?}"
+        );
+        let again = t
+            .manager
+            .validate_authorization_request_from("203.0.113.9", "junk", None, None, None)
+            .await;
+        assert!(
+            is_rate_limited(&again),
+            "second authorize from one peer: {again:?}"
+        );
+    }
+
+    #[test]
+    fn a_limiter_that_cannot_be_consulted_refuses() {
+        let unavailable = FapiManager::limiter_outcome("k", Err(AuthError::internal("down")));
+        assert!(unavailable.is_err() && !is_rate_limited(&unavailable));
+        let blocked = FapiManager::limiter_outcome(
+            "k",
+            Ok(RateLimitResult::Blocked {
+                unblock_at: std::time::Instant::now() + std::time::Duration::from_secs(30),
+                reason: "test".to_string(),
+            }),
+        );
+        assert!(is_rate_limited(&blocked));
+    }
+
+    #[tokio::test]
+    async fn without_a_limiter_the_from_entry_points_count_nothing() {
+        let t = Limited::new(None).await;
+        for _ in 0..5 {
+            assert_eq!(
+                t.token_from("203.0.113.5", &t.assertion()).await.unwrap(),
+                "fapi-client"
+            );
+        }
     }
 }
