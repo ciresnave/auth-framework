@@ -37,6 +37,16 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// FAPI 2.0 Security Profile Manager
+///
+/// # Rate limiting
+///
+/// `FapiManager` has no rate limiter of its own, and the crate's HTTP router does not serve FAPI routes, so nothing in the crate
+/// limits `validate_authorization_request`, `validate_token_request`, `authenticate_client_jwt` or
+/// `validate_sender_constrained_token`. These do signature work and keep per-request state (a DPoP proof and its replay record)
+/// before the caller is authenticated, so put a limiter in front of the FAPI `/authorize` and `/token` endpoints yourself:
+/// one bucket per caller address, counted before any signature check, and one per authenticated client, counted after
+/// client authentication succeeded, with a separate allowance for each endpoint. If the limiter cannot be consulted, refuse
+/// the request rather than serve it unlimited. See `docs/FAPI_RATE_LIMIT_DESIGN.md`.
 #[derive(Clone)]
 pub struct FapiManager {
     /// DPoP manager for sender constraining
