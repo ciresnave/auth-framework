@@ -1393,6 +1393,18 @@ impl AdvancedTokenExchangeManager {
         Ok(token_data.claims)
     }
 
+    /// The `aud` claim as a list: RFC 7519 4.1.3 allows a single string or an array of strings.
+    fn audiences_of(claims: &serde_json::Value) -> Vec<String> {
+        match claims.get("aud") {
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Handle step-up authentication for elevated security requirements
     async fn handle_step_up_authentication(
         &self,
@@ -1500,11 +1512,7 @@ impl TokenExchangeService for AdvancedTokenExchangeManager {
                             .get("iss")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string()),
-                        audience: claims
-                            .get("aud")
-                            .and_then(|v| v.as_str())
-                            .map(|s| vec![s.to_string()])
-                            .unwrap_or_default(),
+                        audience: Self::audiences_of(&claims),
                         scopes,
                         expires_at: claims.get("exp").and_then(|v| v.as_i64()).and_then(|exp| {
                             use chrono::{TimeZone, Utc};
@@ -2029,6 +2037,44 @@ B29cp6/xsQallnwW/39X0GHoAPa7VWKVnV2LOALXNOZ9uXnfClLBKORJYVAHo0E9\n\
             result.is_err(),
             "a token with no exp claim at all must be rejected, not treated as \
              non-expiring"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_service_reports_every_audience_of_a_jwt() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let manager = make_introspection_test_manager();
+        let key = EncodingKey::from_rsa_pem(INTROSPECT_TEST_PRIVATE_KEY_PEM.as_bytes())
+            .expect("valid RSA private key PEM");
+        let exp = (Utc::now() + Duration::minutes(5)).timestamp();
+        let mint = |aud: serde_json::Value| {
+            encode(
+                &Header::new(Algorithm::RS256),
+                &serde_json::json!({ "sub": "user-123", "aud": aud, "exp": exp }),
+                &key,
+            )
+            .expect("signing must succeed")
+        };
+        let jwt = "urn:ietf:params:oauth:token-type:jwt";
+
+        // Control: a single-string audience was reported before and after.
+        let one = manager
+            .validate_token(&mint(serde_json::json!("api")), jwt)
+            .await
+            .unwrap();
+        assert!(one.is_valid);
+        assert_eq!(one.audience, vec!["api".to_string()]);
+
+        // An array of audiences (RFC 7519 4.1.3) was reported as none at all.
+        let many = manager
+            .validate_token(&mint(serde_json::json!(["api", "billing"])), jwt)
+            .await
+            .unwrap();
+        assert!(many.is_valid);
+        assert_eq!(
+            many.audience,
+            vec!["api".to_string(), "billing".to_string()]
         );
     }
 }
