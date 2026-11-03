@@ -1,6 +1,6 @@
 # Rate limiting the FAPI 2.0 endpoints (ROADMAP A16)
 
-Status: design note, docs only. Measured at `origin/main` 4301a8da. No code yet.
+Status: slices 1-3 done (rustdoc, then `FapiManager::with_rate_limiter` and the `_from` entry points). Measured at `origin/main` 4301a8da.
 
 ## What exists
 
