@@ -639,10 +639,7 @@ impl EnhancedCibaManager {
     pub fn new(config: EnhancedCibaConfig) -> Self {
         use crate::server::core::common_config::EndpointConfig;
 
-        let jwt_validator = Arc::new(
-            SecureJwtValidator::new(config.jwt_config.clone())
-                .expect("CIBA JWT config validation failed — check key material"),
-        );
+        let jwt_validator = Arc::new(Self::build_validator(&config));
 
         // Create HTTP client for notifications
         let endpoint_config = EndpointConfig::new(&config.issuer);
@@ -672,10 +669,7 @@ impl EnhancedCibaManager {
     ) -> Self {
         use crate::server::core::common_config::EndpointConfig;
 
-        let jwt_validator = Arc::new(
-            SecureJwtValidator::new(config.jwt_config.clone())
-                .expect("CIBA JWT config validation failed — check key material"),
-        );
+        let jwt_validator = Arc::new(Self::build_validator(&config));
 
         // Create HTTP client for notifications
         let endpoint_config = EndpointConfig::new(&config.issuer);
@@ -696,6 +690,16 @@ impl EnhancedCibaManager {
             notification_client,
             jwt_validator,
         }
+    }
+
+    /// Build the validator for ID token hints. The manager signs its tokens with
+    /// `iss = config.issuer`, so that issuer must be one the validator accepts;
+    /// otherwise a hint this manager issued is refused by its own validator.
+    fn build_validator(config: &EnhancedCibaConfig) -> SecureJwtValidator {
+        let mut jwt_config = config.jwt_config.clone();
+        jwt_config.required_issuers.insert(config.issuer.clone());
+        SecureJwtValidator::new(jwt_config)
+            .expect("CIBA JWT config validation failed — check key material")
     }
 
     /// Configure JWT keys for token generation
@@ -963,24 +967,10 @@ impl EnhancedCibaManager {
                     }
                     code.clone()
                 }
+                // The hint is verified against the configured key and the validator's
+                // issuer/audience/expiry/type rules, the same as token generation does.
                 UserIdentifierHint::IdTokenHint(token) => {
-                    // Decode the JWT token to extract the real subject
-                    // For now, we'll do basic token validation
-                    if token.split('.').count() != 3 {
-                        return Err(AuthError::token(
-                            "Invalid JWT format in id_token_hint".to_string(),
-                        ));
-                    }
-                    // Implement proper JWT validation for id_token_hint
-                    match self.validate_id_token_hint(token) {
-                        Ok(claims) => claims.sub,
-                        Err(e) => {
-                            return Err(AuthError::token(format!(
-                                "id_token_hint validation failed: {}",
-                                e
-                            )));
-                        }
-                    }
+                    self.extract_subject_from_id_token(token)?
                 }
             };
 
@@ -1508,77 +1498,6 @@ impl EnhancedCibaManager {
     pub fn config(&self) -> &EnhancedCibaConfig {
         &self.config
     }
-
-    /// Validate ID token hint JWT
-    fn validate_id_token_hint(&self, token: &str) -> Result<IdTokenHintClaims> {
-        // Basic JWT structure validation
-        let parts: Vec<&str> = token.split('.').collect();
-        if parts.len() != 3 {
-            return Err(AuthError::token("Invalid JWT structure".to_string()));
-        }
-
-        // For now, perform basic validation without signature verification
-        // In production, this would include:
-        // 1. Signature verification with proper keys
-        // 2. Issuer validation
-        // 3. Audience validation
-        // 4. Expiration checks
-        // 5. Not-before validation
-
-        // Decode the payload (middle part)
-        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-        let payload = URL_SAFE_NO_PAD
-            .decode(parts[1])
-            .map_err(|_| AuthError::token("Invalid JWT payload encoding".to_string()))?;
-
-        let payload_str = String::from_utf8(payload)
-            .map_err(|_| AuthError::token("Invalid JWT payload UTF-8".to_string()))?;
-
-        // Parse JWT claims
-        let claims: IdTokenHintClaims = serde_json::from_str(&payload_str)
-            .map_err(|e| AuthError::token(format!("Invalid JWT claims: {}", e)))?;
-
-        // Basic validation checks
-        if claims.sub.is_empty() {
-            return Err(AuthError::token("Missing subject in ID token".to_string()));
-        }
-
-        // Check expiration if present
-        if let Some(exp) = claims.exp {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if exp < now {
-                return Err(AuthError::token("ID token has expired".to_string()));
-            }
-        }
-
-        tracing::debug!(
-            "Successfully validated ID token hint for subject: {}",
-            claims.sub
-        );
-        Ok(claims)
-    }
-}
-
-/// ID Token hint claims structure for lenient JWT parsing during CIBA id_token_hint validation.
-/// Fields are all optional (except `sub`) because incoming JWTs may omit non-required claims.
-/// Distinct from `oidc::core::IdTokenClaims`, which represents a fully-formed issued ID token.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct IdTokenHintClaims {
-    /// Subject identifier
-    pub sub: String,
-    /// Issued at time
-    pub iat: Option<u64>,
-    /// Expiration time
-    pub exp: Option<u64>,
-    /// Issuer
-    pub iss: Option<String>,
-    /// Audience
-    pub aud: Option<serde_json::Value>,
-    /// Not before
-    pub nbf: Option<u64>,
 }
 
 /// CIBA token response
@@ -1793,5 +1712,101 @@ mod tests {
         // Test session revocation
         let revoke_result = manager.revoke_ciba_session(auth_req_id).await;
         assert!(revoke_result.is_ok());
+    }
+
+    // ---- id_token_hint must be a signed token (review round 2, item b) ----
+
+    fn hint_params(hint: UserIdentifierHint) -> BackchannelAuthParams<'static> {
+        BackchannelAuthParams {
+            client_id: "test_client",
+            user_hint: hint,
+            binding_message: None,
+            auth_context: None,
+            scopes: vec!["openid".to_string()],
+            mode: AuthenticationMode::Poll,
+            client_notification_endpoint: None,
+            client_notification_token: None,
+        }
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    fn hint_payload(sub: &str) -> String {
+        let now = chrono::Utc::now().timestamp();
+        serde_json::json!({
+            "sub": sub, "iss": "auth-framework-ciba", "aud": "test_client",
+            "iat": now, "nbf": now, "exp": now + 600
+        })
+        .to_string()
+    }
+
+    /// Complete a request that carries `hint`; returns the completion result.
+    async fn complete_with_hint(manager: &EnhancedCibaManager, hint: String) -> Result<()> {
+        let resp = manager
+            .initiate_backchannel_auth(hint_params(UserIdentifierHint::IdTokenHint(hint)))
+            .await?;
+        manager
+            .complete_auth_request(&resp.auth_req_id, true, None)
+            .await
+    }
+
+    #[tokio::test]
+    async fn an_unsigned_id_token_hint_is_refused() {
+        let manager = EnhancedCibaManager::new_for_testing();
+        // alg none, empty signature, naming any subject
+        let forged = format!(
+            "{}.{}.",
+            b64(br#"{"alg":"none","typ":"JWT"}"#),
+            b64(hint_payload("victim").as_bytes())
+        );
+        let r = complete_with_hint(&manager, forged).await;
+        assert!(r.is_err(), "an unsigned id_token_hint was accepted: {r:?}");
+    }
+
+    #[tokio::test]
+    async fn an_id_token_hint_signed_with_another_key_is_refused() {
+        let manager = EnhancedCibaManager::new_for_testing();
+        let claims: serde_json::Value = serde_json::from_str(&hint_payload("victim")).unwrap();
+        let forged = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(b"an-attacker-chosen-secret-0123456789"),
+        )
+        .unwrap();
+        let r = complete_with_hint(&manager, forged).await;
+        assert!(
+            r.is_err(),
+            "a hint signed with a foreign key was accepted: {r:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_id_token_hint_this_manager_issued_is_accepted() {
+        // Control: the check can tell a genuine hint. The hint is the ID token the
+        // manager itself issued (iss = its configured issuer, typ = id).
+        let manager = EnhancedCibaManager::new_for_testing();
+        let first = manager
+            .initiate_backchannel_auth(hint_params(UserIdentifierHint::UserCode(
+                "ABC123".to_string(),
+            )))
+            .await
+            .unwrap();
+        manager
+            .complete_auth_request(&first.auth_req_id, true, None)
+            .await
+            .unwrap();
+        let id_token = manager
+            .poll_auth_request(&first.auth_req_id)
+            .await
+            .unwrap()
+            .id_token
+            .expect("openid scope yields an ID token");
+
+        complete_with_hint(&manager, id_token)
+            .await
+            .expect("a genuine, signed hint is accepted");
     }
 }

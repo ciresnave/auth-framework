@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc87] - Unreleased
+
+### Fixed
+
+- **CIBA `id_token_hint` is now verified.** `EnhancedCibaManager::complete_auth_request` read the hint's subject from an ID token it never checked the signature of; it now validates the hint against the configured decoding key, issuer, audience, expiry and type, as token generation already did. The manager also adds its own `issuer` to the validator's accepted issuers, so an ID token it issued is accepted as a hint (its issuer, `auth-framework-ciba` by default, was refused by the validator). A hint that is unsigned, signed with another key or from another issuer is now refused.
+
 ## [0.5.0-rc86] - Unreleased
 
 ### Fixed
