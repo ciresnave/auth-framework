@@ -242,6 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc206 -- fix(oauth2): an authenticated client is rate limited by its own identity at the refresh-token grant and at /oauth/revoke too, not only at /token and introspection (#92)
 - 0.6.0-rc205 -- **`AdvancedTokenExchangeManager::validate_token` reports every audience of a JWT** (a JWT whose `aud` is an array was reported with no audience; validity was unchanged), plus a ROADMAP row (docs only).
 - 0.6.0-rc204 -- **FAPI rate limiting (ROADMAP A16 slices 2 and 3).** `FapiManager` documents that the integrator must rate-limit the FAPI endpoints, and gains `with_rate_limiter` plus the `_from` entry points (see Added). Additive public API; the existing methods are unchanged.
 - 0.6.0-rc203 -- **CIBA `id_token_hint` is now verified.** `EnhancedCibaManager::complete_auth_request` read the hint's subject from an ID token it never checked the signature of; it now validates the hint against the configured decoding key, issuer, audience, expiry and type, as token generation already did. The manager also adds its own `issuer` to the validator's accepted issuers, so an ID token it issued is accepted as a hint (its issuer, `auth-framework-ciba` by default, was refused by the validator). A hint that is unsigned, signed with another key or from another issuer is now refused.
