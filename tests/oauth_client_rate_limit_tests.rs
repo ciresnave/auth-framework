@@ -126,9 +126,6 @@ mod client_rate_limit_tests {
             )
             .await
         };
-        let code_of = |r: &auth_framework::api::ApiResponse<_>| {
-            r.error.as_ref().map(|e| e.code.clone()).unwrap_or_default()
-        };
         for i in 0..ALLOWANCE {
             let resp = exchange().await;
             assert_eq!(
@@ -138,5 +135,87 @@ mod client_rate_limit_tests {
             );
         }
         assert_eq!(code_of(&exchange().await), "rate_limit_exceeded");
+    }
+
+    async fn store_refresh_token(state: &ApiState, token: &str, client: &str) {
+        state
+            .auth_framework
+            .storage()
+            .store_kv(
+                &format!("oauth2_refresh_token:{token}"),
+                serde_json::json!({"user_id": "u1", "client_id": client, "scopes": "openid"})
+                    .to_string()
+                    .as_bytes(),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    fn code_of<T>(r: &auth_framework::api::ApiResponse<T>) -> String {
+        r.error.as_ref().map(|e| e.code.clone()).unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn the_refresh_grant_limits_an_authenticated_client_too() {
+        let state = state().await;
+        // A token issued to another client: the caller authenticates, then is refused, and
+        // the refusal releases the token so the attempt can be repeated.
+        store_refresh_token(&state, "rt-of-b", "limited-b").await;
+        let refresh = || async {
+            auth_framework::api::oauth2::token(
+                State(state.clone()),
+                axum::Json(TokenRequest {
+                    grant_type: "refresh_token".to_string(),
+                    refresh_token: Some("rt-of-b".to_string()),
+                    client_id: Some("limited-a".to_string()),
+                    client_secret: Some("secret-a".to_string()),
+                    ..Default::default()
+                }),
+            )
+            .await
+        };
+        for i in 0..ALLOWANCE {
+            assert_eq!(
+                code_of(&refresh().await),
+                "invalid_grant",
+                "request {i} passes client authentication"
+            );
+        }
+        assert_eq!(code_of(&refresh().await), "rate_limit_exceeded");
+    }
+
+    #[tokio::test]
+    async fn the_revoke_endpoint_limits_an_authenticated_client_too() {
+        let state = state().await;
+        let revoke = |secret: &'static str| {
+            let state = state.clone();
+            async move {
+                store_refresh_token(&state, "rt-of-a", "limited-a").await;
+                auth_framework::api::oauth2::revoke(
+                    State(state),
+                    HeaderMap::new(),
+                    axum::Json(auth_framework::api::oauth2::RevokeRequest {
+                        token: "rt-of-a".to_string(),
+                        token_type_hint: None,
+                        client_id: Some("limited-a".to_string()),
+                        client_secret: Some(secret.to_string()),
+                    }),
+                )
+                .await
+            }
+        };
+        // Failed authentication is not counted against the client it names.
+        for _ in 0..(ALLOWANCE * 2) {
+            assert_eq!(code_of(&revoke("wrong").await), "invalid_client");
+        }
+        for i in 0..ALLOWANCE {
+            assert_eq!(
+                code_of(&revoke("secret-a").await),
+                "",
+                "request {i} is within the allowance"
+            );
+        }
+        assert_eq!(code_of(&revoke("secret-a").await), "rate_limit_exceeded");
     }
 }

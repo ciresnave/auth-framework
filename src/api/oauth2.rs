@@ -838,26 +838,30 @@ async fn authenticate_token_client(
             if authenticated {
                 // An authenticated client is limited by its own identity, whatever address it
                 // uses (#92); a failed attempt is not counted against the client it names.
-                match super::client_rate_limit::check(state, client_id).await {
-                    Ok(()) => {}
-                    Err(super::client_rate_limit::ClientLimited::Exceeded { .. }) => {
-                        return Err(refusal(
-                            "rate_limit_exceeded",
-                            "This client is making too many requests",
-                        ));
-                    }
-                    Err(super::client_rate_limit::ClientLimited::Unavailable) => {
-                        return Err(refusal(
-                            "temporarily_unavailable",
-                            "Rate limiting is temporarily unavailable",
-                        ));
-                    }
-                }
+                limit_client(state, client_id).await?;
                 Ok(ClientKind::Confidential)
             } else {
                 Err(refusal("invalid_client", "Client authentication failed"))
             }
         }
+    }
+}
+
+/// Count a request from the authenticated client `client_id` against its own bucket (#92).
+async fn limit_client(
+    state: &ApiState,
+    client_id: &str,
+) -> std::result::Result<(), Box<ApiResponse<TokenResponse>>> {
+    match super::client_rate_limit::check(state, client_id).await {
+        Ok(()) => Ok(()),
+        Err(super::client_rate_limit::ClientLimited::Exceeded { .. }) => Err(refusal(
+            "rate_limit_exceeded",
+            "This client is making too many requests",
+        )),
+        Err(super::client_rate_limit::ClientLimited::Unavailable) => Err(refusal(
+            "temporarily_unavailable",
+            "Rate limiting is temporarily unavailable",
+        )),
     }
 }
 
@@ -931,6 +935,9 @@ async fn authorize_refresh_client(
     if !authenticated {
         return Err(refusal("invalid_client", "Client authentication failed"));
     }
+    // The client has proved who it is: it is limited by its own identity (#92), including
+    // when it presents a token issued to another client.
+    limit_client(state, presented_id).await?;
     if presented_id != stored_client {
         return Err(not_issued_to_you());
     }
@@ -1168,7 +1175,7 @@ async fn revocation_caller_is(
     headers: &HeaderMap,
     req: &RevokeRequest,
     owner: &str,
-) -> bool {
+) -> Result<bool, super::client_rate_limit::ClientLimited> {
     use base64::engine::general_purpose::STANDARD;
     let basic = headers
         .get(axum::http::header::AUTHORIZATION)
@@ -1184,24 +1191,24 @@ async fn revocation_caller_is(
         Some(pair) => pair,
         None => match &req.client_id {
             Some(id) => (id.clone(), req.client_secret.clone()),
-            None => return false,
+            None => return Ok(false),
         },
     };
     if presented_id != owner {
-        return false;
+        return Ok(false);
     }
     let key = format!("oauth2_client:{owner}");
     let record: serde_json::Value = match state.auth_framework.storage().get_kv(&key).await {
         Ok(Some(data)) => match serde_json::from_slice(&data) {
             Ok(record) => record,
-            Err(_) => return false,
+            Err(_) => return Ok(false),
         },
-        _ => return false,
+        _ => return Ok(false),
     };
     if !super::client_secret::is_confidential(&record) {
-        return true;
+        return Ok(true);
     }
-    match presented_secret {
+    let authenticated = match presented_secret {
         Some(secret) => {
             super::client_secret::authenticate(
                 state.auth_framework.storage().as_ref(),
@@ -1212,7 +1219,13 @@ async fn revocation_caller_is(
             .await
         }
         None => false,
+    };
+    // An authenticated client is limited by its own identity (#92); a failed attempt is not
+    // counted against the client it names.
+    if authenticated {
+        super::client_rate_limit::check(state, owner).await?;
     }
+    Ok(authenticated)
 }
 
 /// POST /api/v1/oauth/revoke — revoke an access or refresh token.
@@ -1293,10 +1306,25 @@ pub async fn revoke(
                 .as_ref()
                 .and_then(|record| record["client_id"].as_str().map(String::from))
         });
-    if let Some(owner) = owner_client.as_deref()
-        && !revocation_caller_is(&state, &headers, &req, owner).await
-    {
-        return ApiResponse::error_typed("invalid_client", "Client authentication failed");
+    if let Some(owner) = owner_client.as_deref() {
+        match revocation_caller_is(&state, &headers, &req, owner).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return ApiResponse::error_typed("invalid_client", "Client authentication failed");
+            }
+            Err(super::client_rate_limit::ClientLimited::Exceeded { .. }) => {
+                return ApiResponse::error_typed(
+                    "rate_limit_exceeded",
+                    "This client is making too many requests",
+                );
+            }
+            Err(super::client_rate_limit::ClientLimited::Unavailable) => {
+                return ApiResponse::error_typed(
+                    "temporarily_unavailable",
+                    "Rate limiting is temporarily unavailable",
+                );
+            }
+        }
     }
 
     // Store the revoked token in a blacklist for immediate invalidation.
