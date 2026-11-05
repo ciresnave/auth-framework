@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc88] - Unreleased
+
+### Changed
+
+- **Breaking: GNAP now verifies DPoP proofs; unsupported proof methods are refused.** A client key in a GNAP request is accepted only with a verified `dpop` proof: use the new `GnapService::handle_transaction_with_proof` and `continue_transaction_with_proof` (and `GnapProof`). `handle_transaction` and `continue_transaction` now refuse a request or transaction that names a client key; requests with no client key are unchanged. The `httpsig`, `mtls` and `jws` proof methods, and any unknown one, are refused with "GNAP proof method not supported", and `validate_client_key_with_proof` no longer accepts any method outside unit tests. A caller that passed a client key to the old entry points, or relied on `httpsig`/`mtls`/`jws`, must switch to `dpop` with the new entry points. Same change as 0.6.0-rc209 (ROADMAP A2).
+
 ## [0.5.0-rc87] - Unreleased
 
 ### Fixed
