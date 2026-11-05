@@ -36,6 +36,13 @@
         # is not linked into any built artifact. Nothing in this crate calls it; remove this entry when
         # askama stops depending on it.
         { id = "RUSTSEC-2026-0374", reason = "build-time proc-macro dependency of the newest askama; web-gui only; not linked into artifacts" },
+        # RUSTSEC-2026-0440 (astral-tokio-tar unmaintained, "No safe upgrade is available"; Astral ended
+        # maintenance 2026-11-03): pulled only by testcontainers 0.28.0 -- the newest release, checked on
+        # crates.io 2026-11-05 -- which only the optional `docker-tests` feature enables (integration tests
+        # against Docker; never part of a shipped build). Owner: auth-framework lane. Remove this entry when
+        # testcontainers releases a version that no longer depends on astral-tokio-tar (`cargo tree -i
+        # astral-tokio-tar --all-features` is then empty), or when `docker-tests` is dropped.
+        { id = "RUSTSEC-2026-0440", reason = "unmaintained, no safe upgrade; only via testcontainers 0.28.0 (newest) behind the test-only docker-tests feature; remove when testcontainers drops it" },
     ]
 
 [licenses]
