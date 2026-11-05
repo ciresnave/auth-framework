@@ -242,6 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc207 -- ROADMAP only: #92 row says what is covered at rc206; A17/A18 backports to release/0.5.x recorded as done (#380, #383), 0.4.x retired (docs only).
 - 0.6.0-rc206 -- fix(oauth2): an authenticated client is rate limited by its own identity at the refresh-token grant and at /oauth/revoke too, not only at /token and introspection (#92)
 - 0.6.0-rc205 -- **`AdvancedTokenExchangeManager::validate_token` reports every audience of a JWT** (a JWT whose `aud` is an array was reported with no audience; validity was unchanged), plus a ROADMAP row (docs only).
 - 0.6.0-rc204 -- **FAPI rate limiting (ROADMAP A16 slices 2 and 3).** `FapiManager` documents that the integrator must rate-limit the FAPI endpoints, and gains `with_rate_limiter` plus the `_from` entry points (see Added). Additive public API; the existing methods are unchanged.
