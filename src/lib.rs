@@ -137,6 +137,8 @@ pub mod errors;
 /// Authentication method implementations (JWT, OAuth2, API keys, passwords, SAML).
 pub mod methods;
 
+/// Access-control engine: deny-wins decisions, action registry, `Authorizer` trait.
+pub mod access_control;
 /// Permission and role definitions for access control.
 pub mod permissions;
 
