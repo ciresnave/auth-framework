@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc89] - Unreleased
+
+### Changed
+
+- **Breaking: `UmaService::request_rpt` no longer takes a claims argument.** A resource set with `required_claims` is refused with `UMA need_info` (the ticket is kept) until the service can gather the claims itself, because claims stated by the caller were compared to the policy without being authenticated. Call `request_rpt(ticket)`; resource sets without `required_claims` are unchanged.
+
 ## [0.5.0-rc88] - Unreleased
 
 ### Changed
