@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! KM4: rotation with overlap, for every key kind a [`KeyStore`] holds.
 //!
 //! Rotation never leaves a moment with no signing key: the new key goes in `Active`
