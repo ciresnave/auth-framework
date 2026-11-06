@@ -213,7 +213,7 @@ Several protocol modules provide partial or stub implementations that are not ye
 - **WS-Trust**: Issued tokens are stored in-memory only. They are lost on restart and not shared across instances. Production deployments should integrate with the StorageBackend KV layer.
 - **GNAP**: implements grant negotiation and transaction state management. A client key is accepted only with a verified `dpop` proof (`handle_transaction_with_proof`, `continue_transaction_with_proof`); the `httpsig`, `mtls` and `jws` proof methods are refused as not supported (`src/protocols/gnap.rs`).
 - **OpenID4VP**: Parses and structurally validates Verifiable Presentations but does not perform cryptographic signature verification on credentials.
-- **UMA 2.0**: Implements resource registration, permission tickets, and basic policy evaluation. Does not include a full claims-gathering interaction flow.
+- **UMA 2.0**: Implements resource registration, permission tickets, and RPT issuance. Does not include a claims-gathering interaction flow: `UmaService::request_rpt(ticket)` refuses a resource set that has `required_claims` (`UMA need_info`) because claims stated by the caller are not evidence, so a claims policy cannot be satisfied until the service gathers the claims itself.
 
 ### MD5 in RADIUS
 
