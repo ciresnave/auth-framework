@@ -7,19 +7,25 @@ use crate::errors::{AuthError, Result};
 use crate::protocols::saml_assertions::SamlAssertionBuilder;
 // SamlAssertion removed from import - not currently used but may be needed later
 use crate::protocols::ws_security::{PasswordType, WsSecurityClient, WsSecurityConfig};
+use crate::storage::AuthStorage;
 use base64::Engine as _;
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode as jwt_encode};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use zeroize::Zeroizing;
 
 /// WS-Trust Security Token Service
 ///
-/// **Note:** Issued tokens are stored in an in-memory `HashMap`. They will be
-/// lost on restart and are not shared across STS instances. For production
-/// multi-instance deployments, integrate with the `StorageBackend` KV store
-/// for persistent/shared token state.
+/// **Persistence.** [`SecurityTokenService::process_request`] keeps issued tokens in an
+/// in-memory `HashMap`: they are lost on restart and not shared across instances.
+/// [`SecurityTokenService::with_storage`] plus
+/// [`SecurityTokenService::process_request_stored`] keep them in the `AuthStorage` KV
+/// layer instead (key `wstrust:token:<id>`, expiring with the token), so a restart or a
+/// second instance sees the same tokens. The stored record holds the token content and any
+/// proof-of-possession key material, so give the STS an encrypted storage
+/// (`EncryptedStorage`) in production.
 pub struct SecurityTokenService {
     /// STS configuration
     config: StsConfig,
@@ -29,6 +35,22 @@ pub struct SecurityTokenService {
 
     /// Issued tokens cache
     issued_tokens: HashMap<String, IssuedToken>,
+
+    /// Shared token store used by `process_request_stored`
+    storage: Option<Arc<dyn AuthStorage>>,
+}
+
+/// KV key prefix for tokens persisted by `process_request_stored`.
+const TOKEN_KEY_PREFIX: &str = "wstrust:token:";
+
+/// A token id is generated (`token-<uuid>`); anything else a caller sends for lookup is
+/// not looked up in storage, so a request cannot choose an arbitrary KV key.
+fn is_storable_token_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// STS Configuration
@@ -284,7 +306,150 @@ impl SecurityTokenService {
             config,
             ws_security,
             issued_tokens: HashMap::new(),
+            storage: None,
         }
+    }
+
+    /// Persist issued tokens in `storage` when requests go through
+    /// [`process_request_stored`](Self::process_request_stored).
+    pub fn with_storage(mut self, storage: Arc<dyn AuthStorage>) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Process a request with the token store as the source of truth.
+    ///
+    /// Issue and Renew write the new token to storage (expiring with it), Cancel deletes it,
+    /// Validate and Renew read it from storage, so a restarted or second STS instance sees the
+    /// same tokens. A token that cannot be stored is not returned. Without
+    /// [`with_storage`](Self::with_storage) this is [`process_request`](Self::process_request).
+    ///
+    /// Two instances renewing the same token at the same moment each issue their own new token;
+    /// the old one is not consumed by a renewal, as before.
+    pub async fn process_request_stored(
+        &mut self,
+        request: RequestSecurityToken,
+    ) -> Result<RequestSecurityTokenResponse> {
+        let Some(storage) = self.storage.clone() else {
+            return self.process_request(request);
+        };
+
+        // Load the token the request names (if any) into the working map.
+        let mut touched: HashSet<String> = HashSet::new();
+        if let Some(existing) = request.existing_token.as_deref() {
+            let id = if request.request_type.ends_with("/Renew") {
+                Self::parse_existing_token(existing).0
+            } else {
+                existing.to_string()
+            };
+            self.issued_tokens.remove(&id);
+            if is_storable_token_id(&id)
+                && let Some(bytes) = storage.get_kv(&format!("{TOKEN_KEY_PREFIX}{id}")).await?
+            {
+                let token: IssuedToken = serde_json::from_slice(&bytes).map_err(|e| {
+                    AuthError::auth_method("wstrust", format!("Stored token is unreadable: {e}"))
+                })?;
+                self.issued_tokens.insert(id.clone(), token);
+            }
+            touched.insert(id);
+        }
+        let before: HashSet<String> = self.issued_tokens.keys().cloned().collect();
+
+        let outcome = self.process_request(request);
+
+        let added: Vec<String> = self
+            .issued_tokens
+            .keys()
+            .filter(|k| !before.contains(*k))
+            .cloned()
+            .collect();
+        let removed: Vec<String> = before
+            .iter()
+            .filter(|k| !self.issued_tokens.contains_key(*k))
+            .cloned()
+            .collect();
+
+        let mut persisted: Result<()> = Ok(());
+        for id in &added {
+            if let Some(token) = self.issued_tokens.get(id) {
+                persisted = Self::persist(storage.as_ref(), token).await;
+                if persisted.is_err() {
+                    break;
+                }
+            }
+        }
+        if persisted.is_ok() {
+            for id in &removed {
+                if let Err(e) = storage.delete_kv(&format!("{TOKEN_KEY_PREFIX}{id}")).await {
+                    persisted = Err(e);
+                    break;
+                }
+            }
+        }
+
+        // The store is the source of truth: do not let the working map grow.
+        for id in added.iter().chain(touched.iter()) {
+            self.issued_tokens.remove(id);
+        }
+
+        persisted?;
+        outcome
+    }
+
+    async fn persist(storage: &dyn AuthStorage, token: &IssuedToken) -> Result<()> {
+        let ttl = (token.expires_at - Utc::now())
+            .to_std()
+            .map_err(|_| AuthError::auth_method("wstrust", "Token lifetime has already ended"))?;
+        let bytes = serde_json::to_vec(token).map_err(|e| {
+            AuthError::auth_method("wstrust", format!("Token cannot be stored: {e}"))
+        })?;
+        storage
+            .store_kv(
+                &format!("{TOKEN_KEY_PREFIX}{}", token.token_id),
+                &bytes,
+                Some(ttl),
+            )
+            .await
+    }
+
+    /// Token id a renewal looks up, and the string claims of a JWT presented for renewal.
+    fn parse_existing_token(existing_token: &str) -> (String, HashMap<String, String>) {
+        let mut renewal_claims = HashMap::new();
+        let token_id = if existing_token.matches('.').count() == 2 {
+            // Token looks like a JWT: extract claims from payload
+            if let Some(payload_b64) = existing_token.split('.').nth(1) {
+                if let Ok(payload_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(payload_b64)
+                    .or_else(|_| base64::engine::general_purpose::STANDARD.decode(payload_b64))
+                {
+                    if let Ok(claims) =
+                        serde_json::from_slice::<HashMap<String, serde_json::Value>>(&payload_bytes)
+                    {
+                        for (k, v) in &claims {
+                            if let Some(s) = v.as_str() {
+                                renewal_claims.insert(k.clone(), s.to_string());
+                            }
+                        }
+                        // Use "jti" or "sub" as token ID for lookup
+                        claims
+                            .get("jti")
+                            .or_else(|| claims.get("sub"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(existing_token)
+                            .to_string()
+                    } else {
+                        existing_token.to_string()
+                    }
+                } else {
+                    existing_token.to_string()
+                }
+            } else {
+                existing_token.to_string()
+            }
+        } else {
+            existing_token.to_string()
+        };
+        (token_id, renewal_claims)
     }
 
     /// Process a WS-Trust Request Security Token
@@ -473,43 +638,8 @@ impl SecurityTokenService {
             AuthError::auth_method("wstrust", "Existing token required for renewal")
         })?;
 
-        // Find the token — try direct lookup first, then attempt JWT parsing
-        // to extract claims from the existing token if it looks like a JWT.
-        let mut renewal_claims = HashMap::new();
-        let token_id = if existing_token.matches('.').count() == 2 {
-            // Token looks like a JWT — extract claims from payload
-            if let Some(payload_b64) = existing_token.split('.').nth(1) {
-                if let Ok(payload_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .decode(payload_b64)
-                    .or_else(|_| base64::engine::general_purpose::STANDARD.decode(payload_b64))
-                {
-                    if let Ok(claims) =
-                        serde_json::from_slice::<HashMap<String, serde_json::Value>>(&payload_bytes)
-                    {
-                        for (k, v) in &claims {
-                            if let Some(s) = v.as_str() {
-                                renewal_claims.insert(k.clone(), s.to_string());
-                            }
-                        }
-                        // Use "jti" or "sub" as token ID for lookup
-                        claims
-                            .get("jti")
-                            .or_else(|| claims.get("sub"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(&existing_token)
-                            .to_string()
-                    } else {
-                        existing_token.clone()
-                    }
-                } else {
-                    existing_token.clone()
-                }
-            } else {
-                existing_token.clone()
-            }
-        } else {
-            existing_token.clone()
-        };
+        // Find the token: direct lookup first, then the JWT's jti or sub
+        let (token_id, renewal_claims) = Self::parse_existing_token(&existing_token);
 
         let issued_token = self
             .issued_tokens
