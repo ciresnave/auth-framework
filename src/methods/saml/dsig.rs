@@ -25,10 +25,32 @@ fn invalid(message: impl Into<String>) -> AuthError {
     AuthError::validation(message.into())
 }
 
-/// The certificates an issuer's signatures are accepted under.
+/// Which signature algorithms a SAML verifier accepts.
+///
+/// The default accepts everything the XML-DSig library does, SHA-1 included, because identity
+/// providers in the field still sign that way. Set `allow_sha1` to `false` to refuse a signature
+/// whose `SignatureMethod` or any `DigestMethod` is SHA-1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SamlAlgorithmPolicy {
+    /// Whether a SHA-1 signature or digest is accepted.
+    pub allow_sha1: bool,
+}
+
+impl Default for SamlAlgorithmPolicy {
+    fn default() -> Self {
+        Self { allow_sha1: true }
+    }
+}
+
+/// The refusal of a signature the algorithm policy does not allow.
+const SHA1_REFUSED: &str =
+    "The SAML signature uses SHA-1, which the configured algorithm policy refuses";
+
+/// The certificates an issuer's signatures are accepted under, and the algorithms accepted.
 #[derive(Clone, Default)]
 pub struct SamlTrustAnchors {
     by_issuer: BTreeMap<String, Vec<Vec<u8>>>,
+    policy: SamlAlgorithmPolicy,
 }
 
 impl std::fmt::Debug for SamlTrustAnchors {
@@ -80,12 +102,26 @@ impl SamlTrustAnchors {
 
     /// Add everything `other` trusts.
     pub fn extend(&mut self, other: SamlTrustAnchors) {
+        // Adding anchors never relaxes what was refused.
+        self.policy.allow_sha1 &= other.policy.allow_sha1;
         for (issuer, certificates) in other.by_issuer {
             self.by_issuer
                 .entry(issuer)
                 .or_default()
                 .extend(certificates);
         }
+    }
+
+    /// Use `policy` to decide which signature algorithms are accepted.
+    #[must_use]
+    pub fn with_algorithm_policy(mut self, policy: SamlAlgorithmPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// The algorithm policy in force.
+    pub fn algorithm_policy(&self) -> SamlAlgorithmPolicy {
+        self.policy
     }
 
     /// Whether nothing is trusted.
@@ -175,6 +211,10 @@ struct Element {
     text: Option<String>,
     /// The `Issuer` attribute (a SAML 1.1 assertion names its issuer there).
     issuer_attr: Option<String>,
+    /// The `Algorithm` attribute (`SignatureMethod`, `DigestMethod`).
+    algorithm: Option<String>,
+    /// The `URI` attribute (`Reference`).
+    uri_attr: Option<String>,
 }
 
 fn unescaped(raw: &[u8]) -> Result<String> {
@@ -192,6 +232,8 @@ fn element_of(
     let local = String::from_utf8_lossy(bytes_of(start.local_name().into_inner())).into_owned();
     let mut id = None;
     let mut issuer_attr = None;
+    let mut algorithm = None;
+    let mut uri_attr = None;
     for attr in start.attributes() {
         let attr = attr.map_err(|e| invalid(format!("XML attribute error: {e}")))?;
         let key = String::from_utf8_lossy(bytes_of(attr.key.local_name().into_inner()));
@@ -204,6 +246,10 @@ fn element_of(
             id = Some(unescaped(bytes_of(&*attr.value))?);
         } else if key.as_ref() == "Issuer" {
             issuer_attr = Some(unescaped(bytes_of(&*attr.value))?);
+        } else if key.as_ref() == "Algorithm" {
+            algorithm = Some(unescaped(bytes_of(&*attr.value))?);
+        } else if key.as_ref() == "URI" {
+            uri_attr = Some(unescaped(bytes_of(&*attr.value))?);
         }
     }
     Ok(Element {
@@ -214,6 +260,8 @@ fn element_of(
         parent,
         text: None,
         issuer_attr,
+        algorithm,
+        uri_attr,
     })
 }
 
@@ -315,6 +363,7 @@ pub fn verify_signed_assertion(xml: &str, anchors: &SamlTrustAnchors) -> Result<
         for der in certificates {
             match verify_under(xml, der) {
                 Ok(references) => {
+                    enforce_algorithm_policy(&elements, &references, anchors.algorithm_policy())?;
                     return covered_assertion(xml, &elements, issuer, &references);
                 }
                 Err(reason) => last_reason = reason,
@@ -324,6 +373,65 @@ pub fn verify_signed_assertion(xml: &str, anchors: &SamlTrustAnchors) -> Result<
     Err(invalid(format!(
         "XML signature verification failed: {last_reason}"
     )))
+}
+
+fn is_sha1(algorithm: Option<&str>) -> bool {
+    algorithm.is_some_and(|a| a.to_ascii_lowercase().ends_with("sha1"))
+}
+
+/// Refuse the verified signature when `policy` does not allow an algorithm it uses.
+///
+/// The signature that verified is found by what it signs: the `Signature` elements whose
+/// `SignedInfo` lists exactly the verified reference URIs. Its `SignatureMethod` and every
+/// `DigestMethod` are read from there, so a signature over something else (a decoy that uses
+/// other algorithms) neither satisfies nor trips the policy. Several signatures over the same
+/// references must all comply. If no signature element can be matched to the verified references
+/// the algorithms cannot be established, and a policy that refuses SHA-1 then refuses the
+/// document.
+fn enforce_algorithm_policy(
+    elements: &[Element],
+    verified_references: &[String],
+    policy: SamlAlgorithmPolicy,
+) -> Result<()> {
+    if policy.allow_sha1 {
+        return Ok(());
+    }
+    let verified: BTreeSet<&str> = verified_references.iter().map(String::as_str).collect();
+    let mut matched = false;
+    for (signature, _) in elements
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.local == "Signature")
+    {
+        for signed_info in direct_children(elements, signature, "SignedInfo") {
+            let references: Vec<usize> =
+                direct_children(elements, signed_info, "Reference").collect();
+            let listed: BTreeSet<&str> = references
+                .iter()
+                .map(|&r| elements[r].uri_attr.as_deref().unwrap_or(""))
+                .collect();
+            if listed != verified {
+                continue;
+            }
+            matched = true;
+            let signature_sha1 = direct_children(elements, signed_info, "SignatureMethod")
+                .any(|m| is_sha1(elements[m].algorithm.as_deref()));
+            let digest_sha1 = references.iter().any(|&r| {
+                direct_children(elements, r, "DigestMethod")
+                    .any(|d| is_sha1(elements[d].algorithm.as_deref()))
+            });
+            if signature_sha1 || digest_sha1 {
+                return Err(invalid(SHA1_REFUSED));
+            }
+        }
+    }
+    if matched {
+        Ok(())
+    } else {
+        Err(invalid(
+            "The algorithms of the SAML signature could not be established, and the configured algorithm policy refuses SHA-1",
+        ))
+    }
 }
 
 /// Verify with `der` as the only key; the URIs of the references whose digests were checked.
@@ -486,4 +594,95 @@ pub fn anchors_for_thumbprints(
         }
     }
     Ok(anchors)
+}
+
+/// The algorithm policy reads the signature that verified, by what it signs. These tests run on
+/// the parsed document alone (no signature is checked), so they reach the `SignatureMethod`
+/// side that the AWS-LC backend cannot sign end to end.
+#[cfg(test)]
+mod algorithm_policy_tests {
+    use super::*;
+
+    const SHA1_SIG: &str = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
+    const SHA256_SIG: &str = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
+    const SHA1_DIGEST: &str = "http://www.w3.org/2000/09/xmldsig#sha1";
+    const SHA256_DIGEST: &str = "http://www.w3.org/2001/04/xmlenc#sha256";
+    const REFUSE: SamlAlgorithmPolicy = SamlAlgorithmPolicy { allow_sha1: false };
+
+    fn signature(uri: &str, signature_method: &str, digest_method: &str) -> String {
+        format!(
+            r##"<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:SignatureMethod Algorithm="{signature_method}"/><ds:Reference URI="{uri}"><ds:DigestMethod Algorithm="{digest_method}"/></ds:Reference></ds:SignedInfo></ds:Signature>"##
+        )
+    }
+
+    fn document(signatures: &[String]) -> String {
+        format!("<root>{}</root>", signatures.concat())
+    }
+
+    fn check(signatures: &[String], verified: &[&str], policy: SamlAlgorithmPolicy) -> Result<()> {
+        let elements = scan(&document(signatures)).unwrap();
+        let verified: Vec<String> = verified.iter().map(|u| u.to_string()).collect();
+        enforce_algorithm_policy(&elements, &verified, policy)
+    }
+
+    #[test]
+    fn a_sha1_signature_method_is_refused_and_the_same_with_sha256_is_accepted() {
+        let sha1 = [signature("#a", SHA1_SIG, SHA256_DIGEST)];
+        let sha256 = [signature("#a", SHA256_SIG, SHA256_DIGEST)];
+        assert!(check(&sha1, &["#a"], SamlAlgorithmPolicy::default()).is_ok());
+        let err = check(&sha1, &["#a"], REFUSE).unwrap_err().to_string();
+        assert!(err.contains("SHA-1"), "{err}");
+        assert!(check(&sha256, &["#a"], REFUSE).is_ok());
+    }
+
+    #[test]
+    fn a_sha1_digest_method_is_refused_and_the_same_with_sha256_is_accepted() {
+        let sha1 = [signature("#a", SHA256_SIG, SHA1_DIGEST)];
+        let sha256 = [signature("#a", SHA256_SIG, SHA256_DIGEST)];
+        assert!(check(&sha1, &["#a"], SamlAlgorithmPolicy::default()).is_ok());
+        assert!(check(&sha1, &["#a"], REFUSE).is_err());
+        assert!(check(&sha256, &["#a"], REFUSE).is_ok());
+    }
+
+    #[test]
+    fn a_decoy_signature_over_other_references_decides_nothing() {
+        // The verified signature is over `#a`; a second signature over `#b` uses other algorithms.
+        let real_sha1 = [
+            signature("#a", SHA1_SIG, SHA1_DIGEST),
+            signature("#b", SHA256_SIG, SHA256_DIGEST),
+        ];
+        assert!(
+            check(&real_sha1, &["#a"], REFUSE).is_err(),
+            "sha256 decoy hid a sha1 signature"
+        );
+        let real_sha256 = [
+            signature("#a", SHA256_SIG, SHA256_DIGEST),
+            signature("#b", SHA1_SIG, SHA1_DIGEST),
+        ];
+        assert!(
+            check(&real_sha256, &["#a"], REFUSE).is_ok(),
+            "sha1 decoy tripped the policy"
+        );
+    }
+
+    #[test]
+    fn every_signature_over_the_verified_references_must_comply() {
+        // Which of two signatures over the same reference was the one that verified is not
+        // visible, so both must pass.
+        let both = [
+            signature("#a", SHA256_SIG, SHA256_DIGEST),
+            signature("#a", SHA1_SIG, SHA1_DIGEST),
+        ];
+        assert!(check(&both, &["#a"], REFUSE).is_err());
+    }
+
+    #[test]
+    fn a_signature_that_cannot_be_matched_is_refused_not_passed() {
+        // The verified references name `#a`, but no signature element lists exactly that.
+        let other = [signature("#b", SHA256_SIG, SHA256_DIGEST)];
+        let err = check(&other, &["#a"], REFUSE).unwrap_err().to_string();
+        assert!(err.contains("could not be established"), "{err}");
+        // With the default policy nothing is checked, so the same document passes.
+        assert!(check(&other, &["#a"], SamlAlgorithmPolicy::default()).is_ok());
+    }
 }

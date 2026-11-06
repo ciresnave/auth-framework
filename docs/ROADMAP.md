@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc209`
+- Current crate version: `0.6.0-rc211`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -352,7 +352,7 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 
 | Row | Source | What | State |
 | --- | --- | --- | --- |
-| A1 | `SECURITY.md` "SHA-1 Usage" | Configurable digest/signature algorithm preference in the SAML handler ("a future release will add...") so SHA-256 can be required | Open |
+| A1 | `SECURITY.md` "SHA-1 Usage" | Configurable digest/signature algorithm preference in the SAML handler ("a future release will add...") so SHA-256 can be required | Done (rc211): opt-in `SamlAlgorithmPolicy { allow_sha1: false }` on `SamlTrustAnchors`, judged on the signature that verified; the default still accepts SHA-1 (flipping it is a later Breaking decision, PM) |
 | A2 | `SECURITY.md` "Protocol Stubs" | GNAP: validate DPoP proofs and bind the key. The `dpop` proof method was accepted by name and checked nothing else | Done (rc209): `handle_transaction_with_proof` and `continue_transaction_with_proof` verify the DPoP proof against the named key; `httpsig`, `mtls` and `jws` are refused as not supported until they can be verified. Follow-up, Open: verify `httpsig` (RFC 9421), `mtls` and `jws` |
 | A3 | `SECURITY.md` "Protocol Stubs" | WS-Trust: issued tokens are held in memory only, lost on restart and unshared across instances; persist them through the `AuthStorage` KV layer | Open |
 | A4 | `SECURITY.md` "Protocol Stubs" | UMA 2.0: the claims-gathering interaction flow is missing | Open |
