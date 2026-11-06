@@ -4,7 +4,10 @@ pub mod app_config;
 pub mod config_manager;
 
 // Re-export for easy access
-pub use app_config::{AppConfig, ConfigBuilder as AppConfigBuilder};
+pub use app_config::AppConfig;
+/// Deprecated alias of [`app_config::ConfigBuilder`]; removed in `0.7.0`. Use [`LayeredConfigBuilder`].
+#[deprecated(since = "0.6.0", note = "removed in 0.7.0: use `LayeredConfigBuilder`")]
+pub type AppConfigBuilder = app_config::ConfigBuilder;
 pub use config_manager::{
     ApiServerSettings, AuthFrameworkSettings, ConfigBuilder as LayeredConfigBuilder,
     ConfigIntegration, ConfigManager, SessionCookieSettings, SessionSettings,

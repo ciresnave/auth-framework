@@ -135,13 +135,16 @@ before building stable integrations on top of them.
 
 | Capability                                       | Replacement                                               | Removal target |
 | ------------------------------------------------ | --------------------------------------------------------- | -------------- |
-| `AppConfigBuilder` (legacy)                      | `LayeredConfigBuilder`                                    | `0.7.0`        |
-| `ModularAuthFramework` (legacy alias)            | `AuthFramework`                                           | `0.7.0`        |
+| `AppConfigBuilder` (legacy)                      | `LayeredConfigBuilder` (a different builder; not drop-in) | `0.7.0`        |
+| `ModularAuthFramework` (legacy alias)            | `auth_modular::AuthFramework` (by path; not drop-in)      | `0.7.0`        |
 | Direct monolithic `AuthFramework` method surface | Grouped accessors (`auth.users()`, `auth.tokens()`, etc.) | `0.7.0`        |
 
 Deprecated items emit a `#[deprecated]` warning at compile time and will be removed in the
-target release. (`AppConfigBuilder` and `ModularAuthFramework` are documented as deprecated but do not yet
-carry the attribute; removal moved from `0.6.0` to `0.7.0`, see `docs/ROADMAP.md` row A7.) Migration guidance is published in the [changelog](CHANGELOG.md).
+target release. (`AppConfigBuilder` and `ModularAuthFramework` carry the attribute since `0.6.0-rc214`; removal
+moved from `0.6.0` to `0.7.0`, see `docs/ROADMAP.md` row A7.) `ModularAuthFramework` is an alias of
+`auth_modular::AuthFramework`, a different type from `AuthFramework`, and `AppConfigBuilder` is a
+different builder from `LayeredConfigBuilder`: neither replacement is drop-in, so migrate the call sites
+(`auth_framework::auth_modular::AuthFramework` is named by path). Migration guidance is published in the [changelog](CHANGELOG.md).
 
 ---
 
