@@ -1,0 +1,128 @@
+{
+  "suite": "gnap-transaction-endpoint",
+  "suite_version": 1,
+  "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
+  "vectors": [
+    {
+      "id": "tx-access-direct",
+      "rfc": "RFC 9635",
+      "section": "3.2",
+      "kind": "positive",
+      "description": "A request for access with no interaction is answered with an access token.",
+      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "request": {
+        "access_token": [
+          { "type": "read", "actions": ["list"], "locations": ["https://api.example.test"] }
+        ]
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          { "path": "/access_token/value", "op": "is_string" },
+          { "path": "/access_token/expires_in", "op": "is_number" },
+          { "path": "/access_token/access/0/type", "op": "equals", "value": "read" },
+          { "path": "/interact", "op": "absent" }
+        ]
+      }
+    },
+    {
+      "id": "tx-continue-offered",
+      "rfc": "RFC 9635",
+      "section": "3.1",
+      "kind": "positive",
+      "description": "The response carries a continuation URI and a continuation access token.",
+      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "request": {
+        "access_token": [{ "type": "read" }]
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          { "path": "/continue/uri", "op": "equals", "value": "/api/gnap/tx/continue" },
+          { "path": "/continue/access_token/value", "op": "is_string" }
+        ]
+      }
+    },
+    {
+      "id": "tx-subject-only",
+      "rfc": "RFC 9635",
+      "section": "2.2",
+      "kind": "positive",
+      "description": "A request for subject information alone is accepted and issues no access token.",
+      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "request": {
+        "subject": { "sub_id_formats": ["opaque"] }
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          { "path": "/access_token", "op": "absent" },
+          { "path": "/continue/access_token/value", "op": "is_string" }
+        ]
+      }
+    },
+    {
+      "id": "tx-interact-redirect",
+      "rfc": "RFC 9635",
+      "section": "3.3",
+      "kind": "positive",
+      "description": "A request that offers redirect interaction is answered with a redirect URL and a finish nonce, and issues no access token before the interaction.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "request": {
+        "access_token": [{ "type": "read" }],
+        "interact": {
+          "start": ["redirect"],
+          "finish": { "method": "redirect", "uri": "https://client.example.test/done", "nonce": "client-nonce-1" }
+        }
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          { "path": "/interact/redirect", "op": "is_string" },
+          { "path": "/interact/finish", "op": "is_string" },
+          { "path": "/access_token", "op": "absent" },
+          { "path": "/continue/access_token/value", "op": "is_string" }
+        ]
+      }
+    },
+    {
+      "id": "tx-empty-request",
+      "rfc": "RFC 9635",
+      "section": "2",
+      "kind": "negative",
+      "description": "A request that asks for neither access nor subject information is refused.",
+      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "request": {},
+      "expect": { "outcome": "error" }
+    },
+    {
+      "id": "tx-disabled",
+      "rfc": "RFC 9635",
+      "section": "2",
+      "kind": "negative",
+      "description": "A server with the protocol switched off refuses every request.",
+      "config": { "enabled": false, "transaction_endpoint": "/api/gnap/tx" },
+      "request": {
+        "access_token": [{ "type": "read" }]
+      },
+      "expect": { "outcome": "error" }
+    },
+    {
+      "id": "tx-interact-unconfigured",
+      "rfc": "RFC 9635",
+      "section": "3.3",
+      "kind": "negative",
+      "description": "An interactive request is refused by a server that has no interaction URL configured, not answered with a made-up one.",
+      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "request": {
+        "access_token": [{ "type": "read" }],
+        "interact": { "start": ["redirect"] }
+      },
+      "expect": { "outcome": "error" }
+    }
+  ]
+}
