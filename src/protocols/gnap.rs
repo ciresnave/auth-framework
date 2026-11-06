@@ -387,12 +387,24 @@ pub trait GnapAccessPolicy: Send + Sync {
 ///
 /// The integrator delivers both values to the client's finish URI. The client checks `hash`
 /// (section 4.2.3) and presents `interact_ref`, once, in its continuation request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GnapInteractionCompletion {
     /// The one-time interaction reference, `None` when the transaction has no finish method.
     pub interact_ref: Option<String>,
     /// The interaction hash the client verifies, `None` when the transaction has no finish method.
     pub hash: Option<String>,
+}
+
+impl std::fmt::Debug for GnapInteractionCompletion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("GnapInteractionCompletion");
+        d.field(
+            "interact_ref",
+            &crate::utils::redact::redacted(&self.interact_ref),
+        );
+        d.field("hash", &crate::utils::redact::redacted(&self.hash));
+        d.finish()
+    }
 }
 
 pub struct GnapService {
