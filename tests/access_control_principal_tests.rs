@@ -241,3 +241,24 @@ fn invalidate_applies_a_suspension_at_once() {
             .is_allow()
     );
 }
+
+#[test]
+fn a_program_nobody_owns_cannot_exist_so_no_agent_can_hang_off_one() {
+    // A tool principal with no human behind it is refused outright, so the
+    // owner chain of every principal ends in a human.
+    let mut r = PrincipalRegistry::new();
+    assert_eq!(
+        r.create("tool", Program, None),
+        Err(PrincipalError::OwnerRequired)
+    );
+    assert_eq!(
+        r.create("agent", Agent, Some("tool")),
+        Err(PrincipalError::OwnerInactive)
+    );
+    assert!(r.get("tool").is_none() && r.get("agent").is_none());
+    // An agent made by a program resolves through the program to its human.
+    r.create("alice", Human, None).unwrap();
+    r.create("tool", Program, Some("alice")).unwrap();
+    r.create("agent", Agent, Some("tool")).unwrap();
+    assert_eq!(r.root_human("agent"), Some("alice"));
+}
