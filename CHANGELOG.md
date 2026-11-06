@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc90] - Unreleased
+
+### Changed
+
+- **Breaking: GNAP issues access tokens only through an access policy, requires a client key, and requires the interaction reference.** `GnapService::with_access_policy` takes a `GnapAccessPolicy`; the token carries the rights the policy returns and a service without a policy issues none. A request must name a client key and prove it through `handle_transaction_with_proof` / `continue_transaction_with_proof` (`handle_transaction` and `continue_transaction` are no longer public). `approve_transaction` returns a `GnapInteractionCompletion` with the one-time `interact_ref` and `hash` for a transaction that uses a finish method, and continuation needs that `interact_ref`. An issued token is stored before the response is returned.
+- `Cargo.lock` takes actix-http 3.20.3 and actix-web 4.18.2 (RUSTSEC-2026-0446, -0447, -0448, -0455); `GnapInteractionCompletion` redacts its secrets in `Debug`.
+
 ## [0.5.0-rc89] - Unreleased
 
 ### Changed
