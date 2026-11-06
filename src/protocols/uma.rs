@@ -193,12 +193,29 @@ impl UmaService {
         Ok(ticket)
     }
 
-    /// Request an RPT (Requesting Party Token) by presenting a permission ticket and claims (UMA §3.3).
-    pub async fn request_rpt(
-        &self,
-        ticket: &str,
-        claims: Option<HashMap<String, String>>,
-    ) -> Result<String> {
+    /// Request an RPT (Requesting Party Token) by presenting a permission ticket (UMA §3.3).
+    ///
+    /// A resource set with `required_claims` is refused with `UMA need_info` and the ticket is
+    /// kept: those claims must be gathered by this service itself, and the claims interaction
+    /// that does that is not implemented yet. Claims the caller states in the request are
+    /// never accepted, because they prove nothing: earlier versions took them as a map and
+    /// compared it to the policy, so any holder of a ticket could assert the required values.
+    ///
+    /// ```compile_fail,E0061
+    /// # use auth_framework::protocols::uma::UmaService;
+    /// # async fn f(svc: &UmaService) {
+    /// // The old two-argument form (caller-supplied claims) no longer compiles.
+    /// let _ = svc.request_rpt("ticket", None).await;
+    /// # }
+    /// ```
+    ///
+    /// ```
+    /// # use auth_framework::protocols::uma::UmaService;
+    /// # async fn f(svc: &UmaService) {
+    /// let _ = svc.request_rpt("ticket").await;
+    /// # }
+    /// ```
+    pub async fn request_rpt(&self, ticket: &str) -> Result<String> {
         if !self.config.enabled {
             return Err(AuthError::config("UMA 2.0 protocol is currently disabled"));
         }
@@ -230,35 +247,16 @@ impl UmaService {
             AuthError::internal("Resource for permission ticket no longer exists")
         })?;
 
-        // Evaluate claims against resource policies
+        // A claims policy can only be satisfied with claims this service gathered itself.
+        // Claims asserted by the caller are not evidence, so there is nothing to compare.
         if !resource.required_claims.is_empty() {
-            let provided_claims = claims.as_ref().ok_or_else(|| {
-                AuthError::validation(format!(
-                    "UMA need_info: Redirect to {} with ticket {}",
-                    self.config.claims_interaction_endpoint, ticket
-                ))
-            })?;
-
-            for (required_claim, expected_value) in &resource.required_claims {
-                match provided_claims.get(required_claim) {
-                    Some(actual_value) if actual_value == expected_value => {}
-                    Some(_) => {
-                        return Err(AuthError::validation(format!(
-                            "Claim '{}' does not match required policy",
-                            required_claim
-                        )));
-                    }
-                    None => {
-                        return Err(AuthError::validation(format!(
-                            "UMA need_info: Missing required claim '{}'",
-                            required_claim
-                        )));
-                    }
-                }
-            }
+            return Err(AuthError::validation(format!(
+                "UMA need_info: the required claims must be gathered at {} (claims gathering is not supported yet)",
+                self.config.claims_interaction_endpoint
+            )));
         }
 
-        // Claims satisfied — issue RPT
+        // No claims policy — issue RPT
         let rpt = format!("urn:uma:rpt:{}", uuid::Uuid::new_v4());
 
         // Remove the consumed permission ticket
@@ -713,14 +711,14 @@ mod tests {
             .create_permission_ticket(&id, vec!["read".to_string()])
             .await
             .unwrap();
-        let rpt = svc.request_rpt(&ticket, None).await.unwrap();
+        let rpt = svc.request_rpt(&ticket).await.unwrap();
         assert!(!rpt.is_empty());
     }
 
     #[tokio::test]
     async fn test_request_rpt_invalid_ticket_rejected() {
         let svc = UmaService::new(enabled_config());
-        let result = svc.request_rpt("bogus-ticket", None).await;
+        let result = svc.request_rpt("bogus-ticket").await;
         assert!(result.is_err());
     }
 
@@ -732,7 +730,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_required_claims_enforced() {
+    async fn a_claims_policy_cannot_be_satisfied_by_the_caller() {
         let svc = UmaService::new(enabled_config());
         let mut rs = sample_resource("alice");
         rs.required_claims
@@ -743,20 +741,55 @@ mod tests {
             .await
             .unwrap();
 
-        // Without claims → should fail
-        let result = svc.request_rpt(&ticket, None).await;
-        assert!(result.is_err());
+        let err = svc.request_rpt(&ticket).await.unwrap_err().to_string();
+        assert!(err.contains("need_info"), "{err}");
+        assert!(err.contains("/api/uma/claims"), "{err}");
+        // The refusal does not consume the ticket.
+        assert_eq!(svc.ticket_count().await, 1);
 
-        // Re-create ticket (old one consumed)
-        let ticket2 = svc
+        // Control: the same service issues an RPT for a resource without a claims policy.
+        let open = svc
+            .register_resource_set(sample_resource("alice"))
+            .await
+            .unwrap();
+        let open_ticket = svc
+            .create_permission_ticket(&open, vec!["read".to_string()])
+            .await
+            .unwrap();
+        assert!(
+            svc.request_rpt(&open_ticket)
+                .await
+                .unwrap()
+                .starts_with("urn:uma:rpt:")
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_the_claims_policy_is_the_owners_act_not_the_callers() {
+        let svc = UmaService::new(enabled_config());
+        let mut rs = sample_resource("alice");
+        rs.required_claims
+            .insert("country".to_string(), "US".to_string());
+        let id = svc.register_resource_set(rs).await.unwrap();
+        let ticket = svc
             .create_permission_ticket(&id, vec!["read".to_string()])
             .await
             .unwrap();
-        // With correct claims → should succeed
-        let mut claims = HashMap::new();
-        claims.insert("country".to_string(), "US".to_string());
-        let rpt = svc.request_rpt(&ticket2, Some(claims)).await.unwrap();
-        assert!(!rpt.is_empty());
+        assert!(svc.request_rpt(&ticket).await.is_err());
+
+        // Another party cannot clear the policy, so the ticket still does not redeem.
+        assert!(
+            svc.update_resource_set(&id, "mallory", None, None, Some(HashMap::new()))
+                .await
+                .is_err()
+        );
+        assert!(svc.request_rpt(&ticket).await.is_err());
+
+        // The owner can; then the ticket redeems.
+        svc.update_resource_set(&id, "alice", None, None, Some(HashMap::new()))
+            .await
+            .unwrap();
+        assert!(svc.request_rpt(&ticket).await.is_ok());
     }
 
     // ── UMA Discovery Metadata ──────────────────────────────────
