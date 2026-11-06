@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Key management: one model for every key a client or server generates.
 //!
 //! KM1 (ROADMAP) is the model only: [`KeyKind`], [`Kid`], [`KeyState`] with its

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The one RFC 7638 JWK thumbprint (SHA-256) for RSA, EC and OKP keys.
 
 use crate::errors::{AuthError, Result};

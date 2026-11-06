@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Public export forms: JWK, JWKS and SPKI PEM. Nothing here can hold or print a
 //! private parameter: [`PublicJwk::from_value`] refuses a JWK that carries one.
 
