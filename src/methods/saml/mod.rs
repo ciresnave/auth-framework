@@ -24,7 +24,8 @@ pub mod dsig;
 pub mod xml_signature;
 
 pub use dsig::{
-    SamlTrustAnchors, VerifiedAssertion, anchors_for_thumbprints, verify_signed_assertion,
+    SamlAlgorithmPolicy, SamlTrustAnchors, VerifiedAssertion, anchors_for_thumbprints,
+    verify_signed_assertion,
 };
 pub use xml_signature::SamlSignatureValidator;
 
