@@ -5,9 +5,13 @@
 //! deny; a matching deny grant beats any allow grant; an unregistered action is
 //! denied. Actions are separate: holding one implies nothing about another.
 
+pub mod principal;
+
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+pub use principal::{Lifecycle, Principal, PrincipalError, PrincipalKind, PrincipalRegistry};
 
 /// Whether a grant allows or denies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +60,9 @@ pub enum DenyReason {
     NoMatchingGrant,
     /// The source of truth could not be reached; unreachability never widens access.
     SourceUnreachable,
+    /// A principal registry is attached and the principal is unknown, suspended or retired
+    /// (or one of its owners is).
+    PrincipalInactive,
 }
 
 impl Decision {
@@ -251,6 +258,7 @@ pub struct InMemoryEngine {
     max_depth: u8,
     account_holder: Option<String>,
     sensitive_objects: Vec<String>,
+    principals: Option<PrincipalRegistry>,
 }
 
 impl Default for InMemoryEngine {
@@ -268,6 +276,7 @@ impl InMemoryEngine {
             max_depth: DEFAULT_MAX_DELEGATION_DEPTH,
             account_holder: None,
             sensitive_objects: Vec::new(),
+            principals: None,
         }
     }
 
@@ -282,6 +291,23 @@ impl InMemoryEngine {
     pub fn with_account_holder(mut self, principal: impl Into<String>) -> Self {
         self.account_holder = Some(principal.into());
         self
+    }
+
+    /// Attach a principal registry: from then on only effectively active
+    /// principals can be allowed anything. Without one, any id is accepted.
+    pub fn with_principals(mut self, registry: PrincipalRegistry) -> Self {
+        self.principals = Some(registry);
+        self
+    }
+
+    /// The attached registry, if any.
+    pub fn principals(&self) -> Option<&PrincipalRegistry> {
+        self.principals.as_ref()
+    }
+
+    /// The attached registry, for creating principals and changing lifecycle.
+    pub fn principals_mut(&mut self) -> Option<&mut PrincipalRegistry> {
+        self.principals.as_mut()
     }
 
     /// Add a root grant.
@@ -457,6 +483,17 @@ impl InMemoryEngine {
                     reason: DenyReason::UnregisteredAction,
                 },
                 sensitive: false,
+            };
+        }
+        if let Some(reg) = &self.principals
+            && !reg.is_active(principal)
+        {
+            // Identity state changes are security events: never cached.
+            return Answer {
+                decision: Decision::Deny {
+                    reason: DenyReason::PrincipalInactive,
+                },
+                sensitive: true,
             };
         }
         let mut sensitive = self.registry.is_sensitive(action)
