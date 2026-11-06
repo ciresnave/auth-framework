@@ -24,6 +24,7 @@
 aaguid
 access_key_id
 access_type
+account_holder
 accounting_addr
 acr_values
 acs_url
@@ -317,6 +318,7 @@ from_number
 frontchannel_logout_uri
 gender
 given_name
+grant_ref
 grant_type
 grant_types
 grant_types_supported
@@ -483,6 +485,7 @@ outcome
 output
 output_path
 owner_id
+parent
 parent_id
 parent_role
 parent_role_id
@@ -883,6 +886,7 @@ text
 url
 
 [container_ok]
+actions
 additional
 additional_attributes
 additional_claims
