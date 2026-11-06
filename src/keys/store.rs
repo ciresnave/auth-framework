@@ -40,6 +40,18 @@ pub struct KeyInfo {
     pub alg: String,
     /// Public half.
     pub public: PublicJwk,
+    /// Unix seconds when the store first saw the key.
+    pub created_at: u64,
+    /// Unix seconds when it became `Retiring`, if it has.
+    pub retiring_at: Option<u64>,
+}
+
+/// Seconds since the Unix epoch.
+pub fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// A place keys live. Private keys never appear in this interface except through
@@ -81,9 +93,23 @@ struct Entry {
     state: KeyState,
     public: PublicJwk,
     key: Option<LocalKey>,
+    created_at: u64,
+    retiring_at: Option<u64>,
 }
 
 impl Entry {
+    /// Apply a state change and its timestamp.
+    fn apply(&mut self, next: KeyState) -> Result<()> {
+        self.state = self.state.transition(next)?;
+        if next == KeyState::Retiring {
+            self.retiring_at = Some(unix_now());
+        }
+        if next == KeyState::Destroyed {
+            self.key = None;
+        }
+        Ok(())
+    }
+
     fn info(&self, kid: &Kid) -> KeyInfo {
         KeyInfo {
             kid: kid.clone(),
@@ -91,6 +117,8 @@ impl Entry {
             state: self.state,
             alg: self.public.alg.clone().unwrap_or_default(),
             public: self.public.clone(),
+            created_at: self.created_at,
+            retiring_at: self.retiring_at,
         }
     }
 }
@@ -105,6 +133,8 @@ fn entry_of(key: LocalKey, state: KeyState) -> Entry {
         state,
         public: key.public().clone(),
         key: Some(key),
+        created_at: unix_now(),
+        retiring_at: None,
     }
 }
 
@@ -181,11 +211,7 @@ impl KeyStore for MemoryKeyStore {
     async fn set_state(&self, kid: &Kid, next: KeyState) -> Result<()> {
         let mut map = self.keys.write().await;
         let e = map.get_mut(kid).ok_or_else(|| not_found(kid))?;
-        e.state = e.state.transition(next)?;
-        if next == KeyState::Destroyed {
-            e.key = None;
-        }
-        Ok(())
+        e.apply(next)
     }
 
     async fn sign(&self, kid: &Kid, message: &[u8]) -> Result<Vec<u8>> {
@@ -204,6 +230,10 @@ struct Record {
     state: KeyState,
     public: serde_json::Value,
     pkcs8: Option<String>,
+    #[serde(default)]
+    created_at: u64,
+    #[serde(default)]
+    retiring_at: Option<u64>,
 }
 
 /// Keys persisted one file per key under a directory, each sealed with AES-256-GCM
@@ -285,7 +315,14 @@ fn aad(kid: &Kid) -> Vec<u8> {
 }
 
 fn record_of(e: &Entry, state: KeyState, keep_private: bool) -> Record {
+    let retiring_at = if state == KeyState::Retiring && e.retiring_at.is_none() {
+        Some(unix_now())
+    } else {
+        e.retiring_at
+    };
     Record {
+        created_at: e.created_at,
+        retiring_at,
         v: 1,
         kind: e.kind,
         state,
@@ -332,6 +369,8 @@ fn entry_from_record(kid: &Kid, rec: Record) -> Result<Entry> {
         state: rec.state,
         public,
         key,
+        created_at: rec.created_at,
+        retiring_at: rec.retiring_at,
     })
 }
 
@@ -378,11 +417,7 @@ impl KeyStore for FileKeyStore {
         // Persist first: if the write fails the in-memory key is untouched.
         self.persist(kid, &record_of(e, state, next != KeyState::Destroyed))
             .await?;
-        e.state = state;
-        if next == KeyState::Destroyed {
-            e.key = None;
-        }
-        Ok(())
+        e.apply(next)
     }
 
     async fn sign(&self, kid: &Kid, message: &[u8]) -> Result<Vec<u8>> {
