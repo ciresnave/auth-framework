@@ -556,5 +556,4 @@ For SDK examples, see:
 
 - JavaScript/TypeScript: `sdks/javascript/`
 - Python: `sdks/python/`
-- Go: `sdks/go/` (coming soon)
-- Java: `sdks/java/` (coming soon)
+- Go and Java: no SDK yet (not started; see the SDK rows in `docs/ROADMAP.md`)

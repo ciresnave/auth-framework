@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc212`
+- Current crate version: `0.6.0-rc213`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -360,7 +360,7 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 | A6 | `SECURITY.md` vs `COMPATIBILITY.md` | Kerberos: `SECURITY.md` says AP-REQ validation checks ASN.1 tags only and needs a KDC; `COMPATIBILITY.md` says "Full". `KerberosConfig.kdc_addresses` exists (`kerberos.rs:969`). One of the two docs is wrong; measure and reconcile | Done (rc187), measured at `kerberos.rs` `validate_ap_req` (main 84baa504+): it decrypts the ticket (keytab key) and authenticator (session key), verifies the HMAC, matches realm and client name, and checks expiry, skew and replay; no KDC is contacted. `SECURITY.md` was wrong; `COMPATIBILITY.md` now says Substantial |
 | A7 | `COMPATIBILITY.md` "Deprecated" | `AppConfigBuilder` and `ModularAuthFramework` are documented as `#[deprecated]` but `src/lib.rs:328` and `:334` carry no attribute. Add the attribute and remove both in `0.7.0` | Open; CireSnave/PM ruled 2026-10-24: removal moves from `0.6.0` to `0.7.0` (`COMPATIBILITY.md` fixed in this PR) |
 | A8 | `COMPATIBILITY.md` "Deprecated" | Remove the monolithic `AuthFramework` method surface in `0.7.0` in favour of grouped accessors | Held until `0.7.0` planning |
-| A9 | `docs/DEPLOYMENT_GUIDE.md:559-560` | `sdks/go/` and `sdks/java/` are "coming soon"; neither directory exists (only `sdks/javascript` and `sdks/python`). Covered by the Go and Java SDK rows in Phase 3; the guide should say "not started" | Open (doc wording) |
+| A9 | `docs/DEPLOYMENT_GUIDE.md:559-560` | `sdks/go/` and `sdks/java/` are "coming soon"; neither directory exists (only `sdks/javascript` and `sdks/python`). Covered by the Go and Java SDK rows in Phase 3; the guide should say "not started" | Done (rc213): the guide says Go and Java are not started |
 | A10 | `docs/api/REST_API_DESIGN_RATIONALE.md` | Webhooks for user, role and auth-failure events | Dropped 2026-10-24 (PM ruling): no consumer has asked and no route exists; removed from the design doc. Reopen when a consumer asks |
 | A11 | `docs/api/REST_API_DESIGN_RATIONALE.md` "Planned Additions" | Admin batch operations, advanced filtering, export/import. The other "planned" items (WebAuthn, OIDC discovery, API keys) have routes in `src/api/server.rs` | Open; the note at the top of that document marks it historical |
 | A12 | CodeRipper rule OPS-011 `cli-basics` (2026-10-29) | Every shipped binary answers `--help`, `--version` and a bad flag, and none starts serving unasked: `oauth2_test_server` / `test_oauth2` hung on any argument, `auth-framework` had no `--version`, `security_audit` ignored its arguments and printed a fixed `v0.4.0` | Done (rc169): test servers need `serve`; `tests/bin_cli_basics.rs` probes each binary |
