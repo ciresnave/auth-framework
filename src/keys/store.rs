@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! KM3: key storage by capability.
 //!
 //! A [`KeyStore`] says what it can do ([`StoreCapabilities`]) and signs through
