@@ -147,6 +147,7 @@ owner approves. What the crate needs, none of which exists:
 - **See / send grants**: consumers register their own actions (Synapse: `see`, `send` on rooms and agents) with the engine, and
   ask `decide(principal, action, resource)`. A GNAP token for an agent names the principal acting and the account holder on whose
   behalf it acts.
+- **Creator grants**: when a principal creates another (an agent creating a sub-agent), the creator is issued a grant over the new principal, a strict subset of the creator's own grants, revocable by any ancestor up to the account holder, who always holds override.
 - **Freshness**: a decision may be cached for at most 60 s; a grant marked sensitive is checked live at its source on every use.
 
 ## 6. Access-control engine (rows AC1-AC6, feeding Synapse)
@@ -158,7 +159,7 @@ engine; Synapse enforces through an `Authorizer` trait).
 | Row | Content |
 |---|---|
 | AC1 | deny effect, deny wins; `decide(principal, action, resource) -> Decision`; action registry for consumers |
-| AC2 | attenuation: a shared grant is a subset of what the sharer holds, checked when shared and when used; chains to depth 3 (configurable); stored delegations consulted by every check; revocation cascades |
+| AC2 | attenuation: a shared grant is a subset of what the sharer holds, checked when shared and when used; chains to depth 3 (configurable); stored delegations consulted by every check; revocation cascades. **Creator grants**: creating a principal issues the creator a grant over the new principal, a strict subset of the creator's own grants, revocable by any ancestor up to the account holder, who always holds override (an agent that creates a sub-agent can set see and send rules about it, for example hide a long-running helper from every other agent) |
 | AC3 | cache contract (a decision is valid for at most 60 s, explicit invalidation) and a live path for grants marked sensitive |
 | AC4 | the engine behind `GnapAccessPolicy` (slice G6) |
 | AC5 | principal kinds: human, program, agent (slice G9) |
