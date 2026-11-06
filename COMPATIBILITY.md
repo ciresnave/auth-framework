@@ -140,8 +140,10 @@ before building stable integrations on top of them.
 | Direct monolithic `AuthFramework` method surface | Grouped accessors (`auth.users()`, `auth.tokens()`, etc.) | `0.7.0`        |
 
 Deprecated items emit a `#[deprecated]` warning at compile time and will be removed in the
-target release. (`AppConfigBuilder` and `ModularAuthFramework` are documented as deprecated but do not yet
-carry the attribute; removal moved from `0.6.0` to `0.7.0`, see `docs/ROADMAP.md` row A7.) Migration guidance is published in the [changelog](CHANGELOG.md).
+target release. (`AppConfigBuilder` and `ModularAuthFramework` carry the attribute since `0.6.0-rc214`; removal
+moved from `0.6.0` to `0.7.0`, see `docs/ROADMAP.md` row A7.) `ModularAuthFramework` is an alias of
+`auth_modular::AuthFramework`, a different type from `AuthFramework`: code that needs manager-level
+access names `auth_framework::auth_modular::AuthFramework` by path. Migration guidance is published in the [changelog](CHANGELOG.md).
 
 ---
 
