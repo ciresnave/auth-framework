@@ -1,6 +1,6 @@
 {
   "suite": "gnap-transaction-endpoint",
-  "suite_version": 1,
+  "suite_version": 2,
   "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
   "vectors": [
     {
@@ -9,21 +9,47 @@
       "section": "3.2",
       "kind": "positive",
       "description": "A request for access with no interaction is answered with an access token.",
-      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
       "request": {
         "access_token": [
-          { "type": "read", "actions": ["list"], "locations": ["https://api.example.test"] }
+          {
+            "type": "read",
+            "actions": [
+              "list"
+            ],
+            "locations": [
+              "https://api.example.test"
+            ]
+          }
         ]
       },
       "expect": {
         "outcome": "response",
         "assert": [
-          { "path": "/access_token/value", "op": "is_string" },
-          { "path": "/access_token/expires_in", "op": "is_number" },
-          { "path": "/access_token/access/0/type", "op": "equals", "value": "read" },
-          { "path": "/interact", "op": "absent" }
+          {
+            "path": "/access_token/value",
+            "op": "is_string"
+          },
+          {
+            "path": "/access_token/expires_in",
+            "op": "is_number"
+          },
+          {
+            "path": "/access_token/access/0/type",
+            "op": "equals",
+            "value": "read"
+          },
+          {
+            "path": "/interact",
+            "op": "absent"
+          }
         ]
-      }
+      },
+      "client_key": "dpop",
+      "proof": "valid"
     },
     {
       "id": "tx-continue-offered",
@@ -31,17 +57,33 @@
       "section": "3.1",
       "kind": "positive",
       "description": "The response carries a continuation URI and a continuation access token.",
-      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
       "request": {
-        "access_token": [{ "type": "read" }]
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
       },
       "expect": {
         "outcome": "response",
         "assert": [
-          { "path": "/continue/uri", "op": "equals", "value": "/api/gnap/tx/continue" },
-          { "path": "/continue/access_token/value", "op": "is_string" }
+          {
+            "path": "/continue/uri",
+            "op": "equals",
+            "value": "/api/gnap/tx/continue"
+          },
+          {
+            "path": "/continue/access_token/value",
+            "op": "is_string"
+          }
         ]
-      }
+      },
+      "client_key": "dpop",
+      "proof": "valid"
     },
     {
       "id": "tx-subject-only",
@@ -49,17 +91,32 @@
       "section": "2.2",
       "kind": "positive",
       "description": "A request for subject information alone is accepted and issues no access token.",
-      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
       "request": {
-        "subject": { "sub_id_formats": ["opaque"] }
+        "subject": {
+          "sub_id_formats": [
+            "opaque"
+          ]
+        }
       },
       "expect": {
         "outcome": "response",
         "assert": [
-          { "path": "/access_token", "op": "absent" },
-          { "path": "/continue/access_token/value", "op": "is_string" }
+          {
+            "path": "/access_token",
+            "op": "absent"
+          },
+          {
+            "path": "/continue/access_token/value",
+            "op": "is_string"
+          }
         ]
-      }
+      },
+      "client_key": "dpop",
+      "proof": "valid"
     },
     {
       "id": "tx-interact-redirect",
@@ -73,21 +130,45 @@
         "interaction_base_url": "https://auth.example.test"
       },
       "request": {
-        "access_token": [{ "type": "read" }],
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ],
         "interact": {
-          "start": ["redirect"],
-          "finish": { "method": "redirect", "uri": "https://client.example.test/done", "nonce": "client-nonce-1" }
+          "start": [
+            "redirect"
+          ],
+          "finish": {
+            "method": "redirect",
+            "uri": "https://client.example.test/done",
+            "nonce": "client-nonce-1"
+          }
         }
       },
       "expect": {
         "outcome": "response",
         "assert": [
-          { "path": "/interact/redirect", "op": "is_string" },
-          { "path": "/interact/finish", "op": "is_string" },
-          { "path": "/access_token", "op": "absent" },
-          { "path": "/continue/access_token/value", "op": "is_string" }
+          {
+            "path": "/interact/redirect",
+            "op": "is_string"
+          },
+          {
+            "path": "/interact/finish",
+            "op": "is_string"
+          },
+          {
+            "path": "/access_token",
+            "op": "absent"
+          },
+          {
+            "path": "/continue/access_token/value",
+            "op": "is_string"
+          }
         ]
-      }
+      },
+      "client_key": "dpop",
+      "proof": "valid"
     },
     {
       "id": "tx-empty-request",
@@ -95,9 +176,16 @@
       "section": "2",
       "kind": "negative",
       "description": "A request that asks for neither access nor subject information is refused.",
-      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
       "request": {},
-      "expect": { "outcome": "error" }
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
     },
     {
       "id": "tx-disabled",
@@ -105,11 +193,22 @@
       "section": "2",
       "kind": "negative",
       "description": "A server with the protocol switched off refuses every request.",
-      "config": { "enabled": false, "transaction_endpoint": "/api/gnap/tx" },
-      "request": {
-        "access_token": [{ "type": "read" }]
+      "config": {
+        "enabled": false,
+        "transaction_endpoint": "/api/gnap/tx"
       },
-      "expect": { "outcome": "error" }
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
     },
     {
       "id": "tx-interact-unconfigured",
@@ -117,12 +216,94 @@
       "section": "3.3",
       "kind": "negative",
       "description": "An interactive request is refused by a server that has no interaction URL configured, not answered with a made-up one.",
-      "config": { "enabled": true, "transaction_endpoint": "/api/gnap/tx" },
-      "request": {
-        "access_token": [{ "type": "read" }],
-        "interact": { "start": ["redirect"] }
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
       },
-      "expect": { "outcome": "error" }
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ],
+        "interact": {
+          "start": [
+            "redirect"
+          ]
+        }
+      },
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-client-key-required",
+      "rfc": "RFC 9635",
+      "section": "2.3",
+      "kind": "negative",
+      "description": "A request that names no client key is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "error"
+      }
+    },
+    {
+      "id": "tx-proof-missing",
+      "rfc": "RFC 9635",
+      "section": "7.3",
+      "kind": "negative",
+      "description": "A request that names a client key but carries no proof of holding it is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "proof": "absent",
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "error"
+      }
+    },
+    {
+      "id": "tx-proof-wrong-key",
+      "rfc": "RFC 9635",
+      "section": "7.3",
+      "kind": "negative",
+      "description": "A proof signed by a key other than the one the request names is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "proof": "wrong_key",
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "error"
+      }
     }
   ]
 }
