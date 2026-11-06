@@ -15,6 +15,7 @@
 //! - Transaction expiration and cleanup
 
 use crate::errors::{AuthError, Result};
+use crate::server::security::dpop::DpopManager;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -340,6 +341,22 @@ impl std::fmt::Debug for GnapIssuedToken {
     }
 }
 
+/// The HTTP request a client key signs, handed to the `_with_proof` entry points.
+///
+/// Only the `dpop` proof method can be verified here: the proof is the request's `DPoP` header
+/// and must be signed by the key the client named in its request, for this method and URI.
+#[derive(Debug, Clone, Copy)]
+pub struct GnapProof<'a> {
+    /// HTTP method of the request (`htm`).
+    pub http_method: &'a str,
+    /// HTTP URI of the request, without query or fragment (`htu`).
+    pub http_uri: &'a str,
+    /// The request's `DPoP` header, if it had one.
+    pub dpop_proof: Option<&'a str>,
+    /// A server-issued DPoP nonce the proof must carry, if the caller uses them.
+    pub expected_nonce: Option<&'a str>,
+}
+
 pub struct GnapService {
     config: GnapConfig,
     /// Active transactions (keyed by transaction ID)
@@ -347,6 +364,13 @@ pub struct GnapService {
     /// Issued access tokens (keyed by token value)
     issued_tokens: Arc<RwLock<HashMap<String, GnapIssuedToken>>>,
 }
+
+/// Refusal of a client key whose proof method this crate cannot verify.
+const PROOF_NOT_SUPPORTED: &str = "GNAP proof method not supported";
+/// Refusal of a client key that came without the proof material to check it.
+const PROOF_REQUIRED: &str = "GNAP client key proof required: use the _with_proof entry point with the request's DPoP header";
+/// Refusal of a client key proof that did not verify.
+const PROOF_INVALID: &str = "GNAP client key proof invalid";
 
 impl GnapService {
     pub fn new(config: GnapConfig) -> Self {
@@ -552,7 +576,7 @@ impl GnapService {
             "httpsig" | "mtls" | "dpop" | "jws" | "test" => {}
             other => {
                 return Err(AuthError::validation(format!(
-                    "Unsupported GNAP proof method: {other}"
+                    "GNAP proof method not supported: {other}"
                 )));
             }
         }
@@ -562,12 +586,15 @@ impl GnapService {
 
         let thumbprint = Self::jwk_thumbprint(&key.jwk)?;
 
-        // If proof material is provided and the proof method requires
-        // cryptographic verification, verify the signature now.
-        if key.proof != "test"
-            && let (Some(msg), Some(sig)) = (proof_message, proof_signature)
-        {
-            Self::verify_jwk_signature(&key.jwk, msg, sig)?;
+        // A signature over bytes the caller chose is not a proof of the request, so no method
+        // is accepted here: use `handle_transaction_with_proof` for `dpop`. Only the unit-test
+        // method, which checks nothing, passes, and only in test builds.
+        let _ = (proof_message, proof_signature);
+        if !cfg!(test) || key.proof != "test" {
+            return Err(AuthError::validation(format!(
+                "{PROOF_NOT_SUPPORTED}: {}",
+                key.proof
+            )));
         }
 
         Ok(Some(thumbprint))
@@ -622,13 +649,65 @@ impl GnapService {
             "httpsig" | "mtls" | "dpop" | "jws" | "test" => {}
             other => {
                 return Err(AuthError::validation(format!(
-                    "Unsupported GNAP proof method: {other}"
+                    "GNAP proof method not supported: {other}"
                 )));
             }
         }
 
         Self::validate_jwk_fields(&key.jwk)?;
         let thumbprint = Self::jwk_thumbprint(&key.jwk)?;
+        Ok(Some(thumbprint))
+    }
+
+    /// Prove the client holds the key it named, and return that key's thumbprint.
+    ///
+    /// A request that names no client key is anonymous and passes with no thumbprint. A request
+    /// that names one is accepted only when its proof is verified here: `dpop` against `dpop`'s
+    /// manager and the request's `DPoP` header. Every other method (`httpsig`, `mtls`, `jws`,
+    /// anything unknown) is refused, as is a `dpop` key with no proof material, so no proof
+    /// that was never checked can authorize a request.
+    async fn verify_client_proof(
+        client: &Option<GnapClientInfo>,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<Option<String>> {
+        let Some(thumbprint) = Self::validate_client_key(client)? else {
+            return Ok(None);
+        };
+        let Some(key) = client.as_ref().and_then(|c| c.key.as_ref()) else {
+            return Ok(None);
+        };
+        match key.proof.as_str() {
+            "dpop" => {
+                let Some((manager, proof)) = dpop else {
+                    return Err(AuthError::validation(PROOF_REQUIRED));
+                };
+                let Some(header) = proof.dpop_proof else {
+                    return Err(AuthError::validation(PROOF_REQUIRED));
+                };
+                match manager
+                    .validate_dpop_proof_for_key(
+                        header,
+                        proof.http_method,
+                        proof.http_uri,
+                        None,
+                        proof.expected_nonce,
+                        Some(&thumbprint),
+                    )
+                    .await
+                {
+                    Ok(result) if result.is_valid => {}
+                    _ => return Err(AuthError::validation(PROOF_INVALID)),
+                }
+            }
+            // Unit tests only: a method that checks nothing must never be accepted in a build.
+            #[cfg(test)]
+            "test" => {}
+            other => {
+                return Err(AuthError::validation(format!(
+                    "{PROOF_NOT_SUPPORTED}: {other}"
+                )));
+            }
+        }
         Ok(Some(thumbprint))
     }
 
@@ -714,6 +793,27 @@ impl GnapService {
         &self,
         request: GnapTransactionRequest,
     ) -> Result<serde_json::Value> {
+        self.handle_transaction_inner(request, None).await
+    }
+
+    /// Like [`Self::handle_transaction`], for a request that names a client key with the `dpop`
+    /// proof method: `proof` carries the request's `DPoP` header, which must be signed by that
+    /// key. A request without a client key behaves as in `handle_transaction`.
+    pub async fn handle_transaction_with_proof(
+        &self,
+        dpop: &DpopManager,
+        proof: &GnapProof<'_>,
+        request: GnapTransactionRequest,
+    ) -> Result<serde_json::Value> {
+        self.handle_transaction_inner(request, Some((dpop, proof)))
+            .await
+    }
+
+    async fn handle_transaction_inner(
+        &self,
+        request: GnapTransactionRequest,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<serde_json::Value> {
         if !self.config.enabled {
             return Err(AuthError::config("GNAP protocol is currently disabled"));
         }
@@ -726,7 +826,7 @@ impl GnapService {
         }
 
         // Validate client key if provided (draft §7.1)
-        let key_thumbprint = Self::validate_client_key(&request.client)?;
+        let key_thumbprint = Self::verify_client_proof(&request.client, dpop).await?;
 
         let transaction_id = uuid::Uuid::new_v4().to_string();
         let continue_token = uuid::Uuid::new_v4().to_string();
@@ -847,6 +947,45 @@ impl GnapService {
         interact_ref: Option<&str>,
         interact_hash: Option<&str>,
     ) -> Result<serde_json::Value> {
+        self.continue_transaction_inner(
+            transaction_id,
+            continue_token,
+            interact_ref,
+            interact_hash,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`Self::continue_transaction`], for a transaction whose client named a `dpop` key:
+    /// the continuation request must carry a `DPoP` proof signed by that same key (draft §5.1).
+    pub async fn continue_transaction_with_proof(
+        &self,
+        dpop: &DpopManager,
+        proof: &GnapProof<'_>,
+        transaction_id: &str,
+        continue_token: &str,
+        interact_ref: Option<&str>,
+        interact_hash: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        self.continue_transaction_inner(
+            transaction_id,
+            continue_token,
+            interact_ref,
+            interact_hash,
+            Some((dpop, proof)),
+        )
+        .await
+    }
+
+    async fn continue_transaction_inner(
+        &self,
+        transaction_id: &str,
+        continue_token: &str,
+        interact_ref: Option<&str>,
+        interact_hash: Option<&str>,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<serde_json::Value> {
         // Take a write lock so we can rotate the continuation token atomically
         let mut transactions = self.transactions.write().await;
         let txn = transactions
@@ -867,6 +1006,10 @@ impl GnapService {
         if txn.continue_token != continue_token {
             return Err(AuthError::validation("Invalid continuation token"));
         }
+
+        // A transaction whose client named a key continues only for that key. This runs before
+        // the token is rotated, so a request without that key's proof leaves the token usable.
+        let verified_thumbprint = Self::verify_client_proof(&txn.request.client, dpop).await?;
 
         // Rotate the continuation token (draft §5.1)
         let new_continue_token = uuid::Uuid::new_v4().to_string();
@@ -921,7 +1064,7 @@ impl GnapService {
                 Ok(serde_json::Value::Object(resp))
             }
             GnapTransactionState::Approved => {
-                let key_thumbprint = Self::validate_client_key(&txn.request.client).unwrap_or(None);
+                let key_thumbprint = verified_thumbprint;
 
                 let mut response = serde_json::Map::new();
 
@@ -2014,5 +2157,313 @@ mod tests {
         assert!(req.interact.is_none());
         assert!(req.access_token.is_none());
         assert!(req.subject.is_none());
+    }
+}
+
+/// A client key's proof is verified or refused: no proof that was never checked authorizes a
+/// request. Each refusal is paired with the accepted case built the same way, so a test cannot
+/// pass because every request fails for one shared reason.
+#[cfg(test)]
+mod proof_verification_tests {
+    use super::*;
+    use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
+    use jsonwebtoken::{Algorithm, EncodingKey};
+    use serde_json::json;
+
+    const URI: &str = "https://as.example.test/api/gnap/tx";
+    const CONTINUE_URI: &str = "https://as.example.test/api/gnap/tx/continue";
+
+    struct ClientKey {
+        signing: EncodingKey,
+        jwk: GnapJwk,
+    }
+
+    fn client_key() -> ClientKey {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let raw = key.public_key_raw();
+        let point = &raw[raw.len() - 65..];
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        ClientKey {
+            signing: EncodingKey::from_ec_pem(key.serialize_pem().as_bytes()).unwrap(),
+            jwk: GnapJwk {
+                kty: "EC".to_string(),
+                kid: None,
+                crv: Some("P-256".to_string()),
+                x: Some(b64.encode(&point[1..33])),
+                y: Some(b64.encode(&point[33..65])),
+                n: None,
+                e: None,
+            },
+        }
+    }
+
+    /// A DPoP proof for `htm` `htu`, signed by `signer` and naming `named` in its header.
+    fn dpop_header(
+        signer: &ClientKey,
+        named: &ClientKey,
+        htm: &str,
+        htu: &str,
+        jti: &str,
+    ) -> String {
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let jwk = serde_json::to_value(&named.jwk).unwrap();
+        let header = json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": jwk});
+        let claims = json!({
+            "jti": jti, "htm": htm, "htu": htu, "iat": chrono::Utc::now().timestamp()
+        });
+        let si = format!(
+            "{}.{}",
+            b64.encode(header.to_string()),
+            b64.encode(claims.to_string())
+        );
+        let sig =
+            jsonwebtoken::crypto::sign(si.as_bytes(), &signer.signing, Algorithm::ES256).unwrap();
+        format!("{si}.{sig}")
+    }
+
+    fn manager() -> DpopManager {
+        DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap())
+    }
+
+    fn service() -> GnapService {
+        GnapService::new(GnapConfig {
+            enabled: true,
+            transaction_endpoint: "/api/gnap/tx".to_string(),
+            interaction_base_url: Some("https://as.example.test".to_string()),
+            token_lifetime_secs: 3600,
+            transaction_lifetime_secs: 600,
+        })
+    }
+
+    fn request(key: &ClientKey, proof: &str, interact: bool) -> GnapTransactionRequest {
+        let mut builder = GnapTransactionRequest::builder()
+            .client_key(key.jwk.clone(), proof)
+            .access_type("read");
+        if interact {
+            builder = builder.redirect_interaction("https://client.test/cb", "client-nonce");
+        }
+        builder.build()
+    }
+
+    fn proof<'a>(header: Option<&'a str>, uri: &'a str) -> GnapProof<'a> {
+        GnapProof {
+            http_method: "POST",
+            http_uri: uri,
+            dpop_proof: header,
+            expected_nonce: None,
+        }
+    }
+
+    fn refusal(result: Result<serde_json::Value>) -> String {
+        result.expect_err("the request must be refused").to_string()
+    }
+
+    #[tokio::test]
+    async fn a_dpop_proof_signed_by_the_named_key_is_accepted() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let header = dpop_header(&key, &key, "POST", URI, "jti-ok");
+        let resp = svc
+            .handle_transaction_with_proof(
+                &dpop,
+                &proof(Some(&header), URI),
+                request(&key, "dpop", false),
+            )
+            .await
+            .unwrap();
+        assert!(resp["access_token"]["value"].is_string());
+    }
+
+    #[tokio::test]
+    async fn a_dpop_key_with_no_proof_is_refused() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        // Through the entry point that takes no proof at all.
+        let msg = refusal(svc.handle_transaction(request(&key, "dpop", false)).await);
+        assert!(msg.contains("proof required"), "{msg}");
+        // And through the one that does, with no DPoP header.
+        let msg = refusal(
+            svc.handle_transaction_with_proof(
+                &dpop,
+                &proof(None, URI),
+                request(&key, "dpop", false),
+            )
+            .await,
+        );
+        assert!(msg.contains("proof required"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn a_dpop_proof_from_another_key_is_refused() {
+        let (svc, dpop) = (service(), manager());
+        let (victim, attacker) = (client_key(), client_key());
+        // The attacker names the victim's key but can only sign with its own.
+        let forged = dpop_header(&attacker, &victim, "POST", URI, "jti-forged");
+        let msg = refusal(
+            svc.handle_transaction_with_proof(
+                &dpop,
+                &proof(Some(&forged), URI),
+                request(&victim, "dpop", false),
+            )
+            .await,
+        );
+        assert!(msg.contains("proof invalid"), "{msg}");
+        // The attacker's own proof, naming the attacker's own key, is fine: the key is the
+        // only thing that differs.
+        let own = dpop_header(&attacker, &attacker, "POST", URI, "jti-own");
+        svc.handle_transaction_with_proof(
+            &dpop,
+            &proof(Some(&own), URI),
+            request(&attacker, "dpop", false),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_dpop_proof_for_another_method_or_uri_is_refused() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let other_uri = dpop_header(&key, &key, "POST", "https://other.example/tx", "jti-uri");
+        let msg = refusal(
+            svc.handle_transaction_with_proof(
+                &dpop,
+                &proof(Some(&other_uri), URI),
+                request(&key, "dpop", false),
+            )
+            .await,
+        );
+        assert!(msg.contains("proof invalid"), "{msg}");
+        let other_method = dpop_header(&key, &key, "GET", URI, "jti-method");
+        let msg = refusal(
+            svc.handle_transaction_with_proof(
+                &dpop,
+                &proof(Some(&other_method), URI),
+                request(&key, "dpop", false),
+            )
+            .await,
+        );
+        assert!(msg.contains("proof invalid"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn a_dpop_proof_cannot_be_replayed() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let header = dpop_header(&key, &key, "POST", URI, "jti-once");
+        let go = || async {
+            svc.handle_transaction_with_proof(
+                &dpop,
+                &proof(Some(&header), URI),
+                request(&key, "dpop", false),
+            )
+            .await
+        };
+        go().await.unwrap();
+        assert!(refusal(go().await).contains("proof invalid"));
+    }
+
+    #[tokio::test]
+    async fn httpsig_mtls_and_jws_are_refused_not_accepted_unverified() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        // A valid DPoP header does not rescue a method that is not DPoP.
+        let header = dpop_header(&key, &key, "POST", URI, "jti-other-method");
+        for method in ["httpsig", "mtls", "jws", "no-such-method"] {
+            let msg = refusal(svc.handle_transaction(request(&key, method, false)).await);
+            assert!(
+                msg.contains("proof method not supported"),
+                "{method}: {msg}"
+            );
+            let msg = refusal(
+                svc.handle_transaction_with_proof(
+                    &dpop,
+                    &proof(Some(&header), URI),
+                    request(&key, method, false),
+                )
+                .await,
+            );
+            assert!(
+                msg.contains("proof method not supported"),
+                "{method}: {msg}"
+            );
+        }
+        // The same request as a client with no key still works: only a named key is refused.
+        let anonymous = GnapTransactionRequest::builder()
+            .access_type("read")
+            .build();
+        svc.handle_transaction(anonymous).await.unwrap();
+    }
+
+    #[test]
+    fn the_unit_test_proof_method_is_not_a_way_around_the_refusals() {
+        // `validate_client_key_with_proof` has no proof to check, so it refuses a real method.
+        let key = client_key();
+        for method in ["dpop", "httpsig", "mtls", "jws"] {
+            let client = Some(GnapClientInfo {
+                key: Some(GnapClientKey {
+                    proof: method.to_string(),
+                    jwk: key.jwk.clone(),
+                }),
+                display: None,
+            });
+            let err = GnapService::validate_client_key_with_proof(&client, Some(b"m"), Some(b"s"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("proof method not supported"),
+                "{method}: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_key_bound_transaction_continues_only_with_a_proof_from_that_key() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let first = dpop_header(&key, &key, "POST", URI, "jti-start");
+        let resp = svc
+            .handle_transaction_with_proof(
+                &dpop,
+                &proof(Some(&first), URI),
+                request(&key, "dpop", true),
+            )
+            .await
+            .unwrap();
+        let cont = resp["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let txn_id = svc.transactions.read().await.keys().next().unwrap().clone();
+        svc.approve_transaction(&txn_id, Some("user-1"))
+            .await
+            .unwrap();
+
+        // The continuation token alone is not enough for a key-bound transaction.
+        let msg = refusal(svc.continue_transaction(&txn_id, &cont, None, None).await);
+        assert!(msg.contains("proof required"), "{msg}");
+        // Nor is a proof from another key, and neither burns the holder's token.
+        let other = client_key();
+        let forged = dpop_header(&other, &key, "POST", CONTINUE_URI, "jti-c-forged");
+        let msg = refusal(
+            svc.continue_transaction_with_proof(
+                &dpop,
+                &proof(Some(&forged), CONTINUE_URI),
+                &txn_id,
+                &cont,
+                None,
+                None,
+            )
+            .await,
+        );
+        assert!(msg.contains("proof invalid"), "{msg}");
+        // The key's own proof, with the same token, completes the transaction.
+        let good = dpop_header(&key, &key, "POST", CONTINUE_URI, "jti-c-ok");
+        let done = svc
+            .continue_transaction_with_proof(
+                &dpop,
+                &proof(Some(&good), CONTINUE_URI),
+                &txn_id,
+                &cont,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(done["access_token"]["value"].is_string());
     }
 }

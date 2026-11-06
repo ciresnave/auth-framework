@@ -29,6 +29,14 @@
         # (0.16.1) still depends on it, so bumping this line's askama 0.15 would not remove it. Nothing
         # is linked into a built artifact. Remove when askama drops it.
         "RUSTSEC-2026-0374",
+        # RUSTSEC-2026-0440 (`astral-tokio-tar` unmaintained, "No safe upgrade is available"; Astral
+        # ended maintenance 2026-11-03): pulled only by testcontainers 0.27.2 (`cargo tree -i
+        # astral-tokio-tar --all-features`), which only the optional `docker-tests` feature enables
+        # (integration tests against Docker; never part of a shipped build). The newest testcontainers
+        # (0.28.0, crates.io 2026-11-05) still depends on it, so bumping does not remove it.
+        # Owner: auth-framework lane. Remove this entry when testcontainers releases a version that no
+        # longer depends on astral-tokio-tar, or when `docker-tests` is dropped.
+        "RUSTSEC-2026-0440",
     ]
 
 [licenses]
