@@ -175,3 +175,40 @@ Two unrelated mechanisms; see the rustdoc warnings on `permissions::Delegation` 
 `permissions::Delegation` is an evaluator input: `check_delegation` never looks at the delegator, so it must not be fed
 caller-supplied records. `AuthorizationManager::delegate_permission` checks that the delegator holds the permission at creation
 (and refuses a wider grant than held), allows one level only, and its stored delegations are consulted by no check.
+
+## 8. Key management (rows KM1-KM8)
+
+CireSnave 2026-11-06, verbatim: *"Auth-framework should include full key management tooling for most, if not all keys that a client or server could need to generate.  That includes key creation."*
+Measured at `4eb8f99d` (origin/main) by reading the files named; "none found" means a search of `src` for the symbols named, not a proof of absence.
+
+| Key kind | Exists | Missing |
+| --- | --- | --- |
+| JWS/JWT signing | `tokens/mod.rs` `TokenManager`: HS256 and RS256 only; keys are supplied by the caller as PEM or secret bytes. `rotate_hmac_key`, `rotate_rsa_key` keep exactly one previous key; `retire_previous_key` drops it | Creation (the RSA generator is in `#[cfg(test)]`, line 2053); EC and Ed25519 signing keys; more than one previous key; persistence; rotation on a schedule |
+| JWKS publishing | `export_public_jwks` and OIDC `generate_jwks` (`server/oidc/core.rs:1067`) | RSA only (`kty` is hard-coded `"RSA"`); `kid` is SHA-256 of the modulus, not an RFC 7638 thumbprint; the no-feature error text recommends ES256/ES384 which `TokenManager` cannot be built with |
+| JWE encryption | JARM response encryption in `server/oidc/oidc_advanced_jarm.rs` | No encryption key creation, rotation or publishing (`use: "enc"`) |
+| GNAP client key (JWK) | `gnap.rs` verifies a presented key | Creation, thumbprint helper, `cert` and `cert#S256` forms |
+| DPoP key | `server/security/dpop.rs` verifies proofs; RFC 7638 thumbprint is a private method (line 946) | Client-side generation (only `#[cfg(test)]` code makes keys) and export |
+| httpsig key | none | everything (G2) |
+| mTLS key pair and certificate | `server/security/x509_signing.rs`: CA load from file, PKCS#11 (`hsm` feature, loads the CA certificate), Azure Key Vault and AWS Secrets Manager (certificate only); `generate_development_root_ca` (line 1219); `sign_certificate_request` (line 1399) signs a requester's public key; `methods/client_cert/mod.rs` `cert_thumbprint_s256` (line 581) and a CRL store | CSR creation (none found: `acme.rs` `finalize_order` takes DER the caller built); CA private key custody other than a PEM path; certificate renewal |
+| ACME account key | `protocols/acme.rs:326` generates a P-256 key with `ring`; `account_thumbprint`; `revoke_certificate` | persistence of the account key; rotation |
+| Symmetric: AEAD | `storage/encryption.rs`: AES-256-GCM `StorageEncryption`, `KeyProvider` trait (`load_keys` returns the current id and a map), `EnvKeyProvider` (env var or a JSON keys file), `generate_key` (line 608), `rewrap_kv_keys` re-encrypts under the current key. ChaCha20-Poly1305 behind `enhanced-crypto` | A provider that creates and stores keys; file permissions are unchecked on Windows; KMS provider |
+| Symmetric: HMAC | `rotate_hmac_key` | Creation helper beyond random-token generators (`utils/crypto.rs` has only `generate_token`, `generate_secure_token`, `generate_hex_token`) |
+| Ed25519 / X25519 | `security/enhanced_crypto.rs` `Ed25519KeyPair`, `X25519KeyPair` (feature `enhanced-crypto`) | JWK conversion, storage, any link to tokens |
+| OS keystore, TPM, KMS | none (no keyring crate; `security-framework` appears in `Cargo.lock` only as a transitive dependency). `cryptoki` exists behind `hsm` | all of it |
+
+Backends in the tree: `ring` 0.17.14, `aws-lc-rs` (through `jsonwebtoken` 11.1 and `kryptering`), `rcgen` 0.14 with its `aws_lc_rs` feature (production use in `x509_signing.rs`).
+No new crypto backend is needed for KM1-KM2, KM6 and KM7. Any new crate for KM3 (an OS keystore or TPM binding) is an ASK before use.
+
+**Design choices to settle with the PM before KM3:** a non-exportable key must sign through the store, so `KeyStore` offers `sign(kid, alg, msg)` and does not return private bytes; `TokenManager` and the DPoP, mTLS and httpsig paths take a signer, not PEM bytes.
+
+## 9. Which anchor ties a key to an identity (per principal kind)
+
+Rule from CireSnave 2026-11-06: the agent keeps its private key; the server never holds it. A key proves *possession*; an anchor says *whose* key it is.
+
+| Principal kind | Who generates the key | Anchor | Server holds |
+| --- | --- | --- | --- |
+| Human | the human's device (passkey or authenticator, or a client key in their app) | registration by the human at an authenticated session, or a passkey ceremony; account recovery is a separate, audited path | public key, thumbprint, state |
+| Program (service, confidential client) | the program's operator, in the program's own environment | registration by the account holder (key or `jwks_uri`), or a certificate chain to a CA the account holder trusts (mTLS, `cert`) | public key or trust anchor, thumbprint |
+| Agent | the agent itself, at start; the private key never leaves it | registration by the account holder or by the creating agent (creator grants, section 5), which binds the agent's public key and thumbprint to the new agent id; optional attestation from the host runtime where one exists; no attestation means the anchor is the registrar's word only | public key, thumbprint, registrar, state |
+
+Rules: (1) the registrar must hold the grants it confers on the new principal (strict subset, section 5); (2) a key bound to no registrar has no identity and gets no grant; (3) revoking a registrar's grant over a principal revokes that principal's bindings (KM5); (4) a human vouching for another principal is a registration by that human, recorded as such, and carries only what that human holds; (5) "none" is a valid anchor only for an anonymous, unprivileged GNAP client (RFC 9635 permits key-bound clients with no registered identity), and such a client holds no grants beyond what the policy gives every unknown key.
