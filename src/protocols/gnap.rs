@@ -7,8 +7,9 @@
 //! # Implemented Features
 //!
 //! - Transaction lifecycle (create, continue, approve, deny)
-//! - Client key binding via JWK (ES256, RS256, EdDSA)
-//! - Interaction hash verification (draft §4.2.3)
+//! - Client key binding via JWK (ES256, RS256, EdDSA); a client key is required
+//! - Access granted only through a [`GnapAccessPolicy`] (default deny)
+//! - One-time interaction reference and hash (draft §4.2, §4.2.3)
 //! - Continuation token rotation on each use
 //! - Token management (revocation)
 //! - Subject information responses
@@ -16,6 +17,7 @@
 
 use crate::errors::{AuthError, Result};
 use crate::server::security::dpop::DpopManager;
+use async_trait::async_trait;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -292,6 +294,8 @@ struct GnapTransaction {
     interact_nonce: Option<String>,
     /// Subject identifier assigned after approval
     subject_id: Option<String>,
+    /// One-time interaction reference issued when a finish-method transaction is approved
+    interact_ref: Option<String>,
 }
 
 impl std::fmt::Debug for GnapTransaction {
@@ -310,6 +314,10 @@ impl std::fmt::Debug for GnapTransaction {
             &crate::utils::redact::redacted(&self.interact_nonce),
         );
         d.field("subject_id", &self.subject_id);
+        d.field(
+            "interact_ref",
+            &crate::utils::redact::redacted(&self.interact_ref),
+        );
         d.finish()
     }
 }
@@ -357,8 +365,40 @@ pub struct GnapProof<'a> {
     pub expected_nonce: Option<&'a str>,
 }
 
+/// Decides which access rights a client key is granted.
+///
+/// [`GnapService`] never issues an access token on its own authority: an integrator supplies a
+/// policy with [`GnapService::with_access_policy`], and the token carries exactly what the policy
+/// returns, which can be less than the client asked for. An empty return denies the request. A
+/// service without a policy denies every request for an access token.
+#[async_trait]
+pub trait GnapAccessPolicy: Send + Sync {
+    /// The rights to grant to the client key with this RFC 7638 `client_key_thumbprint` out of
+    /// the `requested` ones. Return an empty list to deny.
+    async fn grant(
+        &self,
+        client_key_thumbprint: &str,
+        requested: &[GnapAccessRequest],
+    ) -> Vec<GnapAccessRequest>;
+}
+
+/// What the authorization server hands back to the client when the resource owner approves a
+/// transaction that uses an interaction `finish` method (RFC 9635 section 4.2).
+///
+/// The integrator delivers both values to the client's finish URI. The client checks `hash`
+/// (section 4.2.3) and presents `interact_ref`, once, in its continuation request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GnapInteractionCompletion {
+    /// The one-time interaction reference, `None` when the transaction has no finish method.
+    pub interact_ref: Option<String>,
+    /// The interaction hash the client verifies, `None` when the transaction has no finish method.
+    pub hash: Option<String>,
+}
+
 pub struct GnapService {
     config: GnapConfig,
+    /// Decides what is granted; without one no access token is issued.
+    policy: Option<Arc<dyn GnapAccessPolicy>>,
     /// Active transactions (keyed by transaction ID)
     transactions: Arc<RwLock<HashMap<String, GnapTransaction>>>,
     /// Issued access tokens (keyed by token value)
@@ -371,14 +411,28 @@ const PROOF_NOT_SUPPORTED: &str = "GNAP proof method not supported";
 const PROOF_REQUIRED: &str = "GNAP client key proof required: use the _with_proof entry point with the request's DPoP header";
 /// Refusal of a client key proof that did not verify.
 const PROOF_INVALID: &str = "GNAP client key proof invalid";
+/// Refusal of a request that names no client key (RFC 9635 section 2.3).
+const KEY_REQUIRED: &str = "GNAP client key required";
+/// Refusal to issue an access token when the service has no access policy.
+const POLICY_REQUIRED: &str = "GNAP access denied: no access policy is configured";
+/// Refusal to issue an access token when the policy grants nothing.
+const ACCESS_DENIED: &str = "GNAP access denied by policy";
 
 impl GnapService {
     pub fn new(config: GnapConfig) -> Self {
         Self {
             config,
+            policy: None,
             transactions: Arc::new(RwLock::new(HashMap::new())),
             issued_tokens: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Set the policy that decides what access tokens carry. Without one, every request for an
+    /// access token is denied.
+    pub fn with_access_policy(mut self, policy: Arc<dyn GnapAccessPolicy>) -> Self {
+        self.policy = Some(policy);
+        self
     }
 
     // ── Key Binding Helpers ──────────────────────────────────────────────
@@ -661,7 +715,7 @@ impl GnapService {
 
     /// Prove the client holds the key it named, and return that key's thumbprint.
     ///
-    /// A request that names no client key is anonymous and passes with no thumbprint. A request
+    /// A request that names no client key is refused (RFC 9635 section 2.3). A request
     /// that names one is accepted only when its proof is verified here: `dpop` against `dpop`'s
     /// manager and the request's `DPoP` header. Every other method (`httpsig`, `mtls`, `jws`,
     /// anything unknown) is refused, as is a `dpop` key with no proof material, so no proof
@@ -671,10 +725,10 @@ impl GnapService {
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
     ) -> Result<Option<String>> {
         let Some(thumbprint) = Self::validate_client_key(client)? else {
-            return Ok(None);
+            return Err(AuthError::validation(KEY_REQUIRED));
         };
         let Some(key) = client.as_ref().and_then(|c| c.key.as_ref()) else {
-            return Ok(None);
+            return Err(AuthError::validation(KEY_REQUIRED));
         };
         match key.proof.as_str() {
             "dpop" => {
@@ -730,12 +784,26 @@ impl GnapService {
 
     // ── Token Issuance Helper ────────────────────────────────────────────
 
-    fn build_access_token_response(
+    async fn build_access_token_response(
         &self,
         access_requests: &[GnapAccessRequest],
         key_thumbprint: &Option<String>,
         transaction_id: &str,
-    ) -> serde_json::Map<String, serde_json::Value> {
+    ) -> Result<serde_json::Map<String, serde_json::Value>> {
+        // The policy, not the request, decides what the token carries.
+        let policy = self
+            .policy
+            .as_ref()
+            .ok_or_else(|| AuthError::validation(POLICY_REQUIRED))?;
+        let thumbprint = key_thumbprint
+            .as_deref()
+            .ok_or_else(|| AuthError::validation(KEY_REQUIRED))?;
+        let granted = policy.grant(thumbprint, access_requests).await;
+        if granted.is_empty() {
+            return Err(AuthError::validation(ACCESS_DENIED));
+        }
+        let access_requests = granted.as_slice();
+
         let access_token = uuid::Uuid::new_v4().to_string();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -750,14 +818,11 @@ impl GnapService {
             transaction_id: transaction_id.to_string(),
         };
 
-        // Store in issued_tokens (fire-and-forget via blocking write is fine
-        // since we return the response synchronously within an async context)
-        let tokens = Arc::clone(&self.issued_tokens);
-        let token_value = access_token.clone();
-        let issued_clone = issued;
-        tokio::spawn(async move {
-            tokens.write().await.insert(token_value, issued_clone);
-        });
+        // Stored before the response is returned: a client that uses the token at once finds it.
+        self.issued_tokens
+            .write()
+            .await
+            .insert(access_token.clone(), issued);
 
         let mut token_obj = serde_json::Map::new();
         token_obj.insert("value".to_string(), serde_json::Value::String(access_token));
@@ -783,22 +848,25 @@ impl GnapService {
             .collect();
         token_obj.insert("access".to_string(), serde_json::Value::Array(access_json));
 
-        token_obj
+        Ok(token_obj)
     }
 
     // ── Transaction Lifecycle ────────────────────────────────────────────
 
-    /// Handle a new GNAP transaction request (draft-ietf-gnap-core-protocol §2)
-    pub async fn handle_transaction(
+    /// Handle a new transaction request without proof material. Tests only: in a build every
+    /// request must come through [`Self::handle_transaction_with_proof`].
+    #[cfg(test)]
+    async fn handle_transaction(
         &self,
         request: GnapTransactionRequest,
     ) -> Result<serde_json::Value> {
         self.handle_transaction_inner(request, None).await
     }
 
-    /// Like [`Self::handle_transaction`], for a request that names a client key with the `dpop`
-    /// proof method: `proof` carries the request's `DPoP` header, which must be signed by that
-    /// key. A request without a client key behaves as in `handle_transaction`.
+    /// Handle a new GNAP transaction request (RFC 9635 section 2). The request must name a
+    /// client key with the `dpop` proof method, and `proof` carries the request's `DPoP` header,
+    /// which must be signed by that key. A request that names no client key is refused, and no
+    /// access token is issued unless the service has an access policy that grants something.
     pub async fn handle_transaction_with_proof(
         &self,
         dpop: &DpopManager,
@@ -889,13 +957,15 @@ impl GnapService {
                 created_at: now,
                 interact_nonce: interact_nonce.clone(),
                 subject_id: None,
+                interact_ref: None,
             };
             self.transactions.write().await.insert(transaction_id, txn);
         } else {
             // No interaction required — issue token directly if access requested
             if let Some(ref access_requests) = request.access_token {
-                let token_obj =
-                    self.build_access_token_response(access_requests, &key_thumbprint, "direct");
+                let token_obj = self
+                    .build_access_token_response(access_requests, &key_thumbprint, "direct")
+                    .await?;
                 response.insert(
                     "access_token".to_string(),
                     serde_json::Value::Object(token_obj),
@@ -936,11 +1006,10 @@ impl GnapService {
         Ok(serde_json::Value::Object(response))
     }
 
-    /// Continue a GNAP transaction (polling or post-interaction).
-    ///
-    /// The continuation token is **rotated on every successful call** per
-    /// draft §5.1, preventing replay of old continuation responses.
-    pub async fn continue_transaction(
+    /// Continue a transaction without proof material. Tests only: in a build every continuation
+    /// must come through [`Self::continue_transaction_with_proof`].
+    #[cfg(test)]
+    async fn continue_transaction(
         &self,
         transaction_id: &str,
         continue_token: &str,
@@ -957,8 +1026,12 @@ impl GnapService {
         .await
     }
 
-    /// Like [`Self::continue_transaction`], for a transaction whose client named a `dpop` key:
-    /// the continuation request must carry a `DPoP` proof signed by that same key (draft §5.1).
+    /// Continue a GNAP transaction (polling or post-interaction), RFC 9635 section 5.
+    ///
+    /// The continuation request must carry a `DPoP` proof signed by the transaction's client
+    /// key. A transaction that uses a finish method continues only with the one-time
+    /// `interact_ref` that [`Self::approve_transaction`] returned. The continuation token is
+    /// **rotated on every successful call**, preventing replay of old continuation responses.
     pub async fn continue_transaction_with_proof(
         &self,
         dpop: &DpopManager,
@@ -1005,6 +1078,24 @@ impl GnapService {
         // Verify continuation token
         if txn.continue_token != continue_token {
             return Err(AuthError::validation("Invalid continuation token"));
+        }
+
+        // An approved transaction that uses a finish method continues only with the one-time
+        // interaction reference issued at approval, and a reference nobody issued is refused.
+        // Checked before the token is rotated, so a refused request leaves the token usable.
+        match (txn.interact_ref.as_deref(), interact_ref) {
+            (Some(issued), Some(given)) => {
+                if !bool::from(subtle::ConstantTimeEq::ct_eq(
+                    issued.as_bytes(),
+                    given.as_bytes(),
+                )) {
+                    return Err(AuthError::validation("Invalid interaction reference"));
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(AuthError::validation("Invalid interaction reference"));
+            }
+            (None, None) => {}
         }
 
         // A transaction whose client named a key continues only for that key. This runs before
@@ -1068,17 +1159,25 @@ impl GnapService {
 
                 let mut response = serde_json::Map::new();
 
-                // Issue access token
+                // Issue access token (the policy decides what it carries)
+                let mut refused = None;
                 if let Some(ref access_requests) = txn.request.access_token {
-                    let token_obj = self.build_access_token_response(
-                        access_requests,
-                        &key_thumbprint,
-                        transaction_id,
-                    );
-                    response.insert(
-                        "access_token".to_string(),
-                        serde_json::Value::Object(token_obj),
-                    );
+                    match self
+                        .build_access_token_response(
+                            access_requests,
+                            &key_thumbprint,
+                            transaction_id,
+                        )
+                        .await
+                    {
+                        Ok(token_obj) => {
+                            response.insert(
+                                "access_token".to_string(),
+                                serde_json::Value::Object(token_obj),
+                            );
+                        }
+                        Err(e) => refused = Some(e),
+                    }
                 }
 
                 // Include subject info if requested and available
@@ -1091,7 +1190,10 @@ impl GnapService {
                     );
                 }
 
-                Ok(serde_json::Value::Object(response))
+                match refused {
+                    Some(e) => Err(e),
+                    None => Ok(serde_json::Value::Object(response)),
+                }
             }
             GnapTransactionState::Denied => Err(AuthError::validation(
                 "Transaction was denied by the resource owner",
@@ -1111,11 +1213,14 @@ impl GnapService {
 
     /// Approve a pending transaction (called after user interaction).
     /// Optionally sets the subject identifier for subject-info responses.
+    ///
+    /// For a transaction that uses a finish method this issues the one-time interaction
+    /// reference and its hash (RFC 9635 section 4.2); deliver both to the client's finish URI.
     pub async fn approve_transaction(
         &self,
         transaction_id: &str,
         subject_id: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<GnapInteractionCompletion> {
         let mut transactions = self.transactions.write().await;
         let txn = transactions
             .get_mut(transaction_id)
@@ -1124,7 +1229,32 @@ impl GnapService {
         if let Some(sid) = subject_id {
             txn.subject_id = Some(sid.to_string());
         }
-        Ok(())
+        let client_nonce = txn
+            .request
+            .interact
+            .as_ref()
+            .and_then(|i| i.finish.as_ref())
+            .map(|f| f.nonce.clone());
+        let Some(client_nonce) = client_nonce else {
+            return Ok(GnapInteractionCompletion {
+                interact_ref: None,
+                hash: None,
+            });
+        };
+        let interact_ref = txn
+            .interact_ref
+            .get_or_insert_with(|| uuid::Uuid::new_v4().simple().to_string())
+            .clone();
+        let hash = Self::compute_interact_hash(
+            &client_nonce,
+            txn.interact_nonce.as_deref().unwrap_or(""),
+            &interact_ref,
+            &self.config.transaction_endpoint,
+        );
+        Ok(GnapInteractionCompletion {
+            interact_ref: Some(interact_ref),
+            hash: Some(hash),
+        })
     }
 
     /// Deny a pending transaction
@@ -1363,9 +1493,29 @@ impl GnapService {
     }
 }
 
+/// Test policy: grants everything requested.
+#[cfg(test)]
+struct AllowAllPolicy;
+
+#[cfg(test)]
+#[async_trait]
+impl GnapAccessPolicy for AllowAllPolicy {
+    async fn grant(
+        &self,
+        _client_key_thumbprint: &str,
+        requested: &[GnapAccessRequest],
+    ) -> Vec<GnapAccessRequest> {
+        requested.to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_service() -> GnapService {
+        GnapService::new(test_config()).with_access_policy(Arc::new(AllowAllPolicy))
+    }
 
     fn test_config() -> GnapConfig {
         GnapConfig {
@@ -1427,7 +1577,7 @@ mod tests {
 
     #[test]
     fn test_gnap_service_creation() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         assert!(service.config.enabled);
     }
 
@@ -1568,9 +1718,9 @@ mod tests {
     async fn test_transaction_disabled() {
         let mut config = test_config();
         config.enabled = false;
-        let service = GnapService::new(config);
+        let service = GnapService::new(config).with_access_policy(Arc::new(AllowAllPolicy));
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: None,
             access_token: Some(vec![GnapAccessRequest {
                 access_type: "read".to_string(),
@@ -1584,9 +1734,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_requires_access_or_subject() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: None,
             access_token: None,
             subject: None,
@@ -1596,7 +1746,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_direct_token_issuance() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
@@ -1621,7 +1771,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_with_interaction() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: Some(GnapInteractionRequirements {
@@ -1651,9 +1801,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_subject_only() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: None,
             access_token: None,
             subject: Some(GnapSubjectRequest {
@@ -1670,7 +1820,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_approve_and_continue() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
 
         // Create interactive transaction
         let req = GnapTransactionRequest {
@@ -1728,9 +1878,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_deny_transaction() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
@@ -1762,9 +1912,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_continue_invalid_token() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
@@ -1791,9 +1941,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_revocation() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: None,
             access_token: Some(vec![GnapAccessRequest {
                 access_type: "read".to_string(),
@@ -1824,9 +1974,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_rotation() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: None,
             access_token: Some(vec![GnapAccessRequest {
                 access_type: "write".to_string(),
@@ -1859,13 +2009,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_revoke_nonexistent_token() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         assert!(service.revoke_token("nonexistent").await.is_err());
     }
 
     #[tokio::test]
     async fn test_introspect_nonexistent_token() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let info = service.introspect_token("nonexistent").await.unwrap();
         assert!(info.is_none());
     }
@@ -1874,7 +2024,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_key_binding_check() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let ec_jwk = test_ec_jwk();
         let req = GnapTransactionRequest {
             client: Some(test_client_info(ec_jwk.clone())),
@@ -1973,9 +2123,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_continuation_token_rotates() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
@@ -2022,10 +2172,10 @@ mod tests {
     async fn test_cleanup_expired_transactions() {
         let mut config = test_config();
         config.transaction_lifetime_secs = 1; // 1 second lifetime
-        let service = GnapService::new(config);
+        let service = GnapService::new(config).with_access_policy(Arc::new(AllowAllPolicy));
 
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
@@ -2056,10 +2206,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_interaction_hash_verification() {
-        let service = GnapService::new(test_config());
+        let service = test_service();
         let client_nonce = "client-nonce-abc";
         let req = GnapTransactionRequest {
-            client: None,
+            client: Some(test_client_info(test_ec_jwk())),
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: Some(GnapInteractionFinish {
@@ -2087,13 +2237,15 @@ mod tests {
             )
         };
 
-        let interact_ref = "test-interact-ref";
+        let done = service.approve_transaction(&txn_id, None).await.unwrap();
+        let interact_ref = done.interact_ref.as_deref().unwrap();
         let correct_hash = GnapService::compute_interact_hash(
             client_nonce,
             &server_nonce,
             interact_ref,
             &service.config.transaction_endpoint,
         );
+        assert_eq!(done.hash.as_deref(), Some(correct_hash.as_str()));
 
         // Wrong hash → fails
         let bad = service
@@ -2117,6 +2269,78 @@ mod tests {
             )
             .await;
         assert!(good.is_ok());
+    }
+
+    /// An approved transaction that uses a finish method: the transaction id, its continuation
+    /// token, the interaction hash and the one-time interaction reference issued at approval.
+    async fn interact_transaction(service: &GnapService) -> (String, String, String, String) {
+        let client_nonce = "client-nonce-abc";
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: Some(GnapInteractionFinish {
+                    method: "redirect".to_string(),
+                    uri: "https://client.test/cb".to_string(),
+                    nonce: client_nonce.to_string(),
+                }),
+            }),
+            access_token: Some(vec![GnapAccessRequest {
+                access_type: "read".to_string(),
+                actions: vec![],
+                locations: vec![],
+            }]),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        let (id, cont) = {
+            let txns = service.transactions.read().await;
+            let (id, txn) = txns.iter().next().unwrap();
+            (id.clone(), txn.continue_token.clone())
+        };
+        let done = service.approve_transaction(&id, None).await.unwrap();
+        let interact_ref = done.interact_ref.unwrap();
+        let hash = done.hash.unwrap();
+        let txns = service.transactions.read().await;
+        let txn = txns.get(&id).unwrap();
+        assert_eq!(
+            hash,
+            GnapService::compute_interact_hash(
+                client_nonce,
+                txn.interact_nonce.as_deref().unwrap(),
+                &interact_ref,
+                &service.config.transaction_endpoint,
+            ),
+            "the hash approve returns is the section 4.2.3 hash"
+        );
+        (id, cont, hash, interact_ref)
+    }
+
+    #[tokio::test]
+    async fn test_continuation_token_must_match_exactly() {
+        let service = test_service();
+        let (txn_id, cont, _, iref) = interact_transaction(&service).await;
+
+        let mut near_miss = cont.clone();
+        near_miss.pop();
+        near_miss.push(if cont.ends_with('0') { '1' } else { '0' });
+        let too_long = format!("{cont}0");
+        let prefix = cont[..cont.len() - 1].to_string();
+        for bad in [near_miss, too_long, prefix, String::new()] {
+            assert!(
+                service
+                    .continue_transaction(&txn_id, &bad, None, None)
+                    .await
+                    .is_err(),
+                "token {bad:?} must be refused"
+            );
+        }
+        assert!(
+            service
+                .continue_transaction(&txn_id, &cont, Some(&iref), None)
+                .await
+                .is_ok()
+        );
     }
 
     #[test]
@@ -2233,6 +2457,7 @@ mod proof_verification_tests {
             token_lifetime_secs: 3600,
             transaction_lifetime_secs: 600,
         })
+        .with_access_policy(Arc::new(AllowAllPolicy))
     }
 
     fn request(key: &ClientKey, proof: &str, interact: bool) -> GnapTransactionRequest {
@@ -2383,11 +2608,12 @@ mod proof_verification_tests {
                 "{method}: {msg}"
             );
         }
-        // The same request as a client with no key still works: only a named key is refused.
+        // A request that names no key is refused too (RFC 9635 section 2.3).
         let anonymous = GnapTransactionRequest::builder()
             .access_type("read")
             .build();
-        svc.handle_transaction(anonymous).await.unwrap();
+        let msg = refusal(svc.handle_transaction(anonymous).await);
+        assert!(msg.contains("client key required"), "{msg}");
     }
 
     #[test]
@@ -2429,12 +2655,18 @@ mod proof_verification_tests {
             .unwrap()
             .to_string();
         let txn_id = svc.transactions.read().await.keys().next().unwrap().clone();
-        svc.approve_transaction(&txn_id, Some("user-1"))
+        let iref = svc
+            .approve_transaction(&txn_id, Some("user-1"))
             .await
+            .unwrap()
+            .interact_ref
             .unwrap();
 
         // The continuation token alone is not enough for a key-bound transaction.
-        let msg = refusal(svc.continue_transaction(&txn_id, &cont, None, None).await);
+        let msg = refusal(
+            svc.continue_transaction(&txn_id, &cont, Some(&iref), None)
+                .await,
+        );
         assert!(msg.contains("proof required"), "{msg}");
         // Nor is a proof from another key, and neither burns the holder's token.
         let other = client_key();
@@ -2445,7 +2677,7 @@ mod proof_verification_tests {
                 &proof(Some(&forged), CONTINUE_URI),
                 &txn_id,
                 &cont,
-                None,
+                Some(&iref),
                 None,
             )
             .await,
@@ -2459,11 +2691,372 @@ mod proof_verification_tests {
                 &proof(Some(&good), CONTINUE_URI),
                 &txn_id,
                 &cont,
-                None,
+                Some(&iref),
                 None,
             )
             .await
             .unwrap();
         assert!(done["access_token"]["value"].is_string());
+    }
+}
+
+/// Access is granted by an integrator's policy, a client key is required, a finished interaction
+/// is proved by its one-time reference, and an issued token is usable at once.
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    fn config() -> GnapConfig {
+        GnapConfig {
+            enabled: true,
+            transaction_endpoint: "/api/gnap/tx".to_string(),
+            interaction_base_url: Some("https://as.example.test".to_string()),
+            token_lifetime_secs: 3600,
+            transaction_lifetime_secs: 600,
+        }
+    }
+
+    fn jwk() -> GnapJwk {
+        GnapJwk {
+            kty: "EC".to_string(),
+            kid: None,
+            crv: Some("P-256".to_string()),
+            x: Some("f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU".to_string()),
+            y: Some("x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0".to_string()),
+            n: None,
+            e: None,
+        }
+    }
+
+    fn keyed() -> Option<GnapClientInfo> {
+        Some(GnapClientInfo {
+            key: Some(GnapClientKey {
+                proof: "test".to_string(),
+                jwk: jwk(),
+            }),
+            display: None,
+        })
+    }
+
+    fn rights(kinds: &[&str]) -> Vec<GnapAccessRequest> {
+        kinds
+            .iter()
+            .map(|k| GnapAccessRequest {
+                access_type: (*k).to_string(),
+                actions: vec![],
+                locations: vec![],
+            })
+            .collect()
+    }
+
+    fn request(
+        client: Option<GnapClientInfo>,
+        kinds: &[&str],
+        finish: bool,
+    ) -> GnapTransactionRequest {
+        GnapTransactionRequest {
+            client,
+            interact: finish.then(|| GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: Some(GnapInteractionFinish {
+                    method: "redirect".to_string(),
+                    uri: "https://client.test/cb".to_string(),
+                    nonce: "client-nonce".to_string(),
+                }),
+            }),
+            access_token: Some(rights(kinds)),
+            subject: None,
+        }
+    }
+
+    struct Records(Mutex<Vec<String>>);
+
+    #[async_trait]
+    impl GnapAccessPolicy for Records {
+        async fn grant(
+            &self,
+            thumbprint: &str,
+            requested: &[GnapAccessRequest],
+        ) -> Vec<GnapAccessRequest> {
+            self.0.lock().unwrap().push(thumbprint.to_string());
+            requested.to_vec()
+        }
+    }
+
+    /// Grants only `read`, whatever was asked for.
+    struct ReadOnly;
+
+    #[async_trait]
+    impl GnapAccessPolicy for ReadOnly {
+        async fn grant(&self, _: &str, requested: &[GnapAccessRequest]) -> Vec<GnapAccessRequest> {
+            requested
+                .iter()
+                .filter(|r| r.access_type == "read")
+                .cloned()
+                .collect()
+        }
+    }
+
+    fn with(policy: impl GnapAccessPolicy + 'static) -> GnapService {
+        GnapService::new(config()).with_access_policy(Arc::new(policy))
+    }
+
+    fn message<T>(r: Result<T>) -> String {
+        match r {
+            Ok(_) => "accepted".to_string(),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    // ── Policy ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn a_service_without_a_policy_issues_no_access_token() {
+        let none = GnapService::new(config());
+        let msg = message(
+            none.handle_transaction(request(keyed(), &["read"], false))
+                .await,
+        );
+        assert!(msg.contains("no access policy"), "{msg}");
+        assert!(none.issued_tokens.read().await.is_empty());
+
+        // Control: the same request is served once a policy grants it.
+        let served = with(AllowAllPolicy)
+            .handle_transaction(request(keyed(), &["read"], false))
+            .await
+            .unwrap();
+        assert!(served["access_token"]["value"].is_string());
+    }
+
+    #[tokio::test]
+    async fn the_token_carries_what_the_policy_grants_not_what_was_requested() {
+        let svc = with(ReadOnly);
+        let resp = svc
+            .handle_transaction(request(keyed(), &["admin", "read"], false))
+            .await
+            .unwrap();
+        let granted = resp["access_token"]["access"].as_array().unwrap();
+        assert_eq!(granted.len(), 1);
+        assert_eq!(granted[0]["type"], "read");
+        let value = resp["access_token"]["value"].as_str().unwrap();
+        let introspected = svc.introspect_token(value).await.unwrap().unwrap();
+        assert_eq!(introspected["access"].as_array().unwrap().len(), 1);
+
+        // A request for nothing the policy grants is denied, and nothing is stored.
+        let before = svc.issued_tokens.read().await.len();
+        let msg = message(
+            svc.handle_transaction(request(keyed(), &["admin"], false))
+                .await,
+        );
+        assert!(msg.contains("denied by policy"), "{msg}");
+        assert_eq!(svc.issued_tokens.read().await.len(), before);
+    }
+
+    #[tokio::test]
+    async fn the_policy_is_told_which_key_is_asking() {
+        let records = Arc::new(Records(Mutex::new(Vec::new())));
+        let svc = GnapService::new(config()).with_access_policy(records.clone());
+        svc.handle_transaction(request(keyed(), &["read"], false))
+            .await
+            .unwrap();
+        let expected = GnapService::jwk_thumbprint(&jwk()).unwrap();
+        assert_eq!(*records.0.lock().unwrap(), vec![expected]);
+    }
+
+    #[tokio::test]
+    async fn a_policy_that_denies_after_approval_ends_the_transaction() {
+        let svc = with(ReadOnly);
+        svc.handle_transaction(request(keyed(), &["admin"], true))
+            .await
+            .unwrap();
+        let (id, cont) = {
+            let txns = svc.transactions.read().await;
+            let (id, t) = txns.iter().next().unwrap();
+            (id.clone(), t.continue_token.clone())
+        };
+        let iref = svc
+            .approve_transaction(&id, None)
+            .await
+            .unwrap()
+            .interact_ref
+            .unwrap();
+        let msg = message(
+            svc.continue_transaction(&id, &cont, Some(&iref), None)
+                .await,
+        );
+        assert!(msg.contains("denied by policy"), "{msg}");
+        assert!(svc.transactions.read().await.is_empty());
+    }
+
+    // ── Client key ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn a_request_without_a_client_key_is_refused() {
+        let svc = with(AllowAllPolicy);
+        for client in [
+            None,
+            Some(GnapClientInfo {
+                key: None,
+                display: None,
+            }),
+        ] {
+            let msg = message(
+                svc.handle_transaction(request(client, &["read"], false))
+                    .await,
+            );
+            assert!(msg.contains("client key required"), "{msg}");
+        }
+        // A subject-only request needs a key as well.
+        let subject_only = GnapTransactionRequest {
+            client: None,
+            interact: None,
+            access_token: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+            }),
+        };
+        let msg = message(svc.handle_transaction(subject_only).await);
+        assert!(msg.contains("client key required"), "{msg}");
+        assert!(svc.issued_tokens.read().await.is_empty());
+
+        // Control: with a key the same request is served.
+        assert!(
+            svc.handle_transaction(request(keyed(), &["read"], false))
+                .await
+                .is_ok()
+        );
+    }
+
+    // ── Interaction reference ────────────────────────────────────────────
+
+    async fn pending(svc: &GnapService, finish: bool) -> (String, String) {
+        let before: Vec<String> = svc.transactions.read().await.keys().cloned().collect();
+        let mut req = request(keyed(), &["read"], finish);
+        if !finish {
+            // Polling: interaction starts at the AS but the client names no finish method.
+            req.interact = Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+            });
+        }
+        svc.handle_transaction(req).await.unwrap();
+        let txns = svc.transactions.read().await;
+        let (id, t) = txns.iter().find(|(k, _)| !before.contains(*k)).unwrap();
+        (id.clone(), t.continue_token.clone())
+    }
+
+    #[tokio::test]
+    async fn an_approved_finish_transaction_continues_only_with_its_own_reference() {
+        let svc = with(AllowAllPolicy);
+        let (id, cont) = pending(&svc, true).await;
+        let (other_id, _) = pending(&svc, true).await;
+        let iref = svc
+            .approve_transaction(&id, None)
+            .await
+            .unwrap()
+            .interact_ref
+            .unwrap();
+        let other_ref = svc
+            .approve_transaction(&other_id, None)
+            .await
+            .unwrap()
+            .interact_ref
+            .unwrap();
+        assert_ne!(iref, other_ref);
+
+        // No reference, a made-up one, and another transaction's one are all refused ...
+        for given in [None, Some("garbage"), Some(other_ref.as_str())] {
+            let msg = message(svc.continue_transaction(&id, &cont, given, None).await);
+            assert!(
+                (msg.contains("Invalid") || msg.contains("not found")),
+                "{given:?}: {msg}"
+            );
+        }
+        // ... and none of them used up the continuation token or the reference.
+        let done = svc
+            .continue_transaction(&id, &cont, Some(&iref), None)
+            .await
+            .unwrap();
+        assert!(done["access_token"]["value"].is_string());
+
+        // The reference works once: the finished transaction is gone.
+        let msg = message(
+            svc.continue_transaction(&id, &cont, Some(&iref), None)
+                .await,
+        );
+        assert!(
+            (msg.contains("Invalid") || msg.contains("not found")),
+            "{msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_polling_transaction_needs_no_reference_and_refuses_one_nobody_issued() {
+        let svc = with(AllowAllPolicy);
+        let (id, cont) = pending(&svc, false).await;
+        svc.approve_transaction(&id, None).await.unwrap();
+        let msg = message(
+            svc.continue_transaction(&id, &cont, Some("garbage"), None)
+                .await,
+        );
+        assert!(
+            (msg.contains("Invalid") || msg.contains("not found")),
+            "{msg}"
+        );
+        // Control: polling without a reference gets the token.
+        let done = svc
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap();
+        assert!(done["access_token"]["value"].is_string());
+    }
+
+    #[tokio::test]
+    async fn approval_returns_the_reference_and_hash_only_for_a_finish_transaction() {
+        let svc = with(AllowAllPolicy);
+        let (finishing, _) = pending(&svc, true).await;
+        let (polling, _) = pending(&svc, false).await;
+        let with_finish = svc.approve_transaction(&finishing, None).await.unwrap();
+        assert!(with_finish.interact_ref.is_some() && with_finish.hash.is_some());
+        let without = svc.approve_transaction(&polling, None).await.unwrap();
+        assert_eq!(
+            without,
+            GnapInteractionCompletion {
+                interact_ref: None,
+                hash: None
+            }
+        );
+        // Approving twice does not mint a second reference.
+        let again = svc.approve_transaction(&finishing, None).await.unwrap();
+        assert_eq!(again, with_finish);
+    }
+
+    // ── Token is stored before it is returned ────────────────────────────
+
+    async fn use_at_once(svc: &GnapService, n: usize) -> usize {
+        let mut unknown = 0;
+        for _ in 0..n {
+            let resp = svc
+                .handle_transaction(request(keyed(), &["read"], false))
+                .await
+                .unwrap();
+            let value = resp["access_token"]["value"].as_str().unwrap();
+            if svc.introspect_token(value).await.unwrap().is_none() {
+                unknown += 1;
+            }
+        }
+        unknown
+    }
+
+    #[tokio::test]
+    async fn a_token_is_known_the_moment_it_is_returned_on_one_thread() {
+        assert_eq!(use_at_once(&with(AllowAllPolicy), 100).await, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_token_is_known_the_moment_it_is_returned_on_many_threads() {
+        assert_eq!(use_at_once(&with(AllowAllPolicy), 300).await, 0);
     }
 }
