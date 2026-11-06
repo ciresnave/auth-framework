@@ -242,6 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc213 -- ROADMAP A9, docs only: `docs/DEPLOYMENT_GUIDE.md` said the Go and Java SDK directories were "coming soon"; neither exists, so it now says they are not started.
 - 0.6.0-rc212 -- WS-Trust tokens can be kept in the `AuthStorage` KV layer: `SecurityTokenService::with_storage` and `process_request_stored` persist issued and renewed tokens (key `wstrust:token:<id>`, expiring with the token) and read and delete them across restarts and instances; `process_request` is unchanged (ROADMAP A3)
 - 0.6.0-rc211 -- **SAML: opt-in refusal of SHA-1** (ROADMAP A1). `SamlTrustAnchors::with_algorithm_policy(SamlAlgorithmPolicy { allow_sha1: false })` refuses a signature whose `SignatureMethod` or any `DigestMethod` is SHA-1, judged on the signature that verified (found by the references it signs; a decoy signature over other references decides nothing). The default is unchanged: SHA-1 is accepted. `SamlTrustAnchors::extend` never relaxes a refusing policy.
 - 0.6.0-rc210 -- ROADMAP only: the reachability row is closed as evidence only, with the 22-row pilot numbers (docs only).
