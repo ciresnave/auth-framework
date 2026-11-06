@@ -954,7 +954,7 @@ openssl pkey -in private_pkcs8.pem -pubout -out public_spki.pem
 
 **Note**: No format conversion is required - the framework handles both formats automatically.
 
-**Generate your own keys.** The files `private.pem` and `private_pkcs8.pem` that shipped inside the `auth-framework` 0.4.0 crate (and `tests/fixtures/test_private_key.pem`, in crates up to 0.5.0-rc88) are example keys and are public: never use them.
+**Generate your own keys.** The files `private.pem` and `private_pkcs8.pem` that shipped inside the `auth-framework` 0.4.0 crate (and `tests/fixtures/test_private_key.pem`, in the 0.5.0-rc88 and 0.5.0-rc90 crates) are example keys and are public: never use them.
 
 ## 📚 Examples
 
