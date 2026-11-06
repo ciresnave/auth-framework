@@ -758,6 +758,7 @@ Our OpenAPI spec includes:
    - Batch operations
    - Advanced filtering
    - Export/import capabilities
+   - **Dropped 2026-11-06 (ROADMAP A11):** no such route exists in `src/api/server.rs` (measured at 8445c472) and no consumer has asked. Reopen when a consumer asks.
 
 ### Under Consideration
 
