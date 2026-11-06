@@ -14,12 +14,12 @@
 //! # Recommended Entry Points
 //!
 //! - Use [`AuthFramework`] for the normal library entry point.
-//! - Use [`ModularAuthFramework`] only when you need direct access to the
-//!   component managers from `auth_modular`.
+//! - [`ModularAuthFramework`] is deprecated (removed in `0.7.0`); name
+//!   `auth_modular::AuthFramework` by path for direct access to the component managers.
 //! - Use [`AuthFramework::users`], [`AuthFramework::sessions`],
 //!   [`AuthFramework::tokens`], and [`AuthFramework::authorization`] when you
 //!   want grouped operations instead of the full façade.
-//! - Use [`AppConfigBuilder`] for simple app-defined configuration.
+//! - [`AppConfigBuilder`] is deprecated (removed in `0.7.0`); use [`LayeredConfigBuilder`].
 //! - Use [`LayeredConfigBuilder`] and [`ConfigManager`] for layered config
 //!   sourced from files and environment variables.
 //! - Use [`SessionManager`] for the standard session engine and
@@ -64,7 +64,7 @@
 //! - [`AuthBuilder`] - Fluent builder for framework setup
 //! - [`AuthConfigBuilder`] - Organized builder for AuthConfig with grouped settings
 //! - [`SecurityPreset`] - Pre-configured security levels
-//! - [`AppConfigBuilder`] - Simple application configuration builder
+//! - [`AppConfigBuilder`] - Deprecated simple configuration builder (removed in `0.7.0`)
 //! - [`LayeredConfigBuilder`] - Layered configuration builder
 //! - [`AdvancedPermissionCheck`] - Builder for multi-source permission checks
 //! - [`ExecutionMode`] - `DryRun` vs `Execute` for maintenance operations
@@ -108,6 +108,7 @@
 
 // Re-export core framework types
 pub use crate::AuthFramework;
+#[allow(deprecated)]
 pub use crate::ModularAuthFramework;
 pub use crate::auth::{
     AdminOperations, AuditOperations, AuthStats, AuthorizationOperations, MfaOperations,
@@ -121,7 +122,9 @@ pub use crate::auth_operations::{
 };
 
 // Re-export configuration types
-pub use crate::config::app_config::{AppConfig, ConfigBuilder as AppConfigBuilder};
+#[allow(deprecated)]
+pub use crate::AppConfigBuilder;
+pub use crate::config::app_config::AppConfig;
 pub use crate::config::config_manager::{
     ApiServerSettings, AuthFrameworkSettings, ConfigBuilder as LayeredConfigBuilder, ConfigManager,
 };

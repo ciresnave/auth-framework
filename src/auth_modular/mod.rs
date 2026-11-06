@@ -54,7 +54,8 @@
 //! # When To Use This Module
 //!
 //! Prefer [`crate::AuthFramework`] for most applications.
-//! Reach for [`crate::ModularAuthFramework`] only when you need direct access
+//! Reach for this module's `AuthFramework` (the deprecated root alias
+//! `crate::ModularAuthFramework` is removed in `0.7.0`) only when you need direct access
 //! to manager-level composition such as `session_manager()` or `user_manager()`.
 
 pub mod authorization_manager;

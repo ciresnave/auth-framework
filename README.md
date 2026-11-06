@@ -51,9 +51,9 @@ The `auth-framework` executable now starts the standalone REST API server direct
 If you are integrating the Rust library directly, start with these entry points:
 
 - `auth_framework::AuthFramework`: recommended default entry point for most applications.
-- `auth_framework::ModularAuthFramework`: advanced entry point when you need direct access to individual managers.
+- `auth_framework::auth_modular::AuthFramework`: advanced entry point when you need direct access to individual managers (the root alias `ModularAuthFramework` is deprecated and removed in `0.7.0`).
 - `auth_framework::prelude::*`: ergonomic imports for application code.
-- `auth_framework::AppConfigBuilder`: simple in-process configuration builder.
+- `auth_framework::AppConfigBuilder`: deprecated (removed in `0.7.0`); use `LayeredConfigBuilder`.
 - `auth_framework::LayeredConfigBuilder` and `auth_framework::ConfigManager`: layered configuration from files and environment variables.
 
 This split exists to support both simple app integration and advanced composition, but new users should usually start with `AuthFramework` plus the prelude.

@@ -12,10 +12,10 @@ a focus on distributed systems.
 ## API Orientation
 
 - Use [`AuthFramework`] as the default entry point for most applications.
-- Use [`ModularAuthFramework`] only when you explicitly want manager-level
-  composition and lifecycle control.
+- [`ModularAuthFramework`] is deprecated (removed in `0.7.0`); for manager-level
+  composition and lifecycle control name [`auth_modular::AuthFramework`] by path.
 - Use [`prelude`] when you want ergonomic imports for application code.
-- Use [`AppConfigBuilder`] for simple application-owned configuration values.
+- [`AppConfigBuilder`] is deprecated (removed in `0.7.0`); use [`LayeredConfigBuilder`].
 - Use [`LayeredConfigBuilder`] and [`ConfigManager`] when you need layered
   configuration from files and environment variables.
 
@@ -110,7 +110,7 @@ pub mod auth;
 
 /// Advanced component-oriented framework.
 ///
-/// Use [`ModularAuthFramework`](auth_modular::AuthFramework) only when you need
+/// Use [`auth_modular::AuthFramework`] only when you need
 /// direct access to individual manager instances (user, session, MFA) for custom
 /// composition. Most applications should use [`auth::AuthFramework`] instead.
 pub mod auth_modular;
@@ -329,13 +329,54 @@ pub use crate::auth::{
     note = "Use `UserInfo` directly — the `Core` prefix is redundant"
 )]
 pub type CoreUserInfo = UserInfo;
-pub use crate::auth_modular::AuthFramework as ModularAuthFramework;
+/// Deprecated alias of [`auth_modular::AuthFramework`]; removed in `0.7.0`.
+///
+/// Use [`AuthFramework`] (see `COMPATIBILITY.md`), or name
+/// `auth_framework::auth_modular::AuthFramework` by path if you need
+/// manager-level access.
+///
+/// ```compile_fail
+/// #![deny(deprecated)]
+/// use auth_framework::ModularAuthFramework;
+/// fn takes(_: Option<ModularAuthFramework>) {}
+/// ```
+///
+/// The same code compiles once the warning is allowed (control):
+///
+/// ```
+/// #![allow(deprecated)]
+/// use auth_framework::ModularAuthFramework;
+/// fn takes(_: Option<ModularAuthFramework>) {}
+/// ```
+#[deprecated(
+    since = "0.6.0",
+    note = "removed in 0.7.0: use `AuthFramework`, or `auth_framework::auth_modular::AuthFramework` by path"
+)]
+pub type ModularAuthFramework = crate::auth_modular::AuthFramework;
 pub use crate::maintenance::{
     BackupReport, MaintenanceSnapshot, MigrationFileReport, ResetReport, RestoreReport,
     SnapshotManifest,
 };
 pub use authentication::credentials::Credential;
-pub use config::app_config::ConfigBuilder as AppConfigBuilder;
+/// Deprecated alias of [`config::app_config::ConfigBuilder`]; removed in `0.7.0`.
+///
+/// Use [`LayeredConfigBuilder`] (see `COMPATIBILITY.md`).
+///
+/// ```compile_fail
+/// #![deny(deprecated)]
+/// use auth_framework::AppConfigBuilder;
+/// fn takes(_: Option<AppConfigBuilder>) {}
+/// ```
+///
+/// The same code compiles once the warning is allowed (control):
+///
+/// ```
+/// #![allow(deprecated)]
+/// use auth_framework::AppConfigBuilder;
+/// fn takes(_: Option<AppConfigBuilder>) {}
+/// ```
+#[deprecated(since = "0.6.0", note = "removed in 0.7.0: use `LayeredConfigBuilder`")]
+pub type AppConfigBuilder = config::app_config::ConfigBuilder;
 pub use config::config_manager::{
     ApiServerSettings, AuthFrameworkSettings, ConfigBuilder as LayeredConfigBuilder, ConfigManager,
 };
