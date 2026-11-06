@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! KM2: creation and import of keys.
 //!
 //! Every private key is created here, by the one crypto backend already in the
