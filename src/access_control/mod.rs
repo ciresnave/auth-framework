@@ -5,8 +5,9 @@
 //! deny; a matching deny grant beats any allow grant; an unregistered action is
 //! denied. Actions are separate: holding one implies nothing about another.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 /// Whether a grant allows or denies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +54,8 @@ pub enum DenyReason {
     },
     /// Nothing allowed it (default deny).
     NoMatchingGrant,
+    /// The source of truth could not be reached; unreachability never widens access.
+    SourceUnreachable,
 }
 
 impl Decision {
@@ -247,6 +250,7 @@ pub struct InMemoryEngine {
     grants: Vec<Grant>,
     max_depth: u8,
     account_holder: Option<String>,
+    sensitive_objects: Vec<String>,
 }
 
 impl Default for InMemoryEngine {
@@ -263,6 +267,7 @@ impl InMemoryEngine {
             grants: Vec::new(),
             max_depth: DEFAULT_MAX_DELEGATION_DEPTH,
             account_holder: None,
+            sensitive_objects: Vec::new(),
         }
     }
 
@@ -419,6 +424,12 @@ impl InMemoryEngine {
         Ok(ids)
     }
 
+    /// Mark every object matching `pattern` sensitive: decisions about it are
+    /// always checked live.
+    pub fn mark_object_sensitive(&mut self, pattern: impl Into<String>) {
+        self.sensitive_objects.push(pattern.into());
+    }
+
     /// Decide at a given instant (deterministic for tests).
     pub fn decide_at(
         &self,
@@ -427,40 +438,69 @@ impl InMemoryEngine {
         object: &str,
         now: DateTime<Utc>,
     ) -> Decision {
+        self.answer_at(principal, action, object, now).decision
+    }
+
+    /// Decide and also say whether the answer is sensitive (action registered
+    /// sensitive, object on the sensitive list, or any grant that applied is
+    /// marked sensitive).
+    pub fn answer_at(
+        &self,
+        principal: &str,
+        action: &str,
+        object: &str,
+        now: DateTime<Utc>,
+    ) -> Answer {
         if !self.registry.is_registered(action) {
-            return Decision::Deny {
-                reason: DenyReason::UnregisteredAction,
+            return Answer {
+                decision: Decision::Deny {
+                    reason: DenyReason::UnregisteredAction,
+                },
+                sensitive: false,
             };
         }
+        let mut sensitive = self.registry.is_sensitive(action)
+            || self
+                .sensitive_objects
+                .iter()
+                .any(|p| object_matches(p, object));
         if self.account_holder.as_deref() == Some(principal) {
-            return Decision::Allow {
-                grant_ref: "account-holder".into(),
+            return Answer {
+                decision: Decision::Allow {
+                    grant_ref: "account-holder".into(),
+                },
+                sensitive,
             };
         }
         let mut allow: Option<&Grant> = None;
+        let mut deny: Option<&Grant> = None;
         for g in self
             .grants
             .iter()
             .filter(|g| g.applies(principal, action, object, now) && self.chain_alive(g, now))
         {
+            sensitive |= g.sensitive;
             match g.effect {
-                Effect::Deny => {
-                    return Decision::Deny {
-                        reason: DenyReason::ExplicitDeny {
-                            grant_ref: g.id.clone(),
-                        },
-                    };
-                }
+                Effect::Deny => deny = deny.or(Some(g)),
                 Effect::Allow => allow = allow.or(Some(g)),
             }
         }
-        match allow {
-            Some(g) => Decision::Allow {
+        let decision = match (deny, allow) {
+            (Some(g), _) => Decision::Deny {
+                reason: DenyReason::ExplicitDeny {
+                    grant_ref: g.id.clone(),
+                },
+            },
+            (None, Some(g)) => Decision::Allow {
                 grant_ref: g.id.clone(),
             },
-            None => Decision::Deny {
+            (None, None) => Decision::Deny {
                 reason: DenyReason::NoMatchingGrant,
             },
+        };
+        Answer {
+            decision,
+            sensitive,
         }
     }
 }
@@ -468,5 +508,144 @@ impl InMemoryEngine {
 impl Authorizer for InMemoryEngine {
     fn decide(&self, principal: &str, action: &str, object: &str, _f: Freshness) -> Decision {
         self.decide_at(principal, action, object, Utc::now())
+    }
+}
+
+/// A decision plus whether it must be checked live every time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    /// The decision.
+    pub decision: Decision,
+    /// Sensitive answers are never cached.
+    pub sensitive: bool,
+}
+
+/// The source could not be reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceUnavailable;
+
+/// The source of truth a [`CachedAuthorizer`] fronts. It may be remote, so a
+/// query can fail.
+pub trait Source {
+    /// Ask the source, at `now`.
+    fn query(
+        &self,
+        principal: &str,
+        action: &str,
+        object: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Answer, SourceUnavailable>;
+}
+
+impl Source for InMemoryEngine {
+    fn query(
+        &self,
+        principal: &str,
+        action: &str,
+        object: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Answer, SourceUnavailable> {
+        Ok(self.answer_at(principal, action, object, now))
+    }
+}
+
+/// The longest a cached decision may be reused.
+pub const MAX_CACHE_TTL: Duration = Duration::seconds(60);
+
+type CacheKey = (String, String, String);
+
+/// Caches decisions from a [`Source`] for at most 60 s, never caches
+/// sensitive answers, and fails closed when the source is unreachable.
+pub struct CachedAuthorizer<S: Source> {
+    source: S,
+    ttl: Duration,
+    cache: Mutex<HashMap<CacheKey, (Decision, DateTime<Utc>)>>,
+}
+
+impl<S: Source> CachedAuthorizer<S> {
+    /// Front `source` with the 60 s cache.
+    pub fn new(source: S) -> Self {
+        Self {
+            source,
+            ttl: MAX_CACHE_TTL,
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Use a shorter lifetime; anything above 60 s is clamped to 60 s.
+    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+        self.ttl = ttl.min(MAX_CACHE_TTL).max(Duration::zero());
+        self
+    }
+
+    /// The source, for reading.
+    pub fn source(&self) -> &S {
+        &self.source
+    }
+
+    /// The source, for changing grants.
+    pub fn source_mut(&mut self) -> &mut S {
+        &mut self.source
+    }
+
+    /// Drop every cached decision (a revocation that must apply now).
+    pub fn invalidate(&self) {
+        if let Ok(mut c) = self.cache.lock() {
+            c.clear();
+        }
+    }
+
+    /// Decide at a given instant (deterministic for tests).
+    ///
+    /// `Cached` reuses a decision younger than the ttl; `Live` always asks the
+    /// source. A sensitive answer is never stored. If the source cannot be
+    /// reached the answer is a deny: a stale entry is not served.
+    pub fn decide_at(
+        &self,
+        principal: &str,
+        action: &str,
+        object: &str,
+        freshness: Freshness,
+        now: DateTime<Utc>,
+    ) -> Decision {
+        let key = (
+            principal.to_string(),
+            action.to_string(),
+            object.to_string(),
+        );
+        if freshness == Freshness::Cached
+            && let Ok(c) = self.cache.lock()
+            && let Some((d, at)) = c.get(&key)
+            && now >= *at
+            && now - *at < self.ttl
+        {
+            return d.clone();
+        }
+        match self.source.query(principal, action, object, now) {
+            Ok(a) => {
+                if let Ok(mut c) = self.cache.lock() {
+                    if a.sensitive {
+                        c.remove(&key);
+                    } else {
+                        c.insert(key, (a.decision.clone(), now));
+                    }
+                }
+                a.decision
+            }
+            Err(SourceUnavailable) => {
+                if let Ok(mut c) = self.cache.lock() {
+                    c.remove(&key);
+                }
+                Decision::Deny {
+                    reason: DenyReason::SourceUnreachable,
+                }
+            }
+        }
+    }
+}
+
+impl<S: Source> Authorizer for CachedAuthorizer<S> {
+    fn decide(&self, principal: &str, action: &str, object: &str, f: Freshness) -> Decision {
+        self.decide_at(principal, action, object, f, Utc::now())
     }
 }
