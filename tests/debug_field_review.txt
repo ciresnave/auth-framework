@@ -639,6 +639,7 @@ security_token_reference
 security_warnings
 selection_reason
 selector_type
+sensitive_objects
 serial
 serial_number
 series_type
