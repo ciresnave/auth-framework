@@ -1,7 +1,9 @@
 //! Replays the language-neutral GNAP vectors in `tests/conformance/gnap/vectors.json`
 //! against `GnapService`.
 
-use auth_framework::protocols::gnap::{GnapConfig, GnapService, GnapTransactionRequest};
+use auth_framework::protocols::gnap::{GnapConfig, GnapProof, GnapService, GnapTransactionRequest};
+use auth_framework::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
+use auth_framework::server::security::dpop::DpopManager;
 use serde_json::Value;
 
 const VECTORS: &str = include_str!("conformance/gnap/vectors.json");
@@ -48,6 +50,7 @@ async fn gnap_transaction_vectors() {
     let vectors = suite["vectors"].as_array().expect("vectors array");
     assert!(!vectors.is_empty(), "no vectors loaded");
 
+    let dpop = DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap());
     let mut positive = 0;
     let mut negative = 0;
     for v in vectors {
@@ -74,7 +77,17 @@ async fn gnap_transaction_vectors() {
                 continue;
             }
         };
-        let result = service.handle_transaction(request).await;
+        // The `_with_proof` entry point is the one every release keeps; these vectors name no
+        // client key, so no proof is needed.
+        let proof = GnapProof {
+            http_method: "POST",
+            http_uri: "https://auth.example.test/api/gnap/tx",
+            dpop_proof: None,
+            expected_nonce: None,
+        };
+        let result = service
+            .handle_transaction_with_proof(&dpop, &proof, request)
+            .await;
         match v["expect"]["outcome"].as_str().expect("expect.outcome") {
             "error" => assert!(result.is_err(), "{id}: expected a refusal, got {result:?}"),
             "response" => {

@@ -242,6 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc219 -- Test only: language-neutral GNAP conformance vectors (`tests/conformance/gnap/vectors.json`, each citing its RFC 9635 section and marked positive or negative) and a Rust harness that replays them.
 - 0.6.0-rc216 -- **Breaking: `UmaService::request_rpt` no longer takes a claims argument.** A resource set with `required_claims` is refused with `UMA need_info` (the ticket is kept) until the service can gather the claims itself, because claims stated by the caller were compared to the policy without being authenticated. Call `request_rpt(ticket)`; resource sets without `required_claims` are unchanged. The claims interaction (ROADMAP A4) follows. `Cargo.lock` takes actix-http 3.20.3 and actix-web 4.18.2 (RUSTSEC-2026-0446, -0447, -0448, -0455, published after rc215).
 - 0.6.0-rc215 -- ROADMAP A11 dropped, docs only: admin batch operations, advanced filtering and export/import have no route and no consumer; `docs/api/REST_API_DESIGN_RATIONALE.md` keeps its text with a dropped note. Reopen when a consumer asks.
 - 0.6.0-rc214 -- ROADMAP A7: `AppConfigBuilder` and `ModularAuthFramework` now carry `#[deprecated(since = "0.6.0")]` (they were `pub use` re-exports, which cannot carry the attribute, so they are type aliases of the same types); removal stays in 0.7.0. `ModularAuthFramework` is `auth_modular::AuthFramework`, not `AuthFramework`: name it by path if you need manager-level access.
