@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::errors::{AuthError, Result};
 
 /// What a key is for. One variant per role a client or server needs a key in.
