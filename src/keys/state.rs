@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::errors::{AuthError, Result};
 
 /// Lifecycle of a key. Moves only forward:
