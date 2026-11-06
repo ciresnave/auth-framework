@@ -228,7 +228,7 @@ The framework includes a SAML integration layer (`src/api/saml.rs`) that impleme
 2. SHA-1 collision attacks require impractical computation on XML structures
 3. Modern IdPs increasingly support SHA-256 variants; configure your IdP to prefer `http://www.w3.org/2001/04/xmldsig-more#rsa-sha256` where possible
 
-**Mitigation path**: When your SAML Identity Provider supports SHA-256 digests (`http://www.w3.org/2001/04/xmlenc#sha256`), configure it to use them. A future release will add configurable algorithm preference to the SAML handler.
+**Mitigation path**: When your SAML Identity Provider supports SHA-256 digests (`http://www.w3.org/2001/04/xmlenc#sha256`), configure it to use them. `SamlTrustAnchors::with_algorithm_policy(SamlAlgorithmPolicy { allow_sha1: false })` makes the verifier refuse a signature whose `SignatureMethod` or any `DigestMethod` is SHA-1. The policy reads the algorithms of the signature that verified (found by the references it signs), so a decoy signature over something else neither satisfies nor trips it; if the verified signature cannot be matched to a `Signature` element the document is refused. The default stays `allow_sha1: true` until a later release changes it. With the AWS-LC backend only `rsa-sha1` signatures can be verified (it signs and verifies no ECDSA-SHA1), but SHA-1 digests under a SHA-2 signature are verified, which is what an opt-in policy most often has to refuse.
 
 ## Known Implementation Limitations
 
