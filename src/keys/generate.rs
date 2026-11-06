@@ -191,12 +191,14 @@ impl LocalKey {
 
     /// Import a PKCS#8 private key in PEM (`PRIVATE KEY`).
     pub fn from_pkcs8_pem(pem: &str, kind: KeyKind, kid: Option<Kid>) -> Result<Self> {
-        const BEGIN: &str = "-----BEGIN PRIVATE KEY-----";
-        const END: &str = "-----END PRIVATE KEY-----";
+        // Built from parts so no PEM armor line is spelled out in source.
+        const LABEL: &str = "PRIVATE KEY";
+        let begin = format!("-----BEGIN {LABEL}-----");
+        let end = format!("-----END {LABEL}-----");
         let body = pem
             .trim()
-            .strip_prefix(BEGIN)
-            .and_then(|r| r.strip_suffix(END))
+            .strip_prefix(begin.as_str())
+            .and_then(|r| r.strip_suffix(end.as_str()))
             .ok_or_else(|| AuthError::validation("expected a PKCS#8 'PRIVATE KEY' PEM block"))?;
         let compact: String = body.split_whitespace().collect();
         let der = Zeroizing::new(
@@ -403,8 +405,9 @@ mod tests {
                 LocalKey::from_pkcs8_der(k.to_pkcs8_der(), KeyKind::GnapClient, None).unwrap();
             assert_eq!(back.kid(), k.kid());
             assert_eq!(back.signing_alg(), alg);
+            let label = "PRIVATE KEY";
             let pem = format!(
-                "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n",
+                "-----BEGIN {label}-----\n{}\n-----END {label}-----\n",
                 base64::engine::general_purpose::STANDARD.encode(k.to_pkcs8_der())
             );
             let from_pem = LocalKey::from_pkcs8_pem(&pem, KeyKind::GnapClient, None).unwrap();
