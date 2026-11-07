@@ -123,6 +123,28 @@ fn member<'a>(jwk: &'a Value, name: &str) -> Result<&'a str, JwsProofError> {
 }
 
 /// The verification key for `algorithm`, from a public JWK whose type and curve fit the algorithm.
+/// The smallest RSA modulus accepted, in bits. A 512- or 1024-bit key can be factored; NIST SP 800-131A and
+/// RFC 7518 section 3.3 set 2048 as the floor, the same one `gnap_httpsig` applies to RSA-PSS.
+pub const MIN_RSA_BITS: usize = 2048;
+
+/// Refuse an RSA modulus (base64url, big-endian) shorter than [`MIN_RSA_BITS`]; leading zero bytes do not count.
+fn check_rsa_size(n: &str) -> Result<(), JwsProofError> {
+    let bytes = B64
+        .decode(n)
+        .map_err(|_| malformed("the RSA modulus is not base64url"))?;
+    let significant = bytes.iter().skip_while(|b| **b == 0).collect::<Vec<_>>();
+    let bits = match significant.first() {
+        Some(first) => significant.len() * 8 - first.leading_zeros() as usize,
+        None => 0,
+    };
+    if bits < MIN_RSA_BITS {
+        return Err(malformed(format!(
+            "the RSA key is {bits} bits; at least {MIN_RSA_BITS} are required"
+        )));
+    }
+    Ok(())
+}
+
 fn decoding_key(jwk: &Value, algorithm: Algorithm) -> Result<DecodingKey, JwsProofError> {
     for private in ["d", "p", "q", "dp", "dq", "qi", "k"] {
         if jwk.get(private).is_some() {
@@ -141,7 +163,9 @@ fn decoding_key(jwk: &Value, algorithm: Algorithm) -> Result<DecodingKey, JwsPro
             if kty != "RSA" {
                 return Err(mismatch("an RSA algorithm needs an RSA key"));
             }
-            DecodingKey::from_rsa_components(member(jwk, "n")?, member(jwk, "e")?)
+            let n = member(jwk, "n")?;
+            check_rsa_size(n)?;
+            DecodingKey::from_rsa_components(n, member(jwk, "e")?)
         }
         Algorithm::ES256 | Algorithm::ES384 => {
             let want = if algorithm == Algorithm::ES256 {
@@ -206,7 +230,14 @@ fn check_header(
     context: &JwsProofContext<'_>,
 ) -> Result<u64, JwsProofError> {
     if header.get("typ").and_then(Value::as_str) != Some(typ) {
-        return Err(mismatch(format!("typ must be {typ}")));
+        // name what arrived (bounded), so a peer that copied the RFC example's "gnap-binding+jwsd" is
+        // diagnosable from the error rather than looking like a bug
+        let got: String = header
+            .get("typ")
+            .and_then(Value::as_str)
+            .map(|t| t.chars().filter(|c| !c.is_control()).take(40).collect())
+            .unwrap_or_else(|| "(none)".to_string());
+        return Err(mismatch(format!("typ must be {typ}, got {got}")));
     }
     if header.get("htm").and_then(Value::as_str) != Some(context.method) {
         return Err(mismatch("htm is not the request method"));
@@ -406,6 +437,44 @@ mod tests {
     }
 
     #[test]
+    fn an_rsa_key_under_2048_bits_is_refused_before_any_signature_work() {
+        let compact = RFC_JWSD.trim();
+        let mut parts = compact.split('.');
+        let (h, p, sig) = (
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+        );
+        let header = b64_json(h, "header").unwrap();
+        let input = format!("{h}.{p}");
+        // control: the RFC key is exactly 2048 bits and verifies
+        assert_eq!(B64.decode(RFC_N).unwrap().len() * 8, 2048);
+        assert!(verify_signature(&header, &rfc_jwk(), &input, sig).is_ok());
+        let size_refused = |n: &str| {
+            let mut jwk = rfc_jwk();
+            jwk["n"] = json!(n);
+            matches!(
+                verify_signature(&header, &jwk, &input, sig),
+                Err(JwsProofError::Malformed(why)) if why.contains("bits")
+            )
+        };
+        // 512 bits, 1024 bits and 2040 bits (one byte short) are refused
+        let full = B64.decode(RFC_N).unwrap();
+        for bytes in [64usize, 128, 255] {
+            assert!(size_refused(&B64.encode(&full[..bytes])), "{bytes} bytes");
+        }
+        // leading zero bytes do not make a small modulus bigger
+        let mut padded = vec![0u8; 200];
+        padded.extend_from_slice(&full[..64]);
+        assert!(size_refused(&B64.encode(&padded)));
+        // a 2048-bit modulus with a zero byte in front is not refused for its size (the key library may still
+        // refuse the non-canonical encoding)
+        let mut zero_led = vec![0u8];
+        zero_led.extend_from_slice(&full);
+        assert!(!size_refused(&B64.encode(&zero_led)));
+    }
+
+    #[test]
     fn the_rfc_example_header_spells_typ_with_a_plus_and_is_refused_by_the_normative_check() {
         let header = b64_json(RFC_JWSD.trim().split('.').next().unwrap(), "header").unwrap();
         assert_eq!(
@@ -422,10 +491,12 @@ mod tests {
             now: 1_618_884_475,
             max_skew_secs: 300,
         };
-        assert!(matches!(
-            check_header(&header, TYP_JWSD, &context),
-            Err(JwsProofError::Mismatch(_))
-        ));
+        let refused = check_header(&header, TYP_JWSD, &context).unwrap_err();
+        assert!(matches!(refused, JwsProofError::Mismatch(_)));
+        // the error names both spellings, so the refusal reads as a choice, not a bug
+        let text = refused.to_string();
+        assert!(text.contains("gnap-binding-jwsd"), "{text}");
+        assert!(text.contains("gnap-binding+jwsd"), "{text}");
     }
 
     // ---- verification with keys made here ----
