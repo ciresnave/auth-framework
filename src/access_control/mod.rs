@@ -123,26 +123,28 @@ pub fn object_matches(pattern: &str, object: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    fn go(p: &[u8], o: &[u8]) -> bool {
-        match p.split_first() {
-            None => o.is_empty(),
-            Some((b'*', rest)) => {
-                let mut i = 0;
-                loop {
-                    if go(rest, &o[i..]) {
-                        return true;
-                    }
-                    if i < o.len() && o[i] != b'@' {
-                        i += 1;
-                    } else {
-                        return false;
-                    }
-                }
+    // Dynamic programming over (pattern, object) prefixes: O(len(p) * len(o)),
+    // so an adversarial pattern cannot blow up. `*` spans anything but `@`.
+    let (p, o) = (pattern.as_bytes(), object.as_bytes());
+    // row[j]: does p[..i] match o[..j]?
+    let mut row = vec![false; o.len() + 1];
+    row[0] = true;
+    for &pc in p {
+        let mut next = vec![false; o.len() + 1];
+        if pc == b'*' {
+            next[0] = row[0];
+            for j in 1..=o.len() {
+                // star consumes o[j-1] (not `@`) or has already matched o[..j]
+                next[j] = row[j] || (next[j - 1] && o[j - 1] != b'@');
             }
-            Some((c, rest)) => o.first() == Some(c) && go(rest, &o[1..]),
+        } else {
+            for j in 1..=o.len() {
+                next[j] = row[j - 1] && o[j - 1] == pc;
+            }
         }
+        row = next;
     }
-    go(pattern.as_bytes(), object.as_bytes())
+    row[o.len()]
 }
 
 /// Actions a consumer has registered, with their sensitivity default.
@@ -190,6 +192,10 @@ pub enum DelegationError {
     UnknownGrant,
     /// A grant with the new id already exists.
     DuplicateId,
+    /// A grant added directly must be a root grant: no parent, depth 0.
+    NotRootGrant,
+    /// The action was never registered.
+    UnregisteredAction,
     /// The delegator is not the holder of the source grant.
     NotHolder,
     /// Only allow grants can be delegated.
@@ -280,9 +286,19 @@ impl InMemoryEngine {
         self
     }
 
-    /// Add a root grant.
-    pub fn add_grant(&mut self, grant: Grant) {
+    /// Add a root grant. Refused if the id is already taken (a second grant with
+    /// the same id would be enforced by `decide` but invisible to lookup and
+    /// removal) or if the grant claims a parent or a depth (a forged chain
+    /// position could outrun the delegation limit).
+    pub fn add_grant(&mut self, grant: Grant) -> Result<(), DelegationError> {
+        if grant.parent.is_some() || grant.depth != 0 {
+            return Err(DelegationError::NotRootGrant);
+        }
+        if self.find(&grant.id).is_some() {
+            return Err(DelegationError::DuplicateId);
+        }
         self.grants.push(grant);
+        Ok(())
     }
 
     /// Remove the grant with this id and, transitively, everything delegated
@@ -405,17 +421,21 @@ impl InMemoryEngine {
         actions: &[&str],
     ) -> Result<Vec<String>, DelegationError> {
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
-            return Err(DelegationError::ActionWidens);
+            return Err(DelegationError::UnregisteredAction);
         }
-        let mut ids = Vec::new();
-        for a in actions {
-            let id = format!("creator:{object}:{a}");
-            if self.find(&id).is_some() {
+        // All or nothing: check every id before pushing any grant.
+        let ids: Vec<String> = actions
+            .iter()
+            .map(|a| format!("creator:{object}:{a}"))
+            .collect();
+        for (i, id) in ids.iter().enumerate() {
+            if self.find(id).is_some() || ids[..i].contains(id) {
                 return Err(DelegationError::DuplicateId);
             }
-            ids.push(id.clone());
+        }
+        for (id, a) in ids.iter().zip(actions) {
             self.grants
-                .push(Grant::new(id, creator, *a, object, Effect::Allow));
+                .push(Grant::new(id.clone(), creator, *a, object, Effect::Allow));
         }
         Ok(ids)
     }

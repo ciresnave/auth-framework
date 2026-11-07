@@ -21,7 +21,8 @@ fn engine() -> InMemoryEngine {
         "synapse:see",
         "agent:*@acct",
         Effect::Allow,
-    ));
+    ))
+    .unwrap();
     e
 }
 
@@ -105,7 +106,8 @@ fn unknown_source_and_duplicate_id_are_refused() {
 #[test]
 fn a_deny_grant_cannot_be_delegated() {
     let mut e = engine();
-    e.add_grant(Grant::new("deny", HOLDER, "synapse:send", PM, Effect::Deny));
+    e.add_grant(Grant::new("deny", HOLDER, "synapse:send", PM, Effect::Deny))
+        .unwrap();
     assert_eq!(
         e.delegate(req("d1", "deny", HOLDER, B, "synapse:send", PM)),
         Err(DelegationError::NotAnAllowGrant)
@@ -159,9 +161,10 @@ fn a_delegation_dies_with_its_source_grants_expiry() {
 }
 
 #[test]
-fn a_delegation_dies_when_a_source_ancestor_expires_even_if_its_own_expiry_is_later() {
-    // Build the chain, then expire the root only: the child has no expiry of
-    // its own beyond the chain.
+fn a_delegation_dies_with_its_source_expiry() {
+    // A hand-built child with a parent or depth is refused by `add_grant`, so a
+    // delegation is the only way to get a child, and it may not outlive its
+    // source.
     let mut e = InMemoryEngine::new({
         let mut r = ActionRegistry::new();
         r.register("synapse:see", false);
@@ -170,11 +173,13 @@ fn a_delegation_dies_when_a_source_ancestor_expires_even_if_its_own_expiry_is_la
     let now = Utc::now();
     let mut root = Grant::new("root", HOLDER, "synapse:see", PM, Effect::Allow);
     root.expires = Some(now + Duration::hours(1));
-    e.add_grant(root);
-    let mut child = Grant::new("d1", B, "synapse:see", PM, Effect::Allow);
-    child.parent = Some("root".into());
-    child.depth = 1;
-    e.add_grant(child);
+    e.add_grant(root).unwrap();
+    let mut d = req("d1", "root", HOLDER, B, "synapse:see", PM);
+    d.expires = Some(now + Duration::hours(2));
+    assert_eq!(e.delegate(d), Err(DelegationError::ExpiryWidens));
+    let mut d = req("d1", "root", HOLDER, B, "synapse:see", PM);
+    d.expires = Some(now + Duration::hours(1));
+    e.delegate(d).unwrap();
     assert!(e.decide_at(B, "synapse:see", PM, now).is_allow());
     assert!(
         !e.decide_at(B, "synapse:see", PM, now + Duration::hours(1))
@@ -235,7 +240,7 @@ fn a_delegation_inherits_sensitivity_and_cannot_lower_it() {
     let mut e = engine();
     let mut root = Grant::new("sroot", HOLDER, "synapse:see", PM, Effect::Allow);
     root.sensitive = true;
-    e.add_grant(root);
+    e.add_grant(root).unwrap();
     e.delegate(req("d1", "sroot", HOLDER, B, "synapse:see", PM))
         .unwrap();
     // read back through a second hop: still sensitive via the engine's view
@@ -250,7 +255,8 @@ fn a_deny_on_the_delegatee_still_wins() {
     let mut e = engine();
     e.delegate(req("d1", "root", HOLDER, B, "synapse:see", PM))
         .unwrap();
-    e.add_grant(Grant::new("deny", B, "synapse:see", PM, Effect::Deny));
+    e.add_grant(Grant::new("deny", B, "synapse:see", PM, Effect::Deny))
+        .unwrap();
     assert!(!allowed(&e, B, "synapse:see", PM));
 }
 
@@ -287,7 +293,8 @@ fn the_creator_can_hide_a_sub_agent_but_the_account_holder_always_overrides() {
     .unwrap();
     assert!(allowed(&e, C, "synapse:see", obj));
     // the creator hides it from everyone, itself included, and from the owner
-    e.add_grant(Grant::new("hide", "*", "synapse:see", obj, Effect::Deny));
+    e.add_grant(Grant::new("hide", "*", "synapse:see", obj, Effect::Deny))
+        .unwrap();
     assert!(!allowed(&e, C, "synapse:see", obj));
     assert!(!allowed(&e, B, "synapse:see", obj));
     assert!(allowed(&e, "owner@acct", "synapse:see", obj));
@@ -298,7 +305,7 @@ fn registering_a_principal_with_an_unknown_action_or_twice_is_refused() {
     let mut e = engine();
     assert_eq!(
         e.register_new_principal(B, "agent:s@acct", &["synapse:nope"]),
-        Err(DelegationError::ActionWidens)
+        Err(DelegationError::UnregisteredAction)
     );
     assert!(!allowed(&e, B, "synapse:nope", "agent:s@acct"));
     e.register_new_principal(B, "agent:s@acct", &["synapse:see"])
@@ -313,9 +320,69 @@ fn registering_a_principal_with_an_unknown_action_or_twice_is_refused() {
 #[test]
 fn an_unregistered_action_cannot_be_delegated_under_a_wildcard_source() {
     let mut e = engine();
-    e.add_grant(Grant::new("wild", HOLDER, "*", "*", Effect::Allow));
+    e.add_grant(Grant::new("wild", HOLDER, "*", "*", Effect::Allow))
+        .unwrap();
     assert_eq!(
         e.delegate(req("d1", "wild", HOLDER, B, "synapse:nope", PM)),
         Err(DelegationError::ActionWidens)
     );
+}
+
+#[test]
+fn registering_a_principal_is_all_or_nothing() {
+    let mut e = engine();
+    e.add_grant(Grant::new(
+        "creator:obj:synapse:send",
+        HOLDER,
+        "synapse:send",
+        "obj",
+        Effect::Allow,
+    ))
+    .unwrap();
+    assert_eq!(
+        e.register_new_principal(B, "obj", &["synapse:see", "synapse:send"]),
+        Err(DelegationError::DuplicateId)
+    );
+    // The earlier action in the list must not have been granted.
+    assert!(!allowed(&e, B, "synapse:see", "obj"));
+    // A repeated action inside one call is also refused with nothing granted.
+    assert_eq!(
+        e.register_new_principal(B, "obj2", &["synapse:see", "synapse:see"]),
+        Err(DelegationError::DuplicateId)
+    );
+    assert!(!allowed(&e, B, "synapse:see", "obj2"));
+}
+
+#[test]
+fn add_grant_refuses_duplicate_ids_and_forged_chain_positions() {
+    let mut e = engine();
+    e.add_grant(Grant::new("g", HOLDER, "synapse:see", "o", Effect::Allow))
+        .unwrap();
+    assert_eq!(
+        e.add_grant(Grant::new("g", HOLDER, "synapse:see", "o", Effect::Deny)),
+        Err(DelegationError::DuplicateId)
+    );
+    let mut forged = Grant::new("f", HOLDER, "synapse:see", "o", Effect::Allow);
+    forged.parent = Some("g".into());
+    assert_eq!(e.add_grant(forged), Err(DelegationError::NotRootGrant));
+    let mut deep = Grant::new("h", HOLDER, "synapse:see", "o", Effect::Allow);
+    deep.depth = 2;
+    assert_eq!(e.add_grant(deep), Err(DelegationError::NotRootGrant));
+}
+
+#[test]
+fn object_matching_is_linear_on_adversarial_patterns() {
+    use auth_framework::access_control::object_matches;
+    let pattern = "*a".repeat(40) + "b";
+    let object = "a".repeat(200);
+    let t = std::time::Instant::now();
+    assert!(!object_matches(&pattern, &object));
+    assert!(t.elapsed() < std::time::Duration::from_secs(1));
+    // Semantics are unchanged.
+    assert!(object_matches("agent:*@acct", "agent:x@acct"));
+    assert!(!object_matches("agent:*@acct", "agent:x@other@acct"));
+    assert!(!object_matches("agent:*", "agent:x@acct"));
+    assert!(object_matches("*", "anything@at all"));
+    assert!(object_matches("a*b*c", "aXXbYYc"));
+    assert!(!object_matches("a*b*c", "aXXbYY"));
 }
