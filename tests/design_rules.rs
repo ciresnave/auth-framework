@@ -6,6 +6,9 @@
 //! * R2 (US 11,349,844): the continuous-access and CAEP code never redirects on an event.
 //! * R3 (US 11,349,844, claim 7): the same code never subscribes to a central service.
 //!
+//! Scope: the three files named above, plus every file under `src/` that names `RequireStepUp`, `CaepRuleAction`
+//! or `AllowWithStepUp` (a redirect is sent by the HTTP layer, so that is where one would be added).
+//!
 //! The scan ignores comments and `#[cfg(test)]` items, because the macaroon test module names
 //! third-party caveats in order to prove they are refused. Each rule has a positive control: the same scanner
 //! flags a sample that breaks it.
@@ -188,8 +191,38 @@ const EVENT_FORBIDDEN: &[&str] = &[
     "statuscode::found",
     "subscribe_to",
     "subscription",
+    ".subscribe(",
     "conditional_access",
     "reqwest",
+    // redirects spelled without the word: actix `HttpResponse::Found()`, a literal 3xx status, a string
+    // `Location` header, axum/hyper `TEMPORARY_REDIRECT`-style constants
+    "httpresponse::found",
+    "httpresponse::seeother",
+    "status(301",
+    "status(302",
+    "status(303",
+    "status(307",
+    "status(308",
+    "insert(\"location\"",
+    "append(\"location\"",
+    "header(\"location\"",
+];
+
+/// The redirect words only (no "subscription", which other server code uses for other things), for the scan of
+/// every server file that handles a step-up decision.
+const REDIRECT_WORDS: &[&str] = &[
+    "redirect",
+    "header::location",
+    "see_other",
+    "statuscode::found",
+    "httpresponse::found",
+    "httpresponse::seeother",
+    "status(302",
+    "status(303",
+    "status(307",
+    "insert(\"location\"",
+    "append(\"location\"",
+    "header(\"location\"",
 ];
 
 /// Words that mean third-party caveats or discharge macaroons.
@@ -200,6 +233,36 @@ const MACAROON_FORBIDDEN: &[&str] = &[
     "verification_id",
     "introspect",
 ];
+
+/// Every `.rs` file under `src/` whose production code handles a step-up decision (names `RequireStepUp`,
+/// `CaepRuleAction` or `AllowWithStepUp`). A redirect is sent by the HTTP layer, so a route that turned the
+/// decision into a redirect would live in such a file and not in the three files above.
+fn step_up_handlers() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("src is readable") {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk(&src, &mut files);
+    files.sort();
+    files
+        .into_iter()
+        .filter_map(|path| {
+            let code = code_only(&std::fs::read_to_string(&path).ok()?);
+            let handles = ["requirestepup", "caepruleaction", "allowwithstepup"]
+                .iter()
+                .any(|word| code.contains(word));
+            handles.then(|| (path.display().to_string(), code))
+        })
+        .collect()
+}
 
 fn violations(code: &str, forbidden: &[&str]) -> Vec<String> {
     forbidden
@@ -221,6 +284,26 @@ fn r2_r3_events_never_redirect_or_subscribe() {
             violations(&code, EVENT_FORBIDDEN),
             Vec::<String>::new(),
             "{name} breaks a standing design rule (docs/ROADMAP.md R2/R3, US 11,349,844)"
+        );
+    }
+}
+
+#[test]
+fn r2_no_server_file_that_handles_a_step_up_decision_redirects() {
+    let handlers = step_up_handlers();
+    // positive control: the scan finds the file that defines the decision, so it is looking at real code
+    assert!(
+        handlers.iter().any(|(name, _)| name
+            .replace('\\', "/")
+            .ends_with("caep_continuous_access.rs")),
+        "the scan found {} files and not the continuous-access module",
+        handlers.len()
+    );
+    for (name, code) in &handlers {
+        assert_eq!(
+            violations(code, REDIRECT_WORDS),
+            Vec::<String>::new(),
+            "{name} handles a step-up decision and redirects (docs/ROADMAP.md R2, US 11,349,844)"
         );
     }
 }
@@ -253,6 +336,19 @@ fn the_scanner_flags_what_it_is_meant_to_flag() {
         violations(&header, EVENT_FORBIDDEN),
         vec!["header::location"]
     );
+    for spelled in [
+        "HttpResponse::Found().finish()",
+        "builder.status(302)",
+        "headers.insert(\"Location\", url)",
+        "client.subscribe(topic)",
+    ] {
+        assert!(
+            !violations(&code_only(spelled), EVENT_FORBIDDEN).is_empty(),
+            "{spelled}"
+        );
+    }
+    // a geographic "location" field is not a redirect
+    assert!(violations(&code_only("struct E { location: String }"), EVENT_FORBIDDEN).is_empty());
     let status = code_only("StatusCode::SEE_OTHER");
     assert_eq!(violations(&status, EVENT_FORBIDDEN), vec!["see_other"]);
     let third_party = code_only("pub fn add_third_party_caveat(&self) {}");
