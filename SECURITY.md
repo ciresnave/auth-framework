@@ -56,6 +56,16 @@ keys in the JARM, JWT introspection and default SAML components; it covers `>=0.
 `>=0.5.0-rc1,<0.5.0-rc51` and `>=0.6.0-rc41,<0.6.0-rc85`). The one before it, GHSA-9r7g-3hh2-8x65
 (default signing secret), is fixed in the same releases. The next fixes are in `CHANGELOG.md`.
 
+The newest advisories concern GNAP and UMA, and are fixed in `0.5.0-rc90` and `0.6.0-rc217`
+(both cover `>=0.5.0-rc18,<0.5.0-rc90` and `>=0.6.0-rc41,<0.6.0-rc217`):
+GHSA-qjgj-6fmg-c5c8 (GNAP) and GHSA-mq4v-f666-jf9r (UMA). In the fixed releases a GNAP service issues
+an access token only through an access policy you install (it grants nothing until you do), requires
+the client to present a key, and requires the one-time interaction reference to continue a
+transaction; `UmaService::request_rpt` takes no caller-supplied claims, and a resource set with
+required claims is refused until claims gathering exists. GHSA-m45g-8jrx-3hfq (GNAP proof
+verification) is fixed in `0.5.0-rc88` and `0.6.0-rc209`. What the module still lacks of RFC 9635 is
+measured in `docs/GNAP_RFC9635_GAP.md`.
+
 ## Security Considerations
 
 The Auth Framework is designed with security as a primary concern. However, security is a shared responsibility between the library maintainers and the users implementing it.
