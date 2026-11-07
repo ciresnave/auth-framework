@@ -807,6 +807,10 @@ yubico_client_id
 yubico_validation_url
 zoneinfo
 
+flags
+class_id
+cert#S256
+
 [secret_capable]
 actor_token
 assertions
@@ -1094,3 +1098,7 @@ src/protocols/ws_federation.rs:WsFedSignInResponse:context | WS-Federation wctx:
 src/tokens/mod.rs:AuthToken:token_id | the identifier of the token record (the jti), not the token value
 src/tokens/mod.rs:AuthTokenBuilder:token_id | the identifier of the token record (the jti), not the token value
 src/admin/mod.rs:ConfigAction:key | the name of the configuration entry the operator typed; the value is redacted
+src/protocols/gnap_wire.rs:GnapAccess:<tuple> | an access right reference string (RFC 9635 8.1): a name both sides know, not a credential
+src/protocols/gnap_wire.rs:GnapKeyRef:<tuple> | a key reference (RFC 9635 7.1.1): an identifier of a key, not the key
+src/protocols/gnap_wire.rs:GnapErrorCode:<tuple> | the text of an extension error code (RFC 9635 3.6): a registered public label
+src/protocols/gnap_wire.rs:GnapKeyObject:proof | the proofing method name (httpsig, mtls, jwsd, jws; RFC 9635 7.3), not a proof value
