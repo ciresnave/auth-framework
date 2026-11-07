@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Principals: humans, programs and agents, each with a stable id, an owner,
 //! bound keys and a lifecycle.
 //!
