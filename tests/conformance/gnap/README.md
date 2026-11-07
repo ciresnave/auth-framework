@@ -22,6 +22,10 @@ Each vector has:
   - `rotate`, `revoke`: `token`; token management (RFC 9635 section 6).
   - `introspect`: `token`; the server's own view of a token (not on the RFC 9635 wire); the response
     has `active` true or false.
+  - `hash`: `compute` and `expect_hash`; a computation a client must get right, with no server.
+  Anywhere a string value is taken from a saved name, `{"sha256_b64url_lines": [..]}` may stand in
+  for it: the lines (each resolved the same way) joined by a newline, hashed with SHA-256 and
+  encoded as URL-safe base64 without padding (RFC 9635 section 4.2.3).
   A step may carry `expect` (as below) and `save`: a map of name to `{pointer, tail}` that keeps a
   string from the response (with `tail`, only what follows the last `/`). A later step writes `$name`
   to use it. `not_equals_saved` asserts a response string differs from a saved one.
@@ -39,5 +43,5 @@ Rules for adding a vector:
 3. A vector that describes behaviour not yet fixed in a published release is held back until
    that release is out.
 
-Scope of suite version 5: the transaction endpoint, continuation, token rotation and revocation, and the RFC 9635 section 11 checks the endpoint can answer, with DPoP client-key proofs. The server under test grants whatever is requested (a permissive access policy). RFC 9767 and the remaining section 11 checks are added
+Scope of suite version 6: the transaction endpoint, continuation, token rotation and revocation, the interaction hash and the RFC 9635 section 11 checks the endpoint can answer, with DPoP client-key proofs. The server under test grants whatever is requested (a permissive access policy). RFC 9767 and the remaining section 11 checks are added
 in later versions of the suite.

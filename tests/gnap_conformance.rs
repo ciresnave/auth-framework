@@ -12,6 +12,7 @@ use auth_framework::server::security::dpop::DpopManager;
 use base64::Engine;
 use jsonwebtoken::{Algorithm, EncodingKey};
 use serde_json::Value;
+use sha2::Digest;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -87,8 +88,22 @@ fn config_from(v: &Value) -> GnapConfig {
     }
 }
 
-/// A `$name` string is replaced by the value a previous step saved under that name.
+/// A `$name` string is replaced by the value a previous step saved under that name. An object
+/// `{"sha256_b64url_lines": [..]}` is the RFC 9635 section 4.2.3 hash of its lines (each resolved the
+/// same way), joined by a newline: SHA-256, URL-safe base64, no padding.
 fn subst(vars: &HashMap<String, String>, v: &Value) -> Option<String> {
+    if let Some(lines) = v["sha256_b64url_lines"].as_array() {
+        let base = lines
+            .iter()
+            .map(|l| subst(vars, l).expect("hash line"))
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        let digest = sha2::Sha256::digest(base.as_bytes());
+        return Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest));
+    }
     let s = v.as_str()?;
     match s.strip_prefix('$') {
         Some(name) => Some(
@@ -289,6 +304,15 @@ async fn gnap_vectors() {
                         )
                         .await;
                     finish_step(id, step, &mut vars, result);
+                }
+                "hash" => {
+                    // A pure computation a client must get right; no server is involved.
+                    let got = subst(&vars, &step["compute"]).expect("step.compute");
+                    assert_eq!(
+                        Some(got.as_str()),
+                        step["expect_hash"].as_str(),
+                        "{id}: hash of the given lines"
+                    );
                 }
                 "rotate" => {
                     let token = subst(&vars, &step["token"]).expect("step.token");

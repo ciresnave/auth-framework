@@ -1,6 +1,6 @@
 {
   "suite": "gnap-transaction-endpoint",
-  "suite_version": 5,
+  "suite_version": 6,
   "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
   "vectors": [
     {
@@ -1693,6 +1693,213 @@
         {
           "do": "revoke",
           "token": "not-a-token",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hash-rfc-example",
+      "rfc": "RFC 9635",
+      "section": "4.2.3",
+      "kind": "positive",
+      "description": "The interaction hash of the RFC's own example (four lines, SHA-256, URL-safe base64 without padding) comes out as the RFC states.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "https://as.example.test/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "hash",
+          "compute": {
+            "sha256_b64url_lines": [
+              "VJLO6A4CATR0KRO",
+              "MBDOFXG4Y5CVJCX821LH",
+              "4IFWWIKYB2PQ6U56NL1",
+              "https://server.example.com/tx"
+            ]
+          },
+          "expect_hash": "x-gguKWTj8rQf7d7i3w3UhzvuJ5bpOlKyAlVpLxBffY"
+        }
+      ]
+    },
+    {
+      "id": "hash-client-computed",
+      "rfc": "RFC 9635",
+      "section": "4.2.3",
+      "kind": "positive",
+      "description": "A client that computes the interaction hash itself from its nonce, the server's nonce, the interaction reference and the grant endpoint URI is accepted.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "https://as.example.test/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/finish",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            },
+            "snonce": {
+              "pointer": "/interact/finish"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "proof": "valid",
+          "interact_hash": {
+            "sha256_b64url_lines": [
+              "client-nonce-1",
+              "$snonce",
+              "$ref",
+              "https://as.example.test/api/gnap/tx"
+            ]
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "is_string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "hash-wrong-client-nonce",
+      "rfc": "RFC 9635",
+      "section": "4.2.3",
+      "kind": "negative",
+      "description": "An interaction hash computed with a nonce other than the one the client sent is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "https://as.example.test/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/finish",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            },
+            "snonce": {
+              "pointer": "/interact/finish"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "proof": "valid",
+          "interact_hash": {
+            "sha256_b64url_lines": [
+              "some-other-nonce",
+              "$snonce",
+              "$ref",
+              "https://as.example.test/api/gnap/tx"
+            ]
+          },
           "expect": {
             "outcome": "error"
           }
