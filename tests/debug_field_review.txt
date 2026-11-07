@@ -24,6 +24,7 @@
 aaguid
 access_key_id
 access_type
+account_holder
 accounting_addr
 acr_values
 acs_url
@@ -484,6 +485,7 @@ outcome
 output
 output_path
 owner_id
+parent
 parent_id
 parent_role
 parent_role_id
