@@ -61,7 +61,12 @@ pub fn unix_now() -> u64 {
 pub trait KeyStore: Send + Sync {
     /// What this store can do.
     fn capabilities(&self) -> StoreCapabilities;
-    /// Add a key in `state`. Fails if the key id is already taken.
+    /// Hold this guard across a read-check-write sequence (such as [`rotate`](super::rotate))
+    /// so two of them on one store cannot interleave. It serialises callers in this
+    /// process; it is not a cross-process lock.
+    async fn lock_rotation(&self) -> tokio::sync::MutexGuard<'_, ()>;
+    /// Add a key in `state`. Fails if the key id is already taken or `state` is
+    /// `Destroyed` (a key is destroyed through [`KeyStore::set_state`], which erases it).
     async fn insert(&self, key: LocalKey, state: KeyState) -> Result<()>;
     /// Describe one key.
     async fn info(&self, kid: &Kid) -> Result<KeyInfo>;
@@ -99,11 +104,14 @@ struct Entry {
 }
 
 impl Entry {
-    /// Apply a state change and its timestamp.
-    fn apply(&mut self, next: KeyState) -> Result<()> {
+    /// Apply a state change; `now` is the one clock reading for this change, so the
+    /// persisted and in-memory timestamps agree. A revoked key keeps no retirement time.
+    fn apply(&mut self, next: KeyState, now: u64) -> Result<()> {
         self.state = self.state.transition(next)?;
-        if next == KeyState::Retiring {
-            self.retiring_at = Some(unix_now());
+        match next {
+            KeyState::Retiring => self.retiring_at = Some(now),
+            KeyState::Revoked => self.retiring_at = None,
+            _ => {}
         }
         if next == KeyState::Destroyed {
             self.key = None;
@@ -122,6 +130,17 @@ impl Entry {
             retiring_at: self.retiring_at,
         }
     }
+}
+
+/// A key is created live (or pending): inserting one as `Destroyed` would keep its
+/// private half in a record that claims it was erased.
+fn refuse_destroyed(state: KeyState) -> Result<()> {
+    if state == KeyState::Destroyed {
+        return Err(AuthError::validation(
+            "a key cannot be inserted as Destroyed: destruction erases its private half",
+        ));
+    }
+    Ok(())
 }
 
 fn not_found(kid: &Kid) -> AuthError {
@@ -166,6 +185,7 @@ fn export_from(map: &HashMap<Kid, Entry>, kid: &Kid) -> Result<Zeroizing<Vec<u8>
 #[derive(Default)]
 pub struct MemoryKeyStore {
     keys: RwLock<HashMap<Kid, Entry>>,
+    rotation: tokio::sync::Mutex<()>,
 }
 
 impl MemoryKeyStore {
@@ -177,6 +197,10 @@ impl MemoryKeyStore {
 
 #[async_trait]
 impl KeyStore for MemoryKeyStore {
+    async fn lock_rotation(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.rotation.lock().await
+    }
+
     fn capabilities(&self) -> StoreCapabilities {
         StoreCapabilities {
             exportable: true,
@@ -186,6 +210,7 @@ impl KeyStore for MemoryKeyStore {
     }
 
     async fn insert(&self, key: LocalKey, state: KeyState) -> Result<()> {
+        refuse_destroyed(state)?;
         let kid = key.kid().clone();
         let mut map = self.keys.write().await;
         if map.contains_key(&kid) {
@@ -212,7 +237,7 @@ impl KeyStore for MemoryKeyStore {
     async fn set_state(&self, kid: &Kid, next: KeyState) -> Result<()> {
         let mut map = self.keys.write().await;
         let e = map.get_mut(kid).ok_or_else(|| not_found(kid))?;
-        e.apply(next)
+        e.apply(next, unix_now())
     }
 
     async fn sign(&self, kid: &Kid, message: &[u8]) -> Result<Vec<u8>> {
@@ -244,6 +269,7 @@ pub struct FileKeyStore {
     dir: PathBuf,
     enc: StorageEncryption,
     keys: RwLock<HashMap<Kid, Entry>>,
+    rotation: tokio::sync::Mutex<()>,
 }
 
 const RECORD_SUFFIX: &str = ".key";
@@ -269,12 +295,19 @@ impl FileKeyStore {
             let Some(stem) = name.strip_suffix(RECORD_SUFFIX) else {
                 continue;
             };
-            let kid_bytes = hex::decode(stem).map_err(|_| {
-                AuthError::validation(format!("unexpected file {name} in key store"))
-            })?;
-            let kid = Kid::new(String::from_utf8(kid_bytes).map_err(|_| {
-                AuthError::validation(format!("unexpected file {name} in key store"))
-            })?)?;
+            let kid = match hex::decode(stem)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .map(Kid::new)
+            {
+                Some(Ok(kid)) => kid,
+                _ => {
+                    // Not one of ours (a leftover from another tool): do not make the
+                    // whole store unopenable. A record that IS ours still fails closed below.
+                    tracing::warn!(file = %name, "ignoring a non-key file in the key directory");
+                    continue;
+                }
+            };
             let sealed = tokio::fs::read(f.path())
                 .await
                 .map_err(|e| AuthError::internal(format!("cannot read key record: {e}")))?;
@@ -287,6 +320,7 @@ impl FileKeyStore {
             dir,
             enc,
             keys: RwLock::new(keys),
+            rotation: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -315,11 +349,11 @@ fn aad(kid: &Kid) -> Vec<u8> {
     format!("auth-framework/keystore/v1:{kid}").into_bytes()
 }
 
-fn record_of(e: &Entry, state: KeyState, keep_private: bool) -> Record {
-    let retiring_at = if state == KeyState::Retiring && e.retiring_at.is_none() {
-        Some(unix_now())
-    } else {
-        e.retiring_at
+fn record_of(e: &Entry, state: KeyState, keep_private: bool, now: u64) -> Record {
+    let retiring_at = match state {
+        KeyState::Retiring => e.retiring_at.or(Some(now)),
+        KeyState::Revoked => None,
+        _ => e.retiring_at,
     };
     Record {
         created_at: e.created_at,
@@ -377,6 +411,10 @@ fn entry_from_record(kid: &Kid, rec: Record) -> Result<Entry> {
 
 #[async_trait]
 impl KeyStore for FileKeyStore {
+    async fn lock_rotation(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.rotation.lock().await
+    }
+
     fn capabilities(&self) -> StoreCapabilities {
         StoreCapabilities {
             exportable: true,
@@ -386,6 +424,7 @@ impl KeyStore for FileKeyStore {
     }
 
     async fn insert(&self, key: LocalKey, state: KeyState) -> Result<()> {
+        refuse_destroyed(state)?;
         let kid = key.kid().clone();
         let mut map = self.keys.write().await;
         if map.contains_key(&kid) {
@@ -394,7 +433,8 @@ impl KeyStore for FileKeyStore {
             )));
         }
         let entry = entry_of(key, state);
-        self.persist(&kid, &record_of(&entry, state, true)).await?;
+        self.persist(&kid, &record_of(&entry, state, true, unix_now()))
+            .await?;
         map.insert(kid, entry);
         Ok(())
     }
@@ -415,10 +455,11 @@ impl KeyStore for FileKeyStore {
         let mut map = self.keys.write().await;
         let e = map.get_mut(kid).ok_or_else(|| not_found(kid))?;
         let state = e.state.transition(next)?;
+        let now = unix_now();
         // Persist first: if the write fails the in-memory key is untouched.
-        self.persist(kid, &record_of(e, state, next != KeyState::Destroyed))
+        self.persist(kid, &record_of(e, state, next != KeyState::Destroyed, now))
             .await?;
-        e.apply(next)
+        e.apply(next, now)
     }
 
     async fn sign(&self, kid: &Kid, message: &[u8]) -> Result<Vec<u8>> {
@@ -481,6 +522,48 @@ mod tests {
         s.set_state(&kid, KeyState::Revoked).await.unwrap();
         assert!(s.set_state(&kid, KeyState::Active).await.is_err());
         assert!(s.info(&Kid::new("nope").unwrap()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_key_cannot_be_inserted_as_destroyed_in_either_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = FileKeyStore::open(dir.path(), enc(5)).await.unwrap();
+        let mem = MemoryKeyStore::new();
+        for s in [&mem as &dyn KeyStore, &file as &dyn KeyStore] {
+            let k = key(SigningAlg::Es256);
+            let kid = k.kid().clone();
+            assert!(s.insert(k, KeyState::Destroyed).await.is_err());
+            assert!(s.info(&kid).await.is_err(), "nothing was stored");
+            assert!(s.export_private_pkcs8(&kid).await.is_err());
+            // Control: the same key inserted live is accepted and exports.
+            let k = key(SigningAlg::Es256);
+            let kid = k.kid().clone();
+            s.insert(k, KeyState::Active).await.unwrap();
+            assert!(s.export_private_pkcs8(&kid).await.is_ok());
+        }
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "one file"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stray_file_does_not_make_the_store_unopenable() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let s = FileKeyStore::open(dir.path(), enc(6)).await.unwrap();
+            s.insert(key(SigningAlg::Es256), KeyState::Active)
+                .await
+                .unwrap();
+        }
+        std::fs::write(dir.path().join("not-hex.key"), b"left by another tool").unwrap();
+        let s = FileKeyStore::open(dir.path(), enc(6)).await.unwrap();
+        assert_eq!(s.list().await.unwrap().len(), 1);
+        // A record that is ours but corrupt still fails closed (control).
+        let ours = dir.path().join(format!("{}.key", hex::encode("bad")));
+        std::fs::write(ours, b"garbage").unwrap();
+        assert!(FileKeyStore::open(dir.path(), enc(6)).await.is_err());
     }
 
     #[tokio::test]
