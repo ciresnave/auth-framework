@@ -1,0 +1,478 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! The resource-server-facing half of GNAP (RFC 9767 section 3): the discovery document and token
+//! introspection.
+//!
+//! This module holds the protocol logic only. It does not parse HTTP and it does not verify an RS's
+//! key proof itself: the deployer supplies two things.
+//!
+//! - a [`ResourceServerAuthenticator`], which decides who is calling (RFC 9767 section 3.2: the RS
+//!   signs its calls to the AS with its own key, never the client instance's or the token's key);
+//! - a [`TokenInfoSource`], which says what the AS knows about an access token value.
+//!
+//! A route layer (HTTP) hands each request here and must send introspection responses with
+//! `Cache-Control: no-store` (RFC 9767 section 3.3).
+
+use crate::errors::{AuthError, Result};
+use async_trait::async_trait;
+use serde_json::{Map, Value};
+use std::sync::Arc;
+
+/// Path of the RS-facing discovery document, under the grant endpoint's scheme and authority.
+pub const DISCOVERY_PATH: &str = "/.well-known/gnap-as-rs";
+
+/// What the AS knows about one issued access token.
+#[derive(Debug, Clone)]
+pub struct RsTokenInfo {
+    /// The access rights of the token (RFC 9635 section 8 format).
+    pub access: Vec<Value>,
+    /// The key the token is bound to, by value, or `None` for a bearer token.
+    pub key: Option<Value>,
+    /// The key proofing method the token is bound with (for example `httpsig`); `None` for bearer.
+    pub proof: Option<String>,
+    /// Seconds since the Unix epoch after which the token is not valid.
+    pub expires_at: u64,
+    /// Seconds since the Unix epoch at which the token was issued.
+    pub issued_at: u64,
+    /// The grant endpoint URL of the AS that issued the token.
+    pub grant_endpoint: String,
+    /// The client instance the token was issued to, if the AS keeps one.
+    pub instance_id: Option<String>,
+    /// Token flags.
+    pub flags: Vec<String>,
+    /// Identifiers of the resource servers the token may be presented at; empty means any.
+    pub audience: Vec<String>,
+}
+
+/// Where the AS looks tokens up.
+#[async_trait]
+pub trait TokenInfoSource: Send + Sync {
+    /// The token's information, or `None` when this AS did not issue it or no longer holds it
+    /// (revoked tokens included).
+    async fn token_info(&self, value: &str) -> Option<RsTokenInfo>;
+}
+
+/// An RS call as the route layer saw it, for the authenticator to check.
+#[derive(Debug, Clone)]
+pub struct RsCall<'a> {
+    /// HTTP method of the call.
+    pub http_method: &'a str,
+    /// HTTP URI of the call.
+    pub http_uri: &'a str,
+    /// The `resource_server` member of the request body: an object (by value) or a string (a
+    /// reference).
+    pub resource_server: &'a Value,
+    /// The request headers the proof lives in (for example `Signature`, `Signature-Input`).
+    pub headers: &'a [(String, String)],
+}
+
+/// Who an authenticated RS is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedRs {
+    /// The identifier the AS uses for this RS; compared with [`RsTokenInfo::audience`].
+    pub id: String,
+}
+
+/// Decides which resource server is calling, from its own key proof.
+#[async_trait]
+pub trait ResourceServerAuthenticator: Send + Sync {
+    /// The RS identity, or `None` when the call is not proved by a known RS key.
+    async fn authenticate(&self, call: &RsCall<'_>) -> Option<AuthenticatedRs>;
+}
+
+/// Settings of the RS-facing API.
+#[derive(Debug, Clone)]
+pub struct GnapRsConfig {
+    /// The grant request endpoint clients use (RFC 9767 section 3.1). Must be an `https` URL
+    /// without a fragment.
+    pub grant_request_endpoint: String,
+    /// The introspection endpoint. Same URL rules.
+    pub introspection_endpoint: String,
+    /// Key proofing methods the AS can verify, by their registered names. List only methods that
+    /// really are verified; an empty list leaves the member out of the document.
+    pub key_proofs_supported: Vec<String>,
+    /// Token formats the AS issues, by their registered names. Empty leaves the member out.
+    pub token_formats_supported: Vec<String>,
+}
+
+fn check_https_url(name: &str, url: &str) -> Result<()> {
+    let rest = url
+        .strip_prefix("https://")
+        .ok_or_else(|| AuthError::config(format!("{name} must be an https URL")))?;
+    if rest.is_empty() || rest.starts_with('/') || url.contains('#') {
+        return Err(AuthError::config(format!(
+            "{name} must have a host and no fragment"
+        )));
+    }
+    Ok(())
+}
+
+/// The RS-facing API of one AS.
+pub struct GnapResourceServerApi {
+    config: GnapRsConfig,
+    tokens: Arc<dyn TokenInfoSource>,
+    authenticator: Arc<dyn ResourceServerAuthenticator>,
+}
+
+impl GnapResourceServerApi {
+    /// Build the API; refuses an endpoint that RFC 9767 section 3.1 does not allow.
+    pub fn new(
+        config: GnapRsConfig,
+        tokens: Arc<dyn TokenInfoSource>,
+        authenticator: Arc<dyn ResourceServerAuthenticator>,
+    ) -> Result<Self> {
+        check_https_url("grant_request_endpoint", &config.grant_request_endpoint)?;
+        check_https_url("introspection_endpoint", &config.introspection_endpoint)?;
+        Ok(Self {
+            config,
+            tokens,
+            authenticator,
+        })
+    }
+
+    /// The document served at [`DISCOVERY_PATH`] (RFC 9767 section 3.1).
+    pub fn discovery_document(&self) -> Value {
+        let mut doc = Map::new();
+        doc.insert(
+            "grant_request_endpoint".into(),
+            self.config.grant_request_endpoint.clone().into(),
+        );
+        doc.insert(
+            "introspection_endpoint".into(),
+            self.config.introspection_endpoint.clone().into(),
+        );
+        if !self.config.token_formats_supported.is_empty() {
+            doc.insert(
+                "token_formats_supported".into(),
+                self.config.token_formats_supported.clone().into(),
+            );
+        }
+        if !self.config.key_proofs_supported.is_empty() {
+            doc.insert(
+                "key_proofs_supported".into(),
+                self.config.key_proofs_supported.clone().into(),
+            );
+        }
+        Value::Object(doc)
+    }
+
+    /// Introspect an access token for an RS (RFC 9767 section 3.3).
+    ///
+    /// `Err` means the call itself is refused: the RS was not authenticated, or the body is not a
+    /// request (the route layer answers 401 and 400). A token that is not active is an `Ok`
+    /// response, `{"active": false}`, with no other member.
+    pub async fn introspect(&self, call: &RsCall<'_>, body: &Value) -> Result<Value> {
+        let Some(rs) = self.authenticator.authenticate(call).await else {
+            return Err(AuthError::validation("resource server not authenticated"));
+        };
+        let value = body
+            .get("access_token")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AuthError::validation("introspection request needs access_token"))?;
+        // The authenticator saw `resource_server` in the call; the member itself is required.
+        if body.get("resource_server").is_none() {
+            return Err(AuthError::validation(
+                "introspection request needs resource_server",
+            ));
+        }
+
+        let inactive = || Ok(serde_json::json!({ "active": false }));
+        let Some(info) = self.tokens.token_info(value).await else {
+            return inactive();
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now >= info.expires_at {
+            return inactive();
+        }
+        if !info.audience.is_empty() && !info.audience.contains(&rs.id) {
+            return inactive();
+        }
+        // A proof method the RS says the client used must be the one the token is bound with.
+        if let Some(proof) = body.get("proof") {
+            match (proof.as_str(), info.proof.as_deref()) {
+                (Some(asked), Some(bound)) if asked == bound => {}
+                _ => return inactive(),
+            }
+        }
+        // Every access right the RS needs must be among the token's. A request this cannot read is
+        // never answered as active.
+        if let Some(needed) = body.get("access") {
+            let Some(needed) = needed.as_array() else {
+                return inactive();
+            };
+            if !needed.iter().all(|n| info.access.contains(n)) {
+                return inactive();
+            }
+        }
+
+        let mut out = Map::new();
+        out.insert("active".into(), true.into());
+        out.insert("access".into(), Value::Array(info.access.clone()));
+        if let Some(key) = &info.key {
+            out.insert("key".into(), key.clone());
+        }
+        if !info.flags.is_empty() {
+            out.insert("flags".into(), info.flags.clone().into());
+        }
+        out.insert("exp".into(), info.expires_at.into());
+        out.insert("iat".into(), info.issued_at.into());
+        out.insert("iss".into(), info.grant_endpoint.clone().into());
+        if let Some(id) = &info.instance_id {
+            out.insert("instance_id".into(), id.clone().into());
+        }
+        Ok(Value::Object(out))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    struct Tokens(HashMap<String, RsTokenInfo>);
+
+    #[async_trait]
+    impl TokenInfoSource for Tokens {
+        async fn token_info(&self, value: &str) -> Option<RsTokenInfo> {
+            self.0.get(value).cloned()
+        }
+    }
+
+    /// Authenticates every call as the RS named `id`, or none when `id` is `None`.
+    struct Rs(Option<&'static str>);
+
+    #[async_trait]
+    impl ResourceServerAuthenticator for Rs {
+        async fn authenticate(&self, _call: &RsCall<'_>) -> Option<AuthenticatedRs> {
+            self.0.map(|id| AuthenticatedRs { id: id.to_string() })
+        }
+    }
+
+    fn now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    fn info() -> RsTokenInfo {
+        RsTokenInfo {
+            access: vec![
+                json!("dolphin-metadata"),
+                json!({"type": "photo-api", "actions": ["read"]}),
+            ],
+            key: Some(json!({"proof": "httpsig", "jwk": {"kty": "EC", "crv": "P-256"}})),
+            proof: Some("httpsig".into()),
+            expires_at: now() + 600,
+            issued_at: now(),
+            grant_endpoint: "https://as.example.test/tx".into(),
+            instance_id: Some("client-1".into()),
+            flags: vec![],
+            audience: vec![],
+        }
+    }
+
+    fn config() -> GnapRsConfig {
+        GnapRsConfig {
+            grant_request_endpoint: "https://as.example.test/tx".into(),
+            introspection_endpoint: "https://as.example.test/introspect".into(),
+            key_proofs_supported: vec![],
+            token_formats_supported: vec![],
+        }
+    }
+
+    fn build(
+        c: GnapRsConfig,
+        tokens: Vec<(&str, RsTokenInfo)>,
+        rs: Option<&'static str>,
+    ) -> Result<GnapResourceServerApi> {
+        let map = tokens
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        GnapResourceServerApi::new(c, Arc::new(Tokens(map)), Arc::new(Rs(rs)))
+    }
+
+    fn api_with(
+        tokens: Vec<(&str, RsTokenInfo)>,
+        rs: Option<&'static str>,
+    ) -> GnapResourceServerApi {
+        build(config(), tokens, rs).unwrap()
+    }
+
+    async fn introspect(api: &GnapResourceServerApi, body: Value) -> Result<Value> {
+        let rs = json!("rs-1");
+        let call = RsCall {
+            http_method: "POST",
+            http_uri: "https://as.example.test/introspect",
+            resource_server: &rs,
+            headers: &[],
+        };
+        api.introspect(&call, &body).await
+    }
+
+    fn req(extra: Value) -> Value {
+        let mut b = json!({"access_token": "tok-1", "resource_server": "rs-1"});
+        for (k, v) in extra.as_object().unwrap() {
+            b[k] = v.clone();
+        }
+        b
+    }
+
+    fn inactive() -> Value {
+        json!({"active": false})
+    }
+
+    #[test]
+    fn discovery_document_carries_the_required_members() {
+        let doc = api_with(vec![], Some("rs-1")).discovery_document();
+        assert_eq!(doc["grant_request_endpoint"], "https://as.example.test/tx");
+        assert_eq!(
+            doc["introspection_endpoint"],
+            "https://as.example.test/introspect"
+        );
+        assert!(doc.get("key_proofs_supported").is_none(), "{doc}");
+        assert!(doc.get("token_formats_supported").is_none(), "{doc}");
+        assert!(doc.get("resource_registration_endpoint").is_none(), "{doc}");
+    }
+
+    #[test]
+    fn discovery_lists_proofs_and_formats_only_when_configured() {
+        let mut c = config();
+        c.key_proofs_supported = vec!["httpsig".into()];
+        c.token_formats_supported = vec!["opaque".into()];
+        let doc = build(c, vec![], None).unwrap().discovery_document();
+        assert_eq!(doc["key_proofs_supported"], json!(["httpsig"]));
+        assert_eq!(doc["token_formats_supported"], json!(["opaque"]));
+    }
+
+    #[test]
+    fn endpoints_must_be_https_urls_without_a_fragment() {
+        for bad in [
+            "http://as.example.test/tx",
+            "/tx",
+            "https://",
+            "https:///tx",
+            "https://as.example.test/tx#f",
+        ] {
+            let mut c = config();
+            c.grant_request_endpoint = bad.into();
+            assert!(build(c, vec![], None).is_err(), "{bad} must be refused");
+            let mut c = config();
+            c.introspection_endpoint = bad.into();
+            assert!(build(c, vec![], None).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_active_token_is_described_without_its_value() {
+        let api = api_with(vec![("tok-1", info())], Some("rs-1"));
+        let r = introspect(&api, req(json!({}))).await.unwrap();
+        assert_eq!(r["active"], true);
+        assert_eq!(r["access"][0], "dolphin-metadata");
+        assert_eq!(r["key"]["proof"], "httpsig");
+        assert_eq!(r["iss"], "https://as.example.test/tx");
+        assert_eq!(r["instance_id"], "client-1");
+        assert!(r["exp"].is_u64() && r["iat"].is_u64());
+        assert!(
+            !r.to_string().contains("tok-1"),
+            "the token value must not come back: {r}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bearer_token_has_no_key_member() {
+        let mut t = info();
+        t.key = None;
+        t.proof = None;
+        let api = api_with(vec![("tok-1", t)], Some("rs-1"));
+        let r = introspect(&api, req(json!({}))).await.unwrap();
+        assert_eq!(r["active"], true);
+        assert!(r.get("key").is_none(), "{r}");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_or_revoked_token_is_inactive_and_nothing_else() {
+        let api = api_with(vec![], Some("rs-1"));
+        assert_eq!(introspect(&api, req(json!({}))).await.unwrap(), inactive());
+    }
+
+    #[tokio::test]
+    async fn an_expired_token_is_inactive() {
+        let mut t = info();
+        t.expires_at = now() - 1;
+        let api = api_with(vec![("tok-1", t)], Some("rs-1"));
+        assert_eq!(introspect(&api, req(json!({}))).await.unwrap(), inactive());
+    }
+
+    #[tokio::test]
+    async fn a_token_for_other_resource_servers_is_inactive_here() {
+        let mut t = info();
+        t.audience = vec!["rs-2".into()];
+        let other = api_with(vec![("tok-1", t.clone())], Some("rs-1"));
+        assert_eq!(
+            introspect(&other, req(json!({}))).await.unwrap(),
+            inactive()
+        );
+        let own = api_with(vec![("tok-1", t)], Some("rs-2"));
+        assert_eq!(
+            introspect(&own, req(json!({}))).await.unwrap()["active"],
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn the_proof_method_must_match_the_one_the_token_is_bound_with() {
+        let api = api_with(vec![("tok-1", info())], Some("rs-1"));
+        let same = introspect(&api, req(json!({"proof": "httpsig"})))
+            .await
+            .unwrap();
+        assert_eq!(same["active"], true);
+        let other = introspect(&api, req(json!({"proof": "mtls"})))
+            .await
+            .unwrap();
+        assert_eq!(other, inactive());
+        let odd = introspect(&api, req(json!({"proof": 7}))).await.unwrap();
+        assert_eq!(odd, inactive());
+        let mut bearer = info();
+        bearer.key = None;
+        bearer.proof = None;
+        let api = api_with(vec![("tok-1", bearer)], Some("rs-1"));
+        let r = introspect(&api, req(json!({"proof": "httpsig"})))
+            .await
+            .unwrap();
+        assert_eq!(r, inactive());
+    }
+
+    #[tokio::test]
+    async fn the_access_the_rs_needs_must_be_covered_by_the_token() {
+        let api = api_with(vec![("tok-1", info())], Some("rs-1"));
+        let covered = req(json!({"access": ["dolphin-metadata"]}));
+        assert_eq!(introspect(&api, covered).await.unwrap()["active"], true);
+        let not_covered = req(json!({"access": ["dolphin-metadata", "something-else"]}));
+        assert_eq!(introspect(&api, not_covered).await.unwrap(), inactive());
+        let unreadable = req(json!({"access": "dolphin-metadata"}));
+        assert_eq!(introspect(&api, unreadable).await.unwrap(), inactive());
+    }
+
+    #[tokio::test]
+    async fn an_unauthenticated_rs_is_refused_before_the_token_is_looked_up() {
+        let api = api_with(vec![("tok-1", info())], None);
+        assert!(introspect(&api, req(json!({}))).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_body_without_the_required_members_is_refused() {
+        let api = api_with(vec![("tok-1", info())], Some("rs-1"));
+        let no_token = json!({"resource_server": "rs-1"});
+        assert!(introspect(&api, no_token).await.is_err());
+        let no_rs = json!({"access_token": "tok-1"});
+        assert!(introspect(&api, no_rs).await.is_err());
+        let bad_token = json!({"access_token": 5, "resource_server": "rs-1"});
+        assert!(introspect(&api, bad_token).await.is_err());
+    }
+}
