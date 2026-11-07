@@ -202,9 +202,14 @@ impl std::fmt::Debug for FinishRequest {
 /// `blob:`, `about:`) are refused earlier, because a URI that cannot be a base has no place as a callback.
 const FORBIDDEN_CALLBACK_SCHEMES: &[&str] = &["file", "ftp", "ws", "wss", "gopher"];
 
+/// A DNS name may end in the root dot (`localhost.`), which names the same host.
+fn without_root_dot(name: &str) -> &str {
+    name.strip_suffix('.').unwrap_or(name)
+}
+
 fn is_loopback_host(host: &Host<&str>) -> bool {
     match host {
-        Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+        Host::Domain(name) => without_root_dot(name).eq_ignore_ascii_case("localhost"),
         Host::Ipv4(ip) => ip.is_loopback(),
         Host::Ipv6(ip) => ip.is_loopback(),
     }
@@ -236,6 +241,10 @@ impl FinishRequest {
         let uri = Url::parse(uri_text)
             .map_err(|_| InteractionError::new(InteractionErrorKind::BadCallbackUri))?;
         if uri.fragment().is_some() || uri.cannot_be_a_base() {
+            return err(InteractionErrorKind::BadCallbackUri);
+        }
+        // credentials in a callback end up in browser history, logs and Referer headers
+        if !uri.username().is_empty() || uri.password().is_some() {
             return err(InteractionErrorKind::BadCallbackUri);
         }
         match uri.scheme() {
@@ -423,7 +432,7 @@ pub fn validate_push_target(uri: &Url) -> Result<(), InteractionError> {
     match uri.host() {
         None => Err(blocked),
         Some(Host::Domain(name)) => {
-            let lower = name.to_ascii_lowercase();
+            let lower = without_root_dot(name).to_ascii_lowercase();
             if lower == "localhost" || lower.ends_with(".localhost") || lower.ends_with(".internal")
             {
                 Err(blocked)
@@ -858,6 +867,22 @@ mod tests {
             })),
             BadCallbackUri
         );
+        // credentials in the callback are refused for redirect and push alike, and for an application scheme
+        for bad in [
+            "https://user:pass@client.example.net/return/1",
+            "https://user@client.example.net/return/1",
+            "https://:pass@client.example.net/return/1",
+            "http://user@localhost:8080/cb",
+            "com.example.app://user@host/cb",
+        ] {
+            assert_eq!(
+                kind(finish_with(|v| v["uri"] = json!(bad))),
+                BadCallbackUri,
+                "{bad}"
+            );
+        }
+        // the root-dot spelling of localhost is loopback too
+        assert!(finish_with(|v| v["uri"] = json!("http://localhost.:8080/cb")).is_ok());
         // controls: loopback http, an application scheme for redirect, and an https push are accepted
         assert!(finish_with(|v| v["uri"] = json!("http://localhost:8080/cb")).is_ok());
         assert!(finish_with(|v| v["uri"] = json!("http://127.0.0.1:8080/cb")).is_ok());
@@ -945,6 +970,10 @@ mod tests {
         let blocked = |s: &str| validate_push_target(&Url::parse(s).unwrap()).is_err();
         for s in [
             "https://localhost/cb",
+            "https://localhost./cb",
+            "https://LOCALHOST./cb",
+            "https://app.localhost./cb",
+            "https://metadata.internal./cb",
             "https://LOCALHOST/cb",
             "https://app.localhost/cb",
             "https://metadata.internal/cb",
