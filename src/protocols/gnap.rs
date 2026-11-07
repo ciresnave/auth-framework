@@ -746,18 +746,28 @@ impl GnapService {
         let Some(key) = client.as_ref().and_then(|c| c.key.as_ref()) else {
             return Err(AuthError::validation(KEY_REQUIRED));
         };
-        match key.proof.as_str() {
-            "dpop" => Self::check_dpop_proof(&thumbprint, dpop).await?,
-            // Unit tests only: a method that checks nothing must never be accepted in a build.
-            #[cfg(test)]
-            "test" => {}
-            other => {
-                return Err(AuthError::validation(format!(
-                    "{PROOF_NOT_SUPPORTED}: {other}"
-                )));
-            }
-        }
+        Self::check_key_proof(&key.proof, &thumbprint, dpop).await?;
         Ok(Some(thumbprint))
+    }
+
+    /// The one place that decides which proof methods this build can verify, and verifies them. Issuance
+    /// (`verify_client_proof`) and token management (`verify_token_key_proof`) both call it, so a method cannot
+    /// be admitted at issuance and then have no way to rotate or revoke its token: a method added here is
+    /// added to both, and a method refused here is refused at both. Only `dpop` is verified; `test`, which
+    /// checks nothing, exists in unit-test builds only.
+    async fn check_key_proof(
+        method: &str,
+        thumbprint: &str,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<()> {
+        match method {
+            "dpop" => Self::check_dpop_proof(thumbprint, dpop).await,
+            #[cfg(test)]
+            "test" => Ok(()),
+            other => Err(AuthError::validation(format!(
+                "{PROOF_NOT_SUPPORTED}: {other}"
+            ))),
+        }
     }
 
     /// Check that the request's `DPoP` header is a fresh proof signed by the key with `thumbprint`, for this
@@ -808,11 +818,8 @@ impl GnapService {
             return Ok(());
         };
         match key_proof {
-            Some("dpop") => Self::check_dpop_proof(thumbprint, dpop).await,
-            // Unit tests only: a method that checks nothing must never be accepted in a build.
-            #[cfg(test)]
-            Some("test") => Ok(()),
-            _ => Err(AuthError::validation(PROOF_NOT_SUPPORTED)),
+            Some(method) => Self::check_key_proof(method, thumbprint, dpop).await,
+            None => Err(AuthError::validation(PROOF_NOT_SUPPORTED)),
         }
     }
 
@@ -2889,6 +2896,52 @@ mod proof_verification_tests {
             .build();
         let msg = refusal(svc.handle_transaction(anonymous).await);
         assert!(msg.contains("client key required"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn issuance_and_management_admit_exactly_the_same_proof_methods() {
+        // A method admitted at issuance but not at management would leave a token that cannot be revoked
+        // (Pip review). Both gates call `check_key_proof`; this fails if they ever diverge.
+        let key = client_key();
+        let thumbprint = GnapService::jwk_thumbprint(&key.jwk).unwrap();
+        let not_supported = |e: AuthError| e.to_string().contains(PROOF_NOT_SUPPORTED);
+        let mut admitted = Vec::new();
+        for method in [
+            "dpop", "test", "httpsig", "mtls", "jws", "", "DPOP", "none", "bogus",
+        ] {
+            let client = Some(GnapClientInfo {
+                key: Some(GnapClientKey {
+                    proof: method.to_string(),
+                    jwk: key.jwk.clone(),
+                }),
+                display: None,
+            });
+            // with no proof material, a verifiable method fails for want of a proof, an unsupported one for
+            // want of support: the two outcomes tell them apart without needing a valid proof
+            let issuance = GnapService::verify_client_proof(&client, None).await;
+            let management =
+                GnapService::verify_token_key_proof(Some(&thumbprint), Some(method), None).await;
+            let issued = match &issuance {
+                Ok(_) => true,
+                Err(e) => !not_supported(AuthError::validation(e.to_string())),
+            };
+            let managed = match &management {
+                Ok(()) => true,
+                Err(e) => !not_supported(AuthError::validation(e.to_string())),
+            };
+            assert_eq!(
+                issued, managed,
+                "{method:?}: issuance {issuance:?} but management {management:?}"
+            );
+            if issued {
+                admitted.push(method);
+            }
+        }
+        // the methods this build verifies, pinned: a new one has to be added on purpose
+        assert_eq!(admitted, ["dpop", "test"]);
+        // a token with no recorded method is refused at management, never waved through
+        let none = GnapService::verify_token_key_proof(Some(&thumbprint), None, None).await;
+        assert!(none.is_err());
     }
 
     #[test]
