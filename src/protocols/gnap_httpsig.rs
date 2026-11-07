@@ -94,6 +94,10 @@ pub enum HttpsigError {
     BadSignature,
     /// The nonce was already used.
     NonceReplayed,
+    /// The signature was made before this verifier's nonce cache began, so a replay cannot be ruled out.
+    PredatesNonceCache,
+    /// The nonce cache is full; the request is refused rather than an old nonce forgotten.
+    NonceCacheFull,
 }
 
 impl fmt::Display for HttpsigError {
@@ -104,6 +108,10 @@ impl fmt::Display for HttpsigError {
             Self::DigestMismatch => f.write_str("content-digest does not match the content"),
             Self::BadSignature => f.write_str("http signature does not verify"),
             Self::NonceReplayed => f.write_str("http signature nonce was already used"),
+            Self::PredatesNonceCache => {
+                f.write_str("http signature was made before the nonce cache began")
+            }
+            Self::NonceCacheFull => f.write_str("http signature nonce cache is full"),
         }
     }
 }
@@ -565,39 +573,76 @@ fn verify_content_digest(request: &HttpRequest<'_>, alg: &str) -> Result<(), Htt
     Ok(())
 }
 
+/// The most nonces a cache holds unless told otherwise.
+pub const DEFAULT_NONCE_CAPACITY: usize = 100_000;
+
 /// Nonces seen in the last `window_secs`, per scope (use the key's thumbprint as the scope). The caller keeps
 /// one cache per verifier and guards it with a lock.
-#[derive(Debug, Default)]
+///
+/// Two limits make a replay unprofitable without persisting anything:
+/// * the cache is **bounded**: when it is full a new nonce is refused ([`HttpsigError::NonceCacheFull`]); an
+///   old one is never forgotten early, because forgetting would reopen a replay;
+/// * the cache has a **floor**, the time it began: a signature whose `created` is earlier than the floor is
+///   refused ([`HttpsigError::PredatesNonceCache`]). Every signature a restarted verifier could not remember
+///   was made before the restart, so a captured request cannot be replayed into a fresh process. A client
+///   whose request was in flight at the restart is refused once and signs again.
+///
+/// A deployment with more than one verifier instance must still share one cache (or route a client to one
+/// instance), because each instance only remembers what it saw itself.
+#[derive(Debug)]
 pub struct NonceCache {
     seen: HashMap<(String, String), u64>,
+    floor: u64,
+    capacity: usize,
 }
 
 impl NonceCache {
-    /// An empty cache.
-    pub fn new() -> Self {
-        Self::default()
+    /// An empty cache that began at `started_at` (seconds since the epoch; pass the current time).
+    pub fn new(started_at: u64) -> Self {
+        Self::with_capacity(started_at, DEFAULT_NONCE_CAPACITY)
     }
 
-    /// Record `nonce` in `scope` at `now`; false when it was already recorded within `window_secs`.
+    /// An empty cache that began at `started_at` and holds at most `capacity` nonces.
+    pub fn with_capacity(started_at: u64, capacity: usize) -> Self {
+        Self {
+            seen: HashMap::new(),
+            floor: started_at,
+            capacity,
+        }
+    }
+
+    /// The time before which a signature is refused.
+    pub fn floor(&self) -> u64 {
+        self.floor
+    }
+
+    /// Record `nonce` in `scope` at `now`. Refused when it was already recorded within `window_secs`, or when
+    /// the cache is full of nonces still inside their window.
     pub fn check_and_insert(
         &mut self,
         scope: &str,
         nonce: &str,
         now: u64,
         window_secs: u64,
-    ) -> bool {
+    ) -> Result<(), HttpsigError> {
         self.seen
             .retain(|_, at| now.saturating_sub(*at) <= window_secs);
         let key = (scope.to_string(), nonce.to_string());
         if self.seen.contains_key(&key) {
-            return false;
+            return Err(HttpsigError::NonceReplayed);
+        }
+        if self.seen.len() >= self.capacity {
+            return Err(HttpsigError::NonceCacheFull);
         }
         self.seen.insert(key, now);
-        true
+        Ok(())
     }
 }
 
 /// How strictly a GNAP request is checked.
+///
+/// The default is the strict one: a nonce is required, so a captured request cannot be replayed inside the
+/// skew window. [`HttpsigPolicy::without_nonce`] is the explicit opt-out for a peer that does not send one.
 #[derive(Debug, Clone, Copy)]
 pub struct HttpsigPolicy {
     /// How far `created` may differ from now, in seconds, either way.
@@ -608,12 +653,24 @@ pub struct HttpsigPolicy {
     pub require_nonce: bool,
 }
 
+impl HttpsigPolicy {
+    /// The default policy, except that a signature without a nonce is accepted. A captured request can then be
+    /// replayed within `max_skew_secs` of its `created` time: use it only for a peer that cannot send nonces,
+    /// and shorten `max_skew_secs`.
+    pub fn without_nonce() -> Self {
+        Self {
+            require_nonce: false,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for HttpsigPolicy {
     fn default() -> Self {
         Self {
             max_skew_secs: 300,
             nonce_window_secs: 600,
-            require_nonce: false,
+            require_nonce: true,
         }
     }
 }
@@ -724,15 +781,16 @@ pub fn verify_gnap_request(
         return Err(violation("the signature has no nonce"));
     }
     key.verify(signature_base(request, entry)?.as_bytes(), &entry.signature)?;
-    if let Some(nonce) = nonce
-        && !nonces.check_and_insert(
+    if created < nonces.floor() {
+        return Err(HttpsigError::PredatesNonceCache);
+    }
+    if let Some(nonce) = nonce {
+        nonces.check_and_insert(
             context.nonce_scope,
             &nonce,
             context.now,
             policy.nonce_window_secs,
-        )
-    {
-        return Err(HttpsigError::NonceReplayed);
+        )?;
     }
     Ok(VerifiedSignature {
         label: entry.label.clone(),
@@ -981,7 +1039,11 @@ mod tests {
             now: NOW,
             nonce_scope: "thumb",
         };
-        verify_gnap_request(&request, &context, &HttpsigPolicy::default(), nonces)
+        verify_gnap_request(&request, &context, &HttpsigPolicy::without_nonce(), nonces)
+    }
+
+    fn cache() -> NonceCache {
+        NonceCache::new(NOW - 1000)
     }
 
     const FULL: &str = "\"@method\" \"@target-uri\" \"content-digest\"";
@@ -994,7 +1056,7 @@ mod tests {
         let s = signer();
         let body = b"{\"access_token\":{\"access\":[\"x\"]}}";
         let headers = signed(&s, body, FULL, &params(";nonce=\"n-1\""), None);
-        let got = check(&s, &headers, body, false, &mut NonceCache::new()).unwrap();
+        let got = check(&s, &headers, body, false, &mut cache()).unwrap();
         assert_eq!(got.algorithm, HttpsigAlgorithm::EcdsaP256Sha256);
         assert_eq!(got.created, NOW);
         assert_eq!(
@@ -1004,7 +1066,7 @@ mod tests {
     }
 
     fn refused(headers: &[(String, String)], s: &Signer, body: &[u8], bound: bool) -> HttpsigError {
-        check(s, headers, body, bound, &mut NonceCache::new()).unwrap_err()
+        check(s, headers, body, bound, &mut cache()).unwrap_err()
     }
 
     #[test]
@@ -1018,7 +1080,7 @@ mod tests {
                 &signed(&s, body, FULL, &params(""), None),
                 body,
                 false,
-                &mut NonceCache::new()
+                &mut cache()
             )
             .is_ok()
         );
@@ -1067,7 +1129,7 @@ mod tests {
                     &signed(&s, body, FULL, &p, None),
                     body,
                     false,
-                    &mut NonceCache::new()
+                    &mut cache()
                 )
                 .is_ok(),
                 "{fine}"
@@ -1127,7 +1189,7 @@ mod tests {
                 &signed(&s, b"", "\"@method\" \"@target-uri\"", &params(""), None),
                 b"",
                 false,
-                &mut NonceCache::new()
+                &mut cache()
             )
             .is_ok()
         );
@@ -1148,7 +1210,7 @@ mod tests {
                 &signed(&s, body, &with_auth, &params(""), Some("TOKEN")),
                 body,
                 true,
-                &mut NonceCache::new()
+                &mut cache()
             )
             .is_ok()
         );
@@ -1162,7 +1224,38 @@ mod tests {
             refused(&headers, &s, b"{\"a\":2}", false),
             HttpsigError::DigestMismatch
         );
-        assert!(check(&s, &headers, b"{\"a\":1}", false, &mut NonceCache::new()).is_ok());
+        assert!(check(&s, &headers, b"{\"a\":1}", false, &mut cache()).is_ok());
+    }
+
+    #[test]
+    fn an_unknown_digest_member_is_ignored_by_choice_and_a_known_one_still_has_to_be_right() {
+        // RFC 9530 lets a sender list several algorithms; one this verifier does not know cannot be checked,
+        // so it is ignored (the algorithm the proof names is what is enforced). The choice is pinned here.
+        let body = b"{}";
+        let good = content_digest_header("sha-256", body).unwrap();
+        let verify = |header: String| {
+            let headers = [("Content-Digest", header.as_str())];
+            let request = HttpRequest {
+                method: "POST",
+                target_uri: URI,
+                headers: &headers,
+                body,
+            };
+            verify_content_digest(&request, "sha-256")
+        };
+        assert!(verify(good.clone()).is_ok());
+        assert!(verify(format!("md5=:AAAA:, {good}")).is_ok());
+        // an unknown member alone does not satisfy the proof's algorithm
+        assert!(matches!(
+            verify("md5=:AAAA:".to_string()),
+            Err(HttpsigError::PolicyViolation(_))
+        ));
+        // a known member that is wrong is refused even beside a right one
+        let wrong = content_digest_header("sha-512", b"other").unwrap();
+        assert_eq!(
+            verify(format!("{good}, {wrong}")).unwrap_err(),
+            HttpsigError::DigestMismatch
+        );
     }
 
     #[test]
@@ -1191,8 +1284,8 @@ mod tests {
         let err = verify_gnap_request(
             &request,
             &context,
-            &HttpsigPolicy::default(),
-            &mut NonceCache::new(),
+            &HttpsigPolicy::without_nonce(),
+            &mut cache(),
         )
         .unwrap_err();
         assert!(matches!(err, HttpsigError::PolicyViolation(_)), "{err:?}");
@@ -1203,7 +1296,7 @@ mod tests {
         let s = signer();
         let body = b"{}";
         let headers = signed(&s, body, FULL, &params(";nonce=\"once\""), None);
-        let mut nonces = NonceCache::new();
+        let mut nonces = cache();
         assert!(check(&s, &headers, body, false, &mut nonces).is_ok());
         assert_eq!(
             check(&s, &headers, body, false, &mut nonces).unwrap_err(),
@@ -1221,7 +1314,7 @@ mod tests {
                 }
             })
             .collect();
-        let mut other = NonceCache::new();
+        let mut other = cache();
         assert_eq!(
             check(&s, &forged, body, false, &mut other).unwrap_err(),
             HttpsigError::BadSignature
@@ -1234,16 +1327,104 @@ mod tests {
 
     #[test]
     fn a_nonce_is_remembered_for_the_window_then_forgotten() {
-        let mut cache = NonceCache::new();
-        assert!(cache.check_and_insert("k", "n", 100, 600));
-        assert!(!cache.check_and_insert("k", "n", 700, 600));
+        let mut cache = cache();
+        assert!(cache.check_and_insert("k", "n", 100, 600).is_ok());
+        assert_eq!(
+            cache.check_and_insert("k", "n", 700, 600),
+            Err(HttpsigError::NonceReplayed)
+        );
         assert!(
-            cache.check_and_insert("k", "n", 701, 600),
+            cache.check_and_insert("k", "n", 701, 600).is_ok(),
             "after the window it may be used again"
         );
         assert!(
-            cache.check_and_insert("other-key", "n", 701, 600),
+            cache.check_and_insert("other-key", "n", 701, 600).is_ok(),
             "scopes are separate"
+        );
+    }
+
+    #[test]
+    fn a_full_cache_refuses_a_new_nonce_and_does_not_forget_an_old_one() {
+        let mut cache = NonceCache::with_capacity(0, 2);
+        assert!(cache.check_and_insert("k", "a", 100, 600).is_ok());
+        assert!(cache.check_and_insert("k", "b", 100, 600).is_ok());
+        assert_eq!(
+            cache.check_and_insert("k", "c", 100, 600),
+            Err(HttpsigError::NonceCacheFull)
+        );
+        // the oldest nonce was not evicted to make room: replaying it is still refused
+        assert_eq!(
+            cache.check_and_insert("k", "a", 100, 600),
+            Err(HttpsigError::NonceReplayed)
+        );
+        // once entries leave their window there is room again
+        assert!(cache.check_and_insert("k", "c", 701, 600).is_ok());
+    }
+
+    #[test]
+    fn a_captured_request_cannot_be_replayed_into_a_restarted_verifier() {
+        let s = signer();
+        let body = b"{}";
+        let headers = signed(&s, body, FULL, &params(";nonce=\"n1\""), None);
+        // the process that saw it
+        let mut before = NonceCache::new(NOW - 1000);
+        assert!(check(&s, &headers, body, false, &mut before).is_ok());
+        assert_eq!(
+            check(&s, &headers, body, false, &mut before).unwrap_err(),
+            HttpsigError::NonceReplayed
+        );
+        // the verifier restarts after the request was made: its cache is empty but its floor is later
+        let mut after = NonceCache::new(NOW + 1);
+        assert_eq!(
+            check(&s, &headers, body, false, &mut after).unwrap_err(),
+            HttpsigError::PredatesNonceCache,
+            "the same request must not verify in a fresh cache"
+        );
+        // control: a request made after the restart is accepted
+        let mut restarted = NonceCache::new(NOW);
+        assert!(check(&s, &headers, body, false, &mut restarted).is_ok());
+    }
+
+    #[test]
+    fn the_default_policy_requires_a_nonce_so_a_captured_request_does_not_replay() {
+        let s = signer();
+        let body = b"{}";
+        let policy = HttpsigPolicy::default();
+        assert!(policy.require_nonce);
+        assert!(policy.nonce_window_secs >= policy.max_skew_secs);
+        let verify = |headers: &[(String, String)], nonces: &mut NonceCache| {
+            let borrowed: Vec<(&str, &str)> = headers
+                .iter()
+                .map(|(n, v)| (n.as_str(), v.as_str()))
+                .collect();
+            let request = HttpRequest {
+                method: "POST",
+                target_uri: URI,
+                headers: &borrowed,
+                body,
+            };
+            let context = GnapHttpsigContext {
+                jwk: &s.jwk,
+                proof_alg: None,
+                content_digest_alg: None,
+                bound_to_token: false,
+                now: NOW,
+                nonce_scope: "t",
+            };
+            verify_gnap_request(&request, &context, &policy, nonces)
+        };
+        let mut nonces = cache();
+        let no_nonce = signed(&s, body, FULL, &params(""), None);
+        assert!(matches!(
+            verify(&no_nonce, &mut nonces),
+            Err(HttpsigError::PolicyViolation(_))
+        ));
+        // control: the same request with a nonce is accepted once, and its replay is refused
+        let with_nonce = signed(&s, body, FULL, &params(";nonce=\"fresh\""), None);
+        assert!(verify(&with_nonce, &mut nonces).is_ok());
+        assert_eq!(
+            verify(&with_nonce, &mut nonces).unwrap_err(),
+            HttpsigError::NonceReplayed
         );
     }
 
@@ -1270,20 +1451,17 @@ mod tests {
             now: NOW,
             nonce_scope: "t",
         };
-        let strict = HttpsigPolicy {
-            require_nonce: true,
-            ..HttpsigPolicy::default()
-        };
+        let strict = HttpsigPolicy::default();
         assert!(matches!(
-            verify_gnap_request(&request, &context, &strict, &mut NonceCache::new()),
+            verify_gnap_request(&request, &context, &strict, &mut cache()),
             Err(HttpsigError::PolicyViolation(_))
         ));
         assert!(
             verify_gnap_request(
                 &request,
                 &context,
-                &HttpsigPolicy::default(),
-                &mut NonceCache::new()
+                &HttpsigPolicy::without_nonce(),
+                &mut cache()
             )
             .is_ok()
         );
@@ -1300,7 +1478,7 @@ mod tests {
             "other=(\"@method\");created=1".into(),
         ));
         headers.push(("Signature".into(), "other=:AAAA:".into()));
-        assert!(check(&s, &headers, body, false, &mut NonceCache::new()).is_ok());
+        assert!(check(&s, &headers, body, false, &mut cache()).is_ok());
         // a second tagged one: ambiguous
         headers.push((
             "Signature-Input".into(),
@@ -1516,8 +1694,8 @@ mod tests {
         let got = verify_gnap_request(
             &request,
             &context,
-            &HttpsigPolicy::default(),
-            &mut NonceCache::new(),
+            &HttpsigPolicy::without_nonce(),
+            &mut cache(),
         )
         .unwrap();
         assert_eq!(got.algorithm, HttpsigAlgorithm::Ed25519);
