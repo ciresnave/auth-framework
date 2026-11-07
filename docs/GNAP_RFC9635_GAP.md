@@ -122,7 +122,7 @@ Each slice is one PR, with a born-red test before the code, a mutation check, an
 | G1 | types and errors | RFC types with Appendix E polymorphism: `access_token` object or array, access objects, labels, flags, references (8.1), `manage` object, `key` object/string, `client` by reference, `user`, `class_id`; the 3.6 error object and codes |
 | G2 | `httpsig` | RFC 9421 + RFC 9530, tag `gnap`; first check crates.io for a maintained crate (any new dependency is an ask) |
 | G3 | `jwsd`, `jws`, `mtls`, key formats | 7.3.2-7.3.4, `cert` / `cert#S256`; decide the fate of the `dpop` extension |
-| G4 | interaction | start modes `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push`, `hash_method`, hints, interaction expiry, callback checks |
+| G4 | interaction | start modes `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push`, `hash_method`, hints, interaction expiry, callback checks. Built in `gnap_interaction.rs`; `hash_method` supports `sha-256`, `sha-384`, `sha-512` and refuses `sha3-*` and the other registry names with `UnsupportedHashMethod` (the RFC 4.2.3 sha3-512 example needs the `sha3` crate: an [ASK] if G10 or a client needs it) |
 | G5 | continuation and tokens | polling with `wait` / `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, rotate and revoke with proof, key rotation, `Authorization: GNAP` parsing |
 | G6 | policy, consent, storage | policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style), not one hard-wired store |
 | G7 | HTTP and discovery | axum and actix routes, `OPTIONS` discovery (9.2), RS-first (9.1) |
