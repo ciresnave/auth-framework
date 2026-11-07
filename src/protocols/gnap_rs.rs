@@ -81,7 +81,8 @@ pub struct RsCall<'a> {
     /// The `resource_server` member of the request body: an object (by value) or a string (a
     /// reference).
     pub resource_server: &'a Value,
-    /// The request headers the proof lives in (for example `Signature`, `Signature-Input`).
+    /// The request headers the proof lives in (for example `signature`, `signature-input`), with
+    /// their names in lower case.
     pub headers: &'a [(String, String)],
 }
 

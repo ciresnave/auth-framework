@@ -54,6 +54,12 @@ impl GnapHttpResponse {
         }
     }
 
+    /// A 400 `invalid_request` answer, for an adapter that refuses a request before it reaches
+    /// [`GnapRsHttp::handle`] (for example a body over [`MAX_BODY_BYTES`]).
+    pub fn invalid_request(description: &str) -> Self {
+        Self::error("invalid_request", description)
+    }
+
     fn error(code: &str, description: &str) -> Self {
         let body = json!({"error": {"code": code, "description": description}});
         Self::json(400, &body, true)
@@ -138,11 +144,19 @@ impl GnapRsHttp {
         let Ok(body) = serde_json::from_slice::<Value>(&req.body) else {
             return GnapHttpResponse::error("invalid_request", "request body is not JSON");
         };
+        // Header names are case-insensitive; the authenticator is given them in lower case.
+        let headers: Vec<(String, String)> = req
+            .headers
+            .iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v.clone()))
+            .collect();
         let call = RsCall {
             http_method: &req.method,
-            http_uri: &req.uri,
+            // The AS's own endpoint URL: a request target does not carry the scheme and host a
+            // proof is bound to.
+            http_uri: self.api.introspection_endpoint(),
             resource_server: body.get("resource_server").unwrap_or(&NULL),
-            headers: &req.headers,
+            headers: &headers,
         };
         match self.api.introspect(&call, &body).await {
             Ok(answer) => GnapHttpResponse::json(200, &answer, true),
@@ -156,7 +170,7 @@ impl GnapRsHttp {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::protocols::gnap_rs::{
         AuthenticatedRs, GnapRsConfig, ResourceServerAuthenticator, RsTokenInfo, TokenInfoSource,
@@ -186,20 +200,23 @@ mod tests {
         }
     }
 
-    /// Knows one RS, called by the `X-Test-Rs` header.
+    /// Knows one RS, called by the `X-Test-Rs` header (seen in lower case).
     struct HeaderRs;
 
     #[async_trait]
     impl ResourceServerAuthenticator for HeaderRs {
         async fn authenticate(&self, call: &RsCall<'_>) -> Option<AuthenticatedRs> {
-            call.headers
+            let known = call
+                .headers
                 .iter()
-                .any(|(k, v)| k == "X-Test-Rs" && v == "rs-1")
-                .then(|| AuthenticatedRs { id: "rs-1".into() })
+                .any(|(k, v)| k == "x-test-rs" && v == "rs-1");
+            // A proof is bound to the AS's own URL, not to whatever target the request carried.
+            let uri_ok = call.http_uri == "https://as.example.test/gnap/introspect";
+            (known && uri_ok).then(|| AuthenticatedRs { id: "rs-1".into() })
         }
     }
 
-    fn handler() -> GnapRsHttp {
+    pub(crate) fn handler() -> GnapRsHttp {
         let config = GnapRsConfig {
             grant_request_endpoint: "https://as.example.test/tx".into(),
             introspection_endpoint: "https://as.example.test/gnap/introspect".into(),
@@ -211,7 +228,7 @@ mod tests {
         GnapRsHttp::new(Arc::new(api))
     }
 
-    fn post(uri: &str, rs: bool, body: &str) -> GnapHttpRequest {
+    pub(crate) fn post(uri: &str, rs: bool, body: &str) -> GnapHttpRequest {
         let headers = if rs {
             vec![("X-Test-Rs".to_string(), "rs-1".to_string())]
         } else {
@@ -320,6 +337,15 @@ mod tests {
     async fn an_unknown_path_is_404() {
         let r = handler().handle(&post("/gnap/other", true, GOOD)).await;
         assert_eq!(r.status, 404);
+    }
+
+    #[tokio::test]
+    async fn the_authenticator_is_given_the_configured_endpoint_url() {
+        // HeaderRs refuses any other URI, so a request that came in as a bare path still passes.
+        let r = handler()
+            .handle(&post("/gnap/introspect", true, GOOD))
+            .await;
+        assert_eq!(r.status, 200);
     }
 
     #[tokio::test]
