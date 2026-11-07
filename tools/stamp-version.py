@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Stamp a version onto a change: the one step that touches the files parallel PRs would otherwise collide on.
 
-    python tools/stamp-version.py 0.6.0-rc237 [--dry-run] [--root DIR]
+    python tools/stamp-version.py 0.6.0-rc230 [--dry-run] [--root DIR]
     python tools/stamp-version.py --check [--root DIR]
 
 A PR edits only its own files plus one CHANGELOG fragment, `changelog.d/<topic>.md` (see changelog.d/README.md).
@@ -171,7 +171,7 @@ def stamp(root, new, dry):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("version", nargs="?", help="the new version, e.g. 0.6.0-rc237")
+    parser.add_argument("version", nargs="?", help="the new version, e.g. 0.6.0-rc230")
     parser.add_argument("--dry-run", action="store_true", help="print what would change and change nothing")
     parser.add_argument("--check", action="store_true", help="verify the file list against the tree and change nothing")
     parser.add_argument("--root", default=".", help="the repository root (default: the current directory)")
