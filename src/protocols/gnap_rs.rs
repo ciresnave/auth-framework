@@ -20,6 +20,26 @@ use std::sync::Arc;
 /// Path of the RS-facing discovery document, under the grant endpoint's scheme and authority.
 pub const DISCOVERY_PATH: &str = "/.well-known/gnap-as-rs";
 
+/// Why an RS call was refused (as opposed to answered with an inactive token).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RsError {
+    /// The call was not proved by a known resource server key (HTTP 401).
+    Unauthenticated,
+    /// The request body is not a valid request (HTTP 400).
+    BadRequest(String),
+}
+
+impl std::fmt::Display for RsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RsError::Unauthenticated => write!(f, "resource server not authenticated"),
+            RsError::BadRequest(why) => write!(f, "{why}"),
+        }
+    }
+}
+
+impl std::error::Error for RsError {}
+
 /// What the AS knows about one issued access token.
 #[derive(Debug, Clone)]
 pub struct RsTokenInfo {
@@ -157,21 +177,27 @@ impl GnapResourceServerApi {
 
     /// Introspect an access token for an RS (RFC 9767 section 3.3).
     ///
-    /// `Err` means the call itself is refused: the RS was not authenticated, or the body is not a
-    /// request (the route layer answers 401 and 400). A token that is not active is an `Ok`
+    /// `Err` means the call itself is refused: [`RsError::Unauthenticated`] (the route layer answers
+    /// 401) or [`RsError::BadRequest`] (400). A token that is not active is an `Ok`
     /// response, `{"active": false}`, with no other member.
-    pub async fn introspect(&self, call: &RsCall<'_>, body: &Value) -> Result<Value> {
+    pub async fn introspect(
+        &self,
+        call: &RsCall<'_>,
+        body: &Value,
+    ) -> std::result::Result<Value, RsError> {
         let Some(rs) = self.authenticator.authenticate(call).await else {
-            return Err(AuthError::validation("resource server not authenticated"));
+            return Err(RsError::Unauthenticated);
         };
         let value = body
             .get("access_token")
             .and_then(Value::as_str)
-            .ok_or_else(|| AuthError::validation("introspection request needs access_token"))?;
+            .ok_or_else(|| {
+                RsError::BadRequest("introspection request needs access_token".into())
+            })?;
         // The authenticator saw `resource_server` in the call; the member itself is required.
         if body.get("resource_server").is_none() {
-            return Err(AuthError::validation(
-                "introspection request needs resource_server",
+            return Err(RsError::BadRequest(
+                "introspection request needs resource_server".into(),
             ));
         }
 
@@ -304,7 +330,10 @@ mod tests {
         build(config(), tokens, rs).unwrap()
     }
 
-    async fn introspect(api: &GnapResourceServerApi, body: Value) -> Result<Value> {
+    async fn introspect(
+        api: &GnapResourceServerApi,
+        body: Value,
+    ) -> std::result::Result<Value, RsError> {
         let rs = json!("rs-1");
         let call = RsCall {
             http_method: "POST",
@@ -462,17 +491,29 @@ mod tests {
     #[tokio::test]
     async fn an_unauthenticated_rs_is_refused_before_the_token_is_looked_up() {
         let api = api_with(vec![("tok-1", info())], None);
-        assert!(introspect(&api, req(json!({}))).await.is_err());
+        assert_eq!(
+            introspect(&api, req(json!({}))).await,
+            Err(RsError::Unauthenticated)
+        );
     }
 
     #[tokio::test]
     async fn a_body_without_the_required_members_is_refused() {
         let api = api_with(vec![("tok-1", info())], Some("rs-1"));
         let no_token = json!({"resource_server": "rs-1"});
-        assert!(introspect(&api, no_token).await.is_err());
+        assert!(matches!(
+            introspect(&api, no_token).await,
+            Err(RsError::BadRequest(_))
+        ));
         let no_rs = json!({"access_token": "tok-1"});
-        assert!(introspect(&api, no_rs).await.is_err());
+        assert!(matches!(
+            introspect(&api, no_rs).await,
+            Err(RsError::BadRequest(_))
+        ));
         let bad_token = json!({"access_token": 5, "resource_server": "rs-1"});
-        assert!(introspect(&api, bad_token).await.is_err());
+        assert!(matches!(
+            introspect(&api, bad_token).await,
+            Err(RsError::BadRequest(_))
+        ));
     }
 }
