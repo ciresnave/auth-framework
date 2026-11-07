@@ -245,6 +245,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 0.6.0-rc234 -- GNAP resource-server API (RFC 9767 sections 3.1 and 3.3): `gnap_rs` holds the discovery document and token introspection. The deployer supplies the resource-server authenticator and the token source. No routes yet.
 - 0.6.0-rc229 -- CI only: `ci-cd.yml` gets a concurrency group, so a newer push to a pull request cancels that PR's older run; pushes to main, develop and release/** and published releases are never cancelled. No code change.
 - 0.6.0-rc219 -- Test only: language-neutral GNAP conformance vectors (`tests/conformance/gnap/vectors.json`, each citing its RFC section and marked positive or negative; transaction, continuation and RFC 9635 section 11 checks) and a Rust harness that replays them.
 - 0.6.0-rc218 -- ROADMAP G0 and KM1-KM8, docs and rustdoc only; `SECURITY.md` lists GHSA-qjgj-6fmg-c5c8, GHSA-mq4v-f666-jf9r and GHSA-m45g-8jrx-3hfq with their fixed releases (key-management rows and the key anchor per principal kind are in `docs/GNAP_RFC9635_GAP.md` sections 8 and 9): `docs/GNAP_RFC9635_GAP.md` measures `src/protocols/gnap.rs` against RFC 9635 section by section (and RFC 9767), with the slice plan, the agent-principal requirements and the access-control engine rows; ROADMAP rows G0-G10 and AC1-AC6 and two dependency-freshness rows; `permissions::Delegation` and `check_delegation` carry a rustdoc warning that they do not attenuate and must not be fed caller-supplied delegations.
