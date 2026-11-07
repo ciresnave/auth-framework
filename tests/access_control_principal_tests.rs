@@ -139,7 +139,7 @@ fn a_thumbprint_is_bound_once_for_ever() {
     assert_eq!(r.add_key("svc", "tp"), Err(PrincipalError::KeyAlreadyBound));
     assert_eq!(r.add_key("bot", "tp"), Err(PrincipalError::KeyAlreadyBound));
     assert_eq!(r.revoke_key("bot", "tp"), Err(PrincipalError::KeyNotBound));
-    assert_eq!(r.add_key("bot", ""), Err(PrincipalError::KeyNotBound));
+    assert_eq!(r.add_key("bot", ""), Err(PrincipalError::InvalidThumbprint));
     r.retire("svc").unwrap();
     assert_eq!(r.add_key("svc", "fresh"), Err(PrincipalError::Retired));
     assert_eq!(r.add_key("ghost", "fresh"), Err(PrincipalError::Unknown));
@@ -158,7 +158,8 @@ fn engine() -> InMemoryEngine {
             "synapse:see",
             "agent:pm@acct",
             Effect::Allow,
-        ));
+        ))
+        .unwrap();
     }
     e
 }
@@ -206,7 +207,8 @@ fn without_a_registry_any_id_is_accepted() {
     let mut a = ActionRegistry::new();
     a.register("synapse:see", false);
     let mut e = InMemoryEngine::new(a);
-    e.add_grant(Grant::new("g", "anyone", "synapse:see", "x", Effect::Allow));
+    e.add_grant(Grant::new("g", "anyone", "synapse:see", "x", Effect::Allow))
+        .unwrap();
     assert!(
         e.decide_at("anyone", "synapse:see", "x", Utc::now())
             .is_allow()
@@ -262,4 +264,37 @@ fn a_program_nobody_owns_cannot_exist_so_no_agent_can_hang_off_one() {
     r.create("tool", Program, Some("alice")).unwrap();
     r.create("agent", Agent, Some("tool")).unwrap();
     assert_eq!(r.root_human("agent"), Some("alice"));
+}
+
+#[test]
+fn a_suspension_applies_through_the_cache_without_invalidate() {
+    // principals_mut moves the source generation, so a cached allow is not
+    // served after the lifecycle change (no caller discipline needed).
+    let mut c = CachedAuthorizer::new(engine());
+    let t = Utc::now();
+    assert!(
+        c.decide_at("bot", "synapse:see", "agent:pm@acct", Freshness::Cached, t)
+            .is_allow()
+    );
+    c.source_mut()
+        .principals_mut()
+        .unwrap()
+        .suspend("bot")
+        .unwrap();
+    assert!(
+        !c.decide_at("bot", "synapse:see", "agent:pm@acct", Freshness::Cached, t)
+            .is_allow()
+    );
+}
+
+#[test]
+fn the_registry_can_be_enumerated() {
+    let mut r = reg();
+    assert_eq!(r.len(), 4);
+    assert!(!r.is_empty());
+    r.retire("sub").unwrap();
+    let mut ids: Vec<&str> = r.principals().map(|p| p.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, ["alice", "bot", "sub", "svc"]);
+    assert!(PrincipalRegistry::new().is_empty());
 }

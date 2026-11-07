@@ -6,7 +6,8 @@
 //! and so can any strict owner-ancestor of the principal the object names
 //! (`agent:<id>@...`), which is how "revocable by any ancestor up to the
 //! account holder" is met. Everyone else shares a subset of what they hold
-//! with [`InMemoryEngine::delegate`]. Every edit, refused or not, is recorded.
+//! with [`InMemoryEngine::delegate`]. Every edit, refused or not, is recorded
+//! (including a refused delegation and a duplicate rule id).
 
 use super::{Effect, Grant, InMemoryEngine, object_matches, object_within};
 use chrono::{DateTime, Utc};
@@ -49,6 +50,19 @@ pub enum RuleError {
     DuplicateId,
     /// No such rule.
     UnknownRule,
+    /// The rule id is empty.
+    InvalidId,
+}
+
+/// Could some object match both patterns? Errs towards true: only the literal
+/// text before each pattern's first `*` is compared.
+fn may_overlap(a: &str, b: &str) -> bool {
+    match (a.find('*'), b.find('*')) {
+        (None, None) => a == b,
+        (None, Some(j)) => a.starts_with(&b[..j]),
+        (Some(i), None) => b.starts_with(&a[..i]),
+        (Some(i), Some(j)) => a[..i].starts_with(&b[..j]) || b[..j].starts_with(&a[..i]),
+    }
 }
 
 /// The principal an object names: `agent:<id>@account` gives `<id>`.
@@ -123,8 +137,8 @@ impl InMemoryEngine {
             return false;
         }
         // A pattern is covered only if some edit grant of the actor contains
-        // it, and the actor has no edit-action deny at all (a deny on one
-        // object under the pattern could otherwise be edited around).
+        // it, and the actor has no edit-action deny that could overlap it (a
+        // deny on one object under the pattern could otherwise be edited around).
         let live: Vec<&Grant> = self
             .grants
             .iter()
@@ -134,7 +148,11 @@ impl InMemoryEngine {
                     && self.chain_alive(g, now)
             })
             .collect();
-        if object.contains('*') && live.iter().any(|g| g.effect == Effect::Deny) {
+        if object.contains('*')
+            && live
+                .iter()
+                .any(|g| g.effect == Effect::Deny && may_overlap(&g.object, object))
+        {
             return false;
         }
         let denied = live
@@ -163,7 +181,12 @@ impl InMemoryEngine {
             self.record(now, actor, AuditOp::Refused, &rule.id, Vec::new());
             return Err(RuleError::NotAuthorized);
         }
+        if rule.id.is_empty() {
+            self.record(now, actor, AuditOp::Refused, &rule.id, Vec::new());
+            return Err(RuleError::InvalidId);
+        }
         if self.find(&rule.id).is_some() {
+            self.record(now, actor, AuditOp::Refused, &rule.id, Vec::new());
             return Err(RuleError::DuplicateId);
         }
         // An editor's rule is a root rule: it hangs from nothing.
@@ -171,6 +194,7 @@ impl InMemoryEngine {
         rule.depth = 0;
         rule.issuer = Some(actor.to_string());
         let id = rule.id.clone();
+        self.generation += 1;
         self.grants.push(rule);
         self.record(now, actor, AuditOp::Added, &id, Vec::new());
         Ok(())

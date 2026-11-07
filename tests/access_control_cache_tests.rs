@@ -28,6 +28,25 @@ impl Source for Flaky {
         }
         self.inner.query(p, a, o, now)
     }
+
+    fn generation(&self) -> u64 {
+        self.inner.generation()
+    }
+}
+
+/// A source that does not override `generation`: it must never be served from cache.
+struct Opaque(InMemoryEngine);
+
+impl Source for Opaque {
+    fn query(
+        &self,
+        p: &str,
+        a: &str,
+        o: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Answer, SourceUnavailable> {
+        self.0.query(p, a, o, now)
+    }
 }
 
 fn cached() -> CachedAuthorizer<Flaky> {
@@ -36,8 +55,10 @@ fn cached() -> CachedAuthorizer<Flaky> {
     r.register("synapse:send", false);
     r.register("synapse:edit-rule", true);
     let mut e = InMemoryEngine::new(r);
-    e.add_grant(Grant::new("g", A, "synapse:see", PM, Effect::Allow));
-    e.add_grant(Grant::new("r", A, "synapse:edit-rule", PM, Effect::Allow));
+    e.add_grant(Grant::new("g", A, "synapse:see", PM, Effect::Allow))
+        .unwrap();
+    e.add_grant(Grant::new("r", A, "synapse:edit-rule", PM, Effect::Allow))
+        .unwrap();
     CachedAuthorizer::new(Flaky {
         inner: e,
         up: AtomicBool::new(true),
@@ -65,16 +86,83 @@ fn a_decision_is_reused_within_the_ttl() {
 }
 
 #[test]
-fn a_revoke_applies_within_60_seconds() {
+fn a_revoke_applies_at_once() {
     let mut c = cached();
     let t = Utc::now();
     assert!(see(&c, A, Freshness::Cached, t).is_allow());
     c.source_mut().inner.remove_grant("g");
-    // inside the window a stale allow is the permitted staleness
-    assert!(see(&c, A, Freshness::Cached, t + Duration::seconds(59)).is_allow());
-    // at 60 s the cache entry is dead and the source says no
-    assert!(!see(&c, A, Freshness::Cached, t + Duration::seconds(60)).is_allow());
+    // The source's generation moved, so the cached allow is not served.
+    assert!(!see(&c, A, Freshness::Cached, t + Duration::seconds(1)).is_allow());
     assert_eq!(calls(&c), 2);
+}
+
+#[test]
+fn a_sensitive_deny_added_after_a_cached_allow_is_seen_at_once() {
+    let mut c = cached();
+    let t = Utc::now();
+    assert!(see(&c, A, Freshness::Cached, t).is_allow());
+    // Control: unchanged source, so the second call is a cache hit.
+    assert!(see(&c, A, Freshness::Cached, t + Duration::seconds(1)).is_allow());
+    assert_eq!(calls(&c), 1);
+    let mut deny = Grant::new("d", A, "synapse:see", PM, Effect::Deny);
+    deny.sensitive = true;
+    c.source_mut().inner.add_grant(deny).unwrap();
+    assert!(!see(&c, A, Freshness::Cached, t + Duration::seconds(2)).is_allow());
+}
+
+#[test]
+fn marking_an_object_sensitive_or_registering_an_action_is_seen_at_once() {
+    let mut c = cached();
+    let t = Utc::now();
+    assert!(see(&c, A, Freshness::Cached, t).is_allow());
+    c.source_mut().inner.mark_object_sensitive(PM);
+    assert!(see(&c, A, Freshness::Cached, t + Duration::seconds(1)).is_allow());
+    // Sensitive now: every call goes to the source.
+    let n = calls(&c);
+    see(&c, A, Freshness::Cached, t + Duration::seconds(2));
+    assert_eq!(calls(&c), n + 1);
+    let g = c.source().inner.generation();
+    c.source_mut()
+        .inner
+        .registry_mut()
+        .register("synapse:new", false);
+    assert_ne!(c.source().inner.generation(), g);
+}
+
+#[test]
+fn a_source_that_cannot_report_a_generation_is_never_served_from_cache() {
+    let mut r = ActionRegistry::new();
+    r.register("synapse:see", false);
+    let mut e = InMemoryEngine::new(r);
+    e.add_grant(Grant::new("g", A, "synapse:see", PM, Effect::Allow))
+        .unwrap();
+    let c = CachedAuthorizer::new(Opaque(e));
+    let t = Utc::now();
+    for i in 0..3 {
+        assert!(
+            c.decide_at(
+                A,
+                "synapse:see",
+                PM,
+                Freshness::Cached,
+                t + Duration::seconds(i)
+            )
+            .is_allow()
+        );
+    }
+    // Still correct after the engine changes, because nothing was cached.
+    let mut c = c;
+    c.source_mut().0.remove_grant("g");
+    assert!(
+        !c.decide_at(
+            A,
+            "synapse:see",
+            PM,
+            Freshness::Cached,
+            t + Duration::seconds(5)
+        )
+        .is_allow()
+    );
 }
 
 #[test]
@@ -141,7 +229,7 @@ fn a_sensitive_grant_is_checked_live_on_every_call() {
     let mut c = cached();
     let mut g = Grant::new("sg", B, "synapse:see", PM, Effect::Allow);
     g.sensitive = true;
-    c.source_mut().inner.add_grant(g);
+    c.source_mut().inner.add_grant(g).unwrap();
     let t = Utc::now();
     assert!(see(&c, B, Freshness::Cached, t).is_allow());
     assert!(see(&c, B, Freshness::Cached, t).is_allow());
@@ -239,7 +327,8 @@ fn the_engine_reports_sensitivity_from_action_object_and_grant() {
     r.register("touchy", true);
     let mut e = InMemoryEngine::new(r);
     let now = Utc::now();
-    e.add_grant(Grant::new("g", A, "plain", PM, Effect::Allow));
+    e.add_grant(Grant::new("g", A, "plain", PM, Effect::Allow))
+        .unwrap();
     assert!(!e.answer_at(A, "plain", PM, now).sensitive);
     assert!(e.answer_at(A, "touchy", PM, now).sensitive);
     e.mark_object_sensitive("agent:*@acct");

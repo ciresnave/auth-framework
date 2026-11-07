@@ -138,26 +138,28 @@ pub fn object_matches(pattern: &str, object: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    fn go(p: &[u8], o: &[u8]) -> bool {
-        match p.split_first() {
-            None => o.is_empty(),
-            Some((b'*', rest)) => {
-                let mut i = 0;
-                loop {
-                    if go(rest, &o[i..]) {
-                        return true;
-                    }
-                    if i < o.len() && o[i] != b'@' {
-                        i += 1;
-                    } else {
-                        return false;
-                    }
-                }
+    // Dynamic programming over (pattern, object) prefixes: O(len(p) * len(o)),
+    // so an adversarial pattern cannot blow up. `*` spans anything but `@`.
+    let (p, o) = (pattern.as_bytes(), object.as_bytes());
+    // row[j]: does p[..i] match o[..j]?
+    let mut row = vec![false; o.len() + 1];
+    row[0] = true;
+    for &pc in p {
+        let mut next = vec![false; o.len() + 1];
+        if pc == b'*' {
+            next[0] = row[0];
+            for j in 1..=o.len() {
+                // star consumes o[j-1] (not `@`) or has already matched o[..j]
+                next[j] = row[j] || (next[j - 1] && o[j - 1] != b'@');
             }
-            Some((c, rest)) => o.first() == Some(c) && go(rest, &o[1..]),
+        } else {
+            for j in 1..=o.len() {
+                next[j] = row[j - 1] && o[j - 1] == pc;
+            }
         }
+        row = next;
     }
-    go(pattern.as_bytes(), object.as_bytes())
+    row[o.len()]
 }
 
 /// Actions a consumer has registered, with their sensitivity default.
@@ -205,6 +207,10 @@ pub enum DelegationError {
     UnknownGrant,
     /// A grant with the new id already exists.
     DuplicateId,
+    /// A grant added directly must be a root grant: no parent, depth 0.
+    NotRootGrant,
+    /// The action was never registered.
+    UnregisteredAction,
     /// The delegator is not the holder of the source grant.
     NotHolder,
     /// Only allow grants can be delegated.
@@ -258,8 +264,8 @@ pub fn object_within(parent: &str, child: &str) -> bool {
 /// In-memory engine: a registry plus a list of grants.
 #[derive(Debug, Clone)]
 pub struct InMemoryEngine {
-    /// The registered actions.
-    pub registry: ActionRegistry,
+    registry: ActionRegistry,
+    generation: u64,
     grants: Vec<Grant>,
     max_depth: u8,
     account_holder: Option<String>,
@@ -280,6 +286,7 @@ impl InMemoryEngine {
     pub fn new(registry: ActionRegistry) -> Self {
         Self {
             registry,
+            generation: 0,
             grants: Vec::new(),
             max_depth: DEFAULT_MAX_DELEGATION_DEPTH,
             account_holder: None,
@@ -288,6 +295,23 @@ impl InMemoryEngine {
             edit_action: None,
             audit: Vec::new(),
         }
+    }
+
+    /// The registered actions.
+    pub fn registry(&self) -> &ActionRegistry {
+        &self.registry
+    }
+
+    /// The registered actions, for registering more. Counts as a change.
+    pub fn registry_mut(&mut self) -> &mut ActionRegistry {
+        self.generation += 1;
+        &mut self.registry
+    }
+
+    /// A number that changes whenever anything that can change an answer
+    /// changes (grants, delegations, sensitivity marks, actions, principals).
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Set the longest delegation chain (default 3).
@@ -307,6 +331,7 @@ impl InMemoryEngine {
     /// principals can be allowed anything. Without one, any id is accepted.
     pub fn with_principals(mut self, registry: PrincipalRegistry) -> Self {
         self.principals = Some(registry);
+        self.generation += 1;
         self
     }
 
@@ -317,17 +342,30 @@ impl InMemoryEngine {
 
     /// The attached registry, for creating principals and changing lifecycle.
     pub fn principals_mut(&mut self) -> Option<&mut PrincipalRegistry> {
+        self.generation += 1;
         self.principals.as_mut()
     }
 
-    /// Add a root grant.
-    pub fn add_grant(&mut self, grant: Grant) {
+    /// Add a root grant. Refused if the id is already taken (a second grant with
+    /// the same id would be enforced by `decide` but invisible to lookup and
+    /// removal) or if the grant claims a parent or a depth (a forged chain
+    /// position could outrun the delegation limit).
+    pub fn add_grant(&mut self, grant: Grant) -> Result<(), DelegationError> {
+        if grant.parent.is_some() || grant.depth != 0 {
+            return Err(DelegationError::NotRootGrant);
+        }
+        if self.find(&grant.id).is_some() {
+            return Err(DelegationError::DuplicateId);
+        }
+        self.generation += 1;
         self.grants.push(grant);
+        Ok(())
     }
 
     /// Remove the grant with this id and, transitively, everything delegated
     /// from it.
     pub fn remove_grant(&mut self, id: &str) {
+        self.generation += 1;
         let mut dead: Vec<String> = vec![id.to_string()];
         let mut i = 0;
         while i < dead.len() {
@@ -375,8 +413,28 @@ impl InMemoryEngine {
         self.delegate_at(req, Utc::now())
     }
 
-    /// [`delegate`](Self::delegate) at a given instant.
+    /// [`delegate`](Self::delegate) at a given instant. A refusal is recorded
+    /// in the audit trail (actor: the delegator; rule: the id that was asked
+    /// for; chain: the source grant's chain, if it exists).
     pub fn delegate_at(
+        &mut self,
+        req: DelegationRequest,
+        now: DateTime<Utc>,
+    ) -> Result<(), DelegationError> {
+        let (delegator, id, from) = (req.delegator.clone(), req.id.clone(), req.from.clone());
+        let r = self.try_delegate_at(req, now);
+        if r.is_err() {
+            let chain = if self.find(&from).is_some() {
+                self.chain_of(&from)
+            } else {
+                Vec::new()
+            };
+            self.record(now, &delegator, AuditOp::Refused, &id, chain);
+        }
+        r
+    }
+
+    fn try_delegate_at(
         &mut self,
         req: DelegationRequest,
         now: DateTime<Utc>,
@@ -430,6 +488,7 @@ impl InMemoryEngine {
             depth,
             issuer: Some(delegator.clone()),
         };
+        self.generation += 1;
         let id = g.id.clone();
         self.grants.push(g);
         let chain = self.chain_of(&id);
@@ -450,16 +509,21 @@ impl InMemoryEngine {
         actions: &[&str],
     ) -> Result<Vec<String>, DelegationError> {
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
-            return Err(DelegationError::ActionWidens);
+            return Err(DelegationError::UnregisteredAction);
         }
-        let mut ids = Vec::new();
-        for a in actions {
-            let id = format!("creator:{object}:{a}");
-            if self.find(&id).is_some() {
+        // All or nothing: check every id before pushing any grant.
+        let ids: Vec<String> = actions
+            .iter()
+            .map(|a| format!("creator:{object}:{a}"))
+            .collect();
+        for (i, id) in ids.iter().enumerate() {
+            if self.find(id).is_some() || ids[..i].contains(id) {
                 return Err(DelegationError::DuplicateId);
             }
-            ids.push(id.clone());
-            let mut g = Grant::new(id, creator, *a, object, Effect::Allow);
+        }
+        self.generation += 1;
+        for (id, a) in ids.iter().zip(actions) {
+            let mut g = Grant::new(id.clone(), creator, *a, object, Effect::Allow);
             g.issuer = Some(creator.to_string());
             self.grants.push(g);
         }
@@ -469,6 +533,7 @@ impl InMemoryEngine {
     /// Mark every object matching `pattern` sensitive: decisions about it are
     /// always checked live.
     pub fn mark_object_sensitive(&mut self, pattern: impl Into<String>) {
+        self.generation += 1;
         self.sensitive_objects.push(pattern.into());
     }
 
@@ -588,9 +653,25 @@ pub trait Source {
         object: &str,
         now: DateTime<Utc>,
     ) -> Result<Answer, SourceUnavailable>;
+
+    /// A number that changes whenever anything that can change an answer
+    /// changes. The cache reuses an entry only while this is unchanged, so a
+    /// change (a new sensitive deny, a revocation) is seen at once instead of
+    /// after the 60 s ttl. The default returns a fresh number on every call,
+    /// which never matches a cached entry: a source that cannot tell is never
+    /// served from cache. Override it only if you can honour the contract.
+    fn generation(&self) -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1 << 63);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
 }
 
 impl Source for InMemoryEngine {
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
     fn query(
         &self,
         principal: &str,
@@ -607,12 +688,15 @@ pub const MAX_CACHE_TTL: Duration = Duration::seconds(60);
 
 type CacheKey = (String, String, String);
 
+/// A cached decision, when it was stored, and the source generation it was read at.
+type CacheEntry = (Decision, DateTime<Utc>, u64);
+
 /// Caches decisions from a [`Source`] for at most 60 s, never caches
 /// sensitive answers, and fails closed when the source is unreachable.
 pub struct CachedAuthorizer<S: Source> {
     source: S,
     ttl: Duration,
-    cache: Mutex<HashMap<CacheKey, (Decision, DateTime<Utc>)>>,
+    cache: Mutex<HashMap<CacheKey, CacheEntry>>,
 }
 
 impl<S: Source> CachedAuthorizer<S> {
@@ -643,14 +727,12 @@ impl<S: Source> CachedAuthorizer<S> {
 
     /// Drop every cached decision (a revocation that must apply now).
     pub fn invalidate(&self) {
-        if let Ok(mut c) = self.cache.lock() {
-            c.clear();
-        }
+        self.lock().clear();
     }
 
     /// Decide at a given instant (deterministic for tests).
     ///
-    /// `Cached` reuses a decision younger than the ttl; `Live` always asks the
+    /// `Cached` reuses a decision younger than the ttl and read at the source's current generation; `Live` always asks the
     /// source. A sensitive answer is never stored. If the source cannot be
     /// reached the answer is a deny: a stale entry is not served.
     pub fn decide_at(
@@ -666,9 +748,12 @@ impl<S: Source> CachedAuthorizer<S> {
             action.to_string(),
             object.to_string(),
         );
+        // Read the generation before asking, so a change that lands while the
+        // source answers leaves the stored entry stale (a miss), never fresh.
+        let generation = self.source.generation();
         if freshness == Freshness::Cached
-            && let Ok(c) = self.cache.lock()
-            && let Some((d, at)) = c.get(&key)
+            && let Some((d, at, g)) = self.lock().get(&key)
+            && *g == generation
             && now >= *at
             && now - *at < self.ttl
         {
@@ -676,24 +761,28 @@ impl<S: Source> CachedAuthorizer<S> {
         }
         match self.source.query(principal, action, object, now) {
             Ok(a) => {
-                if let Ok(mut c) = self.cache.lock() {
-                    if a.sensitive {
-                        c.remove(&key);
-                    } else {
-                        c.insert(key, (a.decision.clone(), now));
-                    }
+                let mut c = self.lock();
+                if a.sensitive {
+                    c.remove(&key);
+                } else {
+                    c.insert(key, (a.decision.clone(), now, generation));
                 }
                 a.decision
             }
             Err(SourceUnavailable) => {
-                if let Ok(mut c) = self.cache.lock() {
-                    c.remove(&key);
-                }
+                self.lock().remove(&key);
                 Decision::Deny {
                     reason: DenyReason::SourceUnreachable,
                 }
             }
         }
+    }
+
+    /// The cache, recovering from a poisoned lock: the map holds only
+    /// decisions that are re-checked against ttl and generation on use, so a
+    /// panic elsewhere must not leave `invalidate` a no-op.
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<CacheKey, CacheEntry>> {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 

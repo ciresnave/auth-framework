@@ -72,6 +72,8 @@ pub enum PrincipalError {
     KeyAlreadyBound,
     /// The thumbprint is not an active key of this principal.
     KeyNotBound,
+    /// The thumbprint is empty.
+    InvalidThumbprint,
 }
 
 /// All principals of one account.
@@ -86,6 +88,21 @@ impl PrincipalRegistry {
     /// An empty registry.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Every principal, in no particular order, whatever its state.
+    pub fn principals(&self) -> impl Iterator<Item = &Principal> {
+        self.principals.values()
+    }
+
+    /// How many principals exist (retired ones included: their ids stay reserved).
+    pub fn len(&self) -> usize {
+        self.principals.len()
+    }
+
+    /// True when no principal has been created.
+    pub fn is_empty(&self) -> bool {
+        self.principals.is_empty()
     }
 
     /// Look a principal up.
@@ -235,7 +252,7 @@ impl PrincipalRegistry {
     /// (to anyone, revoked or not) cannot be bound again.
     pub fn add_key(&mut self, id: &str, thumbprint: &str) -> Result<(), PrincipalError> {
         if thumbprint.is_empty() {
-            return Err(PrincipalError::KeyNotBound);
+            return Err(PrincipalError::InvalidThumbprint);
         }
         let p = self.principals.get(id).ok_or(PrincipalError::Unknown)?;
         if p.state == Lifecycle::Retired {

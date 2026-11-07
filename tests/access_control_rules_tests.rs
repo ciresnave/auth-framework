@@ -152,7 +152,8 @@ fn a_creator_grant_is_revocable_by_any_ancestor_and_by_nobody_unrelated() {
 #[test]
 fn an_issuer_can_remove_what_it_issued_but_not_what_others_issued() {
     let mut e = engine();
-    e.add_grant(rule("src", "bot", "synapse:see", SUB, Effect::Allow));
+    e.add_grant(rule("src", "bot", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
     let req = |id: &str, to: &str| DelegationRequest {
         id: id.into(),
         from: "src".into(),
@@ -275,14 +276,16 @@ fn without_a_configured_or_registered_edit_action_only_the_holder_and_ancestors_
     a.register("synapse:see", false);
     a.register(EDIT, true);
     let mut e = InMemoryEngine::new(a.clone()).with_account_holder("alice");
-    e.add_grant(rule("g", "carol", EDIT, ALL, Effect::Allow));
+    e.add_grant(rule("g", "carol", EDIT, ALL, Effect::Allow))
+        .unwrap();
     assert!(!e.can_edit_rules_about("carol", SUB, Utc::now()));
     assert!(e.can_edit_rules_about("alice", SUB, Utc::now()));
     // configured but never registered
     let mut e = InMemoryEngine::new(ActionRegistry::new())
         .with_account_holder("alice")
         .with_edit_action(EDIT);
-    e.add_grant(rule("g", "carol", EDIT, ALL, Effect::Allow));
+    e.add_grant(rule("g", "carol", EDIT, ALL, Effect::Allow))
+        .unwrap();
     assert!(!e.can_edit_rules_about("carol", SUB, Utc::now()));
 }
 
@@ -302,7 +305,8 @@ fn an_unrelated_issuer_can_still_remove_what_it_shared_and_only_that() {
     // carol is neither the account holder, an ancestor of svc, nor an editor:
     // the only thing that lets her remove her own share is that she issued it.
     let mut e = engine();
-    e.add_grant(rule("src", "carol", "synapse:see", SVC, Effect::Allow));
+    e.add_grant(rule("src", "carol", "synapse:see", SVC, Effect::Allow))
+        .unwrap();
     let req = |id: &str, to: &str| DelegationRequest {
         id: id.into(),
         from: "src".into(),
@@ -322,4 +326,103 @@ fn an_unrelated_issuer_can_still_remove_what_it_shared_and_only_that() {
     // she did not issue the root grant "src" (add_grant has no issuer)
     assert_eq!(e.remove_rule("carol", "src"), Err(RuleError::NotAuthorized));
     assert!(sees(&e, "carol", SVC));
+}
+
+fn dreq(id: &str, from: &str, who: &str) -> DelegationRequest {
+    DelegationRequest {
+        id: id.into(),
+        from: from.into(),
+        delegator: who.into(),
+        delegatee: "carol".into(),
+        action: "synapse:see".into(),
+        object: SUB.into(),
+        expires: None,
+        sensitive: false,
+    }
+}
+
+#[test]
+fn a_refused_delegation_and_a_duplicate_or_empty_rule_id_are_recorded() {
+    let mut e = engine();
+    e.add_rule("alice", rule("r", "bot", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
+    // Wrong delegator.
+    assert_eq!(
+        e.delegate(dreq("d1", "r", "dave")),
+        Err(DelegationError::NotHolder)
+    );
+    // Unknown source.
+    assert_eq!(
+        e.delegate(dreq("d2", "ghost", "bot")),
+        Err(DelegationError::UnknownGrant)
+    );
+    // Duplicate rule id and empty rule id.
+    assert_eq!(
+        e.add_rule(
+            "alice",
+            rule("r", "carol", "synapse:see", SUB, Effect::Allow)
+        ),
+        Err(RuleError::DuplicateId)
+    );
+    assert_eq!(
+        e.add_rule(
+            "alice",
+            rule("", "carol", "synapse:see", SUB, Effect::Allow)
+        ),
+        Err(RuleError::InvalidId)
+    );
+    let ops: Vec<_> = e
+        .audit_log()
+        .iter()
+        .map(|a| (a.actor.as_str(), a.op, a.rule_id.as_str()))
+        .collect();
+    assert_eq!(
+        ops,
+        [
+            ("alice", AuditOp::Added, "r"),
+            ("dave", AuditOp::Refused, "d1"),
+            ("bot", AuditOp::Refused, "d2"),
+            ("alice", AuditOp::Refused, "r"),
+            ("alice", AuditOp::Refused, ""),
+        ]
+    );
+    assert!(e.audit_log()[1].chain.is_empty());
+}
+
+#[test]
+fn a_deny_on_an_unrelated_object_does_not_block_a_pattern_edit() {
+    let mut e = engine();
+    e.add_rule("alice", rule("wide", "carol", EDIT, ALL, Effect::Allow))
+        .unwrap();
+    e.add_rule(
+        "alice",
+        rule("room", "carol", EDIT, "room:x@acct", Effect::Deny),
+    )
+    .unwrap();
+    assert!(e.can_edit_rules_about("carol", ALL, Utc::now()));
+    // Control: a deny that does overlap the pattern still blocks it.
+    e.add_rule("alice", rule("no", "carol", EDIT, SUB, Effect::Deny))
+        .unwrap();
+    assert!(!e.can_edit_rules_about("carol", ALL, Utc::now()));
+    assert!(!e.can_edit_rules_about("carol", "agent:s*@acct", Utc::now()));
+}
+
+#[test]
+fn a_rule_added_through_the_cache_is_seen_at_once() {
+    let mut c = CachedAuthorizer::new(engine());
+    let t = Utc::now();
+    assert!(
+        !c.decide_at("carol", "synapse:see", SUB, Freshness::Cached, t)
+            .is_allow()
+    );
+    c.source_mut()
+        .add_rule(
+            "alice",
+            rule("r1", "carol", "synapse:see", SUB, Effect::Allow),
+        )
+        .unwrap();
+    assert!(
+        c.decide_at("carol", "synapse:see", SUB, Freshness::Cached, t)
+            .is_allow()
+    );
 }

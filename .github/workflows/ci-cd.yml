@@ -9,6 +9,13 @@ on:
   release:
     types: [published]
 
+# One run per pull request: a newer push to the same PR cancels the older run, so superseded heads do not hold
+# runner slots. Pushes to main, develop and release/** and published releases get a group of their own (the run
+# id) and are never cancelled, because every such run must finish (a merge to main and a release are the record).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Least privilege: jobs that need more raise it themselves (see their permissions blocks).
 permissions:
   contents: read
