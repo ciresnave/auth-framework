@@ -1097,3 +1097,4 @@ src/protocols/ws_federation.rs:WsFedSignInResponse:context | WS-Federation wctx:
 src/tokens/mod.rs:AuthToken:token_id | the identifier of the token record (the jti), not the token value
 src/tokens/mod.rs:AuthTokenBuilder:token_id | the identifier of the token record (the jti), not the token value
 src/admin/mod.rs:ConfigAction:key | the name of the configuration entry the operator typed; the value is redacted
+src/protocols/gnap_interaction.rs:InteractionResponse:user_code | the hand-written Debug prints only whether a code is set, never the code
