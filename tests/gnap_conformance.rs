@@ -119,6 +119,13 @@ fn check(id: &str, vars: &HashMap<String, String>, response: &Value, a: &Value) 
             "{id}: {path} not an array in {response}"
         ),
         "equals" => assert_eq!(got, Some(&a["value"]), "{id}: {path} in {response}"),
+        "min_length" => {
+            let n = a["value"].as_u64().expect("min_length value") as usize;
+            assert!(
+                got.and_then(Value::as_str).is_some_and(|s| s.len() >= n),
+                "{id}: {path} should be a string of at least {n} characters in {response}"
+            );
+        }
         "not_equals_saved" => {
             let saved = subst(vars, &a["value"]).expect("value");
             let g = got.and_then(Value::as_str);
@@ -217,7 +224,9 @@ async fn gnap_vectors() {
         let steps: &[Value] = v["steps"].as_array().map_or(&single[..], |s| &s[..]);
 
         for (n, step) in steps.iter().enumerate() {
-            let jti = format!("{id}-{n}");
+            let jti = step["jti"]
+                .as_str()
+                .map_or_else(|| format!("{id}-{n}"), str::to_string);
             let proof_kind = step["proof"].as_str();
             match step["do"].as_str().expect("step.do") {
                 "transaction" => {

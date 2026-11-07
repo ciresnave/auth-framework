@@ -1,6 +1,6 @@
 {
   "suite": "gnap-transaction-endpoint",
-  "suite_version": 3,
+  "suite_version": 4,
   "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
   "vectors": [
     {
@@ -1221,6 +1221,159 @@
           "expect": {
             "outcome": "error"
           }
+        }
+      ]
+    },
+    {
+      "id": "sec-tokens-unguessable-and-unique",
+      "rfc": "RFC 9635",
+      "section": "11.8",
+      "kind": "positive",
+      "description": "Access tokens and continuation tokens are long random values and differ between requests.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "min_length",
+                "value": 32
+              }
+            ]
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "min_length",
+                "value": 32
+              },
+              {
+                "path": "/access_token/value",
+                "op": "not_equals_saved",
+                "value": "$at"
+              },
+              {
+                "path": "/continue/access_token/value",
+                "op": "not_equals_saved",
+                "value": "$ct"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "sec-token-is-key-bound",
+      "rfc": "RFC 9635",
+      "section": "11.10",
+      "kind": "positive",
+      "description": "A token issued to a request that named a client key is marked as bound to a key.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/key",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "sec-proof-replay-refused",
+      "rfc": "RFC 9635",
+      "section": "11.10",
+      "kind": "negative",
+      "description": "A key proof that was already accepted once is refused when sent again.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "jti": "replay-1"
+        },
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "error"
+          },
+          "jti": "replay-1"
         }
       ]
     }

@@ -15,7 +15,7 @@ Each vector has:
   different key than the one named).
 - `steps` (optional): an ordered list, for flows of more than one request. Without it the vector is
   one `transaction` step made of its own `request`, `proof` and `expect`. Each step has `do`:
-  - `transaction`: `request`, `proof` as above.
+  - `transaction`: `request`, `proof` as above; `jti` fixes the proof's `jti` (to send one proof twice).
   - `approve`: the resource owner approves at the server (not on the wire); saves `interact_ref` and `hash`.
   - `continue`: `transaction`, `token`, `interact_ref`, `interact_hash` (null to omit) and `proof`
     (`valid`, `absent`, `wrong_key`), sent to the continuation URL.
@@ -26,7 +26,8 @@ Each vector has:
 - `request`: the JSON body sent to the transaction endpoint (before the replayer adds `client`).
 - `expect.outcome`: `response` (the server answers) or `error` (it refuses).
 - `expect.assert`: checks on a response, each a JSON Pointer `path` and an `op`:
-  `exists`, `absent`, `is_string`, `is_number`, `is_array`, or `equals` (with `value`).
+  `exists`, `absent`, `is_string`, `is_number`, `is_array`, `equals` (with `value`), `min_length`
+  (a string of at least `value` characters) or `not_equals_saved`.
 
 Rules for adding a vector:
 
@@ -35,5 +36,5 @@ Rules for adding a vector:
 3. A vector that describes behaviour not yet fixed in a published release is held back until
    that release is out.
 
-Scope of suite version 3: the transaction endpoint and continuation, with DPoP client-key proofs. The server under test grants whatever is requested (a permissive access policy). Token management, RFC 9767 and the RFC 9635 section 11 checks are added
+Scope of suite version 4: the transaction endpoint, continuation and the RFC 9635 section 11 checks the endpoint can answer, with DPoP client-key proofs. The server under test grants whatever is requested (a permissive access policy). Token management, RFC 9767 and the remaining section 11 checks are added
 in later versions of the suite.
