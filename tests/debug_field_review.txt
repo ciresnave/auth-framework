@@ -1036,6 +1036,7 @@ src/deployment/monitoring.rs:MonitoringError:<tuple> | error message text: diagn
 src/deployment/monitoring.rs:SlackConfig:text | notification message template
 src/deployment/scaling.rs:ScalingError:<tuple> | error message text: diagnostic, not a credential
 src/errors.rs:AuthError:<tuple> | error message text: diagnostic, not a credential
+src/keys/kind.rs:Kid:<tuple> | a key id: a public label published as the JWS kid, never key material
 src/methods/saml/mod.rs:SamlAttributeValue:value | SAML attribute value: asserted user data, not a credential
 src/methods/saml/mod.rs:SamlIssuer:value | SAML issuer entity id: public identifier
 src/methods/saml/mod.rs:SamlNameId:value | SAML NameID: a subject identifier, not a credential

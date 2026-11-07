@@ -158,7 +158,8 @@ fn engine() -> InMemoryEngine {
             "synapse:see",
             "agent:pm@acct",
             Effect::Allow,
-        ));
+        ))
+        .unwrap();
     }
     e
 }
@@ -206,7 +207,8 @@ fn without_a_registry_any_id_is_accepted() {
     let mut a = ActionRegistry::new();
     a.register("synapse:see", false);
     let mut e = InMemoryEngine::new(a);
-    e.add_grant(Grant::new("g", "anyone", "synapse:see", "x", Effect::Allow));
+    e.add_grant(Grant::new("g", "anyone", "synapse:see", "x", Effect::Allow))
+        .unwrap();
     assert!(
         e.decide_at("anyone", "synapse:see", "x", Utc::now())
             .is_allow()
