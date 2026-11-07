@@ -90,6 +90,18 @@ impl AbacPolicy {
 ///
 /// Represents a delegator granting a subset of their permissions to a delegatee,
 /// optionally for a limited time window.
+///
+/// # Warning: no attenuation
+///
+/// Nothing here checks that `delegator` holds the permissions in the record, and
+/// [`PermissionChecker::check_delegation`] never looks at `delegator`. A record that
+/// names a delegator who holds nothing grants the delegatee everything it lists. Build
+/// these records only from grants you have verified yourself, and never evaluate a
+/// delegation list that a caller supplied. For a delegation that checks the delegator
+/// holds what it delegates (at creation, one level), use
+/// `AuthorizationManager::delegate_permission`; its stored delegations are not consulted
+/// by any permission check. Attenuation with chains and revocation that cascades is
+/// ROADMAP rows AC1-AC3.
 #[derive(Debug, Clone)]
 pub struct Delegation {
     pub delegator: String,
@@ -201,7 +213,13 @@ impl PermissionChecker {
         false
     }
 
-    /// Check permission with delegation
+    /// Check permission with delegation.
+    ///
+    /// # Warning
+    ///
+    /// This does not attenuate: it grants whatever a [`Delegation`] addressed to `user_id`
+    /// lists, without checking that the delegator holds it, and it does not follow chains.
+    /// Never pass delegations that a caller supplied. See [`Delegation`].
     pub fn check_delegation(
         &self,
         user_id: &str,
