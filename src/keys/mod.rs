@@ -8,11 +8,13 @@
 //! being returned. Creation (KM2) and storage (KM3) build on these.
 
 mod export;
+mod generate;
 mod kind;
 mod state;
 mod thumbprint;
 
 pub use export::{JwkSet, PublicJwk, spki_pem};
+pub use generate::{LocalKey, SigningAlg, SymmetricKey};
 pub use kind::{KeyKind, Kid, Signer};
 pub use state::KeyState;
 pub use thumbprint::{jwk_thumbprint, jwk_thumbprint_value};
