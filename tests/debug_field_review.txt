@@ -1095,3 +1095,4 @@ src/protocols/ws_federation.rs:WsFedSignInResponse:context | WS-Federation wctx:
 src/tokens/mod.rs:AuthToken:token_id | the identifier of the token record (the jti), not the token value
 src/tokens/mod.rs:AuthTokenBuilder:token_id | the identifier of the token record (the jti), not the token value
 src/admin/mod.rs:ConfigAction:key | the name of the configuration entry the operator typed; the value is redacted
+src/protocols/gnap_jws.rs:JwsProofError:<tuple> | diagnostic text written by this module (which rule failed, a header field or algorithm name the request itself named); it never carries a key, a signature, a token or a body
