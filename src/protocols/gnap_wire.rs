@@ -101,7 +101,13 @@ pub const FLAG_BEARER: &str = "bearer";
 /// * A flag listed twice is `invalid_flag` (2.1.1: "the AS MUST return an invalid_flag error").
 /// * In the array form every entry needs a `label`, and labels are unique, else `invalid_request`
 ///   (2.1.2).
-/// * A request with an empty array of tokens, or a token with no access, is `invalid_request`.
+/// * A request with an empty array of tokens, or a token with no access, is `invalid_request`; so is an access
+///   right whose `type` (or reference string) is empty.
+///
+/// This layer does not know which flags the AS supports, so it does **not** refuse an unknown flag: RFC 9635
+/// section 2.1.1 requires the AS to answer `invalid_flag` for one, and the AS does that by calling
+/// [`validate_access_token_requests_with_flags`] (or [`validate_request`]) with its own list. A caller that
+/// uses only this function accepts any flag string.
 pub fn validate_access_token_requests(requests: &GnapAccessTokenRequests) -> Result<(), GnapError> {
     let items = requests.as_slice();
     if items.is_empty() {
@@ -117,6 +123,18 @@ pub fn validate_access_token_requests(requests: &GnapAccessTokenRequests) -> Res
                 GnapErrorCode::InvalidRequest,
                 "an access_token has no access",
             ));
+        }
+        for access in &item.access {
+            let empty = match access {
+                GnapAccess::Reference(reference) => reference.is_empty(),
+                GnapAccess::Object(object) => object.access_type.is_empty(),
+            };
+            if empty {
+                return Err(GnapError::new(
+                    GnapErrorCode::InvalidRequest,
+                    "an access right has an empty type",
+                ));
+            }
         }
         let mut seen = HashSet::new();
         for flag in &item.flags {
@@ -145,6 +163,47 @@ pub fn validate_access_token_requests(requests: &GnapAccessTokenRequests) -> Res
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// [`validate_access_token_requests`], and every flag must be one of `supported_flags`, else `invalid_flag`
+/// (RFC 9635 section 2.1.1: the AS MUST return `invalid_flag` for a flag it does not support).
+pub fn validate_access_token_requests_with_flags(
+    requests: &GnapAccessTokenRequests,
+    supported_flags: &[&str],
+) -> Result<(), GnapError> {
+    validate_access_token_requests(requests)?;
+    for item in requests.as_slice() {
+        for flag in &item.flags {
+            if !supported_flags.contains(&flag.as_str()) {
+                return Err(GnapError::new(
+                    GnapErrorCode::InvalidFlag,
+                    format!("the flag {flag:?} is not supported"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate the parts of a grant request that this module models: the `access_token`, the `client` (and its
+/// key) and the `user`. This is the one call the AS makes on an incoming request, so that no check depends on
+/// the caller remembering it (the key and user checks are otherwise methods the caller has to know to call).
+pub fn validate_request(
+    access_token: Option<&GnapAccessTokenRequests>,
+    client: Option<&GnapClientRef>,
+    user: Option<&GnapUserRef>,
+    supported_flags: &[&str],
+) -> Result<(), GnapError> {
+    if let Some(requests) = access_token {
+        validate_access_token_requests_with_flags(requests, supported_flags)?;
+    }
+    if let Some(client) = client {
+        client.validate()?;
+    }
+    if let Some(user) = user {
+        user.validate()?;
     }
     Ok(())
 }
@@ -251,6 +310,23 @@ pub struct GnapClientObject {
     pub display: Option<GnapClientDisplay>,
 }
 
+impl GnapClientRef {
+    /// Validate the client's key when it is given by value (see [`GnapKeyObject::validate`]).
+    pub fn validate(&self) -> Result<(), GnapError> {
+        match self {
+            Self::Reference(reference) if reference.is_empty() => Err(GnapError::new(
+                GnapErrorCode::InvalidRequest,
+                "the client reference is empty",
+            )),
+            Self::Reference(_) => Ok(()),
+            Self::Object(object) => match &object.key {
+                Some(GnapKeyRef::Object(key)) => key.validate(),
+                Some(GnapKeyRef::Reference(_)) | None => Ok(()),
+            },
+        }
+    }
+}
+
 /// Client display information (RFC 9635 section 2.3.2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GnapClientDisplay {
@@ -294,6 +370,34 @@ pub struct GnapUserObject {
     /// Assertions (each an object with a `format` and a `value`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assertions: Option<Vec<Value>>,
+}
+
+impl GnapUserRef {
+    /// Check the shape the documentation of [`GnapUserObject`] promises: each `sub_ids` entry is an object with
+    /// a string `format`; each `assertions` entry is an object with a string `format` and a `value`.
+    pub fn validate(&self) -> Result<(), GnapError> {
+        let bad = |why: &str| Err(GnapError::new(GnapErrorCode::InvalidRequest, why));
+        let object = match self {
+            Self::Reference(reference) if reference.is_empty() => {
+                return bad("the user reference is empty");
+            }
+            Self::Reference(_) => return Ok(()),
+            Self::Object(object) => object,
+        };
+        let has_format =
+            |entry: &Value| entry.get("format").is_some_and(|format| format.is_string());
+        for entry in object.sub_ids.iter().flatten() {
+            if !entry.is_object() || !has_format(entry) {
+                return bad("a sub_ids entry must be an object with a format");
+            }
+        }
+        for entry in object.assertions.iter().flatten() {
+            if !entry.is_object() || !has_format(entry) || entry.get("value").is_none() {
+                return bad("an assertions entry must be an object with a format and a value");
+            }
+        }
+        Ok(())
+    }
 }
 
 /// One issued access token (RFC 9635 section 3.2.1).
@@ -637,6 +741,103 @@ mod tests {
         let single: GnapAccessTokenRequests =
             serde_json::from_value(json!({"access": ["x"]})).unwrap();
         validate_access_token_requests(&single).unwrap();
+    }
+
+    #[test]
+    fn an_unsupported_flag_is_invalid_flag_when_the_as_names_what_it_supports() {
+        let request = |flags: Value| -> GnapAccessTokenRequests {
+            serde_json::from_value(json!({"access": ["x"], "flags": flags})).unwrap()
+        };
+        // the base check cannot know the AS's flags and accepts any (control)
+        assert!(validate_access_token_requests(&request(json!(["no-such-flag"]))).is_ok());
+        let code = |r: Result<(), GnapError>| r.unwrap_err().code;
+        assert_eq!(
+            code(validate_access_token_requests_with_flags(
+                &request(json!(["no-such-flag"])),
+                &["bearer"]
+            )),
+            GnapErrorCode::InvalidFlag
+        );
+        assert_eq!(
+            code(validate_access_token_requests_with_flags(
+                &request(json!(["bearer", "split"])),
+                &["bearer"]
+            )),
+            GnapErrorCode::InvalidFlag
+        );
+        assert!(
+            validate_access_token_requests_with_flags(
+                &request(json!(["bearer", "split"])),
+                &["bearer", "split"]
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_access_token_requests_with_flags(&request(json!([])), &[]).is_ok(),
+            "no flags, none to refuse"
+        );
+    }
+
+    #[test]
+    fn an_empty_access_type_is_invalid_request() {
+        for access in [json!({"type": ""}), json!("")] {
+            let request: GnapAccessTokenRequests =
+                serde_json::from_value(json!({"access": [access]})).unwrap();
+            assert_eq!(
+                validate_access_token_requests(&request).unwrap_err().code,
+                GnapErrorCode::InvalidRequest
+            );
+        }
+        let fine: GnapAccessTokenRequests =
+            serde_json::from_value(json!({"access": [{"type": "photo-api"}, "ref"]})).unwrap();
+        assert!(validate_access_token_requests(&fine).is_ok());
+    }
+
+    #[test]
+    fn the_whole_request_check_reaches_the_key_and_the_user() {
+        let access: GnapAccessTokenRequests =
+            serde_json::from_value(json!({"access": ["x"]})).unwrap();
+        let client =
+            |key: Value| -> GnapClientRef { serde_json::from_value(json!({"key": key})).unwrap() };
+        let user = |value: Value| -> GnapUserRef { serde_json::from_value(value).unwrap() };
+        let ok_client = client(json!({"proof": "httpsig", "jwk": {"kty": "EC"}}));
+        let ok_user = user(json!({"sub_ids": [{"format": "opaque", "id": "1"}],
+            "assertions": [{"format": "id_token", "value": "a.b.c"}]}));
+        assert!(validate_request(Some(&access), Some(&ok_client), Some(&ok_user), &[]).is_ok());
+        // a key with two formats, and a private JWK, are refused through the one entry point
+        let two = client(json!({"proof": "httpsig", "jwk": {"kty": "EC"}, "cert": "AAAA"}));
+        let private = client(json!({"proof": "httpsig", "jwk": {"kty": "EC", "d": "x"}}));
+        for bad in [&two, &private] {
+            assert_eq!(
+                validate_request(Some(&access), Some(bad), None, &[])
+                    .unwrap_err()
+                    .code,
+                GnapErrorCode::InvalidRequest
+            );
+        }
+        // unstructured user entries are refused
+        for bad in [
+            json!({"sub_ids": [42]}),
+            json!({"sub_ids": [{"id": "1"}]}),
+            json!({"assertions": [{"format": "id_token"}]}),
+            json!({"assertions": ["x"]}),
+        ] {
+            assert_eq!(
+                validate_request(None, None, Some(&user(bad)), &[])
+                    .unwrap_err()
+                    .code,
+                GnapErrorCode::InvalidRequest
+            );
+        }
+        // and the flag list reaches the access token
+        let flagged: GnapAccessTokenRequests =
+            serde_json::from_value(json!({"access": ["x"], "flags": ["odd"]})).unwrap();
+        assert_eq!(
+            validate_request(Some(&flagged), None, None, &["bearer"])
+                .unwrap_err()
+                .code,
+            GnapErrorCode::InvalidFlag
+        );
     }
 
     #[test]
