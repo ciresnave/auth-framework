@@ -56,6 +56,16 @@ keys in the JARM, JWT introspection and default SAML components; it covers `>=0.
 `>=0.5.0-rc1,<0.5.0-rc51` and `>=0.6.0-rc41,<0.6.0-rc85`). The one before it, GHSA-9r7g-3hh2-8x65
 (default signing secret), is fixed in the same releases. The next fixes are in `CHANGELOG.md`.
 
+The newest advisories concern GNAP and UMA, and are fixed in `0.5.0-rc90` and `0.6.0-rc217`
+(both cover `>=0.5.0-rc18,<0.5.0-rc90` and `>=0.6.0-rc41,<0.6.0-rc217`):
+GHSA-qjgj-6fmg-c5c8 (GNAP) and GHSA-mq4v-f666-jf9r (UMA). In the fixed releases a GNAP service issues
+an access token only through an access policy you install (it grants nothing until you do), requires
+the client to present a key, and requires the one-time interaction reference to continue a
+transaction; `UmaService::request_rpt` takes no caller-supplied claims, and a resource set with
+required claims is refused until claims gathering exists. GHSA-m45g-8jrx-3hfq (GNAP proof
+verification) is fixed in `0.5.0-rc88` and `0.6.0-rc209`. What the module still lacks of RFC 9635 is
+measured in `docs/GNAP_RFC9635_GAP.md`.
+
 ## Security Considerations
 
 The Auth Framework is designed with security as a primary concern. However, security is a shared responsibility between the library maintainers and the users implementing it.
@@ -242,7 +252,7 @@ Several protocol modules provide partial or stub implementations that are not ye
 - **SAML Assertions**: XML-DSig verification is done by `bergshamra` (`src/methods/saml/dsig.rs`), which canonicalizes with Canonical XML 1.0/1.1 and Exclusive C14N (with or without comments), recomputes every `Reference` digest, and requires a signed reference. The verification key is a certificate you pin per issuer (`SamlTrustAnchors`); the `KeyInfo` inside the document is ignored. No certificate chain is built to a root: the pinned certificate is the trust anchor, and revocation is not consulted. An issuer with nothing pinned is refused. Our tests exercise Exclusive C14N with ECDSA-SHA-256; the other canonicalization modes and SHA-1 acceptance are `bergshamra` 0.11's behaviour, read from its source, not covered by a test here.
 - **WS-Federation**: security tokens are accepted only as SAML assertions whose signature verifies under a key or certificate thumbprint the operator configured. JWT security tokens are rejected, because their signature is not verified here; use a dedicated JWT validator for them.
 - **WS-Trust**: `SecurityTokenService::process_request` keeps issued tokens in memory only (lost on restart, not shared across instances). `with_storage(...)` plus `process_request_stored` keep them in the `AuthStorage` KV layer (key `wstrust:token:<id>`, expiring with the token), so a restart or a second instance validates, renews and cancels the same tokens. The stored record holds the token content and any proof-of-possession key material: give the STS an `EncryptedStorage` in production. Two instances renewing one token at the same moment each issue their own new token.
-- **GNAP**: implements grant negotiation and transaction state management. A client key is accepted only with a verified `dpop` proof (`handle_transaction_with_proof`, `continue_transaction_with_proof`); the `httpsig`, `mtls` and `jws` proof methods are refused as not supported (`src/protocols/gnap.rs`).
+- **GNAP**: implements grant negotiation and transaction state management. A request must name a client key and is accepted only with a verified `dpop` proof (`handle_transaction_with_proof`, `continue_transaction_with_proof`); the `httpsig`, `mtls` and `jws` proof methods are refused as not supported. An access token is issued only through an integrator-supplied `GnapAccessPolicy` (`with_access_policy`): the token carries what the policy grants, and a service without a policy issues none. A transaction that uses a finish method continues only with the one-time interaction reference that `approve_transaction` returns (`src/protocols/gnap.rs`).
 - **OpenID4VP**: resolves `did:key` and `did:web` identifiers and verifies JWS signatures (EdDSA, ES256) against the resolved key. Coverage of other DID methods and credential formats is narrower than the specification; see `COMPATIBILITY.md`.
 - **UMA 2.0**: Implements resource registration, permission tickets, and RPT issuance. Does not include a claims-gathering interaction flow: `UmaService::request_rpt(ticket)` refuses a resource set that has `required_claims` (`UMA need_info`) because claims stated by the caller are not evidence, so a claims policy cannot be satisfied until the service gathers the claims itself.
 
