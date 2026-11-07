@@ -143,6 +143,9 @@ pub mod permissions;
 /// Token creation, validation, rotation, and JWKS support.
 pub mod tokens;
 
+/// Key management: key model, RFC 7638 thumbprint, public export, signer trait.
+pub mod keys;
+
 // ────────────────────────────────────────────────────────────────────────────
 // Configuration
 // ────────────────────────────────────────────────────────────────────────────
