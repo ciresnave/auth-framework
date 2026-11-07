@@ -807,6 +807,8 @@ yubico_client_id
 yubico_validation_url
 zoneinfo
 
+key_proof
+
 [secret_capable]
 actor_token
 assertions
