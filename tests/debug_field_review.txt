@@ -807,6 +807,8 @@ yubico_client_id
 yubico_validation_url
 zoneinfo
 
+covered
+
 [secret_capable]
 actor_token
 assertions
@@ -1094,3 +1096,4 @@ src/protocols/ws_federation.rs:WsFedSignInResponse:context | WS-Federation wctx:
 src/tokens/mod.rs:AuthToken:token_id | the identifier of the token record (the jti), not the token value
 src/tokens/mod.rs:AuthTokenBuilder:token_id | the identifier of the token record (the jti), not the token value
 src/admin/mod.rs:ConfigAction:key | the name of the configuration entry the operator typed; the value is redacted
+src/protocols/gnap_httpsig.rs:HttpsigError:<tuple> | diagnostic text written by this module (which rule failed, a component or parameter name the request itself named); it never carries a key, a signature or a header value
