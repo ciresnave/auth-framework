@@ -1097,3 +1097,4 @@ src/protocols/ws_federation.rs:WsFedSignInResponse:context | WS-Federation wctx:
 src/tokens/mod.rs:AuthToken:token_id | the identifier of the token record (the jti), not the token value
 src/tokens/mod.rs:AuthTokenBuilder:token_id | the identifier of the token record (the jti), not the token value
 src/admin/mod.rs:ConfigAction:key | the name of the configuration entry the operator typed; the value is redacted
+src/server/security/caep_continuous_access.rs:ReauthenticateChallenge:www_authenticate | the public WWW-Authenticate challenge sent to the client: an error code and an acr value, no secret
