@@ -12,6 +12,9 @@ use crate::security::secure_utils::SecureComparison;
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 
+// DESIGN RULE R1 (docs/ROADMAP.md "Standing design rules", US 9,397,990): first-party caveats only. No
+// third-party caveat, no discharge macaroon, no issuer-introspection mode. `tests/design_rules.rs` fails if an
+// API for one appears here.
 /// A Macaroon authorization token with chained HMAC caveats.
 ///
 /// The signature is the bearer secret, so `Debug` prints it redacted.

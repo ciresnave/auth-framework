@@ -422,6 +422,20 @@ CireSnave 2026-11-06, verbatim: *"Auth-framework should include full key managem
 
 Suggested order after G0 (release numbers are the PM's): AC1, AC2, AC3, then KM1-KM3 (G2, G3 and G9 need the key model), G1-G6 as the build needs them, AC5 and AC6 with G9, KM4-KM8 alongside G3/G5, then G7, G8, G10.
 
+### Standing design rules from the patent decisions (CireSnave, 2026-11-07)
+
+CireSnave, verbatim: *"First-party macaroons are fine.  On continuous access evaluation, go with your recommendation to never add that redirect on an event; answer with a "re-authenticate" challenge the client handles, and do not add a subscribe-to-central-service flow."*
+
+These are standing rules, not backlog. They bind every change to the files named below; changing one needs a fresh claim chart first (`docs/PATENT-SWEEP-CHARTS.md`) and CireSnave's decision.
+
+| Rule | Reason | What it means in code | Where it is enforced |
+|---|---|---|---|
+| **R1. Macaroons carry first-party caveats only.** No third-party caveat, no discharge macaroon, no issuer-introspection mode. | Google, US 9,397,990: the claims need third-party caveats and discharges. Related: P5 (US 11,595,215). | `Macaroon` holds first-party caveats; a credential that carries a third-party caveat is refused on load. Verification is local. | `src/protocols/macaroons.rs` note at `Macaroon`; `tests/design_rules.rs` (no third-party or discharge API); the existing refusal test in that module |
+| **R2. A revocation or policy event never causes a redirect.** An event may revoke, quarantine, log or notify, and may require step-up by answering the next request with a "re-authenticate" challenge that the client handles. The server does not send the user to the identity provider because of an event. | Microsoft, US 11,349,844: the claims need an event from a central service that makes the receiver revoke the session and redirect the user to the identity provider (P1). | `CaepRuleAction::RequireStepUp` is a decision the caller turns into a challenge on the client's next request, never a `Location` header. | `src/server/security/caep_continuous_access.rs` notes at `CaepRuleAction`, `process_event`, `execute_actions`; `tests/design_rules.rs` |
+| **R3. No subscribe-to-central-service flow.** The receiver is handed events (`process_event`); it makes no subscription call to a central conditional-access or session-event service and holds no subscription state. | Microsoft, US 11,349,844, claim 7 (P2). | Event delivery is the integrator's transport; the crate exposes handlers, not a client for such a service. | the same notes; `tests/design_rules.rs` |
+
+The re-authenticate challenge is the standing answer to "what should a client do when access is revoked or stepped up": return the challenge (a 401 with a `WWW-Authenticate` or an error body the client's own code handles), and let the client decide whether and where to send the user.
+
 ### Do not build otherwise (patent sweep, 2026-10-25)
 
 Each row is a design constraint from `docs/PATENT-SWEEP-CHARTS.md`: an element of a patent's independent claims that this crate does not do. Not legal advice. Changing any row needs a fresh chart first.

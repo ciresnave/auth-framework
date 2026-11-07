@@ -383,6 +383,9 @@ pub enum CaepRuleCondition {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CaepRuleAction {
+    // DESIGN RULE (docs/ROADMAP.md "Standing design rules", R2 and R3; US 11,349,844): no variant of this
+    // enum redirects the user to an identity provider or subscribes to a central service. A step-up is a
+    // decision the caller answers with a "re-authenticate" challenge on the client's next request.
     /// Revoke access tokens for the subject
     RevokeAccess { immediate: bool },
 
@@ -631,7 +634,12 @@ impl CaepManager {
         Ok(())
     }
 
-    /// Process a CAEP event
+    /// Process a CAEP event.
+    ///
+    /// Design rule R2/R3 (docs/ROADMAP.md, US 11,349,844): an event handled here may revoke, quarantine, log or
+    /// notify, and may require step-up through a challenge the client handles; it must never redirect the
+    /// user, and nothing here may subscribe to a central service. `tests/design_rules.rs` fails if this file
+    /// grows a redirect or a subscription.
     pub async fn process_event(&self, event: CaepEvent) -> Result<CaepEvaluationResult> {
         // Add event to history
         {
@@ -1219,6 +1227,7 @@ impl CaepManager {
     }
 
     /// Execute required actions from evaluation
+    // Design rule R2 (docs/ROADMAP.md): `RequireStepUp` records the requirement; it must not redirect.
     async fn execute_actions(&self, evaluation: &CaepEvaluationResult) -> Result<()> {
         for action in &evaluation.required_actions {
             match action {
