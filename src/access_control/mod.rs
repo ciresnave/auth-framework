@@ -252,8 +252,8 @@ pub fn object_within(parent: &str, child: &str) -> bool {
 /// In-memory engine: a registry plus a list of grants.
 #[derive(Debug, Clone)]
 pub struct InMemoryEngine {
-    /// The registered actions.
-    pub registry: ActionRegistry,
+    registry: ActionRegistry,
+    generation: u64,
     grants: Vec<Grant>,
     max_depth: u8,
     account_holder: Option<String>,
@@ -271,11 +271,29 @@ impl InMemoryEngine {
     pub fn new(registry: ActionRegistry) -> Self {
         Self {
             registry,
+            generation: 0,
             grants: Vec::new(),
             max_depth: DEFAULT_MAX_DELEGATION_DEPTH,
             account_holder: None,
             sensitive_objects: Vec::new(),
         }
+    }
+
+    /// The registered actions.
+    pub fn registry(&self) -> &ActionRegistry {
+        &self.registry
+    }
+
+    /// The registered actions, for registering more. Counts as a change.
+    pub fn registry_mut(&mut self) -> &mut ActionRegistry {
+        self.generation += 1;
+        &mut self.registry
+    }
+
+    /// A number that changes whenever anything that can change an answer
+    /// changes (grants, delegations, sensitivity marks, actions, principals).
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Set the longest delegation chain (default 3).
@@ -302,6 +320,7 @@ impl InMemoryEngine {
         if self.find(&grant.id).is_some() {
             return Err(DelegationError::DuplicateId);
         }
+        self.generation += 1;
         self.grants.push(grant);
         Ok(())
     }
@@ -309,6 +328,7 @@ impl InMemoryEngine {
     /// Remove the grant with this id and, transitively, everything delegated
     /// from it.
     pub fn remove_grant(&mut self, id: &str) {
+        self.generation += 1;
         let mut dead: Vec<String> = vec![id.to_string()];
         let mut i = 0;
         while i < dead.len() {
@@ -409,6 +429,7 @@ impl InMemoryEngine {
             parent: Some(req.from),
             depth,
         };
+        self.generation += 1;
         self.grants.push(g);
         Ok(())
     }
@@ -438,6 +459,7 @@ impl InMemoryEngine {
                 return Err(DelegationError::DuplicateId);
             }
         }
+        self.generation += 1;
         for (id, a) in ids.iter().zip(actions) {
             self.grants
                 .push(Grant::new(id.clone(), creator, *a, object, Effect::Allow));
@@ -448,6 +470,7 @@ impl InMemoryEngine {
     /// Mark every object matching `pattern` sensitive: decisions about it are
     /// always checked live.
     pub fn mark_object_sensitive(&mut self, pattern: impl Into<String>) {
+        self.generation += 1;
         self.sensitive_objects.push(pattern.into());
     }
 
@@ -556,9 +579,25 @@ pub trait Source {
         object: &str,
         now: DateTime<Utc>,
     ) -> Result<Answer, SourceUnavailable>;
+
+    /// A number that changes whenever anything that can change an answer
+    /// changes. The cache reuses an entry only while this is unchanged, so a
+    /// change (a new sensitive deny, a revocation) is seen at once instead of
+    /// after the 60 s ttl. The default returns a fresh number on every call,
+    /// which never matches a cached entry: a source that cannot tell is never
+    /// served from cache. Override it only if you can honour the contract.
+    fn generation(&self) -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1 << 63);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
 }
 
 impl Source for InMemoryEngine {
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
     fn query(
         &self,
         principal: &str,
@@ -575,12 +614,15 @@ pub const MAX_CACHE_TTL: Duration = Duration::seconds(60);
 
 type CacheKey = (String, String, String);
 
+/// A cached decision, when it was stored, and the source generation it was read at.
+type CacheEntry = (Decision, DateTime<Utc>, u64);
+
 /// Caches decisions from a [`Source`] for at most 60 s, never caches
 /// sensitive answers, and fails closed when the source is unreachable.
 pub struct CachedAuthorizer<S: Source> {
     source: S,
     ttl: Duration,
-    cache: Mutex<HashMap<CacheKey, (Decision, DateTime<Utc>)>>,
+    cache: Mutex<HashMap<CacheKey, CacheEntry>>,
 }
 
 impl<S: Source> CachedAuthorizer<S> {
@@ -611,14 +653,12 @@ impl<S: Source> CachedAuthorizer<S> {
 
     /// Drop every cached decision (a revocation that must apply now).
     pub fn invalidate(&self) {
-        if let Ok(mut c) = self.cache.lock() {
-            c.clear();
-        }
+        self.lock().clear();
     }
 
     /// Decide at a given instant (deterministic for tests).
     ///
-    /// `Cached` reuses a decision younger than the ttl; `Live` always asks the
+    /// `Cached` reuses a decision younger than the ttl and read at the source's current generation; `Live` always asks the
     /// source. A sensitive answer is never stored. If the source cannot be
     /// reached the answer is a deny: a stale entry is not served.
     pub fn decide_at(
@@ -634,9 +674,12 @@ impl<S: Source> CachedAuthorizer<S> {
             action.to_string(),
             object.to_string(),
         );
+        // Read the generation before asking, so a change that lands while the
+        // source answers leaves the stored entry stale (a miss), never fresh.
+        let generation = self.source.generation();
         if freshness == Freshness::Cached
-            && let Ok(c) = self.cache.lock()
-            && let Some((d, at)) = c.get(&key)
+            && let Some((d, at, g)) = self.lock().get(&key)
+            && *g == generation
             && now >= *at
             && now - *at < self.ttl
         {
@@ -644,24 +687,28 @@ impl<S: Source> CachedAuthorizer<S> {
         }
         match self.source.query(principal, action, object, now) {
             Ok(a) => {
-                if let Ok(mut c) = self.cache.lock() {
-                    if a.sensitive {
-                        c.remove(&key);
-                    } else {
-                        c.insert(key, (a.decision.clone(), now));
-                    }
+                let mut c = self.lock();
+                if a.sensitive {
+                    c.remove(&key);
+                } else {
+                    c.insert(key, (a.decision.clone(), now, generation));
                 }
                 a.decision
             }
             Err(SourceUnavailable) => {
-                if let Ok(mut c) = self.cache.lock() {
-                    c.remove(&key);
-                }
+                self.lock().remove(&key);
                 Decision::Deny {
                     reason: DenyReason::SourceUnreachable,
                 }
             }
         }
+    }
+
+    /// The cache, recovering from a poisoned lock: the map holds only
+    /// decisions that are re-checked against ttl and generation on use, so a
+    /// panic elsewhere must not leave `invalidate` a no-op.
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<CacheKey, CacheEntry>> {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
