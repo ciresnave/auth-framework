@@ -486,7 +486,11 @@ mod tests {
             s.insert(k, KeyState::Active).await.unwrap();
             assert!(s.export_private_pkcs8(&kid).await.is_ok());
         }
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "one file");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "one file"
+        );
     }
 
     #[tokio::test]
@@ -494,7 +498,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         {
             let s = FileKeyStore::open(dir.path(), enc(6)).await.unwrap();
-            s.insert(key(SigningAlg::Es256), KeyState::Active).await.unwrap();
+            s.insert(key(SigningAlg::Es256), KeyState::Active)
+                .await
+                .unwrap();
         }
         std::fs::write(dir.path().join("not-hex.key"), b"left by another tool").unwrap();
         let s = FileKeyStore::open(dir.path(), enc(6)).await.unwrap();

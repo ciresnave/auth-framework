@@ -92,7 +92,7 @@ impl PublicJwk {
         }
         jwk_thumbprint_value(v)?;
         check_shape(obj)?;
-        let s =|n: &str| obj.get(n).and_then(Value::as_str).map(str::to_owned);
+        let s = |n: &str| obj.get(n).and_then(Value::as_str).map(str::to_owned);
         let mut params = Map::new();
         for name in ["kty", "crv", "x", "y", "n", "e"] {
             if let Some(val) = obj.get(name) {

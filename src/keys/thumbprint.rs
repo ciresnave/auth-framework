@@ -17,9 +17,9 @@ fn member<'a>(jwk: &'a Value, name: &str) -> Result<&'a str> {
 /// malformed key never gets a stable but meaningless thumbprint.
 fn b64url_member<'a>(jwk: &'a Value, name: &str) -> Result<&'a str> {
     let s = member(jwk, name)?;
-    URL_SAFE_NO_PAD.decode(s).map_err(|_| {
-        AuthError::validation(format!("JWK member '{name}' is not base64url"))
-    })?;
+    URL_SAFE_NO_PAD
+        .decode(s)
+        .map_err(|_| AuthError::validation(format!("JWK member '{name}' is not base64url")))?;
     Ok(s)
 }
 
