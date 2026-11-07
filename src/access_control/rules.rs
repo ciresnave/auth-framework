@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Editing rules: who may add or remove a grant, and the audit trail.
 //!
 //! A rule is a [`Grant`]. Whoever holds the engine's *edit action* over an
