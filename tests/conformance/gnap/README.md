@@ -19,6 +19,9 @@ Each vector has:
   - `approve`: the resource owner approves at the server (not on the wire); saves `interact_ref` and `hash`.
   - `continue`: `transaction`, `token`, `interact_ref`, `interact_hash` (null to omit) and `proof`
     (`valid`, `absent`, `wrong_key`), sent to the continuation URL.
+  - `rotate`, `revoke`: `token`; token management (RFC 9635 section 6).
+  - `introspect`: `token`; the server's own view of a token (not on the RFC 9635 wire); the response
+    has `active` true or false.
   A step may carry `expect` (as below) and `save`: a map of name to `{pointer, tail}` that keeps a
   string from the response (with `tail`, only what follows the last `/`). A later step writes `$name`
   to use it. `not_equals_saved` asserts a response string differs from a saved one.
@@ -36,5 +39,5 @@ Rules for adding a vector:
 3. A vector that describes behaviour not yet fixed in a published release is held back until
    that release is out.
 
-Scope of suite version 4: the transaction endpoint, continuation and the RFC 9635 section 11 checks the endpoint can answer, with DPoP client-key proofs. The server under test grants whatever is requested (a permissive access policy). Token management, RFC 9767 and the remaining section 11 checks are added
+Scope of suite version 5: the transaction endpoint, continuation, token rotation and revocation, and the RFC 9635 section 11 checks the endpoint can answer, with DPoP client-key proofs. The server under test grants whatever is requested (a permissive access policy). RFC 9767 and the remaining section 11 checks are added
 in later versions of the suite.

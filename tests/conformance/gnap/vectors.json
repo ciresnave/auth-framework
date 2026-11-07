@@ -1,6 +1,6 @@
 {
   "suite": "gnap-transaction-endpoint",
-  "suite_version": 4,
+  "suite_version": 5,
   "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
   "vectors": [
     {
@@ -1374,6 +1374,328 @@
             "outcome": "error"
           },
           "jti": "replay-1"
+        }
+      ]
+    },
+    {
+      "id": "tok-rotate-replaces",
+      "rfc": "RFC 9635",
+      "section": "6.1",
+      "kind": "positive",
+      "description": "Rotating a token returns a new value with the same access rights; the old value stops being honoured and the new one is.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/value",
+                "op": "not_equals_saved",
+                "value": "$at"
+              },
+              {
+                "path": "/access/0/type",
+                "op": "equals",
+                "value": "read"
+              },
+              {
+                "path": "/access/0/actions/0",
+                "op": "equals",
+                "value": "list"
+              }
+            ]
+          },
+          "save": {
+            "at2": {
+              "pointer": "/value"
+            }
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": false
+              }
+            ]
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at2",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-revoke",
+      "rfc": "RFC 9635",
+      "section": "6.2",
+      "kind": "positive",
+      "description": "A revoked token is no longer honoured.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "do": "revoke",
+          "token": "$at",
+          "expect": {
+            "outcome": "response"
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-rotated-value-refused",
+      "rfc": "RFC 9635",
+      "section": "6.1",
+      "kind": "negative",
+      "description": "A token value that has already been rotated cannot be rotated again.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/value",
+                "op": "not_equals_saved",
+                "value": "$at"
+              },
+              {
+                "path": "/access/0/type",
+                "op": "equals",
+                "value": "read"
+              },
+              {
+                "path": "/access/0/actions/0",
+                "op": "equals",
+                "value": "list"
+              }
+            ]
+          },
+          "save": {
+            "at2": {
+              "pointer": "/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "$at",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-rotate-unknown",
+      "rfc": "RFC 9635",
+      "section": "6.1",
+      "kind": "negative",
+      "description": "A token value the server did not issue cannot be rotated.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "not-a-token",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-revoke-unknown",
+      "rfc": "RFC 9635",
+      "section": "6.2",
+      "kind": "negative",
+      "description": "A token value the server did not issue cannot be revoked.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "revoke",
+          "token": "not-a-token",
+          "expect": {
+            "outcome": "error"
+          }
         }
       ]
     }

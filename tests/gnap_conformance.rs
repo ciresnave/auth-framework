@@ -290,6 +290,28 @@ async fn gnap_vectors() {
                         .await;
                     finish_step(id, step, &mut vars, result);
                 }
+                "rotate" => {
+                    let token = subst(&vars, &step["token"]).expect("step.token");
+                    let result = service.rotate_token(&token).await;
+                    finish_step(id, step, &mut vars, result);
+                }
+                "revoke" => {
+                    let token = subst(&vars, &step["token"]).expect("step.token");
+                    let result = service
+                        .revoke_token(&token)
+                        .await
+                        .map(|()| serde_json::json!({}));
+                    finish_step(id, step, &mut vars, result);
+                }
+                "introspect" => {
+                    // The server's own view of a token: `active` is false for one it no longer honours.
+                    let token = subst(&vars, &step["token"]).expect("step.token");
+                    let result = service
+                        .introspect_token(&token)
+                        .await
+                        .map(|t| t.unwrap_or_else(|| serde_json::json!({"active": false})));
+                    finish_step(id, step, &mut vars, result);
+                }
                 other => panic!("{id}: unknown step {other}"),
             }
         }
