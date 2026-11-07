@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Access-control engine: deny-wins decisions over principal, action and object.
 //!
 //! A consumer registers its actions in an [`ActionRegistry`], issues [`Grant`]s,
