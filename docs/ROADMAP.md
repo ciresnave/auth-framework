@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc225`
+- Current crate version: `0.6.0-rc230`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -276,6 +276,17 @@ to replace `rust_crypto` crate-wide rather than coexist with it) that has
 not been scoped or scheduled. Continue looking for a real fix on this
 path rather than bumping the version number.
 
+**Third-party versions held back by our own dependencies** (measured 2026-11-06 at 3156a62c with `cargo tree --locked -i <crate> -e normal --all-features`
+and crates.io; both are direct dependencies of this crate, `Cargo.toml` lines 227 and 268):
+
+- [ ] `totp-lite` 2.0.1 (already the newest release) pulls `hmac` 0.12.1 and `sha1` 0.10.7, while the tree also carries `hmac` 0.13.0 and `sha1` 0.11.0 for
+  other users. Options: an in-crate RFC 6238 implementation on the current `hmac` and `sha1` (with the RFC 6238 test vectors), or drop the crate. Replacement
+  crates are an ASK.
+- [ ] `tokio-cron-scheduler` 0.15.1 (already the newest release) pulls `croner` 3.0.1 (newest 4.0.3), `strum` 0.27.2 (0.28.0 is also in the tree) and
+  `derive_builder` 0.20.2, itself the newest release, which pins `darling` 0.20.11 (newest 0.24.1). Options: replace it, or make it optional. Not
+  gated by a feature today.
+- [ ] `aes-gcm` 0.10.3 -> 0.11.1 (row above) also moves `aes` 0.8.4, `aead` 0.5.2, `ctr` 0.9.2, `ghash` 0.5.1, `polyval` 0.6.2 and `universal-hash` 0.5.1.
+
 ### Storage and Scaling
 
 - [x] SQLite support in a separate crate for lightweight deployments (`auth-storage-sqlite`, a workspace member that carries the root version)
@@ -353,7 +364,7 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 | Row | Source | What | State |
 | --- | --- | --- | --- |
 | A1 | `SECURITY.md` "SHA-1 Usage" | Configurable digest/signature algorithm preference in the SAML handler ("a future release will add...") so SHA-256 can be required | Done (rc211): opt-in `SamlAlgorithmPolicy { allow_sha1: false }` on `SamlTrustAnchors`, judged on the signature that verified; the default still accepts SHA-1 (flipping it is a later Breaking decision, PM) |
-| A2 | `SECURITY.md` "Protocol Stubs" | GNAP: validate DPoP proofs and bind the key. The `dpop` proof method was accepted by name and checked nothing else | Done (rc209): `handle_transaction_with_proof` and `continue_transaction_with_proof` verify the DPoP proof against the named key; `httpsig`, `mtls` and `jws` are refused as not supported until they can be verified. Follow-up, Open: verify `httpsig` (RFC 9421), `mtls` and `jws` |
+| A2 | `SECURITY.md` "Protocol Stubs" | GNAP: validate DPoP proofs and bind the key. The `dpop` proof method was accepted by name and checked nothing else | Done (rc209): `handle_transaction_with_proof` and `continue_transaction_with_proof` verify the DPoP proof against the named key; `httpsig`, `mtls` and `jws` are refused as not supported until they can be verified. Follow-up, Open: verify `httpsig` (RFC 9421), `mtls` and `jws`. Hardened at rc217: an access policy decides what a token carries (default deny), a client key is required, a finish-method transaction needs its one-time `interact_ref`, and a token is stored before it is returned |
 | A3 | `SECURITY.md` "Protocol Stubs" | WS-Trust: issued tokens are held in memory only, lost on restart and unshared across instances; persist them through the `AuthStorage` KV layer | Done (rc212, PM to confirm number): `SecurityTokenService::with_storage` and `process_request_stored` persist Issue and Renew, delete on Cancel and read on Validate and Renew (`wstrust:token:<id>`, TTL = token lifetime); `process_request` is unchanged. `tests/wstrust_persistence_tests.rs`, 8 tests. Follow-up, Open: the issue/validate flow is not behind any HTTP route, so nothing in the crate calls the stored entry point yet |
 | A4 | `SECURITY.md` "Protocol Stubs" | UMA 2.0: the claims-gathering interaction flow is missing | Slice 1 Done (rc216): `request_rpt` no longer takes a claims argument; a resource set with `required_claims` is refused (`need_info`, ticket kept) until claims are gathered by the service. Open, ordinary feature PRs: structured `NeedInfo`; `begin_claims_interaction` / `complete_claims_interaction` (redirect allow-list, state, single use, claims bound to the ticket); register the issued RPT so it introspects |
 | A5 | `SECURITY.md` "Protocol Stubs" | SAML assertions: the doc says no full C14N or signature-chain validation. Measured at f4c512fd: `xml_signature.rs` is a shim; `dsig.rs` verifies on `bergshamra` (real C14N, every reference digest recomputed, pinned certificate, no chain building). Sentence corrected, and the SHA-1 paragraph with it | Done (rc188) |
@@ -370,6 +381,46 @@ that the roadmap did not carry. Measured at `origin/main` 8e12a8b3. State: open 
 | A16 | PM, after the DPoP hardening (2026-11-02) | `FapiManager` has no rate limiter and takes no caller address, and it is not served by `src/api`; the crate's address and per-client limiters (#92) cover only the OAuth2 routes there. Say so in the `FapiManager` docs and `docs/`, then add an optional limiter with an address bucket before any signature work and a per-client bucket after authentication. Design: `docs/FAPI_RATE_LIMIT_DESIGN.md` | Done (rc204, #388): rustdoc, `FapiManager::with_rate_limiter` and the `_from` entry points with the address and per-client buckets |
 | A17 | DPoP review (2026-11-02) | RS256/PS256 DPoP proofs were refused for every RSA key of 2048 bits or more: `verify_dpop_signature` wrote the modulus length in one byte, which wraps at 256, so the DER key it handed to ring was malformed (it failed closed). A proper DER length encoder replaces it; `rs256_and_ps256_proofs_from_a_2048_bit_key_are_accepted` is red before and green after, with a signature over other claims refused. Backport to `release/0.5.x` and `release/0.4.x` when cheap | Main: Done (rc201); `release/0.5.x`: Done (#380, rc85); `release/0.4.x` retired, no backport |
 | A18 | DPoP review (2026-11-02) | `DpopManager::validate_dpop_bound_access_token` reads a JWT access token's claims (including `cnf.jkt`) without verifying the token's signature, so it cannot establish that the token is genuine. Nothing in the crate calls it; the FAPI resource check verifies the token first. Either verify the token with the `SecureJwtValidator` (`DpopManager::new` takes one and ignores it, as `_jwt_validator`) or narrow the function to the binding check and say the token must be validated first | Done (rc202): `validate_dpop_bound_jwt` validates the token with the manager's `SecureJwtValidator` first and only then reads `cnf.jkt`; the old function is `#[deprecated]` and always refuses (a forged JWT was reported valid: `a_forged_jwt_is_not_accepted_as_a_bound_token` red before, green after). The same code was on `release/0.5.x` and `release/0.4.x`: `release/0.5.x`: Done (#383, rc86); `release/0.4.x` retired, no backport |
+
+### GNAP (RFC 9635, RFC 9767) and access control (2026-11-06)
+
+CireSnave 2026-11-06, verbatim: *"Add comprehensive GNAP to auth-framework."* and, for agents: *"auth-framework should support
+authentication of and authorization for agents as well as for humans and programs."* Board 385 ruled A: auth-framework holds
+principals, grants, delegation and the access-control decision engine; Synapse is the first consumer and enforcer. The section-by-section
+measurement is `docs/GNAP_RFC9635_GAP.md`; each slice is one PR with born-red tests and a mutation check, every claim cited to the RFC text, and no slice
+claims a method it does not verify. Rows are Open until their PR lands.
+
+| Row | What | State |
+| --- | --- | --- |
+| G0 | Gap note `docs/GNAP_RFC9635_GAP.md`, these rows, rustdoc warnings on `permissions::Delegation` and `check_delegation` | Done (rc218) |
+| G1 | Full RFC types and errors: Appendix E polymorphism, `access_token` object or array, access objects, labels, flags, references (8.1), `manage` object, `key` object or string, `client` by reference, `user`, `class_id`, the 3.6 error object and codes | Open |
+| G2 | `httpsig` proofing (RFC 9421 + RFC 9530, tag `gnap`). Check crates.io for a maintained crate before writing one; any new dependency is an ASK | Open |
+| G3 | `jwsd`, `jws`, `mtls`, key formats `cert` and `cert#S256`; decide the fate of the non-RFC `dpop` method | Open |
+| G4 | Interaction: start `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push` (SSRF rules of 11.34), `hash_method`, hints, interaction expiry | Open |
+| G5 | Continuation: polling with `wait` and `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, token rotate and revoke with proof, key rotation, `Authorization: GNAP` | Open |
+| G6 | Policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style choice, not one hard-wired store); requirements for agents and rooms from board 384 | Open |
+| G7 | HTTP routes (axum, actix) and discovery (9.1 RS-first, 9.2 `OPTIONS`) | Open |
+| G8 | RFC 9767 resource-server connections: RS discovery, introspection, resource set registration, downstream tokens | Open |
+| G9 | Agent principals and delegation by an account holder (see AC2, AC5, AC6); the creator of a principal holds a strict-subset grant over it, ancestors may revoke it, the account holder always overrides | Open |
+| G10 | Conformance: the RFC example vectors (including the 4.2.3 hash example) and one test per section 11 item | Open |
+| AC1 | Deny effect (deny wins), `decide(principal, action, resource) -> Decision`, action registry for consumers. `permissions.rs` has no deny at 3156a62c; `src/protocols/opa.rs` has a deny-wins `PolicyEffect` (lines 514-523), the candidate base | Open |
+| AC2 | Attenuation: a shared grant is a subset of what the sharer holds, checked when shared and when used; chains to depth 3, configurable; stored delegations consulted by every check (today none is); revocation cascades (today a delegation survives its delegator losing the permission). Replaces `permissions::Delegation` evaluation. Creator grants (CireSnave 2026-11-06, board 384): creating a principal issues the creator a grant over the new principal, a strict subset of the creator's own grants, revocable by any ancestor up to the account holder, who always holds override (so an agent that creates a sub-agent can set see and send rules about it, for example hide a long-running helper from every other agent). | Open |
+| AC3 | Cache contract (a decision is valid for at most 60 s, explicit invalidation) and a live path: a grant marked sensitive is checked at its source on every use | Open |
+| AC4 | The engine behind `GnapAccessPolicy` (G6) | Open |
+| AC5 | Principal kinds human, program, agent (stable id, owner, keys, lifecycle) | Open |
+| AC6 | An account holder starts with permission to create and edit any rule about its own agents and rooms; anyone may share a subset of what it holds with others, including agents, and a shared grant can only narrow | Open |
+| KM1 | Key model: one `KeyKind` (JWS/JWT signing, JWE encryption, GNAP/DPoP/httpsig client key, mTLS key pair, symmetric HMAC and AEAD), key ids, RFC 7638 thumbprints for every kind, lifecycle states (pending, active, retiring, revoked, destroyed) and a public export (JWK, JWKS, SPKI PEM). See `docs/GNAP_RFC9635_GAP.md` section 8 | Open |
+| KM2 | Creation: generate every kind (RSA, P-256, P-384, Ed25519, X25519, 256-bit symmetric) on the one crypto backend already in the tree (aws-lc-rs through rcgen/jsonwebtoken); import; no key is generated by a path that cannot say where its private half went | Open |
+| KM3 | Storage by capability, not one hard-wired store: a `KeyStore` trait whose implementations declare what they can do (exportable or not, can sign in place, can persist). Implementations in order: memory, encrypted file (reusing the `KeyProvider`/`StorageEncryption` seam), OS keystore, then TPM/PKCS#11/KMS where the platform has one. A non-exportable key signs through the store and is never returned | Open |
+| KM4 | Rotation with overlap for every kind, not only the two `TokenManager` cases: N previous keys for a configured overlap window, verification by `kid`, scheduled and on-demand rotation, retirement that is audited. JWKS publishes active and retiring keys, never revoked ones | Open |
+| KM5 | Revocation and compromise: revoking a key stops verification and publishes the fact (CRL entry or OCSP input for certificates, a `revoked` state plus event for JWKs and client keys); a revoked client key kills the grants and tokens bound to its thumbprint | Open |
+| KM6 | Public export and publishing: JWKS for RSA, EC and OKP keys (today RSA only), RFC 7638 `kid`, `use`/`key_ops`/`alg`, `x5c`/`x5t#S256` for certificate-bearing keys, cache headers that match the overlap window | Open |
+| KM7 | Certificates: CSR creation for a client key (none exists today), self-signed (rcgen), CA-issued (the existing `X509Signer`), `cert` and `cert#S256` GNAP key forms, renewal before expiry, and CA key custody through KM3 instead of a PEM path | Open |
+| KM8 | Tooling: the `auth-framework keys` CLI and a library API for create, list, rotate, revoke, export and verify; every command audit-logged; no command prints a private key unless the key is exportable and `--export-private` is given | Open |
+
+CireSnave 2026-11-06, verbatim: *"Auth-framework should include full key management tooling for most, if not all keys that a client or server could need to generate.  That includes key creation."* KM1-KM8 are that request; the measurement of what exists and the per-principal key anchors are `docs/GNAP_RFC9635_GAP.md` sections 8 and 9.
+
+Suggested order after G0 (release numbers are the PM's): AC1, AC2, AC3, then KM1-KM3 (G2, G3 and G9 need the key model), G1-G6 as the build needs them, AC5 and AC6 with G9, KM4-KM8 alongside G3/G5, then G7, G8, G10.
 
 ### Do not build otherwise (patent sweep, 2026-10-25)
 
