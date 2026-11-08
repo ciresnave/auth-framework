@@ -333,6 +333,9 @@ struct GnapIssuedToken {
     pub expires_at: u64,
     /// Client key thumbprint that this token is bound to (if any)
     pub key_thumbprint: Option<String>,
+    /// The proof method of that key (`dpop`, ...): how a request about this token is proved.
+    #[serde(default)]
+    pub key_proof: Option<String>,
     /// The transaction that produced this token
     pub transaction_id: String,
 }
@@ -344,6 +347,7 @@ impl std::fmt::Debug for GnapIssuedToken {
         d.field("access", &self.access);
         d.field("expires_at", &self.expires_at);
         d.field("key_thumbprint", &self.key_thumbprint);
+        d.field("key_proof", &self.key_proof);
         d.field("transaction_id", &self.transaction_id);
         d.finish()
     }
@@ -744,39 +748,98 @@ impl GnapService {
         let Some(key) = client.as_ref().and_then(|c| c.key.as_ref()) else {
             return Err(AuthError::validation(KEY_REQUIRED));
         };
-        match key.proof.as_str() {
-            "dpop" => {
-                let Some((manager, proof)) = dpop else {
-                    return Err(AuthError::validation(PROOF_REQUIRED));
-                };
-                let Some(header) = proof.dpop_proof else {
-                    return Err(AuthError::validation(PROOF_REQUIRED));
-                };
-                match manager
-                    .validate_dpop_proof_for_key(
-                        header,
-                        proof.http_method,
-                        proof.http_uri,
-                        None,
-                        proof.expected_nonce,
-                        Some(&thumbprint),
-                    )
-                    .await
-                {
-                    Ok(result) if result.is_valid => {}
-                    _ => return Err(AuthError::validation(PROOF_INVALID)),
-                }
-            }
-            // Unit tests only: a method that checks nothing must never be accepted in a build.
-            #[cfg(test)]
-            "test" => {}
-            other => {
-                return Err(AuthError::validation(format!(
-                    "{PROOF_NOT_SUPPORTED}: {other}"
-                )));
-            }
-        }
+        Self::check_key_proof(&key.proof, &thumbprint, dpop).await?;
         Ok(Some(thumbprint))
+    }
+
+    /// The one place that decides which proof methods this build can verify, and verifies them. Issuance
+    /// (`verify_client_proof`) and token management (`verify_token_key_proof`) both call it, so a method cannot
+    /// be admitted at issuance and then have no way to rotate or revoke its token: a method added here is
+    /// added to both, and a method refused here is refused at both. Only `dpop` is verified; `test`, which
+    /// checks nothing, exists in unit-test builds only.
+    async fn check_key_proof(
+        method: &str,
+        thumbprint: &str,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<()> {
+        match method {
+            "dpop" => Self::check_dpop_proof(thumbprint, dpop).await,
+            #[cfg(test)]
+            "test" => Ok(()),
+            other => Err(AuthError::validation(format!(
+                "{PROOF_NOT_SUPPORTED}: {other}"
+            ))),
+        }
+    }
+
+    /// Check that the request's `DPoP` header is a fresh proof signed by the key with `thumbprint`, for this
+    /// method and URI. No proof material is a refusal, never a pass.
+    async fn check_dpop_proof(
+        thumbprint: &str,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<()> {
+        let Some((manager, proof)) = dpop else {
+            return Err(AuthError::validation(PROOF_REQUIRED));
+        };
+        let Some(header) = proof.dpop_proof else {
+            return Err(AuthError::validation(PROOF_REQUIRED));
+        };
+        match manager
+            .validate_dpop_proof_for_key(
+                header,
+                proof.http_method,
+                proof.http_uri,
+                None,
+                proof.expected_nonce,
+                Some(thumbprint),
+            )
+            .await
+        {
+            Ok(result) if result.is_valid => Ok(()),
+            _ => Err(AuthError::validation(PROOF_INVALID)),
+        }
+    }
+
+    /// The proof method of the key a request names, if it names one.
+    fn key_proof_method(client: &Option<GnapClientInfo>) -> Option<&str> {
+        client
+            .as_ref()
+            .and_then(|c| c.key.as_ref())
+            .map(|key| key.proof.as_str())
+    }
+
+    /// A request about a key-bound token is accepted only with a proof from that key (RFC 9635 section 6:
+    /// the management request is signed with the key the token is bound to). A bearer token has no key and
+    /// needs none. A token bound under a method this build cannot verify is refused, not waved through.
+    async fn verify_token_key_proof(
+        key_thumbprint: Option<&str>,
+        key_proof: Option<&str>,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<()> {
+        let Some(thumbprint) = key_thumbprint else {
+            return Ok(());
+        };
+        match key_proof {
+            Some(method) => Self::check_key_proof(method, thumbprint, dpop).await,
+            None => Err(AuthError::validation(PROOF_NOT_SUPPORTED)),
+        }
+    }
+
+    /// Look the token up and require the proof its key calls for, before anything is changed.
+    async fn require_token_key_proof(
+        &self,
+        token_value: &str,
+        not_found: &'static str,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<()> {
+        let (thumbprint, method) = {
+            let tokens = self.issued_tokens.read().await;
+            let token = tokens
+                .get(token_value)
+                .ok_or_else(|| AuthError::validation(not_found))?;
+            (token.key_thumbprint.clone(), token.key_proof.clone())
+        };
+        Self::verify_token_key_proof(thumbprint.as_deref(), method.as_deref(), dpop).await
     }
 
     // ── Interaction Hash ─────────────────────────────────────────────────
@@ -802,6 +865,7 @@ impl GnapService {
         &self,
         access_requests: &[GnapAccessRequest],
         key_thumbprint: &Option<String>,
+        key_proof: Option<&str>,
         transaction_id: &str,
     ) -> Result<serde_json::Map<String, serde_json::Value>> {
         // The policy, not the request, decides what the token carries.
@@ -829,6 +893,7 @@ impl GnapService {
             access: access_requests.to_vec(),
             expires_at: now + self.config.token_lifetime_secs,
             key_thumbprint: key_thumbprint.clone(),
+            key_proof: key_proof.map(str::to_string),
             transaction_id: transaction_id.to_string(),
         };
 
@@ -978,7 +1043,12 @@ impl GnapService {
             // No interaction required — issue token directly if access requested
             if let Some(ref access_requests) = request.access_token {
                 let token_obj = self
-                    .build_access_token_response(access_requests, &key_thumbprint, "direct")
+                    .build_access_token_response(
+                        access_requests,
+                        &key_thumbprint,
+                        Self::key_proof_method(&request.client),
+                        "direct",
+                    )
                     .await?;
                 response.insert(
                     "access_token".to_string(),
@@ -1187,6 +1257,7 @@ impl GnapService {
                         .build_access_token_response(
                             access_requests,
                             &key_thumbprint,
+                            Self::key_proof_method(&txn.request.client),
                             transaction_id,
                         )
                         .await
@@ -1291,7 +1362,29 @@ impl GnapService {
     // ── Token Management (draft §6) ─────────────────────────────────────
 
     /// Revoke an issued access token (draft §6.2 — DELETE on manage URI).
+    pub async fn revoke_token_with_proof(
+        &self,
+        dpop: &DpopManager,
+        proof: &GnapProof<'_>,
+        token_value: &str,
+    ) -> Result<()> {
+        self.revoke_token_inner(token_value, Some((dpop, proof)))
+            .await
+    }
+
+    /// Unit tests only: revoke without a proof. A bound token is refused unless its method is the test one.
+    #[cfg(test)]
     pub async fn revoke_token(&self, token_value: &str) -> Result<()> {
+        self.revoke_token_inner(token_value, None).await
+    }
+
+    async fn revoke_token_inner(
+        &self,
+        token_value: &str,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<()> {
+        self.require_token_key_proof(token_value, "Token not found", dpop)
+            .await?;
         let mut tokens = self.issued_tokens.write().await;
         if tokens.remove(token_value).is_none() {
             return Err(AuthError::validation("Token not found"));
@@ -1301,7 +1394,29 @@ impl GnapService {
 
     /// Rotate an issued access token (draft §6.1 — POST on manage URI).
     /// Returns a new token with the same access rights and key binding.
+    pub async fn rotate_token_with_proof(
+        &self,
+        dpop: &DpopManager,
+        proof: &GnapProof<'_>,
+        old_token_value: &str,
+    ) -> Result<serde_json::Value> {
+        self.rotate_token_inner(old_token_value, Some((dpop, proof)))
+            .await
+    }
+
+    /// Unit tests only: rotate without a proof. A bound token is refused unless its method is the test one.
+    #[cfg(test)]
     pub async fn rotate_token(&self, old_token_value: &str) -> Result<serde_json::Value> {
+        self.rotate_token_inner(old_token_value, None).await
+    }
+
+    async fn rotate_token_inner(
+        &self,
+        old_token_value: &str,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<serde_json::Value> {
+        self.require_token_key_proof(old_token_value, "Token not found or already revoked", dpop)
+            .await?;
         let mut tokens = self.issued_tokens.write().await;
         let old = tokens
             .remove(old_token_value)
@@ -1322,6 +1437,7 @@ impl GnapService {
             access: old.access.clone(),
             expires_at: now + self.config.token_lifetime_secs,
             key_thumbprint: old.key_thumbprint.clone(),
+            key_proof: old.key_proof.clone(),
             transaction_id: old.transaction_id,
         };
 
@@ -2576,6 +2692,160 @@ mod proof_verification_tests {
         result.expect_err("the request must be refused").to_string()
     }
 
+    const MANAGE_URI: &str = "https://as.example.test/api/gnap/token/1";
+
+    /// A token issued to `key` over a proved, non-interactive request.
+    async fn issued_token(
+        svc: &GnapService,
+        dpop: &DpopManager,
+        key: &ClientKey,
+        jti: &str,
+    ) -> String {
+        let header = dpop_header(key, key, "POST", URI, jti);
+        let resp = svc
+            .handle_transaction_with_proof(
+                dpop,
+                &proof(Some(&header), URI),
+                request(key, "dpop", false),
+            )
+            .await
+            .unwrap();
+        resp["access_token"]["value"].as_str().unwrap().to_string()
+    }
+
+    async fn is_live(svc: &GnapService, token: &str) -> bool {
+        svc.introspect_token(token).await.unwrap().is_some()
+    }
+
+    fn refused_with<T: std::fmt::Debug>(result: Result<T>) -> String {
+        result.expect_err("the request must be refused").to_string()
+    }
+
+    #[tokio::test]
+    async fn a_key_bound_token_is_rotated_only_with_a_proof_from_its_key() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let token = issued_token(&svc, &dpop, &key, "jti-issue").await;
+        // The value alone is not enough, however it is presented.
+        assert!(refused_with(svc.rotate_token(&token).await).contains("proof required"));
+        assert!(
+            refused_with(
+                svc.rotate_token_with_proof(&dpop, &proof(None, MANAGE_URI), &token)
+                    .await
+            )
+            .contains("proof required")
+        );
+        // A proof signed by another key is not enough.
+        let other = client_key();
+        let forged = dpop_header(&other, &other, "POST", MANAGE_URI, "jti-forged");
+        assert!(
+            refused_with(
+                svc.rotate_token_with_proof(&dpop, &proof(Some(&forged), MANAGE_URI), &token)
+                    .await
+            )
+            .contains("proof invalid")
+        );
+        // A proof for another URI is not enough.
+        let elsewhere = dpop_header(
+            &key,
+            &key,
+            "POST",
+            "https://as.example.test/elsewhere",
+            "jti-elsewhere",
+        );
+        assert!(
+            refused_with(
+                svc.rotate_token_with_proof(&dpop, &proof(Some(&elsewhere), MANAGE_URI), &token)
+                    .await
+            )
+            .contains("proof invalid")
+        );
+        assert!(
+            is_live(&svc, &token).await,
+            "none of the refusals touched the token"
+        );
+        // Control: the key's own proof rotates it, and the old value is gone.
+        let good = dpop_header(&key, &key, "POST", MANAGE_URI, "jti-rotate");
+        let rotated = svc
+            .rotate_token_with_proof(&dpop, &proof(Some(&good), MANAGE_URI), &token)
+            .await
+            .unwrap();
+        let new_value = rotated["value"].as_str().unwrap().to_string();
+        assert_ne!(new_value, token);
+        assert!(!is_live(&svc, &token).await);
+        assert!(
+            is_live(&svc, &new_value).await,
+            "the rotated token keeps its key binding"
+        );
+        // The new token is bound to the same key: the value alone does not rotate it either.
+        assert!(refused_with(svc.rotate_token(&new_value).await).contains("proof required"));
+    }
+
+    #[tokio::test]
+    async fn a_key_bound_token_is_revoked_only_with_a_proof_from_its_key() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let token = issued_token(&svc, &dpop, &key, "jti-issue").await;
+        assert!(refused_with(svc.revoke_token(&token).await).contains("proof required"));
+        let other = client_key();
+        let forged = dpop_header(&other, &other, "POST", MANAGE_URI, "jti-forged");
+        assert!(
+            refused_with(
+                svc.revoke_token_with_proof(&dpop, &proof(Some(&forged), MANAGE_URI), &token)
+                    .await
+            )
+            .contains("proof invalid")
+        );
+        assert!(
+            is_live(&svc, &token).await,
+            "the refusals left the token usable"
+        );
+        let good = dpop_header(&key, &key, "POST", MANAGE_URI, "jti-revoke");
+        svc.revoke_token_with_proof(&dpop, &proof(Some(&good), MANAGE_URI), &token)
+            .await
+            .unwrap();
+        assert!(!is_live(&svc, &token).await);
+    }
+
+    #[tokio::test]
+    async fn a_management_proof_is_good_for_one_request() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let first = issued_token(&svc, &dpop, &key, "jti-a").await;
+        let second = issued_token(&svc, &dpop, &key, "jti-b").await;
+        let header = dpop_header(&key, &key, "POST", MANAGE_URI, "jti-once");
+        svc.revoke_token_with_proof(&dpop, &proof(Some(&header), MANAGE_URI), &first)
+            .await
+            .unwrap();
+        // The same proof, replayed against another token, is refused and that token survives.
+        assert!(
+            refused_with(
+                svc.revoke_token_with_proof(&dpop, &proof(Some(&header), MANAGE_URI), &second)
+                    .await
+            )
+            .contains("proof invalid")
+        );
+        assert!(is_live(&svc, &second).await);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_token_is_refused_whatever_the_proof() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let header = dpop_header(&key, &key, "POST", MANAGE_URI, "jti-unknown");
+        let p = proof(Some(&header), MANAGE_URI);
+        assert!(
+            refused_with(
+                svc.revoke_token_with_proof(&dpop, &p, "no-such-token")
+                    .await
+            )
+            .contains("not found")
+        );
+        assert!(
+            refused_with(
+                svc.rotate_token_with_proof(&dpop, &p, "no-such-token")
+                    .await
+            )
+            .contains("not found")
+        );
+    }
+
     #[tokio::test]
     async fn a_dpop_proof_signed_by_the_named_key_is_accepted() {
         let (svc, dpop, key) = (service(), manager(), client_key());
@@ -2707,6 +2977,52 @@ mod proof_verification_tests {
             .build();
         let msg = refusal(svc.handle_transaction(anonymous).await);
         assert!(msg.contains("client key required"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn issuance_and_management_admit_exactly_the_same_proof_methods() {
+        // A method admitted at issuance but not at management would leave a token that cannot be revoked
+        // (Pip review). Both gates call `check_key_proof`; this fails if they ever diverge.
+        let key = client_key();
+        let thumbprint = GnapService::jwk_thumbprint(&key.jwk).unwrap();
+        let not_supported = |e: AuthError| e.to_string().contains(PROOF_NOT_SUPPORTED);
+        let mut admitted = Vec::new();
+        for method in [
+            "dpop", "test", "httpsig", "mtls", "jws", "", "DPOP", "none", "bogus",
+        ] {
+            let client = Some(GnapClientInfo {
+                key: Some(GnapClientKey {
+                    proof: method.to_string(),
+                    jwk: key.jwk.clone(),
+                }),
+                display: None,
+            });
+            // with no proof material, a verifiable method fails for want of a proof, an unsupported one for
+            // want of support: the two outcomes tell them apart without needing a valid proof
+            let issuance = GnapService::verify_client_proof(&client, None).await;
+            let management =
+                GnapService::verify_token_key_proof(Some(&thumbprint), Some(method), None).await;
+            let issued = match &issuance {
+                Ok(_) => true,
+                Err(e) => !not_supported(AuthError::validation(e.to_string())),
+            };
+            let managed = match &management {
+                Ok(()) => true,
+                Err(e) => !not_supported(AuthError::validation(e.to_string())),
+            };
+            assert_eq!(
+                issued, managed,
+                "{method:?}: issuance {issuance:?} but management {management:?}"
+            );
+            if issued {
+                admitted.push(method);
+            }
+        }
+        // the methods this build verifies, pinned: a new one has to be added on purpose
+        assert_eq!(admitted, ["dpop", "test"]);
+        // a token with no recorded method is refused at management, never waved through
+        let none = GnapService::verify_token_key_proof(Some(&thumbprint), None, None).await;
+        assert!(none.is_err());
     }
 
     #[test]
