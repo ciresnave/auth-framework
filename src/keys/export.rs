@@ -24,6 +24,45 @@ pub struct PublicJwk {
 
 const PRIVATE_MEMBERS: [&str; 8] = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
 
+/// Coordinate length in octets for each EC and OKP curve this module accepts
+/// (RFC 7518 section 6.2.1.2, RFC 8037 section 2).
+fn coordinate_len(kty: &str, crv: &str) -> Option<usize> {
+    match (kty, crv) {
+        ("EC", "P-256") => Some(32),
+        ("EC", "P-384") => Some(48),
+        ("EC", "P-521") => Some(66),
+        ("OKP", "Ed25519" | "X25519") => Some(32),
+        ("OKP", "X448") => Some(56),
+        ("OKP", "Ed448") => Some(57),
+        _ => None,
+    }
+}
+
+/// An EC or OKP key must name a known curve and carry coordinates of that curve's
+/// length, so a malformed key fails here and not in a verifier far away.
+fn check_shape(obj: &Map<String, Value>) -> Result<()> {
+    let text = |n: &str| obj.get(n).and_then(Value::as_str).unwrap_or_default();
+    let kty = text("kty");
+    if kty == "RSA" {
+        return Ok(());
+    }
+    let crv = text("crv");
+    let want = coordinate_len(kty, crv)
+        .ok_or_else(|| AuthError::validation(format!("unsupported {kty} curve '{crv}'")))?;
+    let coords: &[&str] = if kty == "EC" { &["x", "y"] } else { &["x"] };
+    for name in coords {
+        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(text(name))
+            .map_or(0, |b| b.len());
+        if n != want {
+            return Err(AuthError::validation(format!(
+                "{kty} {crv} member '{name}' must be {want} octets"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl PublicJwk {
     /// RSA public key from base64url `n` and `e`.
     pub fn rsa(n: &str, e: &str) -> Result<Self> {
@@ -52,6 +91,7 @@ impl PublicJwk {
             )));
         }
         jwk_thumbprint_value(v)?;
+        check_shape(obj)?;
         let s = |n: &str| obj.get(n).and_then(Value::as_str).map(str::to_owned);
         let mut params = Map::new();
         for name in ["kty", "crv", "x", "y", "n", "e"] {
@@ -166,7 +206,7 @@ mod tests {
 
     #[test]
     fn metadata_is_exported() {
-        let mut j = PublicJwk::ec("P-256", "AAAA", "BBBB").unwrap();
+        let mut j = PublicJwk::ec("P-256", X, X).unwrap();
         j.use_ = Some("sig".into());
         j.alg = Some("ES256".into());
         j.key_ops = Some(vec!["verify".into()]);
@@ -176,6 +216,15 @@ mod tests {
             (Some("sig"), Some("ES256"))
         );
         assert_eq!(v["key_ops"], json!(["verify"]));
+    }
+
+    #[test]
+    fn malformed_public_keys_are_refused_at_construction() {
+        assert!(PublicJwk::ec("P-999", "AAAA", "BBBB").is_err(), "curve");
+        assert!(PublicJwk::ec("P-256", "AAAA", "BBBB").is_err(), "length");
+        assert!(PublicJwk::ec("P-256", X, "!!!").is_err(), "base64url");
+        assert!(PublicJwk::okp("Ed25519", "AAAA").is_err(), "okp length");
+        assert!(PublicJwk::ec("P-256", X, X).is_ok(), "control: valid");
     }
 
     #[test]
