@@ -10,6 +10,7 @@
 mod export;
 mod generate;
 mod kind;
+mod rotation;
 mod state;
 mod store;
 mod thumbprint;
@@ -17,6 +18,9 @@ mod thumbprint;
 pub use export::{JwkSet, PublicJwk, spki_pem};
 pub use generate::{LocalKey, SigningAlg, SymmetricKey};
 pub use kind::{KeyKind, Kid, Signer};
+pub use rotation::{due_for_rotation, retire_expired, rotate};
 pub use state::KeyState;
-pub use store::{FileKeyStore, KeyInfo, KeyStore, MemoryKeyStore, StoreCapabilities, publish_jwks};
+pub use store::{
+    FileKeyStore, KeyInfo, KeyStore, MemoryKeyStore, StoreCapabilities, publish_jwks, unix_now,
+};
 pub use thumbprint::{jwk_thumbprint, jwk_thumbprint_value};
