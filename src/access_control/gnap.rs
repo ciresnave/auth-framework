@@ -155,9 +155,12 @@ mod tests {
         reg.create("alice", PrincipalKind::Human, None).unwrap();
         reg.add_key("alice", "tp-alice").unwrap();
         let mut e = InMemoryEngine::new(actions).with_principals(reg);
-        e.add_grant(Grant::new("g1", "alice", "read", "doc:1", Effect::Allow));
-        e.add_grant(Grant::new("g2", "alice", "read", "doc:2", Effect::Allow));
-        e.add_grant(Grant::new("g3", "alice", "write", "doc:2", Effect::Allow));
+        e.add_grant(Grant::new("g1", "alice", "read", "doc:1", Effect::Allow))
+            .unwrap();
+        e.add_grant(Grant::new("g2", "alice", "read", "doc:2", Effect::Allow))
+            .unwrap();
+        e.add_grant(Grant::new("g3", "alice", "write", "doc:2", Effect::Allow))
+            .unwrap();
         let e = Arc::new(RwLock::new(e));
         (EngineGnapPolicy::new(e.clone()), e)
     }
@@ -233,7 +236,8 @@ mod tests {
         let (p, e) = setup();
         e.write()
             .unwrap()
-            .add_grant(Grant::new("d1", "alice", "read", "doc:1", Effect::Deny));
+            .add_grant(Grant::new("d1", "alice", "read", "doc:1", Effect::Deny))
+            .unwrap();
         let out = p
             .grant("tp-alice", &[req("doc", &["read"], &["doc:1"])])
             .await;
@@ -245,7 +249,8 @@ mod tests {
         let (p, e) = setup();
         e.write()
             .unwrap()
-            .add_grant(Grant::new("w", "alice", "read", "pub:*", Effect::Allow));
+            .add_grant(Grant::new("w", "alice", "read", "pub:*", Effect::Allow))
+            .unwrap();
         let ok = p
             .grant("tp-alice", &[req("doc", &["read"], &["pub:a"])])
             .await;
