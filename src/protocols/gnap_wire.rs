@@ -282,8 +282,8 @@ impl GnapKeyObject {
 pub enum GnapClientRef {
     /// An instance identifier from an earlier response (section 3.5).
     Reference(String),
-    /// The client by value.
-    Object(GnapClientObject),
+    /// The client by value (boxed: the object is much larger than a reference string).
+    Object(Box<GnapClientObject>),
 }
 
 impl fmt::Debug for GnapClientRef {
