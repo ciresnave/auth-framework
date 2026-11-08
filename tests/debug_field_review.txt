@@ -140,6 +140,7 @@ cert_id
 cert_thumbprint
 certificate
 certificate_pem
+chain
 challenge_id
 channel
 channels
@@ -257,6 +258,7 @@ dsl
 e
 ec_public_key_pem
 ed_public_key_pem
+edit_action
 effective_permissions
 effective_scopes
 elements_to_sign

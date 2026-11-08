@@ -7,12 +7,14 @@
 //! denied. Actions are separate: holding one implies nothing about another.
 
 pub mod principal;
+pub mod rules;
 
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 pub use principal::{Lifecycle, Principal, PrincipalError, PrincipalKind, PrincipalRegistry};
+pub use rules::{AuditEntry, AuditOp, RuleError};
 
 /// Whether a grant allows or denies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +96,8 @@ pub struct Grant {
     pub parent: Option<String>,
     /// 0 for a root grant, parent's depth + 1 for a delegation.
     pub depth: u8,
+    /// Who added or shared it (none for a grant added directly with `add_grant`).
+    pub issuer: Option<String>,
 }
 
 impl Grant {
@@ -115,6 +119,7 @@ impl Grant {
             sensitive: false,
             parent: None,
             depth: 0,
+            issuer: None,
         }
     }
 
@@ -266,6 +271,8 @@ pub struct InMemoryEngine {
     account_holder: Option<String>,
     sensitive_objects: Vec<String>,
     principals: Option<PrincipalRegistry>,
+    edit_action: Option<String>,
+    audit: Vec<AuditEntry>,
 }
 
 impl Default for InMemoryEngine {
@@ -285,6 +292,8 @@ impl InMemoryEngine {
             account_holder: None,
             sensitive_objects: Vec::new(),
             principals: None,
+            edit_action: None,
+            audit: Vec::new(),
         }
     }
 
@@ -404,8 +413,28 @@ impl InMemoryEngine {
         self.delegate_at(req, Utc::now())
     }
 
-    /// [`delegate`](Self::delegate) at a given instant.
+    /// [`delegate`](Self::delegate) at a given instant. A refusal is recorded
+    /// in the audit trail (actor: the delegator; rule: the id that was asked
+    /// for; chain: the source grant's chain, if it exists).
     pub fn delegate_at(
+        &mut self,
+        req: DelegationRequest,
+        now: DateTime<Utc>,
+    ) -> Result<(), DelegationError> {
+        let (delegator, id, from) = (req.delegator.clone(), req.id.clone(), req.from.clone());
+        let r = self.try_delegate_at(req, now);
+        if r.is_err() {
+            let chain = if self.find(&from).is_some() {
+                self.chain_of(&from)
+            } else {
+                Vec::new()
+            };
+            self.record(now, &delegator, AuditOp::Refused, &id, chain);
+        }
+        r
+    }
+
+    fn try_delegate_at(
         &mut self,
         req: DelegationRequest,
         now: DateTime<Utc>,
@@ -440,6 +469,7 @@ impl InMemoryEngine {
             (Some(s), Some(c)) if c > s => return Err(DelegationError::ExpiryWidens),
             _ => {}
         }
+        let delegator = req.delegator.clone();
         let depth = src.depth.saturating_add(1);
         if depth > self.max_depth {
             return Err(DelegationError::TooDeep {
@@ -456,9 +486,13 @@ impl InMemoryEngine {
             sensitive: src.sensitive || req.sensitive,
             parent: Some(req.from),
             depth,
+            issuer: Some(delegator.clone()),
         };
         self.generation += 1;
+        let id = g.id.clone();
         self.grants.push(g);
+        let chain = self.chain_of(&id);
+        self.record(now, &delegator, AuditOp::Delegated, &id, chain);
         Ok(())
     }
 
@@ -489,8 +523,9 @@ impl InMemoryEngine {
         }
         self.generation += 1;
         for (id, a) in ids.iter().zip(actions) {
-            self.grants
-                .push(Grant::new(id.clone(), creator, *a, object, Effect::Allow));
+            let mut g = Grant::new(id.clone(), creator, *a, object, Effect::Allow);
+            g.issuer = Some(creator.to_string());
+            self.grants.push(g);
         }
         Ok(ids)
     }
