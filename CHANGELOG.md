@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc91] - Unreleased
+
+### Changed
+
+- **Breaking: GNAP token rotate and revoke take the client's key proof.** `GnapService::rotate_token_with_proof` and `revoke_token_with_proof` accept a request only with a `DPoP` proof from the key the token is bound to (RFC 9635 section 6); the proofless `rotate_token` and `revoke_token` are compiled for unit tests only.
+
 ## [0.5.0-rc90] - Unreleased
 
 ### Changed
