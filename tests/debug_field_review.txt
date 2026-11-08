@@ -816,6 +816,7 @@ yubico_client_id
 yubico_validation_url
 zoneinfo
 
+covered
 flags
 class_id
 cert#S256
@@ -1112,6 +1113,7 @@ src/tokens/mod.rs:AuthToken:token_id | the identifier of the token record (the j
 src/tokens/mod.rs:AuthTokenBuilder:token_id | the identifier of the token record (the jti), not the token value
 src/admin/mod.rs:ConfigAction:key | the name of the configuration entry the operator typed; the value is redacted
 src/protocols/gnap_interaction.rs:InteractionResponse:user_code | the hand-written Debug prints only whether a code is set, never the code
+src/protocols/gnap_httpsig.rs:HttpsigError:<tuple> | diagnostic text written by this module (which rule failed, a component or parameter name the request itself named); it never carries a key, a signature or a header value
 src/protocols/gnap_wire.rs:GnapAccess:<tuple> | an access right reference string (RFC 9635 8.1): a name both sides know, not a credential
 src/protocols/gnap_wire.rs:GnapKeyRef:<tuple> | a key reference (RFC 9635 7.1.1): an identifier of a key, not the key
 src/protocols/gnap_wire.rs:GnapErrorCode:<tuple> | the text of an extension error code (RFC 9635 3.6): a registered public label
