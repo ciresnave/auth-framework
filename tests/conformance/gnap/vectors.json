@@ -1,0 +1,1910 @@
+{
+  "suite": "gnap-transaction-endpoint",
+  "suite_version": 6,
+  "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
+  "vectors": [
+    {
+      "id": "tx-access-direct",
+      "rfc": "RFC 9635",
+      "section": "3.2",
+      "kind": "positive",
+      "description": "A request for access with no interaction is answered with an access token.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "request": {
+        "access_token": [
+          {
+            "type": "read",
+            "actions": [
+              "list"
+            ],
+            "locations": [
+              "https://api.example.test"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          {
+            "path": "/access_token/value",
+            "op": "is_string"
+          },
+          {
+            "path": "/access_token/expires_in",
+            "op": "is_number"
+          },
+          {
+            "path": "/access_token/access/0/type",
+            "op": "equals",
+            "value": "read"
+          },
+          {
+            "path": "/interact",
+            "op": "absent"
+          }
+        ]
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-continue-offered",
+      "rfc": "RFC 9635",
+      "section": "3.1",
+      "kind": "positive",
+      "description": "The response carries a continuation URI and a continuation access token.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          {
+            "path": "/continue/uri",
+            "op": "equals",
+            "value": "/api/gnap/tx/continue"
+          },
+          {
+            "path": "/continue/access_token/value",
+            "op": "is_string"
+          }
+        ]
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-subject-only",
+      "rfc": "RFC 9635",
+      "section": "2.2",
+      "kind": "positive",
+      "description": "A request for subject information alone is accepted and issues no access token.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "request": {
+        "subject": {
+          "sub_id_formats": [
+            "opaque"
+          ]
+        }
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          {
+            "path": "/access_token",
+            "op": "absent"
+          },
+          {
+            "path": "/continue/access_token/value",
+            "op": "is_string"
+          }
+        ]
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-interact-redirect",
+      "rfc": "RFC 9635",
+      "section": "3.3",
+      "kind": "positive",
+      "description": "A request that offers redirect interaction is answered with a redirect URL and a finish nonce, and issues no access token before the interaction.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ],
+        "interact": {
+          "start": [
+            "redirect"
+          ],
+          "finish": {
+            "method": "redirect",
+            "uri": "https://client.example.test/done",
+            "nonce": "client-nonce-1"
+          }
+        }
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          {
+            "path": "/interact/redirect",
+            "op": "is_string"
+          },
+          {
+            "path": "/interact/finish",
+            "op": "is_string"
+          },
+          {
+            "path": "/access_token",
+            "op": "absent"
+          },
+          {
+            "path": "/continue/access_token/value",
+            "op": "is_string"
+          }
+        ]
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-empty-request",
+      "rfc": "RFC 9635",
+      "section": "2",
+      "kind": "negative",
+      "description": "A request that asks for neither access nor subject information is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "request": {},
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-disabled",
+      "rfc": "RFC 9635",
+      "section": "2",
+      "kind": "negative",
+      "description": "A server with the protocol switched off refuses every request.",
+      "config": {
+        "enabled": false,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-interact-unconfigured",
+      "rfc": "RFC 9635",
+      "section": "3.3",
+      "kind": "negative",
+      "description": "An interactive request is refused by a server that has no interaction URL configured, not answered with a made-up one.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ],
+        "interact": {
+          "start": [
+            "redirect"
+          ]
+        }
+      },
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-client-key-required",
+      "rfc": "RFC 9635",
+      "section": "2.3",
+      "kind": "negative",
+      "description": "A request that names no client key is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "error"
+      }
+    },
+    {
+      "id": "tx-proof-missing",
+      "rfc": "RFC 9635",
+      "section": "7.3",
+      "kind": "negative",
+      "description": "A request that names a client key but carries no proof of holding it is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "proof": "absent",
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "error"
+      }
+    },
+    {
+      "id": "tx-proof-wrong-key",
+      "rfc": "RFC 9635",
+      "section": "7.3",
+      "kind": "negative",
+      "description": "A proof signed by a key other than the one the request names is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "proof": "wrong_key",
+      "request": {
+        "access_token": [
+          {
+            "type": "read"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "error"
+      }
+    },
+    {
+      "id": "cont-after-approval",
+      "rfc": "RFC 9635",
+      "section": "5.1",
+      "kind": "positive",
+      "description": "After the resource owner approves, the client continues with the interaction reference, the interaction hash and a proof from its key, and receives an access token.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            },
+            "hash": {
+              "pointer": "/hash"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "interact_hash": "$hash",
+          "proof": "valid",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "is_string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-pending-before-approval",
+      "rfc": "RFC 9635",
+      "section": "5.2",
+      "kind": "positive",
+      "description": "Continuing before the interaction is finished is answered with a new continuation token and no access token.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": null,
+          "interact_hash": null,
+          "proof": "valid",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token",
+                "op": "absent"
+              },
+              {
+                "path": "/continue/access_token/value",
+                "op": "not_equals_saved",
+                "value": "$ct"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-token-single-use",
+      "rfc": "RFC 9635",
+      "section": "5.1",
+      "kind": "negative",
+      "description": "A continuation token that has been used is refused when presented again.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            },
+            "hash": {
+              "pointer": "/hash"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "interact_hash": "$hash",
+          "proof": "valid",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "is_string"
+              }
+            ]
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "interact_hash": "$hash",
+          "proof": "valid",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-wrong-token",
+      "rfc": "RFC 9635",
+      "section": "5.1",
+      "kind": "negative",
+      "description": "A continuation request with a token the server did not issue is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            },
+            "hash": {
+              "pointer": "/hash"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "not-the-token",
+          "interact_ref": "$ref",
+          "interact_hash": "$hash",
+          "proof": "valid",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-wrong-hash",
+      "rfc": "RFC 9635",
+      "section": "4.2",
+      "kind": "negative",
+      "description": "A continuation request whose interaction hash does not match is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            },
+            "hash": {
+              "pointer": "/hash"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "interact_hash": "not-the-hash",
+          "proof": "valid",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-reference-required",
+      "rfc": "RFC 9635",
+      "section": "4.2",
+      "kind": "negative",
+      "description": "After approval, a continuation request without the interaction reference is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            },
+            "hash": {
+              "pointer": "/hash"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": null,
+          "interact_hash": null,
+          "proof": "valid",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-proof-missing",
+      "rfc": "RFC 9635",
+      "section": "7.3",
+      "kind": "negative",
+      "description": "A continuation request without proof of holding the client key is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            },
+            "hash": {
+              "pointer": "/hash"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "interact_hash": "$hash",
+          "proof": "absent",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-proof-wrong-key",
+      "rfc": "RFC 9635",
+      "section": "7.3",
+      "kind": "negative",
+      "description": "A continuation request proved with a key other than the client's is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            },
+            "hash": {
+              "pointer": "/hash"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "interact_hash": "$hash",
+          "proof": "wrong_key",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-unknown-transaction",
+      "rfc": "RFC 9635",
+      "section": "5.1",
+      "kind": "negative",
+      "description": "A continuation request for a transaction the server does not know is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            },
+            "hash": {
+              "pointer": "/hash"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "no-such-transaction",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "interact_hash": "$hash",
+          "proof": "valid",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-pending-new-token-works",
+      "rfc": "RFC 9635",
+      "section": "5.2",
+      "kind": "positive",
+      "description": "The continuation token returned while the interaction is pending is the one the next continuation request must present.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": null,
+          "interact_hash": null,
+          "proof": "valid",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token",
+                "op": "absent"
+              }
+            ]
+          },
+          "save": {
+            "ct2": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct2",
+          "interact_ref": null,
+          "interact_hash": null,
+          "proof": "valid",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token",
+                "op": "absent"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "cont-pending-old-token-refused",
+      "rfc": "RFC 9635",
+      "section": "5.2",
+      "kind": "negative",
+      "description": "Once a pending continuation has returned a new continuation token, the earlier token is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": null,
+          "interact_hash": null,
+          "proof": "valid",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token",
+                "op": "absent"
+              }
+            ]
+          },
+          "save": {
+            "ct2": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": null,
+          "interact_hash": null,
+          "proof": "valid",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "sec-tokens-unguessable-and-unique",
+      "rfc": "RFC 9635",
+      "section": "11.8",
+      "kind": "positive",
+      "description": "Access tokens and continuation tokens are long random values and differ between requests.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "min_length",
+                "value": 32
+              }
+            ]
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "min_length",
+                "value": 32
+              },
+              {
+                "path": "/access_token/value",
+                "op": "not_equals_saved",
+                "value": "$at"
+              },
+              {
+                "path": "/continue/access_token/value",
+                "op": "not_equals_saved",
+                "value": "$ct"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "sec-token-is-key-bound",
+      "rfc": "RFC 9635",
+      "section": "11.10",
+      "kind": "positive",
+      "description": "A token issued to a request that named a client key is marked as bound to a key.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/key",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "sec-proof-replay-refused",
+      "rfc": "RFC 9635",
+      "section": "11.10",
+      "kind": "negative",
+      "description": "A key proof that was already accepted once is refused when sent again.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "jti": "replay-1"
+        },
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "error"
+          },
+          "jti": "replay-1"
+        }
+      ]
+    },
+    {
+      "id": "tok-rotate-replaces",
+      "rfc": "RFC 9635",
+      "section": "6.1",
+      "kind": "positive",
+      "description": "Rotating a token returns a new value with the same access rights; the old value stops being honoured and the new one is.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/value",
+                "op": "not_equals_saved",
+                "value": "$at"
+              },
+              {
+                "path": "/access/0/type",
+                "op": "equals",
+                "value": "read"
+              },
+              {
+                "path": "/access/0/actions/0",
+                "op": "equals",
+                "value": "list"
+              }
+            ]
+          },
+          "save": {
+            "at2": {
+              "pointer": "/value"
+            }
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": false
+              }
+            ]
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at2",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-revoke",
+      "rfc": "RFC 9635",
+      "section": "6.2",
+      "kind": "positive",
+      "description": "A revoked token is no longer honoured.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "do": "revoke",
+          "token": "$at",
+          "expect": {
+            "outcome": "response"
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-rotated-value-refused",
+      "rfc": "RFC 9635",
+      "section": "6.1",
+      "kind": "negative",
+      "description": "A token value that has already been rotated cannot be rotated again.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/value",
+                "op": "not_equals_saved",
+                "value": "$at"
+              },
+              {
+                "path": "/access/0/type",
+                "op": "equals",
+                "value": "read"
+              },
+              {
+                "path": "/access/0/actions/0",
+                "op": "equals",
+                "value": "list"
+              }
+            ]
+          },
+          "save": {
+            "at2": {
+              "pointer": "/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "$at",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-rotate-unknown",
+      "rfc": "RFC 9635",
+      "section": "6.1",
+      "kind": "negative",
+      "description": "A token value the server did not issue cannot be rotated.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "not-a-token",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-revoke-unknown",
+      "rfc": "RFC 9635",
+      "section": "6.2",
+      "kind": "negative",
+      "description": "A token value the server did not issue cannot be revoked.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read",
+                "actions": [
+                  "list"
+                ]
+              }
+            ]
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "revoke",
+          "token": "not-a-token",
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hash-rfc-example",
+      "rfc": "RFC 9635",
+      "section": "4.2.3",
+      "kind": "positive",
+      "description": "The interaction hash of the RFC's own example (four lines, SHA-256, URL-safe base64 without padding) comes out as the RFC states.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "https://as.example.test/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "hash",
+          "compute": {
+            "sha256_b64url_lines": [
+              "VJLO6A4CATR0KRO",
+              "MBDOFXG4Y5CVJCX821LH",
+              "4IFWWIKYB2PQ6U56NL1",
+              "https://server.example.com/tx"
+            ]
+          },
+          "expect_hash": "x-gguKWTj8rQf7d7i3w3UhzvuJ5bpOlKyAlVpLxBffY"
+        }
+      ]
+    },
+    {
+      "id": "hash-client-computed",
+      "rfc": "RFC 9635",
+      "section": "4.2.3",
+      "kind": "positive",
+      "description": "A client that computes the interaction hash itself from its nonce, the server's nonce, the interaction reference and the grant endpoint URI is accepted.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "https://as.example.test/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/finish",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            },
+            "snonce": {
+              "pointer": "/interact/finish"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "proof": "valid",
+          "interact_hash": {
+            "sha256_b64url_lines": [
+              "client-nonce-1",
+              "$snonce",
+              "$ref",
+              "https://as.example.test/api/gnap/tx"
+            ]
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "is_string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "hash-wrong-client-nonce",
+      "rfc": "RFC 9635",
+      "section": "4.2.3",
+      "kind": "negative",
+      "description": "An interaction hash computed with a nonce other than the one the client sent is refused.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "https://as.example.test/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": [
+              {
+                "type": "read"
+              }
+            ],
+            "interact": {
+              "start": [
+                "redirect"
+              ],
+              "finish": {
+                "method": "redirect",
+                "uri": "https://client.example.test/done",
+                "nonce": "client-nonce-1"
+              }
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/finish",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            },
+            "snonce": {
+              "pointer": "/interact/finish"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "ref": {
+              "pointer": "/interact_ref"
+            }
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": "$ref",
+          "proof": "valid",
+          "interact_hash": {
+            "sha256_b64url_lines": [
+              "some-other-nonce",
+              "$snonce",
+              "$ref",
+              "https://as.example.test/api/gnap/tx"
+            ]
+          },
+          "expect": {
+            "outcome": "error"
+          }
+        }
+      ]
+    }
+  ]
+}

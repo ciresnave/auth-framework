@@ -137,11 +137,16 @@ pub mod errors;
 /// Authentication method implementations (JWT, OAuth2, API keys, passwords, SAML).
 pub mod methods;
 
+/// Access-control engine: deny-wins decisions, action registry, `Authorizer` trait.
+pub mod access_control;
 /// Permission and role definitions for access control.
 pub mod permissions;
 
 /// Token creation, validation, rotation, and JWKS support.
 pub mod tokens;
+
+/// Key management: key model, RFC 7638 thumbprint, public export, signer trait.
+pub mod keys;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Configuration
