@@ -29,7 +29,8 @@ fn default_deny() {
 #[test]
 fn allow_grant_allows() {
     let mut e = engine();
-    e.add_grant(Grant::new("g1", A, "synapse:see", PM, Effect::Allow));
+    e.add_grant(Grant::new("g1", A, "synapse:see", PM, Effect::Allow))
+        .unwrap();
     assert_eq!(
         d(&e, "synapse:see", PM),
         Decision::Allow {
@@ -45,11 +46,11 @@ fn deny_beats_allow_in_either_order() {
         let allow = Grant::new("a", A, "synapse:send", "agent:*@acct", Effect::Allow);
         let deny = Grant::new("d", A, "synapse:send", PM, Effect::Deny);
         if deny_first {
-            e.add_grant(deny);
-            e.add_grant(allow);
+            e.add_grant(deny).unwrap();
+            e.add_grant(allow).unwrap();
         } else {
-            e.add_grant(allow);
-            e.add_grant(deny);
+            e.add_grant(allow).unwrap();
+            e.add_grant(deny).unwrap();
         }
         assert_eq!(
             d(&e, "synapse:send", PM),
@@ -66,18 +67,21 @@ fn deny_beats_allow_in_either_order() {
 #[test]
 fn see_does_not_imply_send_and_send_does_not_imply_see() {
     let mut e = engine();
-    e.add_grant(Grant::new("s", A, "synapse:see", PM, Effect::Allow));
+    e.add_grant(Grant::new("s", A, "synapse:see", PM, Effect::Allow))
+        .unwrap();
     assert!(d(&e, "synapse:see", PM).is_allow());
     assert!(!d(&e, "synapse:send", PM).is_allow());
     let mut e = engine();
-    e.add_grant(Grant::new("s", A, "synapse:send", PM, Effect::Allow));
+    e.add_grant(Grant::new("s", A, "synapse:send", PM, Effect::Allow))
+        .unwrap();
     assert!(!d(&e, "synapse:see", PM).is_allow());
 }
 
 #[test]
 fn unregistered_action_is_denied_even_with_wildcard_grant() {
     let mut e = engine();
-    e.add_grant(Grant::new("w", "*", "*", "*", Effect::Allow));
+    e.add_grant(Grant::new("w", "*", "*", "*", Effect::Allow))
+        .unwrap();
     assert_eq!(
         d(&e, "synapse:nope", PM),
         Decision::Deny {
@@ -91,17 +95,18 @@ fn expired_grant_is_ignored() {
     let mut e = engine();
     let mut g = Grant::new("x", A, "synapse:see", PM, Effect::Allow);
     g.expires = Some(Utc::now() - Duration::seconds(1));
-    e.add_grant(g);
+    e.add_grant(g).unwrap();
     assert!(!d(&e, "synapse:see", PM).is_allow());
 }
 
 #[test]
 fn expired_deny_no_longer_blocks() {
     let mut e = engine();
-    e.add_grant(Grant::new("a", A, "synapse:see", PM, Effect::Allow));
+    e.add_grant(Grant::new("a", A, "synapse:see", PM, Effect::Allow))
+        .unwrap();
     let mut g = Grant::new("d", A, "synapse:see", PM, Effect::Deny);
     g.expires = Some(Utc::now() - Duration::seconds(1));
-    e.add_grant(g);
+    e.add_grant(g).unwrap();
     assert!(d(&e, "synapse:see", PM).is_allow());
 }
 
@@ -114,7 +119,8 @@ fn grant_is_for_its_principal_only() {
         "synapse:see",
         PM,
         Effect::Allow,
-    ));
+    ))
+    .unwrap();
     assert!(!d(&e, "synapse:see", PM).is_allow());
 }
 
@@ -130,7 +136,8 @@ fn wildcard_object_stays_inside_its_account() {
 #[test]
 fn removing_a_grant_removes_access() {
     let mut e = engine();
-    e.add_grant(Grant::new("g", A, "synapse:see", PM, Effect::Allow));
+    e.add_grant(Grant::new("g", A, "synapse:see", PM, Effect::Allow))
+        .unwrap();
     e.remove_grant("g");
     assert!(!d(&e, "synapse:see", PM).is_allow());
 }
