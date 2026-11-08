@@ -1,0 +1,27 @@
+# A pull request carries exactly one CHANGELOG fragment (changelog.d/README.md), or bumps the version itself.
+name: Changelog fragment
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fragment:
+    name: One fragment per PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: One fragment, or a manual bump
+        run: python3 tools/check-fragment.py "origin/${{ github.base_ref }}"
+      - name: The version-bearing file list is complete
+        run: python3 tools/stamp-version.py --check
