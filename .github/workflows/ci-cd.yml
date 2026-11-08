@@ -9,6 +9,13 @@ on:
   release:
     types: [published]
 
+# One run per pull request: a newer push to the same PR cancels the older run, so superseded heads do not hold
+# runner slots. Pushes to main, develop and release/** and published releases get a group of their own (the run
+# id) and are never cancelled, because every such run must finish (a merge to main and a release are the record).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Least privilege: jobs that need more raise it themselves (see their permissions blocks).
 permissions:
   contents: read
@@ -54,6 +61,15 @@ jobs:
           - 6379:6379
 
     steps:
+      # The hosted runner has about 14 GB free and this job builds the whole workspace with several feature
+      # sets plus the Postgres and Redis containers; the stable run of 2026-11-07 died with "No space left on
+      # device". These preinstalled toolchains are not used here (a shell step, no third-party action).
+      - name: Free disk space on the runner
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY/CodeQL"
+          df -h /
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
