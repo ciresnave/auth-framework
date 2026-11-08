@@ -24,6 +24,7 @@
 aaguid
 access_key_id
 access_type
+account_holder
 accounting_addr
 acr_values
 acs_url
@@ -139,6 +140,7 @@ cert_id
 cert_thumbprint
 certificate
 certificate_pem
+chain
 challenge_id
 channel
 channels
@@ -256,6 +258,7 @@ dsl
 e
 ec_public_key_pem
 ed_public_key_pem
+edit_action
 effective_permissions
 effective_scopes
 elements_to_sign
@@ -392,6 +395,7 @@ key_ops
 key_prefix
 key_thumbprint
 key_type
+keys
 keytab_path
 kid
 kty
@@ -483,7 +487,9 @@ os
 outcome
 output
 output_path
+owner
 owner_id
+parent
 parent_id
 parent_role
 parent_role_id
@@ -600,6 +606,7 @@ revocation_endpoint
 revocation_endpoint_auth_methods_supported
 revocation_url
 revoke_cert
+revoked_keys
 revoked_reason
 risk_level
 role
@@ -637,6 +644,7 @@ security_token_reference
 security_warnings
 selection_reason
 selector_type
+sensitive_objects
 serial
 serial_number
 series_type
@@ -961,6 +969,7 @@ parent_roles
 per_client
 permission_mappings
 pins
+principals
 properties
 providers
 public_key_jwk
@@ -990,6 +999,7 @@ services
 source_matchers
 tags
 target_matchers
+thumbprints
 token_revocation
 transformed_value
 transmitters
