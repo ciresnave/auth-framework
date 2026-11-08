@@ -4,6 +4,7 @@ pub mod cas;
 pub mod ciba;
 pub mod fido1;
 pub mod gnap;
+pub mod gnap_wire;
 pub mod hotp;
 pub mod indieauth;
 pub mod kerberos;
