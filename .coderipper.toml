@@ -1,0 +1,244 @@
+# Waivers for the CodeRipper SEC-002 (gitleaks) findings on this repository, triaged 2026-11-06 against 4eb8f99d (CI run 42276945357: 93 findings in 48 files).
+# CodeRipper scans the whole git history and honours no in-repo gitleaks:allow or .gitleaksignore, so deleting a file does not clear its findings.
+# Each entry waives SEC-002 for one file, names what was matched and where it came from, an owner and the condition that removes it. Nothing is excluded by path.
+# The three private-key files are covered by the entries at the end (PM ruling 2026-11-06: burned example keys, no history rewrite).
+
+[[allow]]
+check = "SEC-002"
+file = "README.md.backup"
+reason = "an example in the old README copy (README.md.backup): 1 finding, gitleaks private-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-before-enhancements-20251004-080500/security/secure_utils.rs"
+reason = "a copy of a source file taken before a refactor (secure_utils.rs): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-before-enhancements-20251004-080500/security/secure_utils_backup.rs"
+reason = "a copy of a source file taken before a refactor (secure_utils_backup.rs): 2 findings, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-before-enhancements-20251004-080500/server/oidc/oidc_advanced_jarm.rs"
+reason = "a copy of a source file taken before a refactor (oidc_advanced_jarm.rs): 1 finding, gitleaks private-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-before-enhancements-20251004-080500/server/token_exchange/advanced_token_exchange.rs"
+reason = "a copy of a source file taken before a refactor (advanced_token_exchange.rs): 3 findings, gitleaks generic-api-key/private-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-before-enhancements-20251004-080500/server/token_exchange/core.rs"
+reason = "a copy of a source file taken before a refactor (core.rs): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-before-enhancements-20251004-080500/tokens/mod.rs"
+reason = "a copy of a source file taken before a refactor (mod.rs): 1 finding, gitleaks private-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-working-build-20251004-075914/security/secure_utils.rs"
+reason = "a copy of a source file taken before a refactor (secure_utils.rs): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-working-build-20251004-075914/security/secure_utils_backup.rs"
+reason = "a copy of a source file taken before a refactor (secure_utils_backup.rs): 2 findings, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-working-build-20251004-075914/server/oidc/oidc_advanced_jarm.rs"
+reason = "a copy of a source file taken before a refactor (oidc_advanced_jarm.rs): 1 finding, gitleaks private-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-working-build-20251004-075914/server/token_exchange/advanced_token_exchange.rs"
+reason = "a copy of a source file taken before a refactor (advanced_token_exchange.rs): 3 findings, gitleaks generic-api-key/private-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-working-build-20251004-075914/server/token_exchange/core.rs"
+reason = "a copy of a source file taken before a refactor (core.rs): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "backup-working-build-20251004-075914/tokens/mod.rs"
+reason = "a copy of a source file taken before a refactor (mod.rs): 1 finding, gitleaks private-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "benches/auth_hot_paths.rs"
+reason = "a value in a benchmark (auth_hot_paths.rs): 3 findings, gitleaks jwt, commit b3172cc8, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/ENDPOINTS_IMPLEMENTATION_COMPLETE.md"
+reason = "an example response or request in documentation (ENDPOINTS_IMPLEMENTATION_COMPLETE.md): 4 findings, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: API key created, key', token'. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/PASSWORD_AUTH_IMPLEMENTATION.md"
+reason = "an example response or request in documentation (PASSWORD_AUTH_IMPLEMENTATION.md): 2 findings, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: Access Token, Token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/REST_API_ENHANCEMENTS.md"
+reason = "an example response or request in documentation (REST_API_ENHANCEMENTS.md): 2 findings, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: client_secret', logout_token'. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/TOKEN_EXCHANGE_SELECTION_GUIDE.md"
+reason = "an example response or request in documentation (TOKEN_EXCHANGE_SELECTION_GUIDE.md): 2 findings, gitleaks generic-api-key, commit 71c55407, deleted from the tree (history only). Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/api-reference.md"
+reason = "an example response or request in documentation (api-reference.md): 1 finding, gitleaks private-key, commit 71c55407, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/api/README.md"
+reason = "an example response or request in documentation (README.md): 8 findings, gitleaks curl-auth-header/generic-api-key, commit b0ee1092, still in the tree. Field or marker: access_token', refresh_token', usersprofile    -H 'Authorization Bearer. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/api/complete-reference.md"
+reason = "an example response or request in documentation (complete-reference.md): 5 findings, gitleaks curl-auth-header/generic-api-key, commit b0ee1092, still in the tree. Field or marker: access_token', authmfasetup    -H 'Authorization Bearer, usersprofile    -H 'Authorization Bearer. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/api/openapi-bundled.yaml"
+reason = "an example response or request in documentation (openapi-bundled.yaml): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, still in the tree. Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/api/paths/oauth.yaml"
+reason = "an example response or request in documentation (oauth.yaml): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, still in the tree. Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/archives/TEST_REPORT.md"
+reason = "an example response or request in documentation (TEST_REPORT.md): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: access token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "docs/archives/completion_reports/TOKEN_INTROSPECTION_COMPLETE.md"
+reason = "an example response or request in documentation (TOKEN_INTROSPECTION_COMPLETE.md): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, deleted from the tree (history only). Field or marker: token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "examples/api_keys.rs"
+reason = "a value in an example program (api_keys.rs): 1 finding, gitleaks generic-api-key, commit 5e66225d, deleted from the tree (history only). Field or marker: invalid_key. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "examples/debug_server.rs"
+reason = "a value in an example program (debug_server.rs): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, still in the tree. Field or marker: dev_secret. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "examples/security_audit.rs"
+reason = "a value in an example program (security_audit.rs): 1 finding, gitleaks generic-api-key, commit cbc5cd87, deleted from the tree (history only). Field or marker: key. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "private.pem"
+reason = "burned example RSA key (2048-bit) published inside the auth-framework 0.4.0 .crate and in git history (commit 71c55407); public forever, never use it. Checked 2026-11-06: no other portfolio repository tracks it; nothing here loads it. Owner: auth-framework lane. Remove when history is rewritten or all commits holding it age out."
+
+[[allow]]
+check = "SEC-002"
+file = "private_pkcs8.pem"
+reason = "burned example RSA key (2048-bit) published inside the auth-framework 0.4.0 .crate and in git history (commit 71c55407); public forever, never use it. Checked 2026-11-06: no other portfolio repository tracks it; nothing here loads it. Owner: auth-framework lane. Remove when history is rewritten or all commits holding it age out."
+
+[[allow]]
+check = "SEC-002"
+file = "src/protocols/oauth1.rs"
+reason = "a value in a unit test or a rustdoc example (oauth1.rs): 8 findings, gitleaks generic-api-key, commits 16d269da, df07107e, still in the tree. Field or marker: oauth_token, oauth_token_secret, resp.oauth_token, resp.oauth_token_secret, secret, token. Owner: auth-framework lane. Remove when history is rewritten or the commits age out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "src/protocols/ws_security.rs"
+reason = "a value in a unit test or a rustdoc example (ws_security.rs): 1 finding, gitleaks generic-api-key, commit 27c595b1, still in the tree. Field or marker: secret'. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "src/secure_utils.rs"
+reason = "a value in a unit test or a rustdoc example (secure_utils.rs): 1 finding, gitleaks generic-api-key, commit 71c55407, deleted from the tree (history only). Field or marker: token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "src/security/secure_jwt.rs"
+reason = "a value in a unit test or a rustdoc example (secure_jwt.rs): 1 finding, gitleaks jwt, commit 17e8efbe, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "src/security/secure_utils_backup.rs"
+reason = "a value in a unit test or a rustdoc example (secure_utils_backup.rs): 4 findings, gitleaks generic-api-key, commits ee6dd8d2, f1e022da, deleted from the tree (history only). Field or marker: token. Owner: auth-framework lane. Remove when history is rewritten or the commits age out."
+
+[[allow]]
+check = "SEC-002"
+file = "src/server/jwt/private_key_jwt.rs"
+reason = "a value in a unit test or a rustdoc example (private_key_jwt.rs): 1 finding, gitleaks private-key, commit 73395a28, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "src/server/oidc/oidc_advanced_jarm.rs"
+reason = "a value in a unit test or a rustdoc example (oidc_advanced_jarm.rs): 1 finding, gitleaks private-key, commit 71c55407, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "src/server/token_exchange/advanced_token_exchange.rs"
+reason = "a value in a unit test or a rustdoc example (advanced_token_exchange.rs): 5 findings, gitleaks generic-api-key/private-key, commits 47eaa213, 71c55407, still in the tree. Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commits age out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "src/server/token_exchange/core.rs"
+reason = "a value in a unit test or a rustdoc example (core.rs): 1 finding, gitleaks generic-api-key, commit 71c55407, still in the tree. Field or marker: subject_token. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "src/tokens/mod.rs"
+reason = "a value in a unit test or a rustdoc example (mod.rs): 1 finding, gitleaks private-key, commit 71c55407, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "src/utils.rs"
+reason = "a value in a unit test or a rustdoc example (utils.rs): 1 finding, gitleaks generic-api-key, commit 25597e3f, deleted from the tree (history only). Field or marker: secret. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
+
+[[allow]]
+check = "SEC-002"
+file = "src/utils/redact.rs"
+reason = "a value in a unit test or a rustdoc example (redact.rs): 2 findings, gitleaks generic-api-key, commits ce915d6e, d183748e, still in the tree. Field or marker: secret. Owner: auth-framework lane. Remove when history is rewritten or the commits age out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "tests/edge_case_comprehensive_tests.rs"
+reason = "a value in a test (edge_case_comprehensive_tests.rs): 1 finding, gitleaks jwt, commit 71c55407, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "tests/fixtures/test_private_key.pem"
+reason = "example RSA key (2048-bit) made by the openssl commands in tests/fixtures/README.md as a test fixture; it is also inside the published crates 0.5.0-rc88 and 0.5.0-rc90 (burned; not in 0.6.0-rc217), so treat it as public and never use it (commit ee6dd8d2). Checked 2026-11-06: only auth-framework checkouts track it; nothing deployed loads it. Owner: auth-framework lane. Remove when history is rewritten or all commits holding it age out."
+
+[[allow]]
+check = "SEC-002"
+file = "tests/jarm_signing_key.rs"
+reason = "a value in a test (jarm_signing_key.rs): 2 findings, gitleaks private-key, commits 2825bbea, 6f6f2998, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commits age out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "tests/oauth_par_tests.rs"
+reason = "a value in a test (oauth_par_tests.rs): 1 finding, gitleaks generic-api-key, commit ee6dd8d2, still in the tree. Field or marker: JWT_SECRET'. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "tests/security_comprehensive.rs"
+reason = "a value in a test (security_comprehensive.rs): 5 findings, gitleaks jwt, commit 71c55407, still in the tree. Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out (or when the example is rewritten with an obviously fake value)."
+
+[[allow]]
+check = "SEC-002"
+file = "tests/server_tests.rs.disabled"
+reason = "a value in a test (server_tests.rs.disabled): 1 finding, gitleaks private-key, commit 71c55407, deleted from the tree (history only). Field or marker: a key or token literal. Owner: auth-framework lane. Remove when history is rewritten or the commit ages out."
