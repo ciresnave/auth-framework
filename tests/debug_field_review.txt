@@ -393,6 +393,7 @@ key_ops
 key_prefix
 key_thumbprint
 key_type
+keys
 keytab_path
 kid
 kty
@@ -484,6 +485,7 @@ os
 outcome
 output
 output_path
+owner
 owner_id
 parent
 parent_id
@@ -602,6 +604,7 @@ revocation_endpoint
 revocation_endpoint_auth_methods_supported
 revocation_url
 revoke_cert
+revoked_keys
 revoked_reason
 risk_level
 role
@@ -964,6 +967,7 @@ parent_roles
 per_client
 permission_mappings
 pins
+principals
 properties
 providers
 public_key_jwk
@@ -993,6 +997,7 @@ services
 source_matchers
 tags
 target_matchers
+thumbprints
 token_revocation
 transformed_value
 transmitters
