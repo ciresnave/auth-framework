@@ -1,0 +1,1 @@
+GNAP resource-server API (RFC 9767 sections 3.1 and 3.3): `gnap_rs` holds the discovery document and token introspection. The deployer supplies the resource-server authenticator and the token source. No routes yet.
