@@ -816,6 +816,7 @@ yubico_client_id
 yubico_validation_url
 zoneinfo
 
+key_proof
 covered
 flags
 class_id
