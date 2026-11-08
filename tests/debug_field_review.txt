@@ -317,6 +317,7 @@ from_number
 frontchannel_logout_uri
 gender
 given_name
+grant_ref
 grant_type
 grant_types
 grant_types_supported
@@ -883,6 +884,7 @@ text
 url
 
 [container_ok]
+actions
 additional
 additional_attributes
 additional_claims
