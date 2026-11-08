@@ -24,7 +24,7 @@
 //! - JWT Secured Authorization Response Mode (JARM)
 //! - Enhanced threat modeling and protection
 
-use crate::distributed::rate_limiting::{DistributedRateLimiter, RateLimitResult};
+use crate::distributed::rate_limiting::{LimitDecision, RateLimiter};
 use crate::errors::{AuthError, Result};
 use crate::security::secure_jwt::SecureJwtValidator;
 use crate::server::{DpopManager, MutualTlsManager, PARManager, PrivateKeyJwtManager};
@@ -76,7 +76,7 @@ pub struct FapiManager {
     sessions: Arc<RwLock<HashMap<String, FapiSession>>>,
 
     /// Optional limiter used by the `_from` entry points (see [`FapiManager::with_rate_limiter`])
-    rate_limiter: Option<Arc<DistributedRateLimiter>>,
+    rate_limiter: Option<Arc<dyn RateLimiter>>,
 }
 
 impl std::fmt::Debug for FapiManager {
@@ -621,31 +621,23 @@ impl FapiManager {
     /// Two kinds of bucket live in the limiter: `fapi:<authorize|token>:<peer>` per caller address, counted before any
     /// signature work, and `fapi_client:<client id>` per authenticated client, counted only after the client proved who it is,
     /// so a third party cannot spend a client's allowance by naming it. The limiter's configuration sets the allowance. A limiter
-    /// that cannot be consulted refuses the request. The methods without `_from` never consult it.
+    /// that cannot be consulted refuses the request. The methods without `_from` never consult it. The manager
+    /// reaches the limiter only through [`RateLimiter`], so a `DistributedRateLimiter` or any other implementation fits.
     #[must_use]
-    pub fn with_rate_limiter(mut self, limiter: Arc<DistributedRateLimiter>) -> Self {
+    pub fn with_rate_limiter(mut self, limiter: Arc<dyn RateLimiter>) -> Self {
         self.rate_limiter = Some(limiter);
         self
     }
 
-    /// Map a limiter outcome to a request outcome: only `Allowed` serves the request.
-    fn limiter_outcome(what: &str, outcome: Result<RateLimitResult>) -> Result<()> {
+    /// Map a limiter outcome to a request outcome: only `Allow` serves the request.
+    fn limiter_outcome(what: &str, outcome: Result<LimitDecision>) -> Result<()> {
         match outcome {
-            Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-            Ok(RateLimitResult::Denied { retry_after, .. }) => {
+            Ok(LimitDecision::Allow) => Ok(()),
+            Ok(LimitDecision::Deny { retry_after }) => {
                 tracing::warn!(bucket = %what, "FAPI rate limit exceeded");
                 Err(AuthError::rate_limit(format!(
                     "Rate limit exceeded; retry after {} seconds",
                     retry_after.as_secs().max(1)
-                )))
-            }
-            Ok(RateLimitResult::Blocked { unblock_at, .. }) => {
-                tracing::warn!(bucket = %what, "FAPI rate limit: caller blocked");
-                let secs = unblock_at
-                    .checked_duration_since(std::time::Instant::now())
-                    .map_or(1, |d| d.as_secs().max(1));
-                Err(AuthError::rate_limit(format!(
-                    "Rate limit exceeded; retry after {secs} seconds"
                 )))
             }
             Err(e) => {
@@ -658,7 +650,7 @@ impl FapiManager {
     /// Count one request against `key`; with no limiter configured nothing is counted.
     async fn count(&self, key: String) -> Result<()> {
         match &self.rate_limiter {
-            Some(limiter) => Self::limiter_outcome(&key, limiter.check_rate_limit(&key).await),
+            Some(limiter) => Self::limiter_outcome(&key, limiter.check(&key).await),
             None => Ok(()),
         }
     }
@@ -2714,7 +2706,9 @@ mod dpop_regression {
     impl Limited {
         /// A manager for one registered client `fapi-client`; `max` requests per bucket, or no limiter at all.
         async fn new(max: Option<u32>) -> Self {
-            use crate::distributed::rate_limiting::{RateLimitConfig, RateLimitStrategy};
+            use crate::distributed::rate_limiting::{
+                DistributedRateLimiter, RateLimitConfig, RateLimitStrategy,
+            };
             use crate::security::secure_jwt::SecureJwtConfig;
             use crate::server::jwt::private_key_jwt::ClientJwtConfig;
             use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -2898,9 +2892,8 @@ mod dpop_regression {
         assert!(unavailable.is_err() && !is_rate_limited(&unavailable));
         let blocked = FapiManager::limiter_outcome(
             "k",
-            Ok(RateLimitResult::Blocked {
-                unblock_at: std::time::Instant::now() + std::time::Duration::from_secs(30),
-                reason: "test".to_string(),
+            Ok(LimitDecision::Deny {
+                retry_after: std::time::Duration::from_secs(30),
             }),
         );
         assert!(is_rate_limited(&blocked));
