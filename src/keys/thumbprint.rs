@@ -13,6 +13,16 @@ fn member<'a>(jwk: &'a Value, name: &str) -> Result<&'a str> {
     })
 }
 
+/// A member that must be base64url (no padding), checked before it is hashed so a
+/// malformed key never gets a stable but meaningless thumbprint.
+fn b64url_member<'a>(jwk: &'a Value, name: &str) -> Result<&'a str> {
+    let s = member(jwk, name)?;
+    URL_SAFE_NO_PAD
+        .decode(s)
+        .map_err(|_| AuthError::validation(format!("JWK member '{name}' is not base64url")))?;
+    Ok(s)
+}
+
 fn quoted(s: &str) -> String {
     Value::String(s.to_owned()).to_string()
 }
@@ -45,13 +55,13 @@ pub fn jwk_thumbprint_value(jwk: &Value) -> Result<String> {
         "EC" => format!(
             r#"{{"crv":{},"kty":"EC","x":{},"y":{}}}"#,
             quoted(member(jwk, "crv")?),
-            quoted(member(jwk, "x")?),
-            quoted(member(jwk, "y")?)
+            quoted(b64url_member(jwk, "x")?),
+            quoted(b64url_member(jwk, "y")?)
         ),
         "OKP" => format!(
             r#"{{"crv":{},"kty":"OKP","x":{}}}"#,
             quoted(member(jwk, "crv")?),
-            quoted(member(jwk, "x")?)
+            quoted(b64url_member(jwk, "x")?)
         ),
         other => {
             return Err(AuthError::validation(format!(
@@ -129,11 +139,21 @@ mod tests {
 
     #[test]
     fn quote_in_a_member_is_escaped_not_injected() {
-        let a = json!({"kty":"OKP","crv":"Ed25519","x":"a\",\"y\":\"b"});
-        let b = json!({"kty":"OKP","crv":"Ed25519","x":"a"});
-        assert_ne!(
+        // Pins the exact canonical form: SHA-256 of
+        // {"crv":"a\",\"b","kty":"OKP","x":"AAAA"} (computed with openssl), so a raw
+        // interpolation of the quote would change the hash.
+        let a = json!({"kty":"OKP","crv":"a\",\"b","x":"AAAA"});
+        assert_eq!(
             jwk_thumbprint_value(&a).unwrap(),
-            jwk_thumbprint_value(&b).unwrap()
+            "nF5PmE0E9btH7SlNUc4Q96Y6wdmTDT3ZYcYDJ4fA10o"
+        );
+    }
+
+    #[test]
+    fn ec_and_okp_coordinates_must_be_base64url() {
+        assert!(jwk_thumbprint_value(&json!({"kty":"OKP","crv":"Ed25519","x":"!!!"})).is_err());
+        assert!(
+            jwk_thumbprint_value(&json!({"kty":"EC","crv":"P-256","x":"AAAA","y":"B B"})).is_err()
         );
     }
 
