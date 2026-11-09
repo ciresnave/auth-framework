@@ -124,7 +124,7 @@ Each slice is one PR, with a born-red test before the code, a mutation check, an
 | G3 | `jwsd`, `jws`, `mtls`, key formats | 7.3.2-7.3.4, `cert` / `cert#S256`; decide the fate of the `dpop` extension |
 
 > **Erratum candidate (RFC 9635 section 7.3.2 vs its own example).** The text requires the JOSE `typ` header `gnap-binding-jwsd` (`gnap-binding-jws` for attached), but the section 7.3.2 `jwsd` example header decodes to `gnap-binding+jwsd`. `gnap_jws.rs` enforces the normative spelling and a test pins that the example spelling is refused. Not filed upstream; recorded here only.
-| G4 | interaction | start modes `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push`, `hash_method`, hints, interaction expiry, callback checks |
+| G4 | interaction | start modes `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push`, `hash_method`, hints, interaction expiry, callback checks. Built in `gnap_interaction.rs`; `hash_method` supports `sha-256`, `sha-384`, `sha-512` and refuses `sha3-*` and the other registry names with `UnsupportedHashMethod` (the RFC 4.2.3 sha3-512 example needs the `sha3` crate: an [ASK] if G10 or a client needs it) |
 | G5 | continuation and tokens | polling with `wait` / `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, rotate and revoke with proof, key rotation, `Authorization: GNAP` parsing |
 | G6 | policy, consent, storage | policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style), not one hard-wired store |
 | G7 | HTTP and discovery | axum and actix routes, `OPTIONS` discovery (9.2), RS-first (9.1) |
