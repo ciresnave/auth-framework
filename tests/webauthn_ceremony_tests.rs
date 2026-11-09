@@ -391,6 +391,34 @@ mod webauthn_ceremony_tests {
     }
 
     #[tokio::test]
+    async fn an_account_without_a_local_password_is_told_what_is_missing() {
+        let env = env().await;
+        let (user_id, token) = user(&env, "nopass_user").await;
+        // Make it an account that signs in some other way: no password hash on the record.
+        let key = format!("user:{user_id}");
+        let storage = env.fw.storage();
+        let bytes = storage.get_kv(&key).await.unwrap().unwrap();
+        let mut record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        record.as_object_mut().unwrap().remove("password_hash");
+        storage
+            .store_kv(&key, record.to_string().as_bytes(), None)
+            .await
+            .unwrap();
+
+        // The password (right or not) is irrelevant, and nothing is counted against the account.
+        for _ in 0..6 {
+            let r = init_with(
+                &env,
+                &token,
+                json!({"username": "nopass_user", "current_password": "SecurePass123!"}),
+            )
+            .await;
+            assert_eq!(r["success"], false, "{r}");
+            assert_eq!(error_code(&r), "STEP_UP_UNAVAILABLE");
+        }
+    }
+
+    #[tokio::test]
     async fn the_step_up_cannot_be_used_to_guess_the_password() {
         let env = env().await;
         let (_, token) = user(&env, "guess_user").await;

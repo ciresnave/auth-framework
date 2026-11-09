@@ -378,6 +378,21 @@ pub(crate) async fn require_password_step_up(
         "STEP_UP_REQUIRED",
         "Confirm your current password to make this change",
     );
+    // An account with no local password (it signs in through another method) cannot answer a
+    // password step-up. Say so, and do not count it as a failed attempt.
+    if let Ok(Some(bytes)) = state
+        .auth_framework
+        .storage()
+        .get_kv(&format!("user:{user_id}"))
+        .await
+        && let Ok(record) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        && record["password_hash"].as_str().is_none()
+    {
+        return Err((
+            "STEP_UP_UNAVAILABLE",
+            "This account has no local password, so passkey registration cannot confirm it yet",
+        ));
+    }
     let Some(password) = password.filter(|p| !p.is_empty()) else {
         return Err(REQUIRED);
     };
