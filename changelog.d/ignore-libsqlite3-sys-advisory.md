@@ -1,1 +1,0 @@
-Security audit: ignore RUSTSEC-2026-0459 (libsqlite3-sys, bundled SQLite) in `deny.toml` and `.cargo/audit.toml` until 2026-12-09; it is pulled only by sqlx-sqlite 0.9.0, which caps libsqlite3-sys below the fixed 0.39.0 (fix merged upstream in transact-rs/sqlx#4502, unreleased).
