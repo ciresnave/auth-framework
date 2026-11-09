@@ -59,7 +59,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc233"
+  version       = "0.6.0-rc243"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -231,6 +231,11 @@
 
   # SHA-2 hashing (for OAuth 2.0 PKCE and other server features)
   sha2 = "0.11"
+
+  # Structured Field Values (RFC 8941 / RFC 9651): the parser and serializer RFC 9421 HTTP message signatures
+  # are defined on (GNAP `httpsig` proofing, src/protocols/gnap_httpsig.rs). MIT OR Apache-2.0, rust-version 1.95;
+  # approved by the PM 2026-11-06 as the one new dependency of G2 (no httpsig crate: it would bring a second crypto stack).
+  sfv = "0.16"
 
   # MD5 hashing (for RADIUS RFC 2865 wire compatibility)
   md5 = { package = "md-5", version = "0.11" }
