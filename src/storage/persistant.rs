@@ -12,6 +12,16 @@
 //! | `ses:{session_id}` | the session, as JSON |
 //! | `sesuser:{base64url(user_id)}:{session_id}` | `ses:{session_id}` |
 //! | `kv:{key}` | the bytes given to [`AuthStorage::store_kv`] |
+//! | `role:{role_id}` | the [`AbacRole`], as JSON; no time to live |
+//! | `roleidx:{base64url(role_id)}` | `role:{role_id}` (lists the roles) |
+//! | `ur:{base64url(user_id)}:{base64url(role_id)}` | the [`UserRole`] assignment, as JSON |
+//! | `uruser:{base64url(user_id)}:{base64url(role_id)}` | the `ur:` key (a user's roles) |
+//! | `urrole:{base64url(role_id)}:{base64url(user_id)}` | the `ur:` key (a role's users) |
+//!
+//! Roles and assignments are the [`AuthorizationStorage`] of the RBAC engine, kept in the same
+//! store as the tokens, so a backend that serves one serves the other. One assignment exists per
+//! user and role pair: assigning again replaces it (the in-memory store keeps both rows). Like
+//! the in-memory store, deleting a role leaves its assignments in place.
 //!
 //! The access token is hashed and the user id encoded so that a key never carries the secret and a
 //! user id containing `:` cannot select another user's entries. Every key of a record carries the
@@ -23,6 +33,7 @@
 //! Needs a backend with atomic batches: PersistAnt's memory backend and its SQLite, PostgreSQL and
 //! MySQL/MariaDB ones; not its opendal-backed stores.
 
+use crate::authorization::{AbacRole, AuthorizationStorage, UserRole};
 use crate::errors::{AuthError, Result, StorageError};
 use crate::storage::core::{AuthStorage, SessionData};
 use crate::tokens::AuthToken;
@@ -104,6 +115,29 @@ fn session_indexes(user_id: &str, session_id: &str) -> [String; 1] {
     [format!("{}{session_id}", user_prefix("sesuser", user_id))]
 }
 
+fn role_key(role_id: &str) -> String {
+    format!("role:{role_id}")
+}
+
+fn b64(id: &str) -> String {
+    URL_SAFE_NO_PAD.encode(id.as_bytes())
+}
+
+fn role_indexes(role_id: &str) -> [String; 1] {
+    [format!("roleidx:{}", b64(role_id))]
+}
+
+fn assignment_key(user_id: &str, role_id: &str) -> String {
+    format!("ur:{}:{}", b64(user_id), b64(role_id))
+}
+
+fn assignment_indexes(user_id: &str, role_id: &str) -> [String; 2] {
+    [
+        format!("uruser:{}:{}", b64(user_id), b64(role_id)),
+        format!("urrole:{}:{}", b64(role_id), b64(user_id)),
+    ]
+}
+
 fn kv_key(key: &str) -> String {
     format!("kv:{key}")
 }
@@ -141,14 +175,14 @@ impl<K: KvBackend> PersistantStorage<K> {
         value: Vec<u8>,
         indexes: &[String],
         old_indexes: impl Fn(&[u8]) -> Result<Vec<String>>,
-        ttl: Duration,
+        ttl: Option<Duration>,
     ) -> Result<()> {
         let index = Indexed::new(&self.kv);
         for _ in 0..ATTEMPTS {
             match self.kv.get(primary).await.map_err(storage_err)? {
                 None => {
                     if index
-                        .insert(primary, value.clone(), &refs(indexes), Some(ttl))
+                        .insert(primary, value.clone(), &refs(indexes), ttl)
                         .await
                         .map_err(storage_err)?
                     {
@@ -164,7 +198,7 @@ impl<K: KvBackend> PersistantStorage<K> {
                             value.clone(),
                             &refs(&old),
                             &refs(indexes),
-                            Some(ttl),
+                            ttl,
                         )
                         .await
                         .map_err(storage_err)?
@@ -228,7 +262,7 @@ impl<K: KvBackend + 'static> AuthStorage for PersistantStorage<K> {
             encode(token)?,
             &token_indexes(token),
             |old| Ok(token_indexes(&decode::<AuthToken>(old)?).to_vec()),
-            ttl_until(token.expires_at),
+            Some(ttl_until(token.expires_at)),
         )
         .await
     }
@@ -283,7 +317,7 @@ impl<K: KvBackend + 'static> AuthStorage for PersistantStorage<K> {
             encode(data)?,
             &session_indexes(&data.user_id, session_id),
             |old| Ok(session_indexes(&decode::<SessionData>(old)?.user_id, session_id).to_vec()),
-            ttl_until(data.expires_at),
+            Some(ttl_until(data.expires_at)),
         )
         .await
     }
@@ -434,5 +468,92 @@ impl<K: KvBackend + 'static> AuthStorage for PersistantStorage<K> {
             Ok(_) | Err(KvError::Unsupported(_)) => Ok(()),
             Err(e) => Err(storage_err(e)),
         }
+    }
+}
+
+#[async_trait]
+impl<K: KvBackend + 'static> AuthorizationStorage for PersistantStorage<K> {
+    async fn store_role(&self, role: &AbacRole) -> Result<()> {
+        self.upsert(
+            &role_key(&role.id),
+            encode(role)?,
+            &role_indexes(&role.id),
+            |old| Ok(role_indexes(&decode::<AbacRole>(old)?.id).to_vec()),
+            None,
+        )
+        .await
+    }
+
+    async fn get_role(&self, role_id: &str) -> Result<Option<AbacRole>> {
+        self.kv
+            .get(&role_key(role_id))
+            .await
+            .map_err(storage_err)?
+            .map(|bytes| decode(&bytes))
+            .transpose()
+    }
+
+    async fn update_role(&self, role: &AbacRole) -> Result<()> {
+        self.store_role(role).await
+    }
+
+    async fn delete_role(&self, role_id: &str) -> Result<()> {
+        self.discard(&role_key(role_id), |old| {
+            Ok(role_indexes(&decode::<AbacRole>(old)?.id).to_vec())
+        })
+        .await
+    }
+
+    async fn list_roles(&self) -> Result<Vec<AbacRole>> {
+        Indexed::new(&self.kv)
+            .lookup("roleidx:")
+            .await
+            .map_err(storage_err)?
+            .into_iter()
+            .map(|(_, bytes)| decode(&bytes))
+            .collect()
+    }
+
+    async fn assign_role(&self, user_role: &UserRole) -> Result<()> {
+        let (user, role) = (&user_role.user_id, &user_role.role_id);
+        self.upsert(
+            &assignment_key(user, role),
+            encode(user_role)?,
+            &assignment_indexes(user, role),
+            |old| {
+                let old = decode::<UserRole>(old)?;
+                Ok(assignment_indexes(&old.user_id, &old.role_id).to_vec())
+            },
+            None,
+        )
+        .await
+    }
+
+    async fn remove_role(&self, user_id: &str, role_id: &str) -> Result<()> {
+        self.discard(&assignment_key(user_id, role_id), |old| {
+            let old = decode::<UserRole>(old)?;
+            Ok(assignment_indexes(&old.user_id, &old.role_id).to_vec())
+        })
+        .await
+    }
+
+    async fn get_user_roles(&self, user_id: &str) -> Result<Vec<UserRole>> {
+        Indexed::new(&self.kv)
+            .lookup(&user_prefix("uruser", user_id))
+            .await
+            .map_err(storage_err)?
+            .into_iter()
+            .map(|(_, bytes)| decode(&bytes))
+            .collect()
+    }
+
+    async fn get_role_users(&self, role_id: &str) -> Result<Vec<UserRole>> {
+        Indexed::new(&self.kv)
+            .lookup(&user_prefix("urrole", role_id))
+            .await
+            .map_err(storage_err)?
+            .into_iter()
+            .map(|(_, bytes)| decode(&bytes))
+            .collect()
     }
 }
