@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc92] - Unreleased
+
+### Security
+
+- **Breaking: `POST /webauthn/registration/init` requires `current_password`, the caller's own password,** checked with the same failure counter and lockout as login (five failures in 15 minutes). Without it the call answers `STEP_UP_REQUIRED`, with a wrong one `STEP_UP_FAILED`, when locked `ACCOUNT_LOCKED`; an account with no local password gets `STEP_UP_UNAVAILABLE`. Clients that register passkeys must send the field.
+- Deactivating or deleting an account, or changing its password, now ends what the account was issued before: its sessions and stored tokens are deleted, and its API keys, access tokens and refresh tokens stop validating, including after the account is reactivated. API-key, session and stored-token validation also check that the account is live. A token minted in the same second as the change is refused, so sign in again.
+- MFA backup codes are kept only as SHA-256 digests, in one store (`mfa_backup_codes:{user_id}`), and are 12 characters from a 32-character alphabet (were 8 digits), compared ignoring case and surrounding spaces. Plaintext codes left by an earlier release are hashed and removed the first time the user's codes are read.
+- axum: `AuthRouterExt::require_auth_with(framework)` added, which validates the bearer token and answers 401 otherwise. `AuthRouterExt::require_auth()` is deprecated and now answers 500 on every request (it has no `AuthFramework` to use); callers of the bare layer must switch to `require_auth_with`.
+
 ## [0.5.0-rc91] - Unreleased
 
 ### Changed
