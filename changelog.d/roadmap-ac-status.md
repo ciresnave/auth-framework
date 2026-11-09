@@ -1,1 +1,1 @@
-Docs only: ROADMAP rows AC1, AC2, AC3, AC5 and AC6 now read Done with their PR numbers (#409, #411, #413, #417, #420); they still read Open after those PRs merged. AC4 stays Open until its PR (#432) lands.
+Docs only: ROADMAP rows AC1 to AC6 now read Done with their PR numbers (#409, #411, #413, #432, #417, #420); they still read Open after those PRs merged.
