@@ -629,6 +629,13 @@ impl UserManager {
         {
             warn!("Failed to delete backup codes for '{}': {}", username, e);
         }
+        if let Err(e) = self
+            .storage
+            .delete_kv(&crate::auth_modular::mfa::backup_codes::store_key(&user_id))
+            .await
+        {
+            warn!("Failed to delete backup codes for '{}': {}", username, e);
+        }
 
         info!("User '{}' deleted successfully", username);
         Ok(())
