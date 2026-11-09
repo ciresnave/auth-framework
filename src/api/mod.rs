@@ -128,6 +128,15 @@ pub async fn validate_api_token(
         }
     }
 
+    // A token issued before the account's credentials were reset is refused.
+    crate::account_state::ensure_issued_after_revocation(
+        auth_framework.storage().as_ref(),
+        &token_obj.sub,
+        token_obj.iat.saturating_mul(1000),
+    )
+    .await
+    .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
     // Convert the validated token claims to AuthToken.
     // Roles are not embedded in JWT claims (create_jwt_token sets roles: None),
     // so we load them from the user record in KV storage to allow role-based

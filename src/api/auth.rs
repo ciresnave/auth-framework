@@ -544,6 +544,21 @@ pub async fn refresh_token(
                 }
             }
 
+            // A refresh token issued before the account's credentials were reset is refused.
+            if crate::account_state::ensure_issued_after_revocation(
+                state.auth_framework.storage().as_ref(),
+                &claims.sub,
+                claims.iat.saturating_mul(1000),
+            )
+            .await
+            .is_err()
+            {
+                return ApiResponse::error_typed(
+                    "INVALID_TOKEN",
+                    "Refresh token is no longer valid",
+                );
+            }
+
             let permissions: Vec<String> = match state
                 .auth_framework
                 .storage()

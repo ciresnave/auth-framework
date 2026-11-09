@@ -242,6 +242,16 @@ impl SessionManager {
     pub async fn validate_session(&self, session_id: &str) -> Result<Option<String>> {
         if let Some(session) = self.get_session(session_id).await?
             && !session.is_expired()
+            && crate::account_state::ensure_account_active(&*self.storage, &session.user_id)
+                .await
+                .is_ok()
+            && crate::account_state::ensure_issued_after_revocation(
+                &*self.storage,
+                &session.user_id,
+                session.created_at.timestamp_millis(),
+            )
+            .await
+            .is_ok()
         {
             // Update last activity
             let _ = self.update_session_activity(session_id).await;

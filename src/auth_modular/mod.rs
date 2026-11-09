@@ -526,6 +526,23 @@ impl AuthFramework {
         };
         match validated {
             Ok(claims) => {
+                // A token issued before the account's credentials were reset, or for a
+                // deactivated account, is refused.
+                if let Err(e) =
+                    crate::account_state::ensure_account_active(self.storage.as_ref(), &claims.sub)
+                        .await
+                {
+                    return Ok(AuthResult::Failure(e.to_string()));
+                }
+                if let Err(e) = crate::account_state::ensure_issued_after_revocation(
+                    self.storage.as_ref(),
+                    &claims.sub,
+                    claims.iat.saturating_mul(1000),
+                )
+                .await
+                {
+                    return Ok(AuthResult::Failure(e.to_string()));
+                }
                 let token =
                     Self::build_validated_jwt_auth_token(token, claims, metadata, auth_method);
                 Ok(AuthResult::Success(Box::new(token)))
