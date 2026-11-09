@@ -14,7 +14,7 @@ use axum::{Json, extract::State, http::HeaderMap};
 use base32::Alphabet;
 use rand::Rng as _;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
+
 use subtle::ConstantTimeEq as _;
 
 /// Response returned after initiating MFA setup.
@@ -101,26 +101,17 @@ pub struct MfaStatusResponse {
 /// Generate a cryptographically-secure TOTP secret and ten single-use backup
 /// codes.  Returns `(plaintext_codes, sha256_hex_hashes)`.
 fn generate_backup_codes() -> (Vec<String>, Vec<String>) {
-    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Crockford-like, unambiguous
-    let mut plaintext = Vec::with_capacity(10);
-    let mut hashed = Vec::with_capacity(10);
-    let mut buf = [0u8; 8];
-    for _ in 0..10 {
-        rand::rng().fill_bytes(&mut buf);
-        let code: String = buf
-            .iter()
-            .map(|b| ALPHABET[(*b as usize) % ALPHABET.len()] as char)
-            .collect();
-        let hash = hex::encode(Sha256::digest(code.as_bytes()));
-        plaintext.push(code);
-        hashed.push(hash);
-    }
+    let plaintext = crate::auth_modular::mfa::backup_codes::generate_plaintext(10);
+    let hashed = plaintext
+        .iter()
+        .map(|code| crate::auth_modular::mfa::backup_codes::hash_code(code))
+        .collect();
     (plaintext, hashed)
 }
 
 /// Hash a backup code for constant-time comparison.
 fn hash_backup_code(code: &str) -> String {
-    hex::encode(Sha256::digest(code.as_bytes()))
+    crate::auth_modular::mfa::backup_codes::hash_code(code)
 }
 
 /// Verify a 6-digit TOTP code against a raw secret with ±1 window tolerance.
