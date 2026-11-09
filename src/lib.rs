@@ -101,6 +101,7 @@ pub mod admin;
 // Core framework modules
 // ────────────────────────────────────────────────────────────────────────────
 
+pub(crate) mod account_state;
 /// Primary authentication framework — start here.
 ///
 /// Contains [`AuthFramework`], the main entry point for most applications.

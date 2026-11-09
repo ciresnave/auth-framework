@@ -172,6 +172,21 @@ impl UserManager {
             let key_info: serde_json::Value = serde_json::from_slice(&key_data)?;
 
             if let Some(user_id) = key_info["user_id"].as_str() {
+                // The key stops working with its account: deactivated, or the account's
+                // credentials reset after the key was made.
+                crate::account_state::ensure_account_active(&*self.storage, user_id).await?;
+                let created_ms = key_info["created_at"]
+                    .as_str()
+                    .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                    .map(|t| t.timestamp_millis());
+                // A row with no readable creation time predates the check: treat it as made at
+                // the epoch, so any reset of the account ends it.
+                crate::account_state::ensure_issued_after_revocation(
+                    &*self.storage,
+                    user_id,
+                    created_ms.unwrap_or(0),
+                )
+                .await?;
                 // Check expiration
                 if let Some(expires_at_str) = key_info["expires_at"].as_str() {
                     let expires_at: chrono::DateTime<chrono::Utc> = expires_at_str
@@ -637,6 +652,9 @@ impl UserManager {
             warn!("Failed to delete backup codes for '{}': {}", username, e);
         }
 
+        // Whatever the account was issued stops working with it.
+        crate::account_state::revoke_user_credentials(&*self.storage, &user_id).await?;
+
         info!("User '{}' deleted successfully", username);
         Ok(())
     }
@@ -696,6 +714,9 @@ impl UserManager {
         self.storage
             .store_kv(&user_key, user_data.to_string().as_bytes(), None)
             .await?;
+        if !active {
+            crate::account_state::revoke_user_credentials(&*self.storage, user_id).await?;
+        }
         info!("User '{}' active status set to {}", user_id, active);
         Ok(())
     }
@@ -1065,6 +1086,9 @@ impl UserManager {
         self.storage
             .store_kv(&creds_key, creds.to_string().as_bytes(), None)
             .await?;
+
+        // Credentials issued under the old password end with it.
+        crate::account_state::revoke_user_credentials(&*self.storage, &user_id).await?;
 
         info!("Password updated for user: {}", username);
         Ok(())
