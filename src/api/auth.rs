@@ -297,6 +297,53 @@ async fn increment_login_failure(state: &ApiState, lockout_key: &str, window_sec
         .await;
 }
 
+/// Step-up for a sensitive change: the caller proves knowledge of their own password, through
+/// the same per-username failure counter and lockout as `/auth/login`, so a bearer token alone
+/// cannot be used to guess it. Returns the error code and message to answer with.
+pub(crate) async fn require_password_step_up(
+    state: &ApiState,
+    user_id: &str,
+    password: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    const WINDOW_SECS: u64 = 900;
+    const MAX_FAILED_ATTEMPTS: u64 = 5; // the login limit
+    const REQUIRED: (&str, &str) = (
+        "STEP_UP_REQUIRED",
+        "Confirm your current password to make this change",
+    );
+    let Some(password) = password.filter(|p| !p.is_empty()) else {
+        return Err(REQUIRED);
+    };
+    let Ok(username) = state.auth_framework.get_username_by_id(user_id).await else {
+        return Err(REQUIRED);
+    };
+    let lockout_key = format!("login_failures:{username}");
+    if let Ok(Some(bytes)) = state.auth_framework.storage().get_kv(&lockout_key).await
+        && let Ok(text) = std::str::from_utf8(&bytes)
+        && let Ok(count) = text.parse::<u64>()
+        && count >= MAX_FAILED_ATTEMPTS
+    {
+        return Err((
+            "ACCOUNT_LOCKED",
+            "Too many failed attempts. Please try again later.",
+        ));
+    }
+    match state
+        .auth_framework
+        .verify_user_password(user_id, password)
+        .await
+    {
+        Ok(true) => {
+            let _ = state.auth_framework.storage().delete_kv(&lockout_key).await;
+            Ok(())
+        }
+        _ => {
+            increment_login_failure(state, &lockout_key, WINDOW_SECS).await;
+            Err(("STEP_UP_FAILED", "The password is not correct"))
+        }
+    }
+}
+
 /// `POST /auth/login` — authenticate a user with username/password.
 ///
 /// On success returns access + refresh tokens, user metadata, and adaptive
