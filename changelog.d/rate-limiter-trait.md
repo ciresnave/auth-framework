@@ -1,1 +1,0 @@
-Rate limiting: `distributed::rate_limiting::RateLimiter` (check by key, answer `LimitDecision::Allow` or `Deny { retry_after }`) is the one interface the API layer uses, `DistributedRateLimiter` implements it, and the per-client OAuth check (#92) goes through it, so a different limiter can replace the built-in one without touching a caller. Additive; behaviour unchanged.
