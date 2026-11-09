@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 0.6.0-rc244 -- Docs and tests only: the standing design rules from the patent decisions are in `docs/ROADMAP.md` (R1 first-party macaroon caveats only, US 9,397,990; R2 no redirect on a revocation or policy event, and R3 no subscribe-to-central-service flow, US 11,349,844), with notes at `CaepRuleAction`, `process_event`, `execute_actions` and `Macaroon`, and `tests/design_rules.rs`, a source scan that fails if a redirect, a subscription, a third-party caveat or a discharge appears in those files. No behaviour change.
 - 0.6.0-rc243 -- GNAP G4: RFC 9635 interaction as pure functions (`protocols::gnap_interaction`): start modes, `finish` validation (redirect and push, callback URI rules), the section 4.2.3 interaction hash (sha-256, sha-384, sha-512; other registry names refused), callback URLs and bodies, short user codes, the `interact` response, and an SSRF guard for push targets. Additive; nothing existing calls it yet.
 - 0.6.0-rc242 -- GNAP G3: RFC 9635 JWS and JWSD proofing (RFC 7515 detached payload, normative typ values, htm/uri/created/ath checks) and mTLS certificate matching, as verifier functions; additive.
 - 0.6.0-rc241 -- **Breaking: GNAP token rotate and revoke take the client's key proof.** `GnapService::rotate_token_with_proof` and `revoke_token_with_proof` accept a request only with a `DPoP` proof from the key the token is bound to (RFC 9635 section 6); the proofless `rotate_token` and `revoke_token` are compiled for unit tests only.
