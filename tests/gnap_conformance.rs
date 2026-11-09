@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 const URI: &str = "https://as.example.test/api/gnap/tx";
 const CONTINUE_URI: &str = "https://as.example.test/api/gnap/tx/continue";
+const MANAGE_URI: &str = "https://as.example.test/api/gnap/token/1";
 const VECTORS: &str = include_str!("conformance/gnap/vectors.json");
 
 /// The server under test grants whatever is requested; the vectors test the protocol, not a policy.
@@ -59,12 +60,12 @@ fn client_key() -> ClientKey {
     }
 }
 
-/// A DPoP proof for `POST` `htu`, signed by `signer`, naming `named` in its header.
-fn dpop_header(signer: &ClientKey, named: &ClientKey, htu: &str, jti: &str) -> String {
+/// A DPoP proof for `htm` `htu`, signed by `signer`, naming `named` in its header.
+fn dpop_header(signer: &ClientKey, named: &ClientKey, htm: &str, htu: &str, jti: &str) -> String {
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let header = serde_json::json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": named.jwk});
     let claims = serde_json::json!({
-        "jti": jti, "htm": "POST", "htu": htu, "iat": chrono::Utc::now().timestamp()
+        "jti": jti, "htm": htm, "htu": htu, "iat": chrono::Utc::now().timestamp()
     });
     let si = format!(
         "{}.{}",
@@ -159,13 +160,14 @@ fn make_header(
     proof: Option<&str>,
     key: &ClientKey,
     other: &ClientKey,
+    htm: &str,
     htu: &str,
     jti: &str,
 ) -> Option<String> {
     match proof {
         None | Some("absent") => None,
-        Some("valid") => Some(dpop_header(key, key, htu, jti)),
-        Some("wrong_key") => Some(dpop_header(other, key, htu, jti)),
+        Some("valid") => Some(dpop_header(key, key, htm, htu, jti)),
+        Some("wrong_key") => Some(dpop_header(other, key, htm, htu, jti)),
         Some(p) => panic!("{id}: unknown proof {p}"),
     }
 }
@@ -250,7 +252,7 @@ async fn gnap_vectors() {
                         body["client"] =
                             serde_json::json!({"key": {"proof": "dpop", "jwk": key.jwk}});
                     }
-                    let header = make_header(id, proof_kind, &key, &other, URI, &jti);
+                    let header = make_header(id, proof_kind, &key, &other, "POST", URI, &jti);
                     let request: GnapTransactionRequest = match serde_json::from_value(body) {
                         Ok(r) => r,
                         Err(e) => {
@@ -286,7 +288,8 @@ async fn gnap_vectors() {
                     let token = subst(&vars, &step["token"]).expect("step.token");
                     let iref = subst(&vars, &step["interact_ref"]);
                     let hash = subst(&vars, &step["interact_hash"]);
-                    let header = make_header(id, proof_kind, &key, &other, CONTINUE_URI, &jti);
+                    let header =
+                        make_header(id, proof_kind, &key, &other, "POST", CONTINUE_URI, &jti);
                     let proof = GnapProof {
                         http_method: "POST",
                         http_uri: CONTINUE_URI,
@@ -316,13 +319,45 @@ async fn gnap_vectors() {
                 }
                 "rotate" => {
                     let token = subst(&vars, &step["token"]).expect("step.token");
-                    let result = service.rotate_token(&token).await;
+                    // Management is proved with the token's own key (RFC 9635 section 6): a valid proof unless
+                    // the step says otherwise.
+                    let header = make_header(
+                        id,
+                        proof_kind.or(Some("valid")),
+                        &key,
+                        &other,
+                        "POST",
+                        MANAGE_URI,
+                        &jti,
+                    );
+                    let proof = GnapProof {
+                        http_method: "POST",
+                        http_uri: MANAGE_URI,
+                        dpop_proof: header.as_deref(),
+                        expected_nonce: None,
+                    };
+                    let result = service.rotate_token_with_proof(&dpop, &proof, &token).await;
                     finish_step(id, step, &mut vars, result);
                 }
                 "revoke" => {
                     let token = subst(&vars, &step["token"]).expect("step.token");
+                    let header = make_header(
+                        id,
+                        proof_kind.or(Some("valid")),
+                        &key,
+                        &other,
+                        "DELETE",
+                        MANAGE_URI,
+                        &jti,
+                    );
+                    let proof = GnapProof {
+                        http_method: "DELETE",
+                        http_uri: MANAGE_URI,
+                        dpop_proof: header.as_deref(),
+                        expected_nonce: None,
+                    };
                     let result = service
-                        .revoke_token(&token)
+                        .revoke_token_with_proof(&dpop, &proof, &token)
                         .await
                         .map(|()| serde_json::json!({}));
                     finish_step(id, step, &mut vars, result);
