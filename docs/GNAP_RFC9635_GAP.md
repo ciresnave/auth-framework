@@ -20,7 +20,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 2.1 `access_token` object / array of objects | **partial, wire shape differs** | `access_token: Option<Vec<GnapAccessRequest>>` (58) is the array of access objects itself | The RFC's `access_token` is an object `{access, label, flags}` or an array of those. A request in RFC shape (`{"access_token": {"access": [...]}}`) does not deserialize. Needs polymorphism (RFC Appendix E) |
+| 2.1 `access_token` object / array of objects | **done (G5 slice 1)** | `GnapTransactionRequest.access_token` is `gnap_wire::GnapAccessTokenRequests`: `{"access_token":{"access":[...]}}` and the array form both parse; access rights as objects or reference strings. `GnapService::requested_rights` applies the section 2.1.1/2.1.2 checks (empty token, empty type, labels in arrays, `invalid_flag` for any flag, since this server supports none) and refuses more than one token per request | Not carried yet: `datatypes`, `identifier`, `privileges` of an access object (the grant-level right has only type, actions, locations; G6) and several tokens per request |
 | 2.1.1 `label`, `flags` (`bearer`, `split`) | **missing** | none | Label must be echoed back; flags change token behaviour |
 | 2.1.2 multiple access tokens | **missing** | one token per grant | |
 | 2.2 `subject` (`sub_id_formats`, `assertion_formats`, `sub_ids`) | **partial** | formats are parsed (82, 85); `sub_ids` is not a field | `sub_ids` (a specific subject) and assertions are missing |
