@@ -1,0 +1,1 @@
+**Breaking: `POST /webauthn/registration/init` now requires `current_password`, the caller's own password, checked with the same failure counter and lockout as login; without it the call answers `STEP_UP_REQUIRED`, with a wrong one `STEP_UP_FAILED`. Clients that register passkeys must send it.**
