@@ -133,6 +133,10 @@ fn an_owner_ancestor_can_edit_rules_about_what_it_owns_but_not_itself_or_others(
 #[test]
 fn a_creator_grant_is_revocable_by_any_ancestor_and_by_nobody_unrelated() {
     let mut e = engine();
+    for a in ["synapse:see", "synapse:send"] {
+        e.add_grant(Grant::new(format!("h-{a}"), "sub", a, ALL, Effect::Allow))
+            .unwrap();
+    }
     let ids = e
         .register_new_principal("sub", "agent:sub2@acct", &["synapse:see"])
         .unwrap();
@@ -140,9 +144,9 @@ fn a_creator_grant_is_revocable_by_any_ancestor_and_by_nobody_unrelated() {
     assert!(sees(&e, "sub", "agent:sub2@acct"));
     assert_eq!(e.remove_rule("svc", g), Err(RuleError::NotAuthorized));
     assert_eq!(e.remove_rule("carol", g), Err(RuleError::NotAuthorized));
-    assert!(sees(&e, "sub", "agent:sub2@acct"));
+    assert!(e.grant(g).is_some());
     e.remove_rule("bot", g).unwrap(); // an ancestor
-    assert!(!sees(&e, "sub", "agent:sub2@acct"));
+    assert!(e.grant(g).is_none());
     let ids = e
         .register_new_principal("sub", "agent:sub2@acct", &["synapse:send"])
         .unwrap();
