@@ -1,1 +1,0 @@
-ROADMAP A16: `FapiManager::with_rate_limiter` takes `Arc<dyn RateLimiter>` instead of `Arc<DistributedRateLimiter>`, so any limiter implementing the trait fits; a `DistributedRateLimiter` still works unchanged at every call site.
