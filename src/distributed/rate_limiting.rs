@@ -130,6 +130,40 @@ pub enum RateLimitResult {
     Blocked { unblock_at: Instant, reason: String },
 }
 
+/// What a [`RateLimiter`] answers for one key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LimitDecision {
+    /// The request may proceed.
+    Allow,
+    /// The request is refused; the caller may retry after this long.
+    Deny { retry_after: Duration },
+}
+
+/// The one thing callers need from a rate limiter: count a request against a key and say allow or deny.
+///
+/// The API layer (per-client limits, issue #92; the `FapiManager` limiter, ROADMAP A16) talks to this trait
+/// and not to [`DistributedRateLimiter`], so a different limiter (for instance a shared one from the Ant
+/// family, when one exists) can replace the hand-rolled one without touching a caller. An `Err` means the
+/// limiter could not be consulted; callers refuse the request rather than serve it unlimited.
+#[async_trait::async_trait]
+pub trait RateLimiter: Send + Sync {
+    /// Count one request against `key`.
+    async fn check(&self, key: &str) -> Result<LimitDecision>;
+}
+
+#[async_trait::async_trait]
+impl RateLimiter for DistributedRateLimiter {
+    async fn check(&self, key: &str) -> Result<LimitDecision> {
+        Ok(match self.check_rate_limit(key).await? {
+            RateLimitResult::Allowed { .. } => LimitDecision::Allow,
+            RateLimitResult::Denied { retry_after, .. } => LimitDecision::Deny { retry_after },
+            RateLimitResult::Blocked { unblock_at, .. } => LimitDecision::Deny {
+                retry_after: unblock_at.saturating_duration_since((self.now)()),
+            },
+        })
+    }
+}
+
 /// Source of the current time; injectable so window and penalty expiry can be tested without sleeping.
 type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
@@ -666,6 +700,36 @@ impl RateLimitUtils {
 mod tests {
     use super::*;
     use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn the_trait_maps_allowed_denied_and_blocked_to_allow_or_deny() {
+        let config = RateLimitConfig {
+            max_requests: 2,
+            window_duration: Duration::from_secs(60),
+            strategy: RateLimitStrategy::TokenBucket,
+            distributed: false,
+            redis_url: None,
+            burst_allowance: None,
+            adaptive: false,
+            penalty_duration: Some(Duration::from_secs(30)),
+        };
+        let limiter = DistributedRateLimiter::new(config).await.unwrap();
+        let limiter: &dyn RateLimiter = &limiter;
+        let mut decisions = Vec::new();
+        for _ in 0..4 {
+            decisions.push(limiter.check("k").await.unwrap());
+        }
+        assert_eq!(decisions[0], LimitDecision::Allow);
+        // the first refusal is a Denied, the next is the penalty (Blocked): both are a Deny with a wait
+        for d in &decisions[2..] {
+            match d {
+                LimitDecision::Deny { retry_after } => assert!(!retry_after.is_zero()),
+                LimitDecision::Allow => panic!("a limited key was allowed"),
+            }
+        }
+        // another key is unaffected
+        assert_eq!(limiter.check("other").await.unwrap(), LimitDecision::Allow);
+    }
 
     #[tokio::test]
     async fn test_in_memory_rate_limiter() {

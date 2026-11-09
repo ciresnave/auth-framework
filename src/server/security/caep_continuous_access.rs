@@ -383,6 +383,9 @@ pub enum CaepRuleCondition {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CaepRuleAction {
+    // DESIGN RULE (docs/ROADMAP.md "Standing design rules", R2 and R3; US 11,349,844): no variant of this
+    // enum redirects the user to an identity provider or subscribes to a central service. A step-up is a
+    // decision the caller answers with a "re-authenticate" challenge on the client's next request.
     /// Revoke access tokens for the subject
     RevokeAccess { immediate: bool },
 
@@ -400,6 +403,44 @@ pub enum CaepRuleAction {
 
     /// Quarantine session
     QuarantineSession { duration_minutes: u32 },
+}
+
+/// The answer a resource server gives when an event calls for step-up: a 401 with a `WWW-Authenticate` challenge
+/// the client's own code handles (RFC 9470, `insufficient_user_authentication`). The server does not send the
+/// user anywhere; whether and where to re-authenticate is the client's decision (docs/ROADMAP.md, R2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReauthenticateChallenge {
+    /// The HTTP status to answer with: always 401.
+    pub status: u16,
+    /// The value of the `WWW-Authenticate` header.
+    pub www_authenticate: String,
+}
+
+impl CaepRuleAction {
+    /// The challenge to answer the client's next request with, for a `RequireStepUp` action; `None` for any
+    /// other action. The `level` is offered as `acr_values` only when it is a plain token (letters, digits and
+    /// `:._-`), so it cannot break out of the quoted header value.
+    pub fn reauthenticate_challenge(&self) -> Option<ReauthenticateChallenge> {
+        let Self::RequireStepUp { level } = self else {
+            return None;
+        };
+        let mut value = String::from(concat!(
+            "Bearer error=\"insufficient_user_authentication\", ",
+            "error_description=\"a higher level of authentication is required\""
+        ));
+        let plain = !level.is_empty()
+            && level.len() <= 128
+            && level
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || ":._-".contains(c));
+        if plain {
+            value.push_str(&format!(", acr_values=\"{level}\""));
+        }
+        Some(ReauthenticateChallenge {
+            status: 401,
+            www_authenticate: value,
+        })
+    }
 }
 
 impl std::fmt::Debug for CaepRuleAction {
@@ -631,7 +672,12 @@ impl CaepManager {
         Ok(())
     }
 
-    /// Process a CAEP event
+    /// Process a CAEP event.
+    ///
+    /// Design rule R2/R3 (docs/ROADMAP.md, US 11,349,844): an event handled here may revoke, quarantine, log or
+    /// notify, and may require step-up through a challenge the client handles; it must never redirect the
+    /// user, and nothing here may subscribe to a central service. `tests/design_rules.rs` fails if this file
+    /// grows a redirect or a subscription.
     pub async fn process_event(&self, event: CaepEvent) -> Result<CaepEvaluationResult> {
         // Add event to history
         {
@@ -1219,6 +1265,7 @@ impl CaepManager {
     }
 
     /// Execute required actions from evaluation
+    // Design rule R2 (docs/ROADMAP.md): `RequireStepUp` records the requirement; it must not redirect.
     async fn execute_actions(&self, evaluation: &CaepEvaluationResult) -> Result<()> {
         for action in &evaluation.required_actions {
             match action {
@@ -1505,5 +1552,45 @@ mod tests {
         };
 
         assert!(high_level > medium_level);
+    }
+
+    #[test]
+    fn a_step_up_action_yields_a_reauthenticate_challenge_not_a_redirect() {
+        let action = CaepRuleAction::RequireStepUp {
+            level: "urn:mace:incommon:iap:silver".to_string(),
+        };
+        let challenge = action.reauthenticate_challenge().unwrap();
+        assert_eq!(challenge.status, 401);
+        assert!(
+            challenge
+                .www_authenticate
+                .starts_with("Bearer error=\"insufficient_user_authentication\""),
+            "{}",
+            challenge.www_authenticate
+        );
+        assert!(
+            challenge
+                .www_authenticate
+                .contains("acr_values=\"urn:mace:incommon:iap:silver\"")
+        );
+        // a level that could break out of the quoted value is not offered
+        for bad in ["a\"b", "a, b", "a\r\nLocation: x", ""] {
+            let c = CaepRuleAction::RequireStepUp {
+                level: bad.to_string(),
+            }
+            .reauthenticate_challenge()
+            .unwrap();
+            assert!(!c.www_authenticate.contains("acr_values"), "{bad:?}");
+            assert!(!c.www_authenticate.contains('\n'), "{bad:?}");
+        }
+        // only a step-up produces a challenge
+        for other in [
+            CaepRuleAction::RevokeAccess { immediate: true },
+            CaepRuleAction::LogEvent {
+                level: "info".to_string(),
+            },
+        ] {
+            assert!(other.reauthenticate_challenge().is_none());
+        }
     }
 }
