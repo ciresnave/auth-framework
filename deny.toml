@@ -43,6 +43,13 @@
         # testcontainers releases a version that no longer depends on astral-tokio-tar (`cargo tree -i
         # astral-tokio-tar --all-features` is then empty), or when `docker-tests` is dropped.
         { id = "RUSTSEC-2026-0440", reason = "unmaintained, no safe upgrade; only via testcontainers 0.28.0 (newest) behind the test-only docker-tests feature; remove when testcontainers drops it" },
+        # RUSTSEC-2026-0459 (libsqlite3-sys: bundled SQLite CVE-2026-119375; fixed in libsqlite3-sys >=0.39.0).
+        # EXPIRES 2026-12-09 (dated by the PM 2026-11-09): re-check then; do not extend without a new decision.
+        # Exposed only if we open a SQLite file plus a sibling -wal written by a less trusted party; our
+        # storage files are our own. Only via sqlx-sqlite 0.9.0 (newest release), which caps libsqlite3-sys
+        # below 0.38. Upstream already merged the cap bump (transact-rs/sqlx#4502, 2026-11-08) but has not
+        # released it; remove this entry when a sqlx release carrying it is in Cargo.lock.
+        { id = "RUSTSEC-2026-0459", reason = "bundled SQLite CVE; only exposed to a SQLite file plus -wal from a less trusted party; our files are our own; sqlx 0.9.0 caps libsqlite3-sys <0.38, fix merged upstream (transact-rs/sqlx#4502) unreleased; expires 2026-12-09" },
     ]
 
 [licenses]
