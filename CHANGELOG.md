@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deactivating or deleting an account, or changing its password, now ends what the account was issued before: its sessions and stored tokens are deleted, and its API keys, access tokens and refresh tokens stop validating, including after the account is reactivated. API-key, session and stored-token validation also check that the account is live. A token minted in the same second as the change is refused, so sign in again.
 - MFA backup codes are kept only as SHA-256 digests, in one store (`mfa_backup_codes:{user_id}`), and are 12 characters from a 32-character alphabet (were 8 digits), compared ignoring case and surrounding spaces. Plaintext codes left by an earlier release are hashed and removed the first time the user's codes are read.
 - axum: `AuthRouterExt::require_auth_with(framework)` added, which validates the bearer token and answers 401 otherwise. `AuthRouterExt::require_auth()` is deprecated and now answers 500 on every request (it has no `AuthFramework` to use); callers of the bare layer must switch to `require_auth_with`.
+- `Cargo.lock` takes openssl 0.10.82 and openssl-sys 0.9.118 (RUSTSEC-2026-0463). `deny.toml` and `.cargo/audit.toml` ignore RUSTSEC-2026-0459 (`libsqlite3-sys`, via sqlx-sqlite) until 2026-12-09, with owner and removal condition.
+
+### Changed
+
+- **The previous signing key after a rotation is now bounded.** `TokenManager` used to keep verifying tokens under the previous key indefinitely unless an operator called `retire_previous_key`, which nothing did. It now records the rotation time and accepts the previous key only inside a grace window (default 24 hours, `with_previous_key_grace`), only for tokens issued before the rotation and only when their lifetime is at most the configured maximum (default 24 hours, `with_previous_key_max_token_lifetime`); after the window the key retires itself, and the JWKS export drops it. Tokens signed by the current key are unaffected; refresh tokens signed by the old key stop working after the grace window. Backport of the 0.6 change (#440).
 
 ## [0.5.0-rc91] - Unreleased
 
