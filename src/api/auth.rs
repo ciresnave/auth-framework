@@ -367,6 +367,7 @@ async fn authenticator_step_up(
     mfa_code: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
     const WINDOW_SECS: u64 = 900;
+    const MAX_FAILED_ATTEMPTS: u64 = 5; // the login limit
     let storage = state.auth_framework.storage();
     let Some(secret) = super::mfa::active_totp_secret(storage.as_ref(), user_id).await else {
         return Err((
