@@ -1145,6 +1145,13 @@ impl UserManager {
         {
             warn!("Failed to delete backup codes for '{}': {}", username, e);
         }
+        if let Err(e) = self
+            .storage
+            .delete_kv(&crate::auth_modular::mfa::backup_codes::store_key(&user_id))
+            .await
+        {
+            warn!("Failed to delete backup codes for '{}': {}", username, e);
+        }
         // Whatever the account was issued stops working with it.
         crate::auth::revoke_user_credentials(&*self.storage, &user_id).await?;
 
