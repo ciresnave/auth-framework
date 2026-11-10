@@ -337,7 +337,7 @@ mod tests {
             .unwrap();
         ring.refresh(&s).await.unwrap();
         assert_eq!(
-            jsonwebtoken::decode_header(&token(&c))
+            jsonwebtoken::decode_header(token(&c))
                 .unwrap()
                 .kid
                 .as_deref(),
