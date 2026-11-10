@@ -1,0 +1,1 @@
+Passkey registration for an account with no local password confirms with the current code of its enrolled authenticator app, sent as `current_mfa_code` (same failure counter and lockout as the password step-up; a code is accepted once). With no authenticator app enrolled the call still answers `STEP_UP_UNAVAILABLE`, and the message says to enrol one.
