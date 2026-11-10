@@ -2574,6 +2574,16 @@ impl AuthFramework {
             .await
     }
 
+    /// The direct permissions granted to a user (for a snapshot).
+    pub(crate) async fn direct_permissions_for_user(
+        &self,
+        user_id: &str,
+    ) -> Vec<crate::permissions::Permission> {
+        self.authorization_manager
+            .direct_permissions_for_user(user_id)
+            .await
+    }
+
     /// Revoke permission from a user.
     pub async fn revoke_permission(
         &self,
