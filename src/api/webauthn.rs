@@ -113,6 +113,13 @@ pub struct WebAuthnRegistrationInitRequest {
     pub display_name: Option<String>,
     pub authenticator_attachment: Option<String>, // "platform" or "cross-platform"
     pub user_verification: Option<String>,        // "required", "preferred", "discouraged"
+    /// The caller's own current password. Required: a bearer token alone does not add a way to
+    /// sign in to the account.
+    #[serde(default)]
+    pub current_password: Option<String>,
+    /// For an account with no local password: the current code of its authenticator app.
+    #[serde(default)]
+    pub current_mfa_code: Option<String>,
 }
 
 /// WebAuthn registration challenge response
@@ -404,6 +411,19 @@ pub async fn webauthn_registration_init(
             ));
         }
     };
+
+    // Adding a way to sign in needs more than the bearer token: the caller confirms their own
+    // password first.
+    if let Err((code, message)) = crate::api::auth::require_password_step_up(
+        &state,
+        &caller.user_id,
+        request.current_password.as_deref(),
+        request.current_mfa_code.as_deref(),
+    )
+    .await
+    {
+        return Json(ApiResponse::error_typed(code, message));
+    }
 
     // Generate a secure challenge
     let mut challenge_bytes = [0u8; 32];

@@ -37,6 +37,13 @@
         # Owner: auth-framework lane. Remove this entry when testcontainers releases a version that no
         # longer depends on astral-tokio-tar, or when `docker-tests` is dropped.
         "RUSTSEC-2026-0440",
+        # RUSTSEC-2026-0459 (libsqlite3-sys: bundled SQLite CVE-2026-119375; fixed in >=0.39.0).
+        # EXPIRES 2026-12-09 (dated by the PM 2026-11-09): re-check then; do not extend without a new decision.
+        # Exposed only if we open a SQLite file plus a sibling -wal written by a less trusted party; our
+        # storage files are our own. Only via sqlx-sqlite 0.9.0 (newest release), which caps libsqlite3-sys
+        # below 0.38. Upstream merged the cap bump (transact-rs/sqlx#4502, 2026-11-08), not yet released;
+        # remove this entry when a sqlx release carrying it is in Cargo.lock.
+        "RUSTSEC-2026-0459",
     ]
 
 [licenses]
