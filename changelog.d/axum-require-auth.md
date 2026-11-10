@@ -1,1 +1,0 @@
-`AuthRouterExt::require_auth_with(framework)` added: it validates the bearer token and answers 401 otherwise. `AuthRouterExt::require_auth()` is deprecated and now answers 500 on every request (it has no `AuthFramework` to use); **Breaking** for callers of the bare layer, which must switch to `require_auth_with`.
