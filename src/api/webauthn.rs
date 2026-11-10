@@ -117,6 +117,9 @@ pub struct WebAuthnRegistrationInitRequest {
     /// sign in to the account.
     #[serde(default)]
     pub current_password: Option<String>,
+    /// For an account with no local password: the current code of its authenticator app.
+    #[serde(default)]
+    pub current_mfa_code: Option<String>,
 }
 
 /// WebAuthn registration challenge response
@@ -415,6 +418,7 @@ pub async fn webauthn_registration_init(
         &state,
         &caller.user_id,
         request.current_password.as_deref(),
+        request.current_mfa_code.as_deref(),
     )
     .await
     {
