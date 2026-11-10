@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-rc92] - Unreleased
+
+### Changed
+
+- **The previous signing key after a rotation is now bounded.** `TokenManager` used to keep verifying tokens under the previous key indefinitely unless an operator called `retire_previous_key`, which nothing did. It now records the rotation time and accepts the previous key only inside a grace window (default 24 hours, `with_previous_key_grace`), only for tokens issued before the rotation and only when their lifetime is at most the configured maximum (default 24 hours, `with_previous_key_max_token_lifetime`); after the window the key retires itself, and the JWKS export drops it. Tokens signed by the current key are unaffected; refresh tokens signed by the old key stop working after the grace window. Backport of the 0.6 change (#440).
+
 ## [0.5.0-rc91] - Unreleased
 
 ### Changed
