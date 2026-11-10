@@ -631,8 +631,22 @@ impl IntoResponse for AuthError {
 
 /// Ergonomic middleware methods for Router
 pub trait AuthRouterExt<S> {
-    /// Add authentication requirement to all routes
+    /// Add authentication requirement to all routes.
+    ///
+    /// This method has no [`AuthFramework`] to validate a token against, so it cannot
+    /// authenticate anything: it refuses every request with a 500 and logs the
+    /// misconfiguration, as [`require_permission`](Self::require_permission) does. Use
+    /// [`require_auth_with`](Self::require_auth_with).
+    #[deprecated(
+        since = "0.6.0",
+        note = "cannot authenticate without an AuthFramework; use require_auth_with(framework)"
+    )]
     fn require_auth(self) -> Self;
+
+    /// Require a valid access token on all routes: the `Authorization: Bearer` token is
+    /// validated by `framework` ([`AuthFramework::validate_access_jwt`]) and a request without
+    /// one that validates is answered with 401.
+    fn require_auth_with(self, framework: Arc<AuthFramework>) -> Self;
 
     /// Add permission requirement to all routes
     fn require_permission(self, permission: &str) -> Self;
@@ -647,27 +661,25 @@ where
 {
     fn require_auth(self) -> Self {
         self.layer(axum::middleware::from_fn(
-            |request: axum::extract::Request, next: axum::middleware::Next| async move {
-                // Validate that an Authorization: Bearer <token> header is present
-                let has_bearer = request
-                    .headers()
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|h| h.to_str().ok())
-                    .map(|v| v.starts_with("Bearer "))
-                    .unwrap_or(false);
-
-                if has_bearer {
-                    next.run(request).await
-                } else {
-                    axum::response::Response::builder()
-                        .status(axum::http::StatusCode::UNAUTHORIZED)
-                        .header("content-type", "application/json")
-                        .body(axum::body::Body::from(
-                            r#"{"error":"Authentication required"}"#,
-                        ))
-                        .unwrap_or_default()
-                }
+            |_request: axum::extract::Request, _next: axum::middleware::Next| async move {
+                tracing::error!(
+                    "require_auth() was used without an AuthFramework to validate tokens against"
+                );
+                axum::response::Response::builder()
+                    .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        r#"{"error":"Authentication middleware misconfigured","details":"require_auth() cannot validate tokens. Use require_auth_with(framework)."}"#,
+                    ))
+                    .unwrap_or_default()
             },
+        ))
+    }
+
+    fn require_auth_with(self, framework: Arc<AuthFramework>) -> Self {
+        self.layer(axum::middleware::from_fn_with_state(
+            framework,
+            auth_middleware,
         ))
     }
 
