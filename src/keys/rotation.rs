@@ -12,14 +12,14 @@ use crate::errors::{AuthError, Result};
 /// A replacement key for [`rotate`]: an asymmetric [`LocalKey`] or a [`SymmetricKey`].
 pub enum NewKey {
     /// An asymmetric signing, agreement or TLS key.
-    Local(LocalKey),
+    Local(Box<LocalKey>),
     /// An HMAC or AEAD key.
     Symmetric(SymmetricKey),
 }
 
 impl From<LocalKey> for NewKey {
     fn from(k: LocalKey) -> Self {
-        NewKey::Local(k)
+        NewKey::Local(Box::new(k))
     }
 }
 
@@ -56,7 +56,7 @@ pub async fn rotate(store: &dyn KeyStore, current: &Kid, next: impl Into<NewKey>
         )));
     }
     match next {
-        NewKey::Local(k) => store.insert(k, KeyState::Active).await?,
+        NewKey::Local(k) => store.insert(*k, KeyState::Active).await?,
         NewKey::Symmetric(k) => store.insert_symmetric(k, KeyState::Active).await?,
     }
     store
