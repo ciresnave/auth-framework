@@ -251,6 +251,45 @@ pub struct SecurityEvent {
     pub user_id: Option<String>,
 }
 
+/// Load the admin tools' settings from `config_path` and the `env_prefix` environment variables.
+///
+/// A path named on the command line must exist and parse: a missing or unreadable file is an error, never a
+/// silent fall back to the built-in in-memory defaults. With no path, `default_path` is read when it exists
+/// and otherwise the built-in defaults apply; the second return value says which of those happened, so the
+/// caller can tell the operator.
+pub fn load_settings(
+    config_path: Option<&str>,
+    default_path: &str,
+    env_prefix: &str,
+) -> Result<(AuthFrameworkSettings, SettingsSource)> {
+    use crate::config::LayeredConfigBuilder;
+
+    let (path, required) = match config_path {
+        Some(p) => (Some(p), true),
+        None if std::path::Path::new(default_path).is_file() => (Some(default_path), true),
+        None => (None, false),
+    };
+    let mut builder = LayeredConfigBuilder::new().with_env_prefix(env_prefix);
+    if let Some(p) = path {
+        builder = builder.add_file(p, required);
+    }
+    let settings = builder.build()?.get_auth_settings()?;
+    let source = match path {
+        Some(p) => SettingsSource::File(p.to_string()),
+        None => SettingsSource::Defaults,
+    };
+    Ok((settings, source))
+}
+
+/// Where [`load_settings`] got the settings from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsSource {
+    /// A configuration file (plus the environment).
+    File(String),
+    /// No file: the built-in defaults (plus the environment), which use an in-memory store.
+    Defaults,
+}
+
 impl AppState {
     pub fn new(settings: AuthFrameworkSettings) -> Result<Self> {
         let config = Arc::new(RwLock::new(settings));
@@ -909,6 +948,31 @@ pub(crate) fn masked_config<T: serde::Serialize>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn load_settings_reads_the_named_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.toml");
+        std::fs::write(&path, "issuer = \"https://issuer.example.test\"
+").unwrap();
+        let (settings, source) =
+            load_settings(path.to_str(), "no/such/default.toml", "AF_ADMIN_TEST_A").unwrap();
+        assert_eq!(settings.auth.issuer, "https://issuer.example.test");
+        assert_eq!(source, SettingsSource::File(path.to_str().unwrap().to_string()));
+    }
+
+    #[test]
+    fn load_settings_refuses_a_named_file_that_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.toml");
+        assert!(load_settings(path.to_str(), "no/such/default.toml", "AF_ADMIN_TEST_B").is_err());
+    }
+
+    #[test]
+    fn load_settings_without_a_file_says_it_used_defaults() {
+        let (_, source) = load_settings(None, "no/such/default.toml", "AF_ADMIN_TEST_C").unwrap();
+        assert_eq!(source, SettingsSource::Defaults);
+    }
+
     use super::*;
 
     #[derive(clap::Parser)]

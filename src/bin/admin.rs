@@ -7,7 +7,6 @@
 
 use auth_framework::{
     admin::{AppState, CliCommand},
-    config::AuthFrameworkSettings,
     errors::Result,
 };
 use clap::{Parser, Subcommand};
@@ -17,9 +16,9 @@ use clap::{Parser, Subcommand};
 #[command(about = "Auth Framework Administration - CLI, TUI, and Web GUI")]
 #[command(version)]
 pub struct Args {
-    /// Configuration file path
-    #[arg(short, long, default_value = "config/auth-framework.toml")]
-    pub config: String,
+    /// Configuration file path (must exist when given; default: config/auth-framework.toml if present)
+    #[arg(short, long)]
+    pub config: Option<String>,
 
     /// Environment variable prefix
     #[arg(long, default_value = "AUTH_FRAMEWORK")]
@@ -71,8 +70,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     init_logging(args.verbose);
 
-    // Load configuration
-    let settings = load_config(&args.config, &args.env_prefix).await?;
+    // Load configuration: an explicit --config that cannot be read is an error.
+    let (settings, source) = auth_framework::admin::load_settings(
+        args.config.as_deref(),
+        "config/auth-framework.toml",
+        &args.env_prefix,
+    )?;
+    match &source {
+        auth_framework::admin::SettingsSource::File(p) => {
+            eprintln!("Configuration loaded from {p} (environment prefix {})", args.env_prefix)
+        }
+        auth_framework::admin::SettingsSource::Defaults => eprintln!(
+            "No configuration file: using built-in defaults with an in-memory store (environment prefix {})",
+            args.env_prefix
+        ),
+    }
 
     // Build an AuthFramework from the loaded configuration so that admin GUI
     // handlers can query live storage (users, audit events, etc.).
@@ -122,16 +134,4 @@ fn init_logging(verbose: bool) {
         println!("🔧 Verbose logging enabled");
     }
     // In a real implementation, this would configure proper logging
-}
-
-async fn load_config(
-    config_path: &str,
-    env_prefix: &str,
-) -> Result<AuthFrameworkSettings, Box<dyn std::error::Error>> {
-    // Simple configuration loading - in a real implementation this would
-    // use the ConfigManager to load from various sources
-    let settings = AuthFrameworkSettings::default();
-    println!("✅ Configuration loaded from {}", config_path);
-    println!("🔧 Environment prefix: {}", env_prefix);
-    Ok(settings)
 }
