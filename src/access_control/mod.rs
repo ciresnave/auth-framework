@@ -6,6 +6,7 @@
 //! deny; a matching deny grant beats any allow grant; an unregistered action is
 //! denied. Actions are separate: holding one implies nothing about another.
 
+pub mod gnap;
 pub mod principal;
 pub mod rules;
 
