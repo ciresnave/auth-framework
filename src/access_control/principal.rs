@@ -47,6 +47,20 @@ pub struct Principal {
     pub revoked_keys: Vec<String>,
     /// Lifecycle state.
     pub state: Lifecycle,
+    /// The software class of a program or agent (GNAP `class_id`), if any.
+    pub class_id: Option<String>,
+}
+
+/// Who a client key acts as, and for whom: what a GNAP token for an agent
+/// names (the principal acting and the account holder on whose behalf).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActingContext {
+    /// The principal the key acts as.
+    pub principal: String,
+    /// The human at the top of that principal's owner chain.
+    pub account_holder: String,
+    /// The principal's software class, if it has one.
+    pub class_id: Option<String>,
 }
 
 /// Why a principal operation was refused.
@@ -74,6 +88,8 @@ pub enum PrincipalError {
     KeyNotBound,
     /// The thumbprint is empty.
     InvalidThumbprint,
+    /// The software class is empty, contains whitespace, or was set on a human.
+    InvalidClassId,
 }
 
 /// All principals of one account.
@@ -143,6 +159,7 @@ impl PrincipalRegistry {
                 keys: Vec::new(),
                 revoked_keys: Vec::new(),
                 state: Lifecycle::Active,
+                class_id: None,
             },
         );
         Ok(())
@@ -280,6 +297,60 @@ impl PrincipalRegistry {
                 Ok(())
             }
         }
+    }
+
+    /// Replace one of a principal's keys with another in a single step: either
+    /// the old key is revoked and the new one bound, or nothing changes.
+    pub fn rotate_key(
+        &mut self,
+        id: &str,
+        old_thumbprint: &str,
+        new_thumbprint: &str,
+    ) -> Result<(), PrincipalError> {
+        if new_thumbprint.is_empty() {
+            return Err(PrincipalError::InvalidThumbprint);
+        }
+        let p = self.principals.get(id).ok_or(PrincipalError::Unknown)?;
+        if p.state == Lifecycle::Retired {
+            return Err(PrincipalError::Retired);
+        }
+        if !p.keys.iter().any(|k| k == old_thumbprint) {
+            return Err(PrincipalError::KeyNotBound);
+        }
+        if self.thumbprints.contains_key(new_thumbprint) {
+            return Err(PrincipalError::KeyAlreadyBound);
+        }
+        self.add_key(id, new_thumbprint)?;
+        self.revoke_key(id, old_thumbprint)
+    }
+
+    /// Set or clear the software class of a program or agent.
+    pub fn set_class_id(&mut self, id: &str, class_id: Option<&str>) -> Result<(), PrincipalError> {
+        let p = self.principals.get_mut(id).ok_or(PrincipalError::Unknown)?;
+        if p.state == Lifecycle::Retired {
+            return Err(PrincipalError::Retired);
+        }
+        if let Some(c) = class_id
+            && (p.kind == PrincipalKind::Human
+                || c.is_empty()
+                || c.chars().any(char::is_whitespace))
+        {
+            return Err(PrincipalError::InvalidClassId);
+        }
+        p.class_id = class_id.map(str::to_string);
+        Ok(())
+    }
+
+    /// Who a key acts as and for whom. `None` unless the key is active, the
+    /// principal is effectively active and its owner chain ends at a human.
+    pub fn acting_context(&self, thumbprint: &str) -> Option<ActingContext> {
+        let p = self.principal_for_thumbprint(thumbprint)?;
+        let holder = self.root_human(&p.id)?;
+        Some(ActingContext {
+            principal: p.id.clone(),
+            account_holder: holder.to_string(),
+            class_id: p.class_id.clone(),
+        })
     }
 
     /// The principal a key thumbprint acts as: only if the key is active and
