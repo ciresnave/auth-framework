@@ -18,7 +18,7 @@ pub const MAX_BODY_BYTES: usize = 64 * 1024;
 static NULL: Value = Value::Null;
 
 /// A request as read off the wire.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GnapHttpRequest {
     /// HTTP method, for example `POST`.
     pub method: String,
@@ -30,8 +30,21 @@ pub struct GnapHttpRequest {
     pub body: Vec<u8>,
 }
 
+/// `Debug` prints the body's length, never its bytes: an introspection request body carries the access token it asks
+/// about, and a response body describes a token (tests/debug_field_review.txt asks for a redacting `Debug`).
+impl std::fmt::Debug for GnapHttpRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GnapHttpRequest")
+            .field("method", &self.method)
+            .field("uri", &self.uri)
+            .field("headers", &self.headers)
+            .field("body_len", &self.body.len())
+            .finish()
+    }
+}
+
 /// A response to send.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GnapHttpResponse {
     /// HTTP status code.
     pub status: u16,
@@ -39,6 +52,17 @@ pub struct GnapHttpResponse {
     pub headers: Vec<(String, String)>,
     /// The response body (JSON, or empty).
     pub body: Vec<u8>,
+}
+
+/// `Debug` prints the body's length, never its bytes; see [`GnapHttpRequest`].
+impl std::fmt::Debug for GnapHttpResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GnapHttpResponse")
+            .field("status", &self.status)
+            .field("headers", &self.headers)
+            .field("body_len", &self.body.len())
+            .finish()
+    }
 }
 
 impl GnapHttpResponse {
