@@ -1,0 +1,1 @@
+Breaking: `register_new_principal` now requires the creator to hold each requested action on the new object, so a creator can no longer be issued more than it has; otherwise it returns the new `DelegationError::CreatorLacksAction` and grants nothing. The account holder is unaffected.
