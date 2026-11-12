@@ -426,3 +426,49 @@ fn a_rule_added_through_the_cache_is_seen_at_once() {
             .is_allow()
     );
 }
+
+#[test]
+fn a_direct_add_and_remove_are_in_the_audit_trail() {
+    let mut e = engine();
+    e.add_grant(rule("g", "carol", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
+    e.remove_grant("g");
+    let log = e.audit_log();
+    assert_eq!(log.len(), 2);
+    assert_eq!(
+        (log[0].op, log[0].actor.as_str(), log[0].rule_id.as_str()),
+        (AuditOp::GrantAdded, DIRECT_ACTOR, "g")
+    );
+    assert_eq!(
+        (log[1].op, log[1].actor.as_str(), log[1].rule_id.as_str()),
+        (AuditOp::GrantRemoved, DIRECT_ACTOR, "g")
+    );
+}
+
+#[test]
+fn a_refused_direct_add_and_a_removal_of_nothing_are_told_apart() {
+    let mut e = engine();
+    e.add_grant(rule("g", "carol", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
+    // A duplicate is refused and changes nothing; the trail still has just the add.
+    assert!(
+        e.add_grant(rule("g", "dave", "synapse:see", SUB, Effect::Allow))
+            .is_err()
+    );
+    // Control: removing an id that does not exist records nothing.
+    e.remove_grant("nope");
+    assert_eq!(e.audit_log().len(), 1);
+}
+
+#[test]
+fn a_rule_removal_by_an_editor_is_recorded_once() {
+    let mut e = engine();
+    e.add_rule(
+        "alice",
+        rule("r", "carol", "synapse:see", SUB, Effect::Allow),
+    )
+    .unwrap();
+    e.remove_rule("alice", "r").unwrap();
+    let ops: Vec<AuditOp> = e.audit_log().iter().map(|a| a.op).collect();
+    assert_eq!(ops, vec![AuditOp::Added, AuditOp::Removed]);
+}

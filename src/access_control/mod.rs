@@ -17,7 +17,7 @@ use std::sync::Mutex;
 pub use principal::{
     ActingContext, Lifecycle, Principal, PrincipalError, PrincipalKind, PrincipalRegistry,
 };
-pub use rules::{AuditEntry, AuditOp, RuleError};
+pub use rules::{AuditEntry, AuditOp, DIRECT_ACTOR, RuleError};
 
 /// Whether a grant allows or denies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -361,13 +361,33 @@ impl InMemoryEngine {
             return Err(DelegationError::DuplicateId);
         }
         self.generation += 1;
+        let id = grant.id.clone();
         self.grants.push(grant);
+        self.record(
+            Utc::now(),
+            DIRECT_ACTOR,
+            AuditOp::GrantAdded,
+            &id,
+            Vec::new(),
+        );
         Ok(())
     }
 
     /// Remove the grant with this id and, transitively, everything delegated
-    /// from it.
+    /// from it. Recorded in the audit trail under [`DIRECT_ACTOR`]; removing an
+    /// id that does not exist changes nothing and is not recorded.
     pub fn remove_grant(&mut self, id: &str) {
+        let existed = self.find(id).is_some();
+        let chain = self.chain_of(id);
+        self.remove_grant_unrecorded(id);
+        if existed {
+            self.record(Utc::now(), DIRECT_ACTOR, AuditOp::GrantRemoved, id, chain);
+        }
+    }
+
+    /// [`remove_grant`](Self::remove_grant) without an audit entry, for callers
+    /// that record the removal themselves.
+    pub(crate) fn remove_grant_unrecorded(&mut self, id: &str) {
         self.generation += 1;
         let mut dead: Vec<String> = vec![id.to_string()];
         let mut i = 0;

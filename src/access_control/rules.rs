@@ -8,6 +8,10 @@
 //! account holder" is met. Everyone else shares a subset of what they hold
 //! with [`InMemoryEngine::delegate`]. Every edit, refused or not, is recorded
 //! (including a refused delegation and a duplicate rule id).
+//!
+//! The trail is **diagnostic, not tamper-evident**: it is an in-memory list
+//! the engine appends to. Nothing chains or signs its entries, so anyone who
+//! can reach the engine can alter it. Do not rely on it as evidence.
 
 use super::{Effect, Grant, InMemoryEngine, object_matches, object_within};
 use chrono::{DateTime, Utc};
@@ -23,7 +27,15 @@ pub enum AuditOp {
     Delegated,
     /// An edit was refused.
     Refused,
+    /// A grant was added directly with `add_grant`, not by an editor.
+    GrantAdded,
+    /// A grant was removed directly with `remove_grant`.
+    GrantRemoved,
 }
+
+/// The actor recorded for `add_grant` and `remove_grant`, which take no actor:
+/// the embedding application calling the engine directly.
+pub const DIRECT_ACTOR: &str = "(direct)";
 
 /// One entry of the audit trail: who did what to which rule, and the chain it
 /// hung from.
@@ -221,7 +233,7 @@ impl InMemoryEngine {
             self.record(now, actor, AuditOp::Refused, id, chain);
             return Err(RuleError::NotAuthorized);
         }
-        self.remove_grant(id);
+        self.remove_grant_unrecorded(id);
         self.record(now, actor, AuditOp::Removed, id, chain);
         Ok(())
     }
