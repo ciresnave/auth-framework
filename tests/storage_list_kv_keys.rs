@@ -210,3 +210,41 @@ mod redis_backend {
         assert!(storage.list_kv_keys("g?b:").await.unwrap().is_empty());
     }
 }
+
+/// ADR-011 slice 1: `lists_kv_keys` says whether `list_kv_keys` is real. The default is `false`, so a
+/// backend that keeps the failing default is never mistaken for one that lists.
+#[test]
+fn only_backends_that_list_report_it() {
+    assert!(!KeepsTheDefault.lists_kv_keys(), "the default is false");
+    assert!(MemoryStorage::new().lists_kv_keys());
+    assert!(DashMapMemoryStorage::new().lists_kv_keys());
+    assert!(MockStorage::new().lists_kv_keys());
+    #[cfg(feature = "performance-optimization")]
+    assert!(UnifiedStorage::new().lists_kv_keys());
+    let shared: std::sync::Arc<dyn AuthStorage> = std::sync::Arc::new(MemoryStorage::new());
+    assert!(shared.lists_kv_keys(), "the Arc<dyn> impl forwards");
+}
+
+struct OneKey;
+
+impl auth_framework::storage::encryption::KeyProvider for OneKey {
+    fn load_keys(&self) -> Result<auth_framework::storage::encryption::LoadedKeys> {
+        Ok(auth_framework::storage::encryption::LoadedKeys {
+            current_key_id: "k".to_string(),
+            keys: std::collections::HashMap::from([("k".to_string(), [7u8; 32])]),
+        })
+    }
+}
+
+#[test]
+fn try_new_refuses_a_backend_that_does_not_list_its_keys() {
+    use auth_framework::storage::encryption::{EncryptedStorage, StorageEncryption};
+    let enc = StorageEncryption::new(&OneKey).unwrap();
+    let err = EncryptedStorage::try_new(KeepsTheDefault, enc, false, false)
+        .err()
+        .expect("a backend that does not list is refused");
+    assert!(err.to_string().contains("lists_kv_keys"), "got: {err}");
+
+    let enc = StorageEncryption::new(&OneKey).unwrap();
+    assert!(EncryptedStorage::try_new(MemoryStorage::new(), enc, false, false).is_ok());
+}
