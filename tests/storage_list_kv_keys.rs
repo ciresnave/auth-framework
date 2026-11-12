@@ -213,8 +213,8 @@ mod redis_backend {
 
 /// ADR-011 slice 1: `lists_kv_keys` says whether `list_kv_keys` is real. The default is `false`, so a
 /// backend that keeps the failing default is never mistaken for one that lists.
-#[test]
-fn only_backends_that_list_report_it() {
+#[tokio::test]
+async fn only_backends_that_list_report_it() {
     assert!(!KeepsTheDefault.lists_kv_keys(), "the default is false");
     assert!(MemoryStorage::new().lists_kv_keys());
     assert!(DashMapMemoryStorage::new().lists_kv_keys());
