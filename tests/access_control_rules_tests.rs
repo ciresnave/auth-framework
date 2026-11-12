@@ -446,18 +446,76 @@ fn a_direct_add_and_remove_are_in_the_audit_trail() {
 }
 
 #[test]
-fn a_refused_direct_add_and_a_removal_of_nothing_are_told_apart() {
+fn a_refused_direct_add_is_recorded_and_changes_nothing() {
     let mut e = engine();
     e.add_grant(rule("g", "carol", "synapse:see", SUB, Effect::Allow))
         .unwrap();
-    // A duplicate is refused and changes nothing; the trail still has just the add.
+    // A duplicate id is refused.
     assert!(
         e.add_grant(rule("g", "dave", "synapse:see", SUB, Effect::Allow))
             .is_err()
     );
-    // Control: removing an id that does not exist records nothing.
+    // It was not inserted: dave gets nothing, carol keeps her grant.
+    assert!(!sees(&e, "dave", SUB));
+    assert!(sees(&e, "carol", SUB));
+    // A grant claiming a parent is refused too.
+    let mut forged = rule("f", "dave", "synapse:see", SUB, Effect::Allow);
+    forged.parent = Some("g".into());
+    assert!(e.add_grant(forged).is_err());
+    assert!(!sees(&e, "dave", SUB));
+    let ops: Vec<(AuditOp, &str)> = e
+        .audit_log()
+        .iter()
+        .map(|a| (a.op, a.rule_id.as_str()))
+        .collect();
+    assert_eq!(
+        ops,
+        vec![
+            (AuditOp::GrantAdded, "g"),
+            (AuditOp::Refused, "g"),
+            (AuditOp::Refused, "f")
+        ]
+    );
+}
+
+#[test]
+fn removing_a_missing_grant_records_nothing_and_leaves_the_generation() {
+    let mut e = engine();
+    e.add_grant(rule("g", "carol", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
+    let (generation, entries) = (e.generation(), e.audit_log().len());
     e.remove_grant("nope");
-    assert_eq!(e.audit_log().len(), 1);
+    assert_eq!(e.audit_log().len(), entries);
+    assert_eq!(e.generation(), generation);
+    // Control: removing a real grant does move both.
+    e.remove_grant("g");
+    assert_eq!(e.audit_log().len(), entries + 1);
+    assert_ne!(e.generation(), generation);
+}
+
+#[test]
+fn an_editor_cannot_take_the_name_the_trail_uses_for_direct_calls() {
+    // A real, active principal that is also the account holder: only the
+    // reserved name can be what refuses it.
+    let mut p = PrincipalRegistry::new();
+    p.create(DIRECT_ACTOR, Human, None).unwrap();
+    let mut a = ActionRegistry::new();
+    a.register("synapse:see", false);
+    let mut e = InMemoryEngine::new(a)
+        .with_principals(p)
+        .with_account_holder(DIRECT_ACTOR);
+    assert_eq!(
+        e.add_rule(
+            DIRECT_ACTOR,
+            rule("r", "carol", "synapse:see", SUB, Effect::Allow)
+        ),
+        Err(RuleError::NotAuthorized)
+    );
+    assert!(
+        e.audit_log()
+            .iter()
+            .all(|a| a.op == AuditOp::Refused && a.rule_id == "r")
+    );
 }
 
 #[test]

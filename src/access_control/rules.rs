@@ -34,7 +34,9 @@ pub enum AuditOp {
 }
 
 /// The actor recorded for `add_grant` and `remove_grant`, which take no actor:
-/// the embedding application calling the engine directly.
+/// the embedding application calling the engine directly. The name is
+/// reserved: an editor called this may not edit rules, so a trail entry under
+/// it always means a direct call.
 pub const DIRECT_ACTOR: &str = "(direct)";
 
 /// One entry of the audit trail: who did what to which rule, and the chain it
@@ -128,6 +130,9 @@ impl InMemoryEngine {
 
     /// May `actor` edit rules about `object` (a literal object or a pattern)?
     pub fn can_edit_rules_about(&self, actor: &str, object: &str, now: DateTime<Utc>) -> bool {
+        if actor == DIRECT_ACTOR {
+            return false;
+        }
         if let Some(reg) = &self.principals
             && !reg.is_active(actor)
         {

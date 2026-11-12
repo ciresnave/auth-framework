@@ -354,14 +354,16 @@ impl InMemoryEngine {
     /// removal) or if the grant claims a parent or a depth (a forged chain
     /// position could outrun the delegation limit).
     pub fn add_grant(&mut self, grant: Grant) -> Result<(), DelegationError> {
+        let id = grant.id.clone();
         if grant.parent.is_some() || grant.depth != 0 {
+            self.record(Utc::now(), DIRECT_ACTOR, AuditOp::Refused, &id, Vec::new());
             return Err(DelegationError::NotRootGrant);
         }
         if self.find(&grant.id).is_some() {
+            self.record(Utc::now(), DIRECT_ACTOR, AuditOp::Refused, &id, Vec::new());
             return Err(DelegationError::DuplicateId);
         }
         self.generation += 1;
-        let id = grant.id.clone();
         self.grants.push(grant);
         self.record(
             Utc::now(),
@@ -377,12 +379,14 @@ impl InMemoryEngine {
     /// from it. Recorded in the audit trail under [`DIRECT_ACTOR`]; removing an
     /// id that does not exist changes nothing and is not recorded.
     pub fn remove_grant(&mut self, id: &str) {
-        let existed = self.find(id).is_some();
+        if self.find(id).is_none() {
+            // Nothing to remove: no change, so no new generation (a no-op must
+            // not make every cached decision stale) and no entry.
+            return;
+        }
         let chain = self.chain_of(id);
         self.remove_grant_unrecorded(id);
-        if existed {
-            self.record(Utc::now(), DIRECT_ACTOR, AuditOp::GrantRemoved, id, chain);
-        }
+        self.record(Utc::now(), DIRECT_ACTOR, AuditOp::GrantRemoved, id, chain);
     }
 
     /// [`remove_grant`](Self::remove_grant) without an audit entry, for callers
