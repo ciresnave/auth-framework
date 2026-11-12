@@ -144,7 +144,7 @@ jobs:
     name: CodeRipper portfolio check
     permissions:
       contents: read
-    uses: ciresnave/coderipper/.github/workflows/portfolio.yml@4bcf55e4cd5c171a88f021c0c4e563e47ef4bb7d # installs coderipper 0.43.41
+    uses: ciresnave/coderipper/.github/workflows/portfolio.yml@33cc3b7e4ab9305b5244092842fc7f6f6b686983 # installs coderipper 0.43.49
 
   msrv:
     name: MSRV Verification
