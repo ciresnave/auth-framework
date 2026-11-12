@@ -1,0 +1,1 @@
+GNAP resource-server routes: `gnap_http` is a transport-neutral handler for the RFC 9767 discovery document and token introspection (every error is HTTP 400 with an `error` member, introspection answers carry `Cache-Control: no-store`), with axum (`integrations::gnap_axum`) and actix (`integrations::gnap_actix`) adapters.

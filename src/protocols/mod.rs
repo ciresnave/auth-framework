@@ -4,6 +4,7 @@ pub mod cas;
 pub mod ciba;
 pub mod fido1;
 pub mod gnap;
+pub mod gnap_http;
 pub mod gnap_httpsig;
 pub mod gnap_interaction;
 pub mod gnap_jws;
