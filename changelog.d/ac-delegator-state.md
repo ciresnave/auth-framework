@@ -1,1 +1,0 @@
-Breaking: access control now checks who issued a delegation. A delegation stops working while its delegator (or an owner of the delegator) is suspended, and ends for good on retirement. A suspended, retired or unknown principal can no longer delegate; `delegate` returns the new `DelegationError::DelegatorInactive`. Engines without a principal registry behave as before.
