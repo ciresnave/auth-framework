@@ -225,6 +225,9 @@ pub enum DelegationError {
     DelegatorInactive,
     /// The action is not within the source grant's action.
     ActionWidens,
+    /// The creator does not itself hold one of the requested actions on the
+    /// new object, so it cannot be issued a grant for it.
+    CreatorLacksAction,
     /// The object is not within the source grant's object.
     ObjectWidens,
     /// The delegation would outlive its source.
@@ -520,7 +523,9 @@ impl InMemoryEngine {
     /// `object`; nobody else gets anything, so until a rule says otherwise the
     /// new object is visible to the creator and the account holder only. The
     /// creator can later hide it further with deny grants; the account holder
-    /// cannot be hidden from. Returns the new grant ids.
+    /// cannot be hidden from. The creator must already hold each listed action
+    /// on `object` (as any caller would be checked); it cannot be issued more
+    /// than it has. Returns the new grant ids.
     pub fn register_new_principal(
         &mut self,
         creator: &str,
@@ -529,6 +534,15 @@ impl InMemoryEngine {
     ) -> Result<Vec<String>, DelegationError> {
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
             return Err(DelegationError::UnregisteredAction);
+        }
+        // A creator can be issued only what it already holds on this object.
+        let now = Utc::now();
+        if actions
+            .iter()
+            .any(|a| !self.decide_at(creator, a, object, now).is_allow())
+        {
+            self.record(now, creator, AuditOp::Refused, object, Vec::new());
+            return Err(DelegationError::CreatorLacksAction);
         }
         // All or nothing: check every id before pushing any grant.
         let ids: Vec<String> = actions
