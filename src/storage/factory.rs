@@ -148,12 +148,12 @@ pub(crate) fn wrap_with_encryption_if_enabled(
         ))
     })?;
 
-    Ok(Arc::new(EncryptedStorage::new(
+    Ok(Arc::new(EncryptedStorage::try_new(
         backend,
         encryption,
         encryption_config.allow_plaintext_reads,
         encryption_config.allow_legacy_v0,
-    )))
+    )?))
 }
 
 async fn build_storage_backend_inner(
