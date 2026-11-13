@@ -116,6 +116,12 @@ where
         Ok(())
     }
 
+    /// Rewrite an already-sealed session under the current key (reindex).
+    pub(super) async fn reseal_session(&self, s: &SessionData, old_key: &str) -> Result<()> {
+        self.put_sealed_session(&s.session_id, s, Some((s, old_key)))
+            .await
+    }
+
     async fn adopt_legacy_session(&self, legacy: SessionData) -> Result<Option<SessionData>> {
         if !live(&legacy) {
             self.inner.delete_session(&legacy.session_id).await?;
