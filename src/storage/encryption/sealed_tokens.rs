@@ -25,6 +25,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 const TOK: &str = "tok:";
 const TOKAT: &str = "tokat:";
 const TOKUSER: &str = "tokuser:";
+const SESS: &str = "sess:";
+const SESSUSER: &str = "sessuser:";
 
 /// Domains separating the roles a blind index plays.
 const D_TOKEN_ID: &str = "token_id";
@@ -35,7 +37,9 @@ const D_USER: &str = "user_id";
 /// (ASCII-case-insensitive), so a caller cannot reach a sealed key by changing its case.
 pub(super) fn is_reserved_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
-    [TOK, TOKAT, TOKUSER].iter().any(|p| lower.starts_with(p))
+    [TOK, TOKAT, TOKUSER, SESS, SESSUSER]
+        .iter()
+        .any(|p| lower.starts_with(p))
 }
 
 pub(super) fn reject_reserved(key: &str) -> Result<()> {
@@ -48,14 +52,14 @@ pub(super) fn reject_reserved(key: &str) -> Result<()> {
     Ok(())
 }
 
-fn storage_err(message: impl Into<String>) -> AuthError {
+pub(super) fn storage_err(message: impl Into<String>) -> AuthError {
     AuthError::Storage(crate::errors::StorageError::operation_failed(message))
 }
 
 /// Unix seconds of the last legacy-row warning, for a once-a-minute rate limit per process.
 static LAST_LEGACY_WARN: AtomicI64 = AtomicI64::new(0);
 
-fn warn_legacy_row_once_a_minute() {
+pub(super) fn warn_legacy_row_once_a_minute() {
     let now = chrono::Utc::now().timestamp();
     let last = LAST_LEGACY_WARN.load(Ordering::Relaxed);
     if now - last >= 60
@@ -71,7 +75,7 @@ fn warn_legacy_row_once_a_minute() {
     }
 }
 
-fn ttl_until(expires_at: chrono::DateTime<chrono::Utc>) -> Option<Duration> {
+pub(super) fn ttl_until(expires_at: chrono::DateTime<chrono::Utc>) -> Option<Duration> {
     let ms = (expires_at - chrono::Utc::now()).num_milliseconds();
     (ms > 0).then(|| Duration::from_millis(ms as u64))
 }
@@ -85,7 +89,7 @@ where
     T: AuthStorage + Send + Sync,
 {
     /// The sealed layer is only sound on a backend that lists its KV keys and reports TTLs.
-    fn ensure_sealing_supported(&self) -> Result<()> {
+    pub(super) fn ensure_sealing_supported(&self) -> Result<()> {
         if !self.inner.lists_kv_keys() || !self.inner.tracks_kv_ttl() {
             return Err(storage_err(
                 "tokens cannot be sealed at rest on this storage backend: it must list its KV \
@@ -96,7 +100,7 @@ where
         Ok(())
     }
 
-    fn bi(&self, kid: &str, domain: &str, value: &str) -> Option<String> {
+    pub(super) fn bi(&self, kid: &str, domain: &str, value: &str) -> Option<String> {
         self.encryption.blind_index(kid, domain, value)
     }
 
@@ -121,13 +125,13 @@ where
         Some(format!("{prefix}{tid}"))
     }
 
-    fn seal(&self, key: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
+    pub(super) fn seal(&self, key: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
         self.encryption
             .encrypt_for_storage(plaintext, key.as_bytes())
     }
 
     /// Read and open a sealed key. A value that does not open is an error, never `None`.
-    async fn open_sealed(&self, key: &str) -> Result<Option<Vec<u8>>> {
+    pub(super) async fn open_sealed(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let Some(raw) = self.inner.get_kv(key).await? else {
             return Ok(None);
         };
@@ -136,7 +140,12 @@ where
             .map(Some)
     }
 
-    async fn put_sealed(&self, key: &str, plaintext: &[u8], ttl: Duration) -> Result<()> {
+    pub(super) async fn put_sealed(
+        &self,
+        key: &str,
+        plaintext: &[u8],
+        ttl: Duration,
+    ) -> Result<()> {
         let sealed = self.seal(key, plaintext)?;
         self.inner.store_kv(key, &sealed, Some(ttl)).await
     }

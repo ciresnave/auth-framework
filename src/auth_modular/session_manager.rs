@@ -37,6 +37,37 @@ pub struct SessionCoordinationStats {
 pub struct SessionManager {
     storage: Arc<dyn AuthStorage>,
     distributed_store: Arc<dyn DistributedSessionStore>,
+    /// Per-process count of active sessions for the login path (ADR-011 section 4.4).
+    count_cache: CountCache,
+}
+
+/// How long the login-path session count may be reused before it is read again.
+const COUNT_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// A per-process cached session count. The cap it feeds is a denial-of-service guard, not an
+/// invariant: it can be exceeded by (login rate x refresh interval x processes), and this process's
+/// own creates raise the cached value so a single node stays close to exact.
+#[derive(Default)]
+struct CountCache(std::sync::Mutex<Option<(std::time::Instant, u64)>>);
+
+impl CountCache {
+    fn fresh(&self) -> Option<u64> {
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        guard.and_then(|(at, n)| (at.elapsed() < COUNT_CACHE_TTL).then_some(n))
+    }
+
+    fn set(&self, n: u64) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), n));
+    }
+
+    /// This process created a session: keep the cached count from lagging its own creates.
+    /// Deletes are not subtracted (the entry may not have existed); the value is stale-high until
+    /// the next refresh, which is the safe direction for a cap.
+    fn bump(&self) {
+        if let Some((_, n)) = self.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            *n = n.saturating_add(1);
+        }
+    }
 }
 
 impl SessionManager {
@@ -51,6 +82,7 @@ impl SessionManager {
         Self {
             storage,
             distributed_store: Arc::new(LocalOnlySessionStore),
+            count_cache: CountCache::default(),
         }
     }
 
@@ -308,7 +340,7 @@ impl SessionManager {
         user_agent: Option<String>,
     ) -> Result<(String, u64)> {
         const MAX_TOTAL_SESSIONS: u64 = 100_000;
-        let total_sessions = self.count_active_sessions().await?;
+        let total_sessions = self.count_active_sessions_cached().await?;
         if total_sessions >= MAX_TOTAL_SESSIONS {
             warn!(
                 "Maximum total sessions ({}) exceeded, rejecting new session",
@@ -332,7 +364,20 @@ impl SessionManager {
         let session_id = self
             .create_session(user_id, expires_in, ip_address, user_agent)
             .await?;
+        self.count_cache.bump();
         Ok((session_id, total_sessions + 1))
+    }
+
+    /// The active-session count for the login path: reused for up to 30 seconds so a login or a
+    /// logout does not scan every session (on a sealed store the exact count is a key scan).
+    /// Statistics that must be exact call [`Self::count_active_sessions`].
+    pub async fn count_active_sessions_cached(&self) -> Result<u64> {
+        if let Some(n) = self.count_cache.fresh() {
+            return Ok(n);
+        }
+        let n = self.count_active_sessions().await?;
+        self.count_cache.set(n);
+        Ok(n)
     }
 
     /// Count the number of currently active sessions.
@@ -482,6 +527,47 @@ mod tests {
 
     fn make_manager() -> SessionManager {
         SessionManager::new(Arc::new(MemoryStorage::new()))
+    }
+
+    #[tokio::test]
+    async fn the_login_path_count_is_cached_and_raised_by_own_creates() {
+        let storage = Arc::new(MemoryStorage::new());
+        let mgr = SessionManager::new(storage.clone());
+        assert_eq!(mgr.count_active_sessions_cached().await.unwrap(), 0);
+        // A session created behind the manager's back is not seen until the cache is refreshed...
+        storage
+            .store_session(
+                "x",
+                &crate::storage::SessionData {
+                    session_id: "x".into(),
+                    user_id: "u".into(),
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                    last_activity: chrono::Utc::now(),
+                    ip_address: None,
+                    user_agent: None,
+                    data: Default::default(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            mgr.count_active_sessions().await.unwrap(),
+            1,
+            "exact count sees it"
+        );
+        assert_eq!(
+            mgr.count_active_sessions_cached().await.unwrap(),
+            0,
+            "cached does not"
+        );
+        // ...while this manager's own creates are counted at once.
+        let (_, total) = mgr
+            .create_session_limited("u2", Duration::from_secs(600), None, None)
+            .await
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(mgr.count_active_sessions_cached().await.unwrap(), 1);
     }
 
     // ── create_session ──────────────────────────────────────────────────
