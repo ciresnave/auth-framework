@@ -1883,7 +1883,7 @@ impl TokenManager {
             let (kid, key) = ring.signing_key()?;
             let mut header = Header::new(key.algorithm());
             header.kid = Some(kid);
-            return encode(&header, &claims, &key.encoding_key()).map_err(|e| {
+            return encode(&header, &claims, &key.encoding_key()?).map_err(|e| {
                 TokenError::creation_failed(format!("JWT encoding failed: {e}")).into()
             });
         }

@@ -29,7 +29,7 @@ pub(super) enum RingKey {
     Asymmetric {
         alg: jsonwebtoken::Algorithm,
         decoding: jsonwebtoken::DecodingKey,
-        encoding: Arc<jsonwebtoken::EncodingKey>,
+        encoding: Option<Arc<jsonwebtoken::EncodingKey>>,
     },
 }
 
@@ -40,10 +40,14 @@ impl RingKey {
             Self::Asymmetric { alg, .. } => *alg,
         }
     }
-    pub(super) fn encoding_key(&self) -> jsonwebtoken::EncodingKey {
+    pub(super) fn encoding_key(&self) -> Result<jsonwebtoken::EncodingKey> {
         match self {
-            Self::Hmac(secret) => jsonwebtoken::EncodingKey::from_secret(&secret[..]),
-            Self::Asymmetric { encoding, .. } => (**encoding).clone(),
+            Self::Hmac(secret) => Ok(jsonwebtoken::EncodingKey::from_secret(&secret[..])),
+            Self::Asymmetric {
+                encoding: Some(key),
+                ..
+            } => Ok((**key).clone()),
+            Self::Asymmetric { .. } => Err(AuthError::crypto("this ring key cannot sign")),
         }
     }
     pub(super) fn decoding_key(&self) -> jsonwebtoken::DecodingKey {
@@ -82,20 +86,20 @@ async fn asymmetric_entry(
         },
     }
     .map_err(|e| AuthError::crypto(format!("bad public key in the key store: {e}")))?;
+    // Only an Active key signs, so only it needs its private half exported.
     let encoding = if need_private {
         let der = store.export_private_pkcs8(&info.kid).await?;
-        match alg {
+        Some(Arc::new(match alg {
             jsonwebtoken::Algorithm::ES256 => jsonwebtoken::EncodingKey::from_ec_der(&der),
             _ => jsonwebtoken::EncodingKey::from_ed_der(&der),
-        }
+        }))
     } else {
-        // Never used: only an Active key signs, and an Active key takes the branch above.
-        jsonwebtoken::EncodingKey::from_secret(b"")
+        None
     };
     Ok(Some(RingKey::Asymmetric {
         alg,
         decoding,
-        encoding: Arc::new(encoding),
+        encoding,
     }))
 }
 
