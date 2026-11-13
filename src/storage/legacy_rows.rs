@@ -262,3 +262,145 @@ mod tests {
         assert!(sealed.get_session("s1").await.unwrap().is_none());
     }
 }
+
+/// The service URL a backend test needs. In CI (`CI` is set by GitHub Actions) a missing URL is a
+/// failure, never a skip: these tests must run against the service containers there.
+#[cfg(all(test, any(feature = "postgres-storage", feature = "redis-storage")))]
+fn service_url(var: &str) -> Option<String> {
+    match std::env::var(var) {
+        Ok(url) if !url.is_empty() => Some(url),
+        _ => {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "{var} is not set in CI: the service container was not wired to this job"
+            );
+            eprintln!("{var} not set: skipping this service-backed test (local run)");
+            None
+        }
+    }
+}
+
+/// Seed typed rows through the raw backend, sweep, and check the same things on every backend.
+#[cfg(all(test, any(feature = "postgres-storage", feature = "redis-storage")))]
+#[allow(clippy::unwrap_used, reason = "tests")]
+async fn sweep_round_trip(raw: std::sync::Arc<dyn LegacyRows>) {
+    use crate::storage::encryption::{KeyProvider, LoadedKeys, StorageEncryption};
+    struct P;
+    impl KeyProvider for P {
+        fn load_keys(&self) -> Result<LoadedKeys> {
+            let mut keys = std::collections::HashMap::new();
+            keys.insert("A".to_string(), [b'A'; 32]);
+            Ok(LoadedKeys {
+                current_key_id: "A".to_string(),
+                keys,
+            })
+        }
+    }
+    let now = chrono::Utc::now();
+    let session = |id: &str, hours: i64| SessionData {
+        session_id: id.into(),
+        user_id: "u".into(),
+        created_at: now,
+        expires_at: now + chrono::Duration::hours(hours),
+        last_activity: now,
+        ip_address: None,
+        user_agent: None,
+        data: Default::default(),
+    };
+    raw.store_token(&AuthToken::builder("t1", "u", "access-1").build())
+        .await
+        .unwrap();
+    raw.store_session("s1", &session("s1", 1)).await.unwrap();
+    raw.store_session("s-old", &session("s-old", -1))
+        .await
+        .unwrap();
+    assert_eq!(raw.legacy_tokens().await.unwrap().len(), 1);
+    assert_eq!(raw.legacy_sessions().await.unwrap().len(), 2);
+
+    let as_dyn: std::sync::Arc<dyn AuthStorage> = raw.clone();
+    let sealed =
+        EncryptedStorage::try_new(as_dyn, StorageEncryption::new(&P).unwrap(), false, false)
+            .unwrap();
+    let dry = encrypt_tokens(raw.as_ref(), &sealed, false, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        (dry.tokens_found, dry.sessions_found, dry.sealed),
+        (1, 2, 0)
+    );
+
+    let report = encrypt_tokens(raw.as_ref(), &sealed, false, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        (report.sealed, report.expired_dropped, report.remaining),
+        (2, 1, 0)
+    );
+    assert_eq!(
+        sealed.get_token("t1").await.unwrap().unwrap().token_id,
+        "t1"
+    );
+    assert!(sealed.get_session("s1").await.unwrap().is_some());
+    assert!(raw.legacy_tokens().await.unwrap().is_empty());
+    assert!(raw.legacy_sessions().await.unwrap().is_empty());
+}
+
+#[cfg(all(test, feature = "postgres-storage"))]
+#[allow(clippy::unwrap_used, reason = "tests")]
+mod postgres_tests {
+    use super::*;
+
+    /// Runs in its own schema, so the sweep (which reads whole tables) cannot touch rows that
+    /// other tests keep in the shared database.
+    #[tokio::test]
+    async fn sweep_against_postgres() {
+        let Some(url) = service_url("DATABASE_URL") else {
+            return;
+        };
+        let schema = format!("sweep_{}", uuid::Uuid::new_v4().simple());
+        let admin = sqlx::PgPool::connect(&url).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        let set_path = format!("SET search_path TO {schema}");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .after_connect(move |conn, _| {
+                let set_path = set_path.clone();
+                Box::pin(async move {
+                    sqlx::query(sqlx::AssertSqlSafe(set_path))
+                        .execute(conn)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect(&url)
+            .await
+            .unwrap();
+        let raw = crate::storage::postgres::PostgresStorage::new(pool);
+        raw.migrate().await.unwrap();
+        sweep_round_trip(std::sync::Arc::new(raw)).await;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&admin)
+            .await
+            .unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "redis-storage"))]
+#[allow(clippy::unwrap_used, reason = "tests")]
+mod redis_tests {
+    use super::*;
+
+    /// A unique key prefix per run keeps the SCAN to this test's own keys.
+    #[tokio::test]
+    async fn sweep_against_redis() {
+        let Some(url) = service_url("REDIS_URL") else {
+            return;
+        };
+        let prefix = format!("sweep-{}:", uuid::Uuid::new_v4().simple());
+        let raw = crate::storage::RedisStorage::new(&url, prefix).unwrap();
+        sweep_round_trip(std::sync::Arc::new(raw)).await;
+    }
+}

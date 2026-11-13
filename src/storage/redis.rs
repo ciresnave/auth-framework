@@ -251,54 +251,6 @@ end
 return 1
 "#;
 
-#[cfg(feature = "cli")]
-impl RedisStorage {
-    /// Every row stored under `{key_prefix}{kind}*`, decoded, found with cursor `SCAN`
-    /// (ADR-011 slice 4 sweep). `kind` is an exact legacy key stem such as `token:`.
-    pub(crate) async fn scan_typed_rows<T: serde::de::DeserializeOwned>(
-        &self,
-        kind: &str,
-    ) -> Result<Vec<T>> {
-        let mut conn = self.get_connection().await?;
-        let pattern = format!("{}{}*", self.key_prefix, kind);
-        let mut keys = Vec::new();
-        let mut cursor: u64 = 0;
-        loop {
-            let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg(&pattern)
-                .arg("COUNT")
-                .arg(100)
-                .query_async(&mut conn)
-                .await
-                .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
-            keys.extend(batch);
-            cursor = next;
-            if cursor == 0 {
-                break;
-            }
-        }
-        keys.sort_unstable();
-        keys.dedup();
-        let mut out = Vec::new();
-        for key in keys {
-            let raw: Option<String> = conn
-                .get(&key)
-                .await
-                .map_err(|e| AuthError::Storage(StorageError::operation_failed(e.to_string())))?;
-            if let Some(raw) = raw {
-                out.push(
-                    serde_json::from_str(&raw).map_err(|e| {
-                        AuthError::Storage(StorageError::serialization(e.to_string()))
-                    })?,
-                );
-            }
-        }
-        Ok(out)
-    }
-}
-
 #[async_trait]
 impl AuthStorage for RedisStorage {
     async fn update_token(&self, token: &AuthToken) -> Result<()> {
