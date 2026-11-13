@@ -220,8 +220,14 @@ pub enum DelegationError {
     NotAnAllowGrant,
     /// The source grant (or something above it) has expired or been revoked.
     SourceInactive,
+    /// The delegator is not an active principal (suspended, retired, unknown,
+    /// or owned by one that is).
+    DelegatorInactive,
     /// The action is not within the source grant's action.
     ActionWidens,
+    /// The creator does not itself hold one of the requested actions on the
+    /// new object, so it cannot be issued a grant for it.
+    CreatorLacksAction,
     /// The object is not within the source grant's object.
     ObjectWidens,
     /// The delegation would outlive its source.
@@ -392,11 +398,19 @@ impl InMemoryEngine {
         self.grants.iter().find(|g| g.id == id)
     }
 
-    /// A grant is alive if it and every ancestor exists and is unexpired.
+    /// A grant is alive if it and every ancestor exists and is unexpired, and,
+    /// when a principal registry is attached, every delegation in the chain was
+    /// issued by a principal that is still active.
     fn chain_alive(&self, g: &Grant, now: DateTime<Utc>) -> bool {
         let mut cur = g;
         for _ in 0..=self.grants.len() {
             if cur.expires.is_some_and(|e| now >= e) {
+                return false;
+            }
+            if let (Some(reg), Some(issuer)) = (&self.principals, &cur.issuer)
+                && cur.parent.is_some()
+                && !reg.is_active(issuer)
+            {
                 return false;
             }
             match &cur.parent {
@@ -455,6 +469,11 @@ impl InMemoryEngine {
         if src.principal != req.delegator {
             return Err(DelegationError::NotHolder);
         }
+        if let Some(reg) = &self.principals
+            && !reg.is_active(&req.delegator)
+        {
+            return Err(DelegationError::DelegatorInactive);
+        }
         if !self.chain_alive(&src, now) {
             return Err(DelegationError::SourceInactive);
         }
@@ -504,7 +523,9 @@ impl InMemoryEngine {
     /// `object`; nobody else gets anything, so until a rule says otherwise the
     /// new object is visible to the creator and the account holder only. The
     /// creator can later hide it further with deny grants; the account holder
-    /// cannot be hidden from. Returns the new grant ids.
+    /// cannot be hidden from. The creator must already hold each listed action
+    /// on `object` (as any caller would be checked); it cannot be issued more
+    /// than it has. Returns the new grant ids.
     pub fn register_new_principal(
         &mut self,
         creator: &str,
@@ -513,6 +534,15 @@ impl InMemoryEngine {
     ) -> Result<Vec<String>, DelegationError> {
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
             return Err(DelegationError::UnregisteredAction);
+        }
+        // A creator can be issued only what it already holds on this object.
+        let now = Utc::now();
+        if actions
+            .iter()
+            .any(|a| !self.decide_at(creator, a, object, now).is_allow())
+        {
+            self.record(now, creator, AuditOp::Refused, object, Vec::new());
+            return Err(DelegationError::CreatorLacksAction);
         }
         // All or nothing: check every id before pushing any grant.
         let ids: Vec<String> = actions

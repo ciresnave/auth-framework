@@ -490,6 +490,15 @@ pub async fn assign_user_role(
         )));
     }
 
+    // The role system keeps no expiry on an assignment, so a request that asks for one would
+    // be granted for good. Refuse it rather than accept and drop the field.
+    if request.expires_at.is_some() {
+        return Ok(Json(ApiResponse::<()>::error_with_message_typed(
+            "EXPIRY_UNSUPPORTED",
+            "Role assignments with an expiry are not supported; assign without expires_at and revoke the role when it should end",
+        )));
+    }
+
     match state
         .authorization_service
         .assign_role(&user_id, &request.role_id)
@@ -618,6 +627,19 @@ pub async fn bulk_assign_roles(
     if !auth_token.has_permission("manage:user_roles") {
         return Ok(Json(ApiResponse::<()>::forbidden_with_message_typed(
             "Insufficient permissions to manage user roles",
+        )));
+    }
+
+    // As for a single assignment: an expiry cannot be kept, so refuse the whole request before
+    // any role is granted.
+    if request
+        .assignments
+        .iter()
+        .any(|assignment| assignment.expires_at.is_some())
+    {
+        return Ok(Json(ApiResponse::<()>::error_with_message_typed(
+            "EXPIRY_UNSUPPORTED",
+            "Role assignments with an expiry are not supported; assign without expires_at and revoke the role when it should end",
         )));
     }
 
