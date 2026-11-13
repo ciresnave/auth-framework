@@ -820,6 +820,28 @@ pub enum SecurityAction {
         #[arg(long)]
         accept_legacy_v0: bool,
     },
+    /// Re-seal every encrypted token and session under the CURRENT storage key.
+    ///
+    /// Run after a key rotation, before removing the old key from the key set: records sealed
+    /// under the old key stay readable only while that key is loaded. Records already under the
+    /// current key are left alone; ones that cannot be opened are reported and left untouched.
+    Reindex,
+    /// Seal every token and session still stored as a plaintext typed row (written before
+    /// token and session sealing existed), then delete the plaintext row.
+    ///
+    /// Reports how many typed rows remain. With `--purge-legacy` the rows are deleted instead of
+    /// sealed: every holder must log in again.
+    EncryptTokens {
+        /// Count what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Delete plaintext rows instead of sealing them (forces re-login). Requires --confirm.
+        #[arg(long)]
+        purge_legacy: bool,
+        /// Required with --purge-legacy on a real run.
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 /// What a masked value is replaced with.

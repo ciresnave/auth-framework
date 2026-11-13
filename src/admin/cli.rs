@@ -976,6 +976,125 @@ async fn handle_security_action(state: AppState, action: SecurityAction) -> Resu
                 )));
             }
         }
+        SecurityAction::Reindex => {
+            let (storage_config, enabled) = {
+                let config = state.config.read().await;
+                (
+                    config.auth.storage.clone(),
+                    config.auth.storage_encryption.enabled,
+                )
+            };
+            if !enabled {
+                return Err(AuthError::Cli(
+                    "storage_encryption.enabled is false: there are no sealed records to reindex."
+                        .to_string(),
+                ));
+            }
+            let backend =
+                crate::storage::factory::build_storage_backend_unencrypted(&storage_config, None)
+                    .await?;
+            let encryption =
+                crate::storage::encryption::StorageEncryption::from_env().map_err(|e| {
+                    AuthError::Cli(format!(
+                        "Cannot run reindex: no storage encryption key is configured ({e})."
+                    ))
+                })?;
+            let sealed = crate::storage::encryption::EncryptedStorage::try_new(
+                backend, encryption, false, false,
+            )?;
+            let report = sealed.reindex_sealed().await?;
+            println!("  Scanned:        {}", report.scanned.to_string().cyan());
+            println!("  Already current: {}", report.current.to_string().green());
+            println!("  Resealed:       {}", report.resealed.to_string().yellow());
+            if report.unreadable > 0 {
+                println!("  Unreadable:     {}", report.unreadable.to_string().red());
+                return Err(AuthError::Cli(format!(
+                    "{} sealed record(s) could not be opened (their key is not loaded, or the \
+                     record is damaged) and were left untouched. Do not remove the old key yet.",
+                    report.unreadable
+                )));
+            }
+        }
+        SecurityAction::EncryptTokens {
+            dry_run,
+            purge_legacy,
+            confirm,
+        } => {
+            let (storage_config, enabled) = {
+                let config = state.config.read().await;
+                (
+                    config.auth.storage.clone(),
+                    config.auth.storage_encryption.enabled,
+                )
+            };
+            if !enabled {
+                return Err(AuthError::Cli(
+                    "storage_encryption.enabled is false in the current configuration: \
+                     encrypt-tokens would act against that choice."
+                        .to_string(),
+                ));
+            }
+            if purge_legacy && !confirm && !dry_run {
+                return Err(AuthError::Cli(
+                    "--purge-legacy deletes every plaintext token and session row, so each \
+                     holder must log in again. Pass --confirm to proceed."
+                        .to_string(),
+                ));
+            }
+            let source =
+                crate::storage::factory::build_legacy_rows_source(&storage_config, None).await?;
+            let encryption =
+                crate::storage::encryption::StorageEncryption::from_env().map_err(|e| {
+                    AuthError::Cli(format!(
+                        "Cannot run encrypt-tokens: no storage encryption key is configured ({e})."
+                    ))
+                })?;
+            let as_storage: std::sync::Arc<dyn crate::storage::AuthStorage> = source.clone();
+            let sealed = crate::storage::encryption::EncryptedStorage::try_new(
+                as_storage, encryption, false, false,
+            )?;
+            let report = crate::storage::legacy_rows::encrypt_tokens(
+                source.as_ref(),
+                &sealed,
+                purge_legacy,
+                dry_run,
+            )
+            .await?;
+            println!(
+                "  Token rows found:   {}",
+                report.tokens_found.to_string().cyan()
+            );
+            println!(
+                "  Session rows found: {}",
+                report.sessions_found.to_string().cyan()
+            );
+            if dry_run {
+                println!("  (dry run: nothing written)");
+            } else {
+                println!(
+                    "  Sealed:             {}",
+                    report.sealed.to_string().green()
+                );
+                println!(
+                    "  Expired, dropped:   {}",
+                    report.expired_dropped.to_string().dimmed()
+                );
+                println!(
+                    "  Purged:             {}",
+                    report.purged.to_string().yellow()
+                );
+                println!(
+                    "  Plaintext rows remaining: {}",
+                    report.remaining.to_string().cyan()
+                );
+                if report.remaining > 0 {
+                    return Err(AuthError::Cli(format!(
+                        "{} plaintext row(s) remain (written during the sweep?). Run it again.",
+                        report.remaining
+                    )));
+                }
+            }
+        }
     }
 
     Ok(())

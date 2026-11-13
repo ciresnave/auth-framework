@@ -20,6 +20,8 @@ pub mod dashmap_memory; // DashMap-based storage proof-of-concept
 pub mod encryption; // AES-256-GCM encryption for storage at rest
 pub(crate) mod factory;
 pub(crate) mod key_names; // one-way key names for credentials
+#[cfg(feature = "cli")]
+pub(crate) mod legacy_rows; // typed-row enumerators for the encrypt-tokens sweep
 pub mod memory;
 #[cfg(feature = "persistant-storage")]
 pub mod persistant;
