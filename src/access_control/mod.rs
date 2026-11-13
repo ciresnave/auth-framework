@@ -14,7 +14,9 @@ use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-pub use principal::{Lifecycle, Principal, PrincipalError, PrincipalKind, PrincipalRegistry};
+pub use principal::{
+    ActingContext, Lifecycle, Principal, PrincipalError, PrincipalKind, PrincipalRegistry,
+};
 pub use rules::{AuditEntry, AuditOp, RuleError};
 
 /// Whether a grant allows or denies.

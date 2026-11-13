@@ -23,9 +23,9 @@ pub const DISCOVERY_PATH: &str = "/.well-known/gnap-as-rs";
 /// Why an RS call was refused (as opposed to answered with an inactive token).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RsError {
-    /// The call was not proved by a known resource server key (HTTP 401).
+    /// The call was not proved by a known resource server key (`invalid_resource_server`).
     Unauthenticated,
-    /// The request body is not a valid request (HTTP 400).
+    /// The request body is not a valid request (`invalid_request`).
     BadRequest(String),
 }
 
@@ -81,7 +81,8 @@ pub struct RsCall<'a> {
     /// The `resource_server` member of the request body: an object (by value) or a string (a
     /// reference).
     pub resource_server: &'a Value,
-    /// The request headers the proof lives in (for example `Signature`, `Signature-Input`).
+    /// The request headers the proof lives in (for example `signature`, `signature-input`), with
+    /// their names in lower case.
     pub headers: &'a [(String, String)],
 }
 
@@ -149,6 +150,11 @@ impl GnapResourceServerApi {
         })
     }
 
+    /// The introspection endpoint URL, as configured.
+    pub fn introspection_endpoint(&self) -> &str {
+        &self.config.introspection_endpoint
+    }
+
     /// The document served at [`DISCOVERY_PATH`] (RFC 9767 section 3.1).
     pub fn discovery_document(&self) -> Value {
         let mut doc = Map::new();
@@ -177,8 +183,8 @@ impl GnapResourceServerApi {
 
     /// Introspect an access token for an RS (RFC 9767 section 3.3).
     ///
-    /// `Err` means the call itself is refused: [`RsError::Unauthenticated`] (the route layer answers
-    /// 401) or [`RsError::BadRequest`] (400). A token that is not active is an `Ok`
+    /// `Err` means the call itself is refused: [`RsError::Unauthenticated`] or
+    /// [`RsError::BadRequest`]; RFC 9767 section 3.5 answers both with HTTP 400. A token that is not active is an `Ok`
     /// response, `{"active": false}`, with no other member.
     pub async fn introspect(
         &self,
