@@ -556,11 +556,12 @@ impl InMemoryEngine {
         object: &str,
         actions: &[&str],
     ) -> Result<Vec<String>, DelegationError> {
+        let now = Utc::now();
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
+            self.record(now, creator, AuditOp::Refused, object, Vec::new());
             return Err(DelegationError::UnregisteredAction);
         }
         // A creator can be issued only what it already holds on this object.
-        let now = Utc::now();
         if actions
             .iter()
             .any(|a| !self.decide_at(creator, a, object, now).is_allow())
@@ -575,6 +576,7 @@ impl InMemoryEngine {
             .collect();
         for (i, id) in ids.iter().enumerate() {
             if self.find(id).is_some() || ids[..i].contains(id) {
+                self.record(now, creator, AuditOp::Refused, object, Vec::new());
                 return Err(DelegationError::DuplicateId);
             }
         }
@@ -583,6 +585,7 @@ impl InMemoryEngine {
             let mut g = Grant::new(id.clone(), creator, *a, object, Effect::Allow);
             g.issuer = Some(creator.to_string());
             self.grants.push(g);
+            self.record(now, creator, AuditOp::GrantAdded, id, Vec::new());
         }
         Ok(ids)
     }
