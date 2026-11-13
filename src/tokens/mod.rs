@@ -1880,10 +1880,10 @@ impl TokenManager {
         }
 
         if let Some(ring) = &self.keyring {
-            let (kid, secret) = ring.signing_key()?;
-            let mut header = Header::new(Algorithm::HS256);
+            let (kid, key) = ring.signing_key()?;
+            let mut header = Header::new(key.algorithm());
             header.kid = Some(kid);
-            return encode(&header, &claims, &EncodingKey::from_secret(&secret[..])).map_err(|e| {
+            return encode(&header, &claims, &key.encoding_key()).map_err(|e| {
                 TokenError::creation_failed(format!("JWT encoding failed: {e}")).into()
             });
         }
@@ -1946,13 +1946,13 @@ impl TokenManager {
         let header =
             jsonwebtoken::decode_header(token).map_err(|_| invalid("Invalid token format"))?;
         let kid = header.kid.ok_or_else(|| invalid("Token has no key id"))?;
-        let secret = ring
+        let key = ring
             .verification_key(&kid)
             .map_err(|_| invalid("Invalid token signature"))?;
-        let mut validation = Validation::new(Algorithm::HS256);
+        let mut validation = Validation::new(key.algorithm());
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&[&self.audience]);
-        match decode::<JwtClaims>(token, &DecodingKey::from_secret(&secret[..]), &validation) {
+        match decode::<JwtClaims>(token, &key.decoding_key(), &validation) {
             Ok(data) => Ok(data.claims),
             Err(e) => match e.kind() {
                 jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
