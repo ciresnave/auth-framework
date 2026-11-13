@@ -3,6 +3,9 @@
 use crate::errors::{AuthError, Result};
 use crate::permissions::{Permission, PermissionChecker, Role};
 use crate::storage::AuthStorage;
+
+/// Storage prefix of a user's persisted direct permission grants (`rbac:user_perms:{user_id}`).
+const USER_PERMISSIONS_PREFIX: &str = "rbac:user_perms:";
 use crate::tokens::AuthToken;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -90,7 +93,51 @@ impl AuthorizationManager {
             }
         }
 
+        // Load direct permission grants
+        let grant_keys = self.storage.list_kv_keys(USER_PERMISSIONS_PREFIX).await?;
+        if !grant_keys.is_empty() {
+            let mut c = self.checker.write().await;
+            for key in &grant_keys {
+                let user_id = key.strip_prefix(USER_PERMISSIONS_PREFIX).unwrap_or(key);
+                if let Some(bytes) = self.storage.get_kv(key).await?
+                    && let Ok(permissions) = serde_json::from_slice::<Vec<Permission>>(&bytes)
+                {
+                    for permission in permissions {
+                        c.add_user_permission(user_id, permission);
+                    }
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    /// The direct permissions granted to a user (not those a role brings).
+    pub(crate) async fn direct_permissions_for_user(&self, user_id: &str) -> Vec<Permission> {
+        let c = self.checker.read().await;
+        let mut permissions: Vec<Permission> = c
+            .get_user_permissions(user_id)
+            .map(|user| user.direct_permissions.iter().cloned().collect())
+            .unwrap_or_default();
+        permissions.sort_by(|a, b| {
+            (&a.action, &a.resource, &a.instance).cmp(&(&b.action, &b.resource, &b.instance))
+        });
+        permissions
+    }
+
+    /// Write a user's direct permissions to storage (deleting the row when none are left).
+    async fn persist_user_permissions(
+        &self,
+        user_id: &str,
+        permissions: &[Permission],
+    ) -> Result<()> {
+        let key = format!("{USER_PERMISSIONS_PREFIX}{user_id}");
+        if permissions.is_empty() {
+            return self.storage.delete_kv(&key).await;
+        }
+        let json = serde_json::to_vec(permissions)
+            .map_err(|e| AuthError::internal(format!("Failed to serialize permissions: {e}")))?;
+        self.storage.store_kv(&key, &json, None).await
     }
 
     /// Reset runtime authorization state back to the default role set.
@@ -111,6 +158,11 @@ impl AuthorizationManager {
             }
         }
         if let Ok(keys) = self.storage.list_kv_keys("rbac:user_roles:").await {
+            for key in keys {
+                let _ = self.storage.delete_kv(&key).await;
+            }
+        }
+        if let Ok(keys) = self.storage.list_kv_keys(USER_PERMISSIONS_PREFIX).await {
             for key in keys {
                 let _ = self.storage.delete_kv(&key).await;
             }
@@ -136,6 +188,10 @@ impl AuthorizationManager {
         let mut c = self.checker.write().await;
         let permission = Permission::new(action, resource);
         c.add_user_permission(user_id, permission);
+        drop(c);
+        // Persist, so the grant survives a restart and is part of a backup.
+        let current = self.direct_permissions_for_user(user_id).await;
+        self.persist_user_permissions(user_id, &current).await?;
         info!(
             "Permission '{}:{}' granted to user '{}'",
             action, resource, user_id
@@ -167,6 +223,9 @@ impl AuthorizationManager {
         let mut c = self.checker.write().await;
         let permission = Permission::new(action, resource);
         c.remove_user_permission(user_id, &permission);
+        drop(c);
+        let current = self.direct_permissions_for_user(user_id).await;
+        self.persist_user_permissions(user_id, &current).await?;
         info!(
             "Permission '{}:{}' revoked from user '{}'",
             action, resource, user_id
@@ -1141,6 +1200,57 @@ mod tests {
             mgr2.user_has_role("restored_user", "restored_role")
                 .await
                 .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_permission_grants_survive_a_restart_and_revokes_do_too() {
+        let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+        {
+            let mgr = AuthorizationManager::new(
+                Arc::new(RwLock::new(PermissionChecker::new())),
+                storage.clone(),
+            );
+            mgr.grant_permission("grantee", "read", "documents")
+                .await
+                .unwrap();
+            mgr.grant_permission("grantee", "write", "documents")
+                .await
+                .unwrap();
+            mgr.revoke_permission("grantee", "write", "documents")
+                .await
+                .unwrap();
+            // A user who only ever had grants (no revoke rewrites their row afterwards).
+            mgr.grant_permission("grant_only", "export", "reports")
+                .await
+                .unwrap();
+        }
+        let mgr2 = AuthorizationManager::new(
+            Arc::new(RwLock::new(PermissionChecker::new())),
+            storage.clone(),
+        );
+        mgr2.load_persisted_roles().await.unwrap();
+        let direct = mgr2.direct_permissions_for_user("grantee").await;
+        assert_eq!(direct.len(), 1, "{direct:?}");
+        assert_eq!(
+            (direct[0].action.as_str(), direct[0].resource.as_str()),
+            ("read", "documents")
+        );
+
+        let only = mgr2.direct_permissions_for_user("grant_only").await;
+        assert_eq!(only.len(), 1, "{only:?}");
+        assert_eq!(only[0].action, "export");
+
+        // Revoking the last one removes the row.
+        mgr2.revoke_permission("grantee", "read", "documents")
+            .await
+            .unwrap();
+        assert!(
+            storage
+                .get_kv("rbac:user_perms:grantee")
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 
