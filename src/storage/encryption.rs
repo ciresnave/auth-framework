@@ -871,15 +871,16 @@ impl StorageEncryption {
     }
 }
 
+mod sealed_tokens;
+
 /// Wrapper for storage backends that adds encryption at rest to the
 /// generic key-value (`store_kv`/`get_kv`) layer.
 ///
-/// **Coverage note:** this wraps `store_kv`/`get_kv` only. The dedicated
-/// `store_token`/`store_session` methods (and each backend's own typed
-/// columns for them) are NOT touched by this wrapper -- they delegate to
-/// `inner` unchanged. Encrypting those would need changes to the
-/// `AuthStorage` trait itself (their fields are typed, not opaque bytes),
-/// tracked separately. This wrapper covers everything that already goes
+/// **Coverage note:** tokens (`store_token` and the other token methods) are
+/// sealed above the backend, in its KV space (ADR-011 slice 2; the key names
+/// `tok:`, `tokat:` and `tokuser:` are reserved and hidden from the KV
+/// methods). Sessions (`store_session` and friends) are NOT yet sealed: they
+/// delegate to `inner` unchanged until slice 3. This wrapper covers everything that already goes
 /// through `store_kv` today: API keys, TOTP secrets, OAuth2 client
 /// registries, MFA codes, and most of the other KV-backed subsystems
 /// found in the storage audit (`docs/STORAGE-AUDIT.md`).
@@ -974,27 +975,27 @@ where
     // Token/session methods — NOT encrypted by this wrapper. See the
     // "Coverage note" on `EncryptedStorage` itself.
     async fn store_token(&self, token: &AuthToken) -> Result<()> {
-        self.inner.store_token(token).await
+        self.sealed_store_token(token).await
     }
 
     async fn get_token(&self, token_id: &str) -> Result<Option<AuthToken>> {
-        self.inner.get_token(token_id).await
+        self.sealed_get_token(token_id).await
     }
 
     async fn get_token_by_access_token(&self, access_token: &str) -> Result<Option<AuthToken>> {
-        self.inner.get_token_by_access_token(access_token).await
+        self.sealed_get_token_by_access_token(access_token).await
     }
 
     async fn update_token(&self, token: &AuthToken) -> Result<()> {
-        self.inner.update_token(token).await
+        self.sealed_update_token(token).await
     }
 
     async fn delete_token(&self, token_id: &str) -> Result<()> {
-        self.inner.delete_token(token_id).await
+        self.sealed_delete_token(token_id).await
     }
 
     async fn list_user_tokens(&self, user_id: &str) -> Result<Vec<AuthToken>> {
-        self.inner.list_user_tokens(user_id).await
+        self.sealed_list_user_tokens(user_id).await
     }
 
     async fn store_session(&self, session_id: &str, data: &SessionData) -> Result<()> {
@@ -1023,11 +1024,17 @@ where
     // benefit even when wrapped. Token/session bulk methods are unaffected
     // by encryption (see the coverage note above) either way.
     async fn store_tokens_bulk(&self, tokens: &[AuthToken]) -> Result<()> {
-        self.inner.store_tokens_bulk(tokens).await
+        for token in tokens {
+            self.sealed_store_token(token).await?;
+        }
+        Ok(())
     }
 
     async fn delete_tokens_bulk(&self, token_ids: &[String]) -> Result<()> {
-        self.inner.delete_tokens_bulk(token_ids).await
+        for id in token_ids {
+            self.sealed_delete_token(id).await?;
+        }
+        Ok(())
     }
 
     async fn store_sessions_bulk(&self, sessions: &[(String, SessionData)]) -> Result<()> {
@@ -1042,10 +1049,12 @@ where
     // a ciphertext can't be swapped between records.
     async fn get_kv_ttl(&self, key: &str) -> Result<Option<Duration>> {
         // A TTL is storage metadata, not part of the encrypted value.
+        sealed_tokens::reject_reserved(key)?;
         self.inner.get_kv_ttl(key).await
     }
 
     async fn store_kv(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
+        sealed_tokens::reject_reserved(key)?;
         let encrypted_value = self.encryption.encrypt_for_storage(value, key.as_bytes())?;
         self.inner.store_kv(key, &encrypted_value, ttl).await
     }
@@ -1056,6 +1065,7 @@ where
         value: &[u8],
         ttl: Option<Duration>,
     ) -> Result<bool> {
+        sealed_tokens::reject_reserved(key)?;
         let encrypted_value = self.encryption.encrypt_for_storage(value, key.as_bytes())?;
         self.inner
             .store_kv_if_absent(key, &encrypted_value, ttl)
@@ -1069,6 +1079,10 @@ where
         value: &[u8],
         ttl: Option<Duration>,
     ) -> Result<bool> {
+        sealed_tokens::reject_reserved(key)?;
+        for r in remove {
+            sealed_tokens::reject_reserved(r)?;
+        }
         let encrypted_value = self.encryption.encrypt_for_storage(value, key.as_bytes())?;
         self.inner.swap_kv(remove, key, &encrypted_value, ttl).await
     }
@@ -1093,6 +1107,7 @@ where
     /// done), a non-envelope value is also a hard `Err`, so overwriting an
     /// encrypted record with plaintext cannot silently succeed.
     async fn get_kv(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        sealed_tokens::reject_reserved(key)?;
         let Some(raw) = self.inner.get_kv(key).await? else {
             return Ok(None);
         };
@@ -1139,6 +1154,7 @@ where
     }
 
     async fn delete_kv(&self, key: &str) -> Result<()> {
+        sealed_tokens::reject_reserved(key)?;
         self.inner.delete_kv(key).await
     }
 
@@ -1152,7 +1168,10 @@ where
     }
 
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
-        self.inner.list_kv_keys(prefix).await
+        // Sealed token keys are internal: never listed to a caller.
+        let mut keys = self.inner.list_kv_keys(prefix).await?;
+        keys.retain(|k| !sealed_tokens::is_reserved_key(k));
+        Ok(keys)
     }
 
     async fn cleanup_expired(&self) -> Result<()> {
