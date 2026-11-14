@@ -79,6 +79,26 @@ impl SqliteStorage {
     }
 }
 
+#[cfg(feature = "cli")]
+impl SqliteStorage {
+    /// Every row of a `SELECT data FROM <table>` query, decoded (ADR-011 slice 4 sweep).
+    pub(crate) async fn all_typed_rows<T: serde::de::DeserializeOwned>(
+        &self,
+        sql: &'static str,
+    ) -> Result<Vec<T>> {
+        let rows = sqlx::query(sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage_err)?;
+        rows.into_iter()
+            .map(|row| {
+                let data: String = row.get("data");
+                serde_json::from_str(&data).map_err(|e| AuthError::internal(e.to_string()))
+            })
+            .collect()
+    }
+}
+
 /// The `expires_at` (whole seconds) for an entry stored now with `ttl`.
 ///
 /// An entry is alive while `expires_at >= now` (in whole seconds), i.e. through the second named

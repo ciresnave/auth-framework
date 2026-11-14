@@ -14,6 +14,43 @@ pub struct PostgresStorage {
     pool: PgPool,
 }
 
+#[cfg(feature = "cli")]
+impl PostgresStorage {
+    /// Every typed token row, expired or not (ADR-011 slice 4 sweep).
+    pub(crate) async fn all_typed_tokens(&self) -> Result<Vec<AuthToken>> {
+        sqlx::query_as::<_, AuthToken>("SELECT * FROM auth_tokens")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| {
+                AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                    "Failed to list token rows: {e}"
+                )))
+            })
+    }
+
+    /// Every typed session row, expired or not (ADR-011 slice 4 sweep).
+    pub(crate) async fn all_typed_sessions(&self) -> Result<Vec<SessionData>> {
+        let rows = sqlx::query("SELECT data FROM sessions")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| {
+                AuthError::Storage(crate::errors::StorageError::operation_failed(format!(
+                    "Failed to list session rows: {e}"
+                )))
+            })?;
+        rows.into_iter()
+            .map(|row| {
+                let data: serde_json::Value = row.try_get("data").map_err(|e| {
+                    AuthError::Storage(crate::errors::StorageError::operation_failed(e.to_string()))
+                })?;
+                serde_json::from_value(data).map_err(|e| {
+                    AuthError::Storage(crate::errors::StorageError::operation_failed(e.to_string()))
+                })
+            })
+            .collect()
+    }
+}
+
 /// Advisory-lock key serialising `PostgresStorage::migrate` across connections ("authfmwk" as ASCII).
 const MIGRATION_LOCK_KEY: i64 = 0x6175_7468_666d_776b;
 
