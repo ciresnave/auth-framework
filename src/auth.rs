@@ -1767,7 +1767,7 @@ impl AuthFramework {
 
         let remaining = self
             .session_manager
-            .count_active_sessions()
+            .count_active_sessions_cached()
             .await
             .unwrap_or(0);
         self.monitoring_manager

@@ -133,6 +133,10 @@ fn an_owner_ancestor_can_edit_rules_about_what_it_owns_but_not_itself_or_others(
 #[test]
 fn a_creator_grant_is_revocable_by_any_ancestor_and_by_nobody_unrelated() {
     let mut e = engine();
+    for a in ["synapse:see", "synapse:send"] {
+        e.add_grant(Grant::new(format!("h-{a}"), "sub", a, ALL, Effect::Allow))
+            .unwrap();
+    }
     let ids = e
         .register_new_principal("sub", "agent:sub2@acct", &["synapse:see"])
         .unwrap();
@@ -140,9 +144,9 @@ fn a_creator_grant_is_revocable_by_any_ancestor_and_by_nobody_unrelated() {
     assert!(sees(&e, "sub", "agent:sub2@acct"));
     assert_eq!(e.remove_rule("svc", g), Err(RuleError::NotAuthorized));
     assert_eq!(e.remove_rule("carol", g), Err(RuleError::NotAuthorized));
-    assert!(sees(&e, "sub", "agent:sub2@acct"));
+    assert!(e.grant(g).is_some());
     e.remove_rule("bot", g).unwrap(); // an ancestor
-    assert!(!sees(&e, "sub", "agent:sub2@acct"));
+    assert!(e.grant(g).is_none());
     let ids = e
         .register_new_principal("sub", "agent:sub2@acct", &["synapse:send"])
         .unwrap();
@@ -425,4 +429,108 @@ fn a_rule_added_through_the_cache_is_seen_at_once() {
         c.decide_at("carol", "synapse:see", SUB, Freshness::Cached, t)
             .is_allow()
     );
+}
+
+#[test]
+fn a_direct_add_and_remove_are_in_the_audit_trail() {
+    let mut e = engine();
+    e.add_grant(rule("g", "carol", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
+    e.remove_grant("g");
+    let log = e.audit_log();
+    assert_eq!(log.len(), 2);
+    assert_eq!(
+        (log[0].op, log[0].actor.as_str(), log[0].rule_id.as_str()),
+        (AuditOp::GrantAdded, DIRECT_ACTOR, "g")
+    );
+    assert_eq!(
+        (log[1].op, log[1].actor.as_str(), log[1].rule_id.as_str()),
+        (AuditOp::GrantRemoved, DIRECT_ACTOR, "g")
+    );
+}
+
+#[test]
+fn a_refused_direct_add_is_recorded_and_changes_nothing() {
+    let mut e = engine();
+    e.add_grant(rule("g", "carol", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
+    // A duplicate id is refused.
+    assert!(
+        e.add_grant(rule("g", "dave", "synapse:see", SUB, Effect::Allow))
+            .is_err()
+    );
+    // It was not inserted: dave gets nothing, carol keeps her grant.
+    assert!(!sees(&e, "dave", SUB));
+    assert!(sees(&e, "carol", SUB));
+    // A grant claiming a parent is refused too.
+    let mut forged = rule("f", "dave", "synapse:see", SUB, Effect::Allow);
+    forged.parent = Some("g".into());
+    assert!(e.add_grant(forged).is_err());
+    assert!(!sees(&e, "dave", SUB));
+    let ops: Vec<(AuditOp, &str)> = e
+        .audit_log()
+        .iter()
+        .map(|a| (a.op, a.rule_id.as_str()))
+        .collect();
+    assert_eq!(
+        ops,
+        vec![
+            (AuditOp::GrantAdded, "g"),
+            (AuditOp::Refused, "g"),
+            (AuditOp::Refused, "f")
+        ]
+    );
+}
+
+#[test]
+fn removing_a_missing_grant_records_nothing_and_leaves_the_generation() {
+    let mut e = engine();
+    e.add_grant(rule("g", "carol", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
+    let (generation, entries) = (e.generation(), e.audit_log().len());
+    e.remove_grant("nope");
+    assert_eq!(e.audit_log().len(), entries);
+    assert_eq!(e.generation(), generation);
+    // Control: removing a real grant does move both.
+    e.remove_grant("g");
+    assert_eq!(e.audit_log().len(), entries + 1);
+    assert_ne!(e.generation(), generation);
+}
+
+#[test]
+fn an_editor_cannot_take_the_name_the_trail_uses_for_direct_calls() {
+    // A real, active principal that is also the account holder: only the
+    // reserved name can be what refuses it.
+    let mut p = PrincipalRegistry::new();
+    p.create(DIRECT_ACTOR, Human, None).unwrap();
+    let mut a = ActionRegistry::new();
+    a.register("synapse:see", false);
+    let mut e = InMemoryEngine::new(a)
+        .with_principals(p)
+        .with_account_holder(DIRECT_ACTOR);
+    assert_eq!(
+        e.add_rule(
+            DIRECT_ACTOR,
+            rule("r", "carol", "synapse:see", SUB, Effect::Allow)
+        ),
+        Err(RuleError::NotAuthorized)
+    );
+    assert!(
+        e.audit_log()
+            .iter()
+            .all(|a| a.op == AuditOp::Refused && a.rule_id == "r")
+    );
+}
+
+#[test]
+fn a_rule_removal_by_an_editor_is_recorded_once() {
+    let mut e = engine();
+    e.add_rule(
+        "alice",
+        rule("r", "carol", "synapse:see", SUB, Effect::Allow),
+    )
+    .unwrap();
+    e.remove_rule("alice", "r").unwrap();
+    let ops: Vec<AuditOp> = e.audit_log().iter().map(|a| a.op).collect();
+    assert_eq!(ops, vec![AuditOp::Added, AuditOp::Removed]);
 }
