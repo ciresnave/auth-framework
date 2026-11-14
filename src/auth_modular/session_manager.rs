@@ -48,23 +48,45 @@ const COUNT_CACHE_TTL: Duration = Duration::from_secs(30);
 /// invariant: it can be exceeded by (login rate x refresh interval x processes), and this process's
 /// own creates raise the cached value so a single node stays close to exact.
 #[derive(Default)]
-struct CountCache(std::sync::Mutex<Option<(std::time::Instant, u64)>>);
+struct CountCache(std::sync::Mutex<CountCacheState>);
+
+#[derive(Default)]
+struct CountCacheState {
+    value: Option<(std::time::Instant, u64)>,
+    /// Creates seen by this process so far; lets a refresh tell which creates its scan may predate.
+    creates: u64,
+}
 
 impl CountCache {
     fn fresh(&self) -> Option<u64> {
         let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        guard.and_then(|(at, n)| (at.elapsed() < COUNT_CACHE_TTL).then_some(n))
+        guard
+            .value
+            .and_then(|(at, n)| (at.elapsed() < COUNT_CACHE_TTL).then_some(n))
     }
 
-    fn set(&self, n: u64) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), n));
+    /// The create counter to take before a scan, to hand back to [`Self::set`].
+    fn mark(&self) -> u64 {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).creates
+    }
+
+    /// Store a scanned count. Creates that happened since `mark` may not be in the scan, so they
+    /// are added: a refresh never erases this process's own creates (an over-count is the safe
+    /// direction for a cap). Returns the value stored.
+    fn set(&self, scanned: u64, mark: u64) -> u64 {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let n = scanned.saturating_add(guard.creates.saturating_sub(mark));
+        guard.value = Some((std::time::Instant::now(), n));
+        n
     }
 
     /// This process created a session: keep the cached count from lagging its own creates.
     /// Deletes are not subtracted (the entry may not have existed); the value is stale-high until
     /// the next refresh, which is the safe direction for a cap.
     fn bump(&self) {
-        if let Some((_, n)) = self.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        guard.creates = guard.creates.saturating_add(1);
+        if let Some((_, n)) = guard.value.as_mut() {
             *n = n.saturating_add(1);
         }
     }
@@ -375,9 +397,9 @@ impl SessionManager {
         if let Some(n) = self.count_cache.fresh() {
             return Ok(n);
         }
+        let mark = self.count_cache.mark();
         let n = self.count_active_sessions().await?;
-        self.count_cache.set(n);
-        Ok(n)
+        Ok(self.count_cache.set(n, mark))
     }
 
     /// Count the number of currently active sessions.
@@ -527,6 +549,16 @@ mod tests {
 
     fn make_manager() -> SessionManager {
         SessionManager::new(Arc::new(MemoryStorage::new()))
+    }
+
+    #[test]
+    fn a_refresh_never_erases_a_create_that_happened_during_its_scan() {
+        let cache = CountCache::default();
+        let mark = cache.mark();
+        // A create lands after the scan started but before its result is stored.
+        cache.bump();
+        assert_eq!(cache.set(10, mark), 11);
+        assert_eq!(cache.fresh(), Some(11));
     }
 
     #[tokio::test]

@@ -122,7 +122,35 @@ where
             return Ok(None);
         }
         let id = legacy.session_id.clone();
-        self.put_sealed_session(&id, &legacy, None).await?;
+        let Some(ttl) = ttl_until(legacy.expires_at) else {
+            self.inner.delete_session(&id).await?;
+            return Ok(None);
+        };
+        let kid = self.encryption.current_key_id().to_string();
+        let key = self
+            .sess_key_for(&kid, &id)
+            .ok_or_else(|| storage_err("current encryption key is missing"))?;
+        let user_key = self
+            .sessuser_key_for(&kid, &legacy.user_id, &id)
+            .ok_or_else(|| storage_err("current encryption key is missing"))?;
+        let body = serde_json::to_vec(&legacy)
+            .map_err(|e| storage_err(format!("could not serialise the session: {e}")))?;
+        // Only when no sealed record exists: one written meanwhile (a concurrent store) is newer
+        // than the legacy row this read fetched and stays authoritative.
+        if !self.put_sealed_if_absent(&key, &body, ttl).await? {
+            self.inner.delete_session(&id).await?;
+            return Ok(self
+                .read_sealed_session(&id)
+                .await?
+                .and_then(|(s, _)| live(&s).then_some(s)));
+        }
+        self.put_sealed(&user_key, b"", ttl).await?;
+        // A delete (a logout) that ran while this read held the legacy row has already removed it:
+        // that delete won, so undo the sealed copy just written instead of resurrecting the session.
+        if self.inner.get_session(&id).await?.is_none() {
+            self.delete_sealed_session(&id).await?;
+            return Ok(None);
+        }
         self.inner.delete_session(&id).await?;
         Ok(Some(legacy))
     }
@@ -133,9 +161,22 @@ where
         data: &SessionData,
     ) -> Result<()> {
         self.ensure_sealing_supported()?;
+        // The record is keyed by `session_id` and must carry it (the hint rule rejects a record
+        // whose own id differs), so a mismatch would store a session no lookup can find.
+        if data.session_id != session_id {
+            return Err(AuthError::validation(
+                "session_id does not match the SessionData it is stored with",
+            ));
+        }
         let old = self.read_sealed_session(session_id).await?;
         self.put_sealed_session(session_id, data, old.as_ref().map(|(s, k)| (s, k.as_str())))
-            .await
+            .await?;
+        // While legacy rows are still read through, a stored session must not leave a plaintext
+        // copy of the same id behind.
+        if self.allow_plaintext_reads {
+            self.inner.delete_session(session_id).await?;
+        }
+        Ok(())
     }
 
     pub(super) async fn sealed_get_session(&self, session_id: &str) -> Result<Option<SessionData>> {
@@ -193,8 +234,15 @@ where
         }
         if self.allow_plaintext_reads {
             for s in self.inner.list_user_sessions(user_id).await? {
-                if seen.insert(s.session_id.clone()) {
-                    out.push(s);
+                // An expired row counts towards nothing (the per-user cap reads this list).
+                if !live(&s) || !seen.insert(s.session_id.clone()) {
+                    continue;
+                }
+                // Listing migrates the row like a read does; a failed migration still lists it.
+                match self.adopt_legacy_session(s.clone()).await {
+                    Ok(Some(adopted)) => out.push(adopted),
+                    Ok(None) => {}
+                    Err(_) => out.push(s),
                 }
             }
         }
@@ -352,5 +400,73 @@ mod tests {
             .await
             .unwrap();
         assert!(w.inner.list_kv_keys("").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_adoption_that_lost_to_a_delete_does_not_resurrect_the_session() {
+        let w = wrapper(true);
+        // The row as the read fetched it; by adoption time the logout has removed it.
+        let fetched = sess("gone", "u1");
+        assert!(w.inner.get_session("gone").await.unwrap().is_none());
+        assert!(w.adopt_legacy_session(fetched).await.unwrap().is_none());
+        assert!(w.get_session("gone").await.unwrap().is_none());
+        assert!(w.inner.list_kv_keys("").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_adoption_never_overwrites_a_newer_sealed_record() {
+        let w = wrapper(true);
+        let mut stale = sess("s1", "u1");
+        stale.data.insert("v".into(), serde_json::json!("old"));
+        w.inner.store_session("s1", &stale).await.unwrap();
+        // A concurrent store seals newer data after the read fetched the legacy row.
+        let mut newer = sess("s1", "u1");
+        newer.data.insert("v".into(), serde_json::json!("new"));
+        w.put_sealed_session("s1", &newer, None).await.unwrap();
+
+        let served = w.adopt_legacy_session(stale).await.unwrap().unwrap();
+        assert_eq!(served.data.get("v"), Some(&serde_json::json!("new")));
+        assert!(w.inner.get_session("s1").await.unwrap().is_none());
+        let kept = w.get_session("s1").await.unwrap().unwrap();
+        assert_eq!(kept.data.get("v"), Some(&serde_json::json!("new")));
+    }
+
+    #[tokio::test]
+    async fn a_session_stored_under_another_id_is_refused() {
+        let w = wrapper(false);
+        assert!(w.store_session("a", &sess("b", "u1")).await.is_err());
+        assert!(w.inner.list_kv_keys("").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn storing_a_session_removes_its_plaintext_legacy_row_while_reads_are_allowed() {
+        let w = wrapper(true);
+        w.inner
+            .store_session("s1", &sess("s1", "u1"))
+            .await
+            .unwrap();
+        w.store_session("s1", &sess("s1", "u1")).await.unwrap();
+        assert!(w.inner.get_session("s1").await.unwrap().is_none());
+        assert!(w.get_session("s1").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn listing_adopts_live_legacy_rows_and_skips_expired_ones() {
+        let w = wrapper(true);
+        w.inner
+            .store_session("live", &sess("live", "u1"))
+            .await
+            .unwrap();
+        let mut dead = sess("dead", "u1");
+        dead.expires_at = chrono::Utc::now() - chrono::Duration::hours(1);
+        w.inner.store_session("dead", &dead).await.unwrap();
+
+        let listed = w.list_user_sessions("u1").await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].session_id, "live");
+        assert!(
+            w.inner.get_session("live").await.unwrap().is_none(),
+            "adopted"
+        );
     }
 }
