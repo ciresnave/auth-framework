@@ -150,18 +150,6 @@ where
         self.inner.store_kv(key, &sealed, Some(ttl)).await
     }
 
-    /// Like [`Self::put_sealed`], but only when no live value is stored under `key`; `false` means
-    /// a value was already there and is left untouched.
-    pub(super) async fn put_sealed_if_absent(
-        &self,
-        key: &str,
-        plaintext: &[u8],
-        ttl: Duration,
-    ) -> Result<bool> {
-        let sealed = self.seal(key, plaintext)?;
-        self.inner.store_kv_if_absent(key, &sealed, Some(ttl)).await
-    }
-
     /// The sealed token under `token_id`, with the key it was found at.
     async fn read_sealed_token(&self, token_id: &str) -> Result<Option<(AuthToken, String)>> {
         for kid in self.encryption.key_ids() {
