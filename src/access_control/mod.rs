@@ -17,7 +17,7 @@ use std::sync::Mutex;
 pub use principal::{
     ActingContext, Lifecycle, Principal, PrincipalError, PrincipalKind, PrincipalRegistry,
 };
-pub use rules::{AuditEntry, AuditOp, RuleError};
+pub use rules::{AuditEntry, AuditOp, DIRECT_ACTOR, RuleError};
 
 /// Whether a grant allows or denies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -360,20 +360,44 @@ impl InMemoryEngine {
     /// removal) or if the grant claims a parent or a depth (a forged chain
     /// position could outrun the delegation limit).
     pub fn add_grant(&mut self, grant: Grant) -> Result<(), DelegationError> {
+        let id = grant.id.clone();
         if grant.parent.is_some() || grant.depth != 0 {
+            self.record(Utc::now(), DIRECT_ACTOR, AuditOp::Refused, &id, Vec::new());
             return Err(DelegationError::NotRootGrant);
         }
         if self.find(&grant.id).is_some() {
+            self.record(Utc::now(), DIRECT_ACTOR, AuditOp::Refused, &id, Vec::new());
             return Err(DelegationError::DuplicateId);
         }
         self.generation += 1;
         self.grants.push(grant);
+        self.record(
+            Utc::now(),
+            DIRECT_ACTOR,
+            AuditOp::GrantAdded,
+            &id,
+            Vec::new(),
+        );
         Ok(())
     }
 
     /// Remove the grant with this id and, transitively, everything delegated
-    /// from it.
+    /// from it. Recorded in the audit trail under [`DIRECT_ACTOR`]; removing an
+    /// id that does not exist changes nothing and is not recorded.
     pub fn remove_grant(&mut self, id: &str) {
+        if self.find(id).is_none() {
+            // Nothing to remove: no change, so no new generation (a no-op must
+            // not make every cached decision stale) and no entry.
+            return;
+        }
+        let chain = self.chain_of(id);
+        self.remove_grant_unrecorded(id);
+        self.record(Utc::now(), DIRECT_ACTOR, AuditOp::GrantRemoved, id, chain);
+    }
+
+    /// [`remove_grant`](Self::remove_grant) without an audit entry, for callers
+    /// that record the removal themselves.
+    pub(crate) fn remove_grant_unrecorded(&mut self, id: &str) {
         self.generation += 1;
         let mut dead: Vec<String> = vec![id.to_string()];
         let mut i = 0;
@@ -549,11 +573,12 @@ impl InMemoryEngine {
         object: &str,
         actions: &[&str],
     ) -> Result<Vec<String>, DelegationError> {
+        let now = Utc::now();
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
+            self.record(now, creator, AuditOp::Refused, object, Vec::new());
             return Err(DelegationError::UnregisteredAction);
         }
         // A creator can be issued only what it already holds on this object.
-        let now = Utc::now();
         if actions
             .iter()
             .any(|a| !self.decide_at(creator, a, object, now).is_allow())
@@ -568,6 +593,7 @@ impl InMemoryEngine {
             .collect();
         for (i, id) in ids.iter().enumerate() {
             if self.find(id).is_some() || ids[..i].contains(id) {
+                self.record(now, creator, AuditOp::Refused, object, Vec::new());
                 return Err(DelegationError::DuplicateId);
             }
         }
@@ -576,6 +602,7 @@ impl InMemoryEngine {
             let mut g = Grant::new(id.clone(), creator, *a, object, Effect::Allow);
             g.issuer = Some(creator.to_string());
             self.grants.push(g);
+            self.record(now, creator, AuditOp::GrantAdded, id, Vec::new());
         }
         Ok(ids)
     }
