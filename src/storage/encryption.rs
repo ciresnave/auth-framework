@@ -871,16 +871,16 @@ impl StorageEncryption {
     }
 }
 
+mod sealed_sessions;
 mod sealed_tokens;
 
 /// Wrapper for storage backends that adds encryption at rest to the
 /// generic key-value (`store_kv`/`get_kv`) layer.
 ///
-/// **Coverage note:** tokens (`store_token` and the other token methods) are
-/// sealed above the backend, in its KV space (ADR-011 slice 2; the key names
-/// `tok:`, `tokat:` and `tokuser:` are reserved and hidden from the KV
-/// methods). Sessions (`store_session` and friends) are NOT yet sealed: they
-/// delegate to `inner` unchanged until slice 3. This wrapper covers everything that already goes
+/// **Coverage note:** tokens and sessions (`store_token`, `store_session` and
+/// the other typed methods) are sealed above the backend, in its KV space
+/// (ADR-011 slices 2 and 3; the key names `tok:`, `tokat:`, `tokuser:`,
+/// `sess:` and `sessuser:` are reserved and hidden from the KV methods). This wrapper covers everything that already goes
 /// through `store_kv` today: API keys, TOTP secrets, OAuth2 client
 /// registries, MFA codes, and most of the other KV-backed subsystems
 /// found in the storage audit (`docs/STORAGE-AUDIT.md`).
@@ -972,7 +972,7 @@ impl<T> AuthStorage for EncryptedStorage<T>
 where
     T: AuthStorage + Send + Sync,
 {
-    // Token/session methods — NOT encrypted by this wrapper. See the
+    // Token and session methods are sealed above the backend (ADR-011); see the
     // "Coverage note" on `EncryptedStorage` itself.
     async fn store_token(&self, token: &AuthToken) -> Result<()> {
         self.sealed_store_token(token).await
@@ -999,23 +999,23 @@ where
     }
 
     async fn store_session(&self, session_id: &str, data: &SessionData) -> Result<()> {
-        self.inner.store_session(session_id, data).await
+        self.sealed_store_session(session_id, data).await
     }
 
     async fn get_session(&self, session_id: &str) -> Result<Option<SessionData>> {
-        self.inner.get_session(session_id).await
+        self.sealed_get_session(session_id).await
     }
 
     async fn delete_session(&self, session_id: &str) -> Result<()> {
-        self.inner.delete_session(session_id).await
+        self.sealed_delete_session(session_id).await
     }
 
     async fn list_user_sessions(&self, user_id: &str) -> Result<Vec<SessionData>> {
-        self.inner.list_user_sessions(user_id).await
+        self.sealed_list_user_sessions(user_id).await
     }
 
     async fn count_active_sessions(&self) -> Result<u64> {
-        self.inner.count_active_sessions().await
+        self.sealed_count_active_sessions().await
     }
 
     // Bulk methods — delegate directly to `inner`'s own overrides (if any)
@@ -1038,11 +1038,17 @@ where
     }
 
     async fn store_sessions_bulk(&self, sessions: &[(String, SessionData)]) -> Result<()> {
-        self.inner.store_sessions_bulk(sessions).await
+        for (id, data) in sessions {
+            self.sealed_store_session(id, data).await?;
+        }
+        Ok(())
     }
 
     async fn delete_sessions_bulk(&self, session_ids: &[String]) -> Result<()> {
-        self.inner.delete_sessions_bulk(session_ids).await
+        for id in session_ids {
+            self.sealed_delete_session(id).await?;
+        }
+        Ok(())
     }
 
     // Key-value methods — encrypted, with the storage key itself as AAD so
