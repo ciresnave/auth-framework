@@ -66,7 +66,8 @@ pub struct ActingContext {
 /// Why a principal operation was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrincipalError {
-    /// The id is empty, has whitespace, or contains `*`.
+    /// The id is empty, has whitespace, contains `*`, or is the reserved
+    /// [`DIRECT_ACTOR`](super::DIRECT_ACTOR) name.
     InvalidId,
     /// The id was used before (including by a retired principal).
     DuplicateId,
@@ -134,7 +135,13 @@ impl PrincipalRegistry {
         kind: PrincipalKind,
         owner: Option<&str>,
     ) -> Result<(), PrincipalError> {
-        if id.is_empty() || id.contains('*') || id.chars().any(char::is_whitespace) {
+        // `(direct)` is the audit trail's name for direct engine calls: no
+        // principal may carry it.
+        if id.is_empty()
+            || id.contains('*')
+            || id.chars().any(char::is_whitespace)
+            || id == super::rules::DIRECT_ACTOR
+        {
             return Err(PrincipalError::InvalidId);
         }
         if self.principals.contains_key(id) {

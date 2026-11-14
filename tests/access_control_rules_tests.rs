@@ -499,15 +499,11 @@ fn removing_a_missing_grant_records_nothing_and_leaves_the_generation() {
 
 #[test]
 fn an_editor_cannot_take_the_name_the_trail_uses_for_direct_calls() {
-    // A real, active principal that is also the account holder: only the
-    // reserved name can be what refuses it.
-    let mut p = PrincipalRegistry::new();
-    p.create(DIRECT_ACTOR, Human, None).unwrap();
+    // The account holder, named as the reserved name: only the reservation can
+    // refuse it (no principal can carry the name, so no registry is attached).
     let mut a = ActionRegistry::new();
     a.register("synapse:see", false);
-    let mut e = InMemoryEngine::new(a)
-        .with_principals(p)
-        .with_account_holder(DIRECT_ACTOR);
+    let mut e = InMemoryEngine::new(a).with_account_holder(DIRECT_ACTOR);
     assert_eq!(
         e.add_rule(
             DIRECT_ACTOR,
