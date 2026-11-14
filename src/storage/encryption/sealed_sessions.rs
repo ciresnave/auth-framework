@@ -42,6 +42,18 @@ where
         Some(format!("{prefix}{sid}"))
     }
 
+    /// Like [`Self::put_sealed`], but only when no live value is stored under `key`; `false` means
+    /// a value was already there and is left untouched.
+    async fn put_sealed_if_absent(
+        &self,
+        key: &str,
+        plaintext: &[u8],
+        ttl: Duration,
+    ) -> Result<bool> {
+        let sealed = self.seal(key, plaintext)?;
+        self.inner.store_kv_if_absent(key, &sealed, Some(ttl)).await
+    }
+
     async fn read_sealed_session(&self, session_id: &str) -> Result<Option<(SessionData, String)>> {
         for kid in self.encryption.key_ids() {
             let Some(key) = self.sess_key_for(&kid, session_id) else {
