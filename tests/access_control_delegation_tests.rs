@@ -263,6 +263,10 @@ fn a_deny_on_the_delegatee_still_wins() {
 #[test]
 fn a_new_principal_is_visible_only_to_its_creator_and_the_account_holder() {
     let mut e = engine().with_account_holder("owner@acct");
+    e.add_grant(Grant::new("hb0", B, "synapse:see", "*", Effect::Allow))
+        .unwrap();
+    e.add_grant(Grant::new("hb1", B, "synapse:send", "*", Effect::Allow))
+        .unwrap();
     let obj = "agent:sub1@acct";
     let ids = e
         .register_new_principal(B, obj, &["synapse:see", "synapse:send"])
@@ -280,6 +284,8 @@ fn a_new_principal_is_visible_only_to_its_creator_and_the_account_holder() {
 #[test]
 fn the_creator_can_hide_a_sub_agent_but_the_account_holder_always_overrides() {
     let mut e = engine().with_account_holder("owner@acct");
+    e.add_grant(Grant::new("hb0", B, "synapse:see", "*", Effect::Allow))
+        .unwrap();
     let obj = "agent:sub1@acct";
     e.register_new_principal(B, obj, &["synapse:see"]).unwrap();
     e.delegate(req(
@@ -303,6 +309,10 @@ fn the_creator_can_hide_a_sub_agent_but_the_account_holder_always_overrides() {
 #[test]
 fn registering_a_principal_with_an_unknown_action_or_twice_is_refused() {
     let mut e = engine();
+    e.add_grant(Grant::new("hb0", B, "synapse:see", "*", Effect::Allow))
+        .unwrap();
+    e.add_grant(Grant::new("hc0", C, "synapse:see", "*", Effect::Allow))
+        .unwrap();
     assert_eq!(
         e.register_new_principal(B, "agent:s@acct", &["synapse:nope"]),
         Err(DelegationError::UnregisteredAction)
@@ -314,7 +324,11 @@ fn registering_a_principal_with_an_unknown_action_or_twice_is_refused() {
         e.register_new_principal(C, "agent:s@acct", &["synapse:see"]),
         Err(DelegationError::DuplicateId)
     );
-    assert!(!allowed(&e, C, "synapse:see", "agent:s@acct"));
+    // C holds its own grant, so check that the refused call issued nothing.
+    assert!(
+        e.grant("creator:agent:s@acct:synapse:see")
+            .is_some_and(|g| g.principal == B)
+    );
 }
 
 #[test]
@@ -339,18 +353,22 @@ fn registering_a_principal_is_all_or_nothing() {
         Effect::Allow,
     ))
     .unwrap();
+    e.add_grant(Grant::new("hb0", B, "synapse:see", "*", Effect::Allow))
+        .unwrap();
+    e.add_grant(Grant::new("hb1", B, "synapse:send", "*", Effect::Allow))
+        .unwrap();
     assert_eq!(
         e.register_new_principal(B, "obj", &["synapse:see", "synapse:send"]),
         Err(DelegationError::DuplicateId)
     );
     // The earlier action in the list must not have been granted.
-    assert!(!allowed(&e, B, "synapse:see", "obj"));
+    assert!(e.grant("creator:obj:synapse:see").is_none());
     // A repeated action inside one call is also refused with nothing granted.
     assert_eq!(
         e.register_new_principal(B, "obj2", &["synapse:see", "synapse:see"]),
         Err(DelegationError::DuplicateId)
     );
-    assert!(!allowed(&e, B, "synapse:see", "obj2"));
+    assert!(e.grant("creator:obj2:synapse:see").is_none());
 }
 
 #[test]

@@ -241,6 +241,15 @@ pub trait AuthStorage: Send + Sync {
     /// Delete arbitrary key-value data.
     async fn delete_kv(&self, key: &str) -> Result<()>;
 
+    /// Whether this storage really lists its KV keys ([`list_kv_keys`](Self::list_kv_keys) is
+    /// overridden and returns the live keys). `false` (the default) means the default
+    /// `list_kv_keys`, which fails. Anything that must enumerate keys to be correct (sealed token and
+    /// session indexes: a user's tokens that are not listed are not revoked) refuses a storage that
+    /// reports `false`. A wrapper around another storage must forward this.
+    fn lists_kv_keys(&self) -> bool {
+        false
+    }
+
     /// List keys with a specific prefix.
     ///
     /// **Important:** every storage backend must override this method. The default
@@ -385,6 +394,10 @@ impl AuthStorage for Arc<dyn AuthStorage> {
 
     fn encrypts_kv_at_rest(&self) -> bool {
         (**self).encrypts_kv_at_rest()
+    }
+
+    fn lists_kv_keys(&self) -> bool {
+        (**self).lists_kv_keys()
     }
 
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
@@ -760,6 +773,10 @@ impl AuthStorage for MemoryStorage {
     async fn delete_kv(&self, key: &str) -> Result<()> {
         // Delegate to DashMap implementation for deadlock-free operations
         self.inner.delete_kv(key).await
+    }
+
+    fn lists_kv_keys(&self) -> bool {
+        true
     }
 
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
@@ -1337,6 +1354,10 @@ impl AuthStorage for RedisStorage {
             .map_err(|e| StorageError::operation_failed(format!("Failed to delete KV: {e}")))?;
 
         Ok(())
+    }
+
+    fn lists_kv_keys(&self) -> bool {
+        true
     }
 
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
