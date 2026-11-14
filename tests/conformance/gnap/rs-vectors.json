@@ -1,0 +1,196 @@
+{
+  "suite": "gnap-rs-facing-api",
+  "suite_version": 1,
+  "description": "Language-neutral conformance vectors for the resource-server-facing API of a GNAP authorization server (RFC 9767 section 3): the discovery document and token introspection. Each vector is one HTTP request and assertions on the response.",
+  "server": {
+    "grant_request_endpoint": "https://as.example.test/tx",
+    "introspection_endpoint": "https://as.example.test/gnap/introspect",
+    "rs_credential_header": "x-test-rs-id",
+    "tokens": {
+      "tok-bound": {
+        "access": ["dolphin-metadata", { "type": "photo-api", "actions": ["read"] }],
+        "key": { "proof": "httpsig", "jwk": { "kty": "EC", "crv": "P-256" } },
+        "proof": "httpsig",
+        "expires_in": 600,
+        "instance_id": "client-1"
+      },
+      "tok-bearer": { "access": ["dolphin-metadata"], "expires_in": 600 },
+      "tok-expired": { "access": ["dolphin-metadata"], "expires_in": -10 },
+      "tok-for-rs2": { "access": ["dolphin-metadata"], "expires_in": 600, "audience": ["rs-2"] }
+    }
+  },
+  "notes": "Authenticating the resource server (RFC 9767 section 3.2) is out of scope for these vectors: the server under test is set up to recognize a resource server by the request header named in rs_credential_header, whose value is the resource server's identifier. A request without that header is from an unknown resource server.",
+  "vectors": [
+    {
+      "id": "rs-discovery-document",
+      "rfc": "RFC 9767", "section": "3.1", "kind": "positive",
+      "description": "The discovery document names the grant request endpoint and the introspection endpoint, and does not advertise features the server lacks.",
+      "request": { "method": "GET", "path": "/.well-known/gnap-as-rs" },
+      "expect": {
+        "status": 200,
+        "assert": [
+          { "path": "/grant_request_endpoint", "op": "equals", "value": "https://as.example.test/tx" },
+          { "path": "/introspection_endpoint", "op": "equals", "value": "https://as.example.test/gnap/introspect" },
+          { "path": "/resource_registration_endpoint", "op": "absent" },
+          { "path": "/key_proofs_supported", "op": "absent" }
+        ]
+      }
+    },
+    {
+      "id": "rs-discovery-method",
+      "rfc": "RFC 9767", "section": "3.1", "kind": "negative",
+      "description": "The discovery document is read with GET; another method is refused.",
+      "request": { "method": "POST", "path": "/.well-known/gnap-as-rs", "body": {} },
+      "expect": { "status": 405 }
+    },
+    {
+      "id": "rs-introspect-active-bound",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A valid key-bound token is reported active with its access rights, bound key and issuer, and the response is not cacheable and never contains the token value.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bound", "resource_server": "rs-1" } },
+      "expect": {
+        "status": 200,
+        "headers": { "cache-control": "no-store" },
+        "assert": [
+          { "path": "/active", "op": "equals", "value": true },
+          { "path": "/access/0", "op": "equals", "value": "dolphin-metadata" },
+          { "path": "/key/proof", "op": "equals", "value": "httpsig" },
+          { "path": "/iss", "op": "equals", "value": "https://as.example.test/tx" },
+          { "path": "/exp", "op": "is_number" },
+          { "path": "/iat", "op": "is_number" }
+        ],
+        "body_lacks": "tok-bound"
+      }
+    },
+    {
+      "id": "rs-introspect-bearer-no-key",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A bearer token is reported active and carries no key.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bearer", "resource_server": "rs-1" } },
+      "expect": {
+        "status": 200,
+        "assert": [
+          { "path": "/active", "op": "equals", "value": true },
+          { "path": "/key", "op": "absent" }
+        ]
+      }
+    },
+    {
+      "id": "rs-introspect-unknown-token",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A token the server does not know is reported inactive, with no other member.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "not-a-token", "resource_server": "rs-1" } },
+      "expect": {
+        "status": 200,
+        "assert": [
+          { "path": "/active", "op": "equals", "value": false },
+          { "path": "/access", "op": "absent" },
+          { "path": "/key", "op": "absent" },
+          { "path": "/iss", "op": "absent" }
+        ]
+      }
+    },
+    {
+      "id": "rs-introspect-expired-token",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "An expired token is reported inactive.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-expired", "resource_server": "rs-1" } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": false }, { "path": "/access", "op": "absent" }] }
+    },
+    {
+      "id": "rs-introspect-other-resource-server",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A token meant for a different resource server is reported inactive to this one.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-for-rs2", "resource_server": "rs-1" } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": false }, { "path": "/access", "op": "absent" }] }
+    },
+    {
+      "id": "rs-introspect-own-audience",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "The same token is reported active to the resource server it is meant for.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-2", "body": { "access_token": "tok-for-rs2", "resource_server": "rs-2" } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": true }] }
+    },
+    {
+      "id": "rs-introspect-proof-matches",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A token is active when the proofing method the resource server names is the one the token is bound with.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bound", "resource_server": "rs-1", "proof": "httpsig" } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": true }] }
+    },
+    {
+      "id": "rs-introspect-proof-mismatch",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A token is inactive when the proofing method named is not the one it is bound with.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bound", "resource_server": "rs-1", "proof": "mtls" } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": false }] }
+    },
+    {
+      "id": "rs-introspect-bearer-with-proof",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A bearer token is inactive when the resource server says a proofing method was used.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bearer", "resource_server": "rs-1", "proof": "httpsig" } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": false }] }
+    },
+    {
+      "id": "rs-introspect-access-covered",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A token is active when it covers every access right the resource server needs.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bound", "resource_server": "rs-1", "access": ["dolphin-metadata"] } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": true }] }
+    },
+    {
+      "id": "rs-introspect-access-not-covered",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A token is inactive when an access right the resource server needs is not among its own.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bound", "resource_server": "rs-1", "access": ["dolphin-metadata", "something-else"] } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": false }] }
+    },
+    {
+      "id": "rs-introspect-access-unreadable",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "positive",
+      "description": "A request whose access member the server cannot process is never answered as active.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bound", "resource_server": "rs-1", "access": "dolphin-metadata" } },
+      "expect": { "status": 200, "assert": [{ "path": "/active", "op": "equals", "value": false }] }
+    },
+    {
+      "id": "rs-introspect-unknown-resource-server",
+      "rfc": "RFC 9767", "section": "3.5", "kind": "negative",
+      "description": "A call from a resource server the server does not recognize is refused with 400 and the invalid_resource_server error.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "body": { "access_token": "tok-bound", "resource_server": "rs-1" } },
+      "expect": {
+        "status": 400,
+        "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_resource_server" }],
+        "body_lacks": "tok-bound"
+      }
+    },
+    {
+      "id": "rs-introspect-missing-token",
+      "rfc": "RFC 9767", "section": "3.5", "kind": "negative",
+      "description": "A request without access_token is refused with 400 and the invalid_request error.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "resource_server": "rs-1" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-introspect-missing-resource-server",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "negative",
+      "description": "A request without resource_server, which is required, is refused with 400.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "body": { "access_token": "tok-bound" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-introspect-not-json",
+      "rfc": "RFC 9767", "section": "3.5", "kind": "negative",
+      "description": "A body that is not JSON is refused with 400 and the invalid_request error.",
+      "request": { "method": "POST", "path": "/gnap/introspect", "rs": "rs-1", "raw_body": "not json" },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-introspect-method",
+      "rfc": "RFC 9767", "section": "3.3", "kind": "negative",
+      "description": "Introspection is a POST; another method is refused.",
+      "request": { "method": "GET", "path": "/gnap/introspect", "rs": "rs-1" },
+      "expect": { "status": 405 }
+    }
+  ]
+}
