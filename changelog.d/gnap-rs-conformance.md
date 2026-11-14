@@ -1,1 +1,0 @@
-Test only: language-neutral RFC 9767 resource-server conformance vectors (`tests/conformance/gnap/rs-vectors.json`: discovery document shape, introspection active and inactive answers, the 400 error codes and `Cache-Control: no-store`) and a Rust harness (`tests/gnap_rs_conformance.rs`) that replays them against the `gnap_http` handler.
