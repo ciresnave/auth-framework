@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::time::Duration;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Serializes the tests in this crate's lib-unit-test binary that
 /// EXPLICITLY read or write `AUTH_STORAGE_ENCRYPTION_KEY`/
@@ -518,6 +518,29 @@ fn decode_key(encoded: &str) -> Result<[u8; 32]> {
 pub struct StorageEncryption {
     current_key_id: String,
     ciphers: HashMap<String, Aes256Gcm>,
+    /// One blind-index key per key id (ADR-011 section 4.2), derived from the data key
+    /// before the raw key is zeroized, so a keyed index name needs no raw key afterwards.
+    index_keys: HashMap<String, Zeroizing<[u8; 32]>>,
+}
+
+/// HMAC-SHA256 of the length-delimited `parts` under `key`.
+fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
+    use hmac::{Hmac, KeyInit, Mac};
+    let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(key)
+        .expect("HMAC accepts a key of any length");
+    for part in parts {
+        mac.update(&(part.len() as u64).to_be_bytes());
+        mac.update(part);
+    }
+    mac.finalize().into_bytes().into()
+}
+
+/// The blind-index key for `key_id`: `HMAC-SHA256(data_key, "auth-framework/blind-index/v1" || key_id)`.
+fn derive_index_key(data_key: &[u8], key_id: &str) -> Zeroizing<[u8; 32]> {
+    Zeroizing::new(hmac_sha256(
+        data_key,
+        &[b"auth-framework/blind-index/v1", key_id.as_bytes()],
+    ))
 }
 
 impl StorageEncryption {
@@ -564,6 +587,12 @@ impl StorageEncryption {
                 (id.clone(), Aes256Gcm::new(key))
             })
             .collect();
+        // Derive the blind-index keys now: after the zeroize below no raw key exists to derive from.
+        let index_keys = loaded
+            .keys
+            .iter()
+            .map(|(id, key_bytes)| (id.clone(), derive_index_key(key_bytes, id)))
+            .collect();
         // The cipher objects above have their own internal copies of the
         // key material; zeroize the raw bytes we held so they don't sit
         // around in this struct any longer than necessary.
@@ -573,7 +602,32 @@ impl StorageEncryption {
         Ok(Self {
             current_key_id: loaded.current_key_id,
             ciphers,
+            index_keys,
         })
+    }
+
+    /// The key ids this instance can read, in ascending order. A lookup by blind index probes
+    /// each of them (ADR-011 section 4.2).
+    pub fn key_ids(&self) -> Vec<String> {
+        self.sorted_key_ids()
+    }
+
+    /// The blind index of `value` in role `domain` under the key `key_id`: lower-case hex
+    /// `HMAC-SHA256(index_key[key_id], domain || value)`, both length-delimited. `None` when this
+    /// instance has no such key. A bearer value (access token, session id, ...) is never put into a
+    /// storage key name verbatim; its blind index is, and only a holder of the key can compute it.
+    pub fn blind_index(&self, key_id: &str, domain: &str, value: &str) -> Option<String> {
+        let index_key = self.index_keys.get(key_id)?;
+        Some(hex::encode(hmac_sha256(
+            index_key.as_ref(),
+            &[domain.as_bytes(), value.as_bytes()],
+        )))
+    }
+
+    /// [`Self::blind_index`] under the current key, the one new records are written with.
+    pub fn blind_index_current(&self, domain: &str, value: &str) -> String {
+        self.blind_index(&self.current_key_id, domain, value)
+            .expect("the current key id is always among the loaded keys")
     }
 
     /// The id of the key new values are encrypted under.
@@ -596,10 +650,13 @@ impl StorageEncryption {
         let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
         let mut ciphers = HashMap::new();
         ciphers.insert("test".to_string(), Aes256Gcm::new(key));
+        let index_keys =
+            HashMap::from([("test".to_string(), derive_index_key(&key_bytes, "test"))]);
         key_bytes.zeroize();
         Self {
             current_key_id: "test".to_string(),
             ciphers,
+            index_keys,
         }
     }
 
@@ -877,6 +934,38 @@ impl<T> EncryptedStorage<T> {
     }
 }
 
+impl<T: AuthStorage> EncryptedStorage<T> {
+    /// Like [`Self::new`], but refuses a backend the sealed token and session layer cannot work on
+    /// (ADR-011 section 4.5): one that does not list its KV keys
+    /// ([`AuthStorage::lists_kv_keys`]; an empty list would silently drop a user's tokens from a
+    /// revocation) or does not report KV TTLs ([`AuthStorage::tracks_kv_ttl`]; sealed records
+    /// expire by TTL). Prefer this over `new` wherever the storage is not one of the shipped
+    /// backends.
+    pub fn try_new(
+        storage: T,
+        encryption: StorageEncryption,
+        allow_plaintext_reads: bool,
+        allow_legacy_v0: bool,
+    ) -> Result<Self> {
+        if !storage.lists_kv_keys() {
+            return Err(AuthError::config(
+                "this storage backend does not list its KV keys (AuthStorage::lists_kv_keys is                  false): encrypting tokens and sessions at rest needs it, so the backend is refused",
+            ));
+        }
+        if !storage.tracks_kv_ttl() {
+            return Err(AuthError::config(
+                "this storage backend does not report KV TTLs (AuthStorage::tracks_kv_ttl is                  false): encrypting tokens and sessions at rest needs it, so the backend is refused",
+            ));
+        }
+        Ok(Self::new(
+            storage,
+            encryption,
+            allow_plaintext_reads,
+            allow_legacy_v0,
+        ))
+    }
+}
+
 #[async_trait::async_trait]
 impl<T> AuthStorage for EncryptedStorage<T>
 where
@@ -1058,6 +1147,10 @@ where
     // (all of which call this) keep working once this wrapper is in the
     // default path. Without this override, the AuthStorage trait's
     // default implementation would fail (it used to return an empty Vec).
+    fn lists_kv_keys(&self) -> bool {
+        self.inner.lists_kv_keys()
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         self.inner.list_kv_keys(prefix).await
     }
@@ -3109,5 +3202,149 @@ mod tests {
         assert!(!MemoryStorage::new().encrypts_kv_at_rest());
         let shared: std::sync::Arc<dyn AuthStorage> = std::sync::Arc::new(wrapped);
         assert!(shared.encrypts_kv_at_rest(), "the Arc impl forwards");
+    }
+
+    // ---- blind index (ADR-011 section 4.2) --------------------------------------
+
+    fn two_keys(current: &'static str) -> StorageEncryption {
+        StorageEncryption::new(&FixedKeys {
+            current,
+            keys: vec![("a", KEY_A), ("b", KEY_B)],
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn blind_index_is_stable_hex_and_hides_the_value() {
+        let enc = two_keys("a");
+        let bi = enc.blind_index("a", "access_token", "tok-123").unwrap();
+        assert_eq!(bi.len(), 64);
+        assert!(
+            bi.bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        );
+        assert!(!bi.contains("tok-123"));
+        assert_eq!(bi, enc.blind_index("a", "access_token", "tok-123").unwrap());
+        assert_eq!(bi, enc.blind_index_current("access_token", "tok-123"));
+    }
+
+    #[test]
+    fn blind_index_separates_keys_domains_and_values() {
+        let enc = two_keys("a");
+        let base = enc.blind_index("a", "access_token", "x").unwrap();
+        assert_ne!(
+            base,
+            enc.blind_index("b", "access_token", "x").unwrap(),
+            "key id"
+        );
+        assert_ne!(
+            base,
+            enc.blind_index("a", "session_id", "x").unwrap(),
+            "domain"
+        );
+        assert_ne!(
+            base,
+            enc.blind_index("a", "access_token", "y").unwrap(),
+            "value"
+        );
+        // a boundary shifted between domain and value must not collide
+        assert_ne!(
+            enc.blind_index("a", "ab", "c").unwrap(),
+            enc.blind_index("a", "a", "bc").unwrap()
+        );
+        assert!(enc.blind_index("nope", "access_token", "x").is_none());
+    }
+
+    /// Pins the algorithm: a change here silently orphans every stored index name.
+    /// The literal was computed independently (Python `hmac`/`hashlib`):
+    /// `index_key = HMAC(KEY_A, len8("auth-framework/blind-index/v1") || ... || len8("a") || "a")`,
+    /// then `HMAC(index_key, len8("access_token") || ... || len8("abc") || "abc")`, every part
+    /// preceded by its length as eight big-endian bytes.
+    #[test]
+    fn blind_index_known_answer() {
+        assert_eq!(
+            two_keys("a")
+                .blind_index("a", "access_token", "abc")
+                .unwrap(),
+            "85176f53ddb6fe96431e11fcd08c086e5ba5603697c7a7d2f0955749298e2fea"
+        );
+    }
+
+    #[test]
+    fn rotation_keeps_the_old_index_computable() {
+        // Written while A was current, looked up after B became current: the A index is still
+        // available, and equals what an A-current instance computes.
+        let before = two_keys("a");
+        let after = two_keys("b");
+        assert_eq!(
+            before.blind_index_current("access_token", "t"),
+            after.blind_index("a", "access_token", "t").unwrap()
+        );
+        assert_ne!(
+            after.blind_index_current("access_token", "t"),
+            after.blind_index("a", "access_token", "t").unwrap(),
+            "new records use the new key's index"
+        );
+        assert_eq!(after.key_ids(), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn index_key_is_derived_per_key_not_from_the_key_id_alone() {
+        // Two instances with the same key id but different key material must not agree.
+        let one = StorageEncryption::new(&FixedKeys {
+            current: "k",
+            keys: vec![("k", KEY_A)],
+        })
+        .unwrap();
+        let other = StorageEncryption::new(&FixedKeys {
+            current: "k",
+            keys: vec![("k", KEY_B)],
+        })
+        .unwrap();
+        assert_ne!(
+            one.blind_index_current("access_token", "t"),
+            other.blind_index_current("access_token", "t")
+        );
+        let random = StorageEncryption::new_random();
+        assert_eq!(random.blind_index_current("d", "v").len(), 64);
+    }
+
+    #[test]
+    fn try_new_refuses_a_backend_that_cannot_report_ttls_and_accepts_the_shipped_memory_one() {
+        assert!(!crate::testing::utilities::MockStorage::new().tracks_kv_ttl());
+        let refused = EncryptedStorage::try_new(
+            crate::testing::utilities::MockStorage::new(),
+            StorageEncryption::new_random(),
+            false,
+            false,
+        );
+        let err = refused.err().expect("a TTL-blind backend is refused");
+        assert!(err.to_string().contains("tracks_kv_ttl"), "got: {err}");
+        assert!(
+            EncryptedStorage::try_new(
+                MemoryStorage::new(),
+                StorageEncryption::new_random(),
+                false,
+                false
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn lists_kv_keys_is_forwarded_by_the_wrapper_and_the_arc_impl() {
+        let wrapped = EncryptedStorage::new(
+            MemoryStorage::new(),
+            StorageEncryption::new_random(),
+            false,
+            false,
+        );
+        assert!(wrapped.lists_kv_keys());
+        let shared: std::sync::Arc<dyn AuthStorage> = std::sync::Arc::new(wrapped);
+        assert!(shared.lists_kv_keys(), "the Arc impl forwards too");
+        // the factory's own type: an Arc<dyn> wrapped again
+        let rewrapped =
+            EncryptedStorage::new(shared, StorageEncryption::new_random(), false, false);
+        assert!(rewrapped.lists_kv_keys());
     }
 }

@@ -17,7 +17,7 @@ use std::sync::Mutex;
 pub use principal::{
     ActingContext, Lifecycle, Principal, PrincipalError, PrincipalKind, PrincipalRegistry,
 };
-pub use rules::{AuditEntry, AuditOp, RuleError};
+pub use rules::{AuditEntry, AuditOp, DIRECT_ACTOR, RuleError};
 
 /// Whether a grant allows or denies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,8 +220,14 @@ pub enum DelegationError {
     NotAnAllowGrant,
     /// The source grant (or something above it) has expired or been revoked.
     SourceInactive,
+    /// The delegator is not an active principal (suspended, retired, unknown,
+    /// or owned by one that is).
+    DelegatorInactive,
     /// The action is not within the source grant's action.
     ActionWidens,
+    /// The creator does not itself hold one of the requested actions on the
+    /// new object, so it cannot be issued a grant for it.
+    CreatorLacksAction,
     /// The object is not within the source grant's object.
     ObjectWidens,
     /// The delegation would outlive its source.
@@ -354,20 +360,44 @@ impl InMemoryEngine {
     /// removal) or if the grant claims a parent or a depth (a forged chain
     /// position could outrun the delegation limit).
     pub fn add_grant(&mut self, grant: Grant) -> Result<(), DelegationError> {
+        let id = grant.id.clone();
         if grant.parent.is_some() || grant.depth != 0 {
+            self.record(Utc::now(), DIRECT_ACTOR, AuditOp::Refused, &id, Vec::new());
             return Err(DelegationError::NotRootGrant);
         }
         if self.find(&grant.id).is_some() {
+            self.record(Utc::now(), DIRECT_ACTOR, AuditOp::Refused, &id, Vec::new());
             return Err(DelegationError::DuplicateId);
         }
         self.generation += 1;
         self.grants.push(grant);
+        self.record(
+            Utc::now(),
+            DIRECT_ACTOR,
+            AuditOp::GrantAdded,
+            &id,
+            Vec::new(),
+        );
         Ok(())
     }
 
     /// Remove the grant with this id and, transitively, everything delegated
-    /// from it.
+    /// from it. Recorded in the audit trail under [`DIRECT_ACTOR`]; removing an
+    /// id that does not exist changes nothing and is not recorded.
     pub fn remove_grant(&mut self, id: &str) {
+        if self.find(id).is_none() {
+            // Nothing to remove: no change, so no new generation (a no-op must
+            // not make every cached decision stale) and no entry.
+            return;
+        }
+        let chain = self.chain_of(id);
+        self.remove_grant_unrecorded(id);
+        self.record(Utc::now(), DIRECT_ACTOR, AuditOp::GrantRemoved, id, chain);
+    }
+
+    /// [`remove_grant`](Self::remove_grant) without an audit entry, for callers
+    /// that record the removal themselves.
+    pub(crate) fn remove_grant_unrecorded(&mut self, id: &str) {
         self.generation += 1;
         let mut dead: Vec<String> = vec![id.to_string()];
         let mut i = 0;
@@ -392,11 +422,19 @@ impl InMemoryEngine {
         self.grants.iter().find(|g| g.id == id)
     }
 
-    /// A grant is alive if it and every ancestor exists and is unexpired.
+    /// A grant is alive if it and every ancestor exists and is unexpired, and,
+    /// when a principal registry is attached, every delegation in the chain was
+    /// issued by a principal that is still active.
     fn chain_alive(&self, g: &Grant, now: DateTime<Utc>) -> bool {
         let mut cur = g;
         for _ in 0..=self.grants.len() {
             if cur.expires.is_some_and(|e| now >= e) {
+                return false;
+            }
+            if let (Some(reg), Some(issuer)) = (&self.principals, &cur.issuer)
+                && cur.parent.is_some()
+                && !reg.is_active(issuer)
+            {
                 return false;
             }
             match &cur.parent {
@@ -455,6 +493,11 @@ impl InMemoryEngine {
         if src.principal != req.delegator {
             return Err(DelegationError::NotHolder);
         }
+        if let Some(reg) = &self.principals
+            && !reg.is_active(&req.delegator)
+        {
+            return Err(DelegationError::DelegatorInactive);
+        }
         if !self.chain_alive(&src, now) {
             return Err(DelegationError::SourceInactive);
         }
@@ -504,15 +547,27 @@ impl InMemoryEngine {
     /// `object`; nobody else gets anything, so until a rule says otherwise the
     /// new object is visible to the creator and the account holder only. The
     /// creator can later hide it further with deny grants; the account holder
-    /// cannot be hidden from. Returns the new grant ids.
+    /// cannot be hidden from. The creator must already hold each listed action
+    /// on `object` (as any caller would be checked); it cannot be issued more
+    /// than it has. Returns the new grant ids.
     pub fn register_new_principal(
         &mut self,
         creator: &str,
         object: &str,
         actions: &[&str],
     ) -> Result<Vec<String>, DelegationError> {
+        let now = Utc::now();
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
+            self.record(now, creator, AuditOp::Refused, object, Vec::new());
             return Err(DelegationError::UnregisteredAction);
+        }
+        // A creator can be issued only what it already holds on this object.
+        if actions
+            .iter()
+            .any(|a| !self.decide_at(creator, a, object, now).is_allow())
+        {
+            self.record(now, creator, AuditOp::Refused, object, Vec::new());
+            return Err(DelegationError::CreatorLacksAction);
         }
         // All or nothing: check every id before pushing any grant.
         let ids: Vec<String> = actions
@@ -521,6 +576,7 @@ impl InMemoryEngine {
             .collect();
         for (i, id) in ids.iter().enumerate() {
             if self.find(id).is_some() || ids[..i].contains(id) {
+                self.record(now, creator, AuditOp::Refused, object, Vec::new());
                 return Err(DelegationError::DuplicateId);
             }
         }
@@ -529,6 +585,7 @@ impl InMemoryEngine {
             let mut g = Grant::new(id.clone(), creator, *a, object, Effect::Allow);
             g.issuer = Some(creator.to_string());
             self.grants.push(g);
+            self.record(now, creator, AuditOp::GrantAdded, id, Vec::new());
         }
         Ok(ids)
     }

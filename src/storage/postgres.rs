@@ -607,6 +607,10 @@ impl AuthStorage for PostgresStorage {
         Ok(())
     }
 
+    fn lists_kv_keys(&self) -> bool {
+        true
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         let rows = sqlx::query(
             r#"
