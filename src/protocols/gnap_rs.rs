@@ -24,6 +24,7 @@ pub const DISCOVERY_PATH: &str = "/.well-known/gnap-as-rs";
 
 /// Why an RS call was refused (as opposed to answered with an inactive token).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RsError {
     /// The call was not proved by a known resource server key (`invalid_resource_server`).
     Unauthenticated,
