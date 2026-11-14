@@ -6,7 +6,8 @@
 use async_trait::async_trait;
 use auth_framework::protocols::gnap_http::{GnapHttpRequest, GnapRsHttp};
 use auth_framework::protocols::gnap_rs::{
-    AuthenticatedRs, GnapResourceServerApi, GnapRsConfig, ResourceServerAuthenticator, RsCall,
+    AuthenticatedRs, GnapResourceServerApi, GnapRsConfig, RegisteredResources,
+    ResourceRegistration, ResourceRegistry, ResourceServerAuthenticator, RsCall, RsError,
     RsTokenInfo, TokenInfoSource,
 };
 use serde_json::Value;
@@ -34,6 +35,32 @@ impl ResourceServerAuthenticator for HeaderAuthenticator {
             .iter()
             .find(|(k, _)| *k == self.0)
             .map(|(_, v)| AuthenticatedRs { id: v.clone() })
+    }
+}
+
+/// The fixture registration policy described in `rs-vectors.json`.
+struct FixtureRegistry {
+    forbidden: Vec<Value>,
+    resource_reference: String,
+    instance_id_prefix: String,
+}
+
+#[async_trait]
+impl ResourceRegistry for FixtureRegistry {
+    async fn register(
+        &self,
+        rs: &AuthenticatedRs,
+        request: &ResourceRegistration,
+    ) -> Result<RegisteredResources, RsError> {
+        if request.access.iter().any(|a| self.forbidden.contains(a)) {
+            return Err(RsError::InvalidAccess(
+                "access is not permitted for this resource server".into(),
+            ));
+        }
+        Ok(RegisteredResources {
+            resource_reference: self.resource_reference.clone(),
+            instance_id: Some(format!("{}{}", self.instance_id_prefix, rs.id)),
+        })
     }
 }
 
@@ -108,13 +135,33 @@ async fn gnap_rs_vectors() {
             .unwrap()
             .to_string(),
         key_proofs_supported: vec![],
-        token_formats_supported: vec![],
+        token_formats_supported: server["token_formats_supported"]
+            .as_array()
+            .expect("token_formats_supported")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect(),
+    };
+    let policy = &server["registration"];
+    let registry = FixtureRegistry {
+        forbidden: policy["forbidden_access"]
+            .as_array()
+            .expect("forbidden_access")
+            .clone(),
+        resource_reference: policy["resource_reference"].as_str().unwrap().to_string(),
+        instance_id_prefix: policy["instance_id_prefix"].as_str().unwrap().to_string(),
     };
     let api = GnapResourceServerApi::new(
         config,
         Arc::new(Tokens(tokens)),
         Arc::new(HeaderAuthenticator(rs_header.to_string())),
     )
+    .and_then(|api| {
+        api.with_registry(
+            server["resource_registration_endpoint"].as_str().unwrap(),
+            Arc::new(registry),
+        )
+    })
     .expect("the fixture server's endpoints are valid");
     let http = GnapRsHttp::new(Arc::new(api));
 

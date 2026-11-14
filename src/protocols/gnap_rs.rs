@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The resource-server-facing half of GNAP (RFC 9767 section 3): the discovery document and token
-//! introspection.
+//! The resource-server-facing half of GNAP (RFC 9767 section 3): the discovery document, token
+//! introspection and resource set registration.
 //!
 //! This module holds the protocol logic only. It does not parse HTTP and it does not verify an RS's
 //! key proof itself: the deployer supplies two things.
 //!
 //! - a [`ResourceServerAuthenticator`], which decides who is calling (RFC 9767 section 3.2: the RS
 //!   signs its calls to the AS with its own key, never the client instance's or the token's key);
-//! - a [`TokenInfoSource`], which says what the AS knows about an access token value.
+//! - a [`TokenInfoSource`], which says what the AS knows about an access token value;
+//! - optionally a [`ResourceRegistry`], which decides and records resource set registrations
+//!   (RFC 9767 section 3.4); without one the AS does not offer registration.
 //!
-//! A route layer (HTTP) hands each request here and must send introspection responses with
-//! `Cache-Control: no-store` (RFC 9767 section 3.3).
+//! A route layer (HTTP) hands each request here and must send introspection and registration
+//! responses with `Cache-Control: no-store` (RFC 9767 sections 3.3 and 3.4).
 
 use crate::errors::{AuthError, Result};
 use async_trait::async_trait;
@@ -27,13 +29,16 @@ pub enum RsError {
     Unauthenticated,
     /// The request body is not a valid request (`invalid_request`).
     BadRequest(String),
+    /// The resource server may not register or introspect for the requested access
+    /// (`invalid_access`).
+    InvalidAccess(String),
 }
 
 impl std::fmt::Display for RsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RsError::Unauthenticated => write!(f, "resource server not authenticated"),
-            RsError::BadRequest(why) => write!(f, "{why}"),
+            RsError::BadRequest(why) | RsError::InvalidAccess(why) => write!(f, "{why}"),
         }
     }
 }
@@ -69,6 +74,44 @@ pub trait TokenInfoSource: Send + Sync {
     /// The token's information, or `None` when this AS did not issue it or no longer holds it
     /// (revoked tokens included).
     async fn token_info(&self, value: &str) -> Option<RsTokenInfo>;
+}
+
+/// A resource set registration request, as the AS reads it (RFC 9767 section 3.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResourceRegistration {
+    /// The access rights to register (RFC 9635 section 8 format): strings and objects, at least one.
+    pub access: Vec<Value>,
+    /// Token formats the RS can process; empty when the RS did not say, which leaves the choice to
+    /// the AS. When [`GnapRsConfig::token_formats_supported`] is not empty the API has already
+    /// checked that at least one listed format is one the AS issues.
+    pub token_formats_supported: Vec<String>,
+    /// Whether the RS expects to introspect tokens for these resources.
+    pub token_introspection_required: bool,
+}
+
+/// What the AS answers a registration with (RFC 9767 section 3.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisteredResources {
+    /// The opaque handle for the registered resource list, which a client instance later uses as a
+    /// string access reference. The AS may return the same value for a repeated registration.
+    pub resource_reference: String,
+    /// An identifier the RS may use to refer to itself in later calls instead of sending its key.
+    pub instance_id: Option<String>,
+}
+
+/// Decides and records resource set registrations; supplied by the deployer.
+#[async_trait]
+pub trait ResourceRegistry: Send + Sync {
+    /// Register `request.access` for the authenticated resource server `rs`.
+    ///
+    /// Refuse with [`RsError::InvalidAccess`] when `rs` may not register an access value, or
+    /// [`RsError::BadRequest`] for a request the AS cannot honor. Both are answered with HTTP 400
+    /// (RFC 9767 section 3.5).
+    async fn register(
+        &self,
+        rs: &AuthenticatedRs,
+        request: &ResourceRegistration,
+    ) -> std::result::Result<RegisteredResources, RsError>;
 }
 
 /// An RS call as the route layer saw it, for the authenticator to check.
@@ -127,11 +170,19 @@ fn check_https_url(name: &str, url: &str) -> Result<()> {
     Ok(())
 }
 
+/// The path of an `https` URL (no query), `/` when it has none.
+fn url_path(url: &str) -> &str {
+    let rest = url.strip_prefix("https://").unwrap_or(url);
+    let path = rest.find('/').map_or("/", |i| &rest[i..]);
+    path.split('?').next().unwrap_or("/")
+}
+
 /// The RS-facing API of one AS.
 pub struct GnapResourceServerApi {
     config: GnapRsConfig,
     tokens: Arc<dyn TokenInfoSource>,
     authenticator: Arc<dyn ResourceServerAuthenticator>,
+    registration: Option<(String, Arc<dyn ResourceRegistry>)>,
 }
 
 impl GnapResourceServerApi {
@@ -147,7 +198,33 @@ impl GnapResourceServerApi {
             config,
             tokens,
             authenticator,
+            registration: None,
         })
+    }
+
+    /// Offer resource set registration (RFC 9767 section 3.4) at `endpoint`, decided by `registry`.
+    ///
+    /// The endpoint must be an `https` URL without a fragment, and not the introspection endpoint.
+    pub fn with_registry(
+        mut self,
+        endpoint: &str,
+        registry: Arc<dyn ResourceRegistry>,
+    ) -> Result<Self> {
+        check_https_url("resource_registration_endpoint", endpoint)?;
+        // The route layer matches on the path alone, so a clash there would shadow a route.
+        let path = url_path(endpoint);
+        if path == url_path(&self.config.introspection_endpoint) || path == DISCOVERY_PATH {
+            return Err(AuthError::config(
+                "resource_registration_endpoint must not share a path with the introspection endpoint or the discovery document",
+            ));
+        }
+        self.registration = Some((endpoint.to_string(), registry));
+        Ok(self)
+    }
+
+    /// The registration endpoint URL, or `None` when registration is not offered.
+    pub fn registration_endpoint(&self) -> Option<&str> {
+        self.registration.as_ref().map(|(url, _)| url.as_str())
     }
 
     /// The introspection endpoint URL, as configured.
@@ -166,6 +243,9 @@ impl GnapResourceServerApi {
             "introspection_endpoint".into(),
             self.config.introspection_endpoint.clone().into(),
         );
+        if let Some(endpoint) = self.registration_endpoint() {
+            doc.insert("resource_registration_endpoint".into(), endpoint.into());
+        }
         if !self.config.token_formats_supported.is_empty() {
             doc.insert(
                 "token_formats_supported".into(),
@@ -179,6 +259,85 @@ impl GnapResourceServerApi {
             );
         }
         Value::Object(doc)
+    }
+
+    /// Register a resource set for an RS (RFC 9767 section 3.4).
+    ///
+    /// `Err` is any refusal, answered with HTTP 400 (section 3.5). `Ok` is the response object:
+    /// `resource_reference`, `instance_id` when the registry gave one, and this AS's
+    /// `introspection_endpoint`.
+    pub async fn register(
+        &self,
+        call: &RsCall<'_>,
+        body: &Value,
+    ) -> std::result::Result<Value, RsError> {
+        let Some((_, registry)) = &self.registration else {
+            return Err(RsError::BadRequest(
+                "resource registration is not supported".into(),
+            ));
+        };
+        let Some(rs) = self.authenticator.authenticate(call).await else {
+            return Err(RsError::Unauthenticated);
+        };
+        let bad = |why: &str| RsError::BadRequest(why.into());
+
+        let access = body
+            .get("access")
+            .and_then(Value::as_array)
+            .ok_or_else(|| bad("registration request needs an access array"))?;
+        if access.is_empty() {
+            return Err(bad("access must list at least one access right"));
+        }
+        if !access.iter().all(|a| a.is_string() || a.is_object()) {
+            return Err(bad("each access entry must be a string or an object"));
+        }
+        if body.get("resource_server").is_none() {
+            return Err(bad("registration request needs resource_server"));
+        }
+        let token_formats: Vec<String> = match body.get("token_formats_supported") {
+            None => Vec::new(),
+            Some(v) => v
+                .as_array()
+                .and_then(|a| {
+                    a.iter()
+                        .map(|f| f.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| bad("token_formats_supported must be an array of strings"))?,
+        };
+        // The AS must refuse when it issues none of the formats the RS can process.
+        if !token_formats.is_empty()
+            && !self.config.token_formats_supported.is_empty()
+            && !token_formats
+                .iter()
+                .any(|f| self.config.token_formats_supported.contains(f))
+        {
+            return Err(bad("none of the requested token formats is supported"));
+        }
+        let introspection_required = match body.get("token_introspection_required") {
+            None => false,
+            Some(v) => v
+                .as_bool()
+                .ok_or_else(|| bad("token_introspection_required must be a boolean"))?,
+        };
+
+        let request = ResourceRegistration {
+            access: access.clone(),
+            token_formats_supported: token_formats,
+            token_introspection_required: introspection_required,
+        };
+        let done = registry.register(&rs, &request).await?;
+        let mut out = Map::new();
+        out.insert("resource_reference".into(), done.resource_reference.into());
+        if let Some(id) = done.instance_id {
+            out.insert("instance_id".into(), id.into());
+        }
+        // Every API built here offers introspection, so the RS may be told where.
+        out.insert(
+            "introspection_endpoint".into(),
+            self.config.introspection_endpoint.clone().into(),
+        );
+        Ok(Value::Object(out))
     }
 
     /// Introspect an access token for an RS (RFC 9767 section 3.3).
@@ -282,6 +441,63 @@ mod tests {
         async fn authenticate(&self, _call: &RsCall<'_>) -> Option<AuthenticatedRs> {
             self.0.map(|id| AuthenticatedRs { id: id.to_string() })
         }
+    }
+
+    /// Counts its calls; refuses the access value `"forbidden"`.
+    struct Registry(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl ResourceRegistry for Registry {
+        async fn register(
+            &self,
+            rs: &AuthenticatedRs,
+            request: &ResourceRegistration,
+        ) -> std::result::Result<RegisteredResources, RsError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if request.access.contains(&json!("forbidden")) {
+                return Err(RsError::InvalidAccess("not permitted".into()));
+            }
+            Ok(RegisteredResources {
+                resource_reference: format!("ref-for-{}", rs.id),
+                instance_id: None,
+            })
+        }
+    }
+
+    const REGISTER_URL: &str = "https://as.example.test/gnap/resource";
+
+    fn registering(
+        c: GnapRsConfig,
+        rs: Option<&'static str>,
+    ) -> (GnapResourceServerApi, Arc<Registry>) {
+        let registry = Arc::new(Registry(Default::default()));
+        let api = build(c, vec![], rs)
+            .unwrap()
+            .with_registry(REGISTER_URL, registry.clone())
+            .unwrap();
+        (api, registry)
+    }
+
+    async fn register(
+        api: &GnapResourceServerApi,
+        body: Value,
+    ) -> std::result::Result<Value, RsError> {
+        let rs = json!("rs-1");
+        let call = RsCall {
+            http_method: "POST",
+            http_uri: REGISTER_URL,
+            resource_server: &rs,
+            headers: &[],
+        };
+        api.register(&call, &body).await
+    }
+
+    fn registration(extra: Value) -> Value {
+        let mut b = json!({"access": ["dolphin-metadata", {"type": "photo-api"}], "resource_server": "rs-1"});
+        for (k, v) in extra.as_object().unwrap() {
+            b[k] = v.clone();
+        }
+        b
     }
 
     fn now() -> u64 {
@@ -401,6 +617,120 @@ mod tests {
             c.introspection_endpoint = bad.into();
             assert!(build(c, vec![], None).is_err(), "{bad} must be refused");
         }
+    }
+
+    #[test]
+    fn the_registration_endpoint_is_checked_and_advertised() {
+        let (api, _) = registering(config(), Some("rs-1"));
+        assert_eq!(api.registration_endpoint(), Some(REGISTER_URL));
+        assert_eq!(
+            api.discovery_document()["resource_registration_endpoint"],
+            REGISTER_URL
+        );
+        for bad in [
+            "http://as.example.test/gnap/resource",
+            "https://as.example.test/gnap/resource#f",
+            "https://",
+            // the same path as the introspection endpoint or the discovery document
+            "https://other.example.test/introspect",
+            "https://as.example.test/introspect?x=1",
+            "https://as.example.test/.well-known/gnap-as-rs",
+        ] {
+            let r = build(config(), vec![], None)
+                .unwrap()
+                .with_registry(bad, Arc::new(Registry(Default::default())));
+            assert!(r.is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[tokio::test]
+    async fn registration_needs_a_registry_and_an_authenticated_rs() {
+        let api = api_with(vec![], Some("rs-1"));
+        assert!(matches!(
+            register(&api, registration(json!({}))).await,
+            Err(RsError::BadRequest(_))
+        ));
+        let (api, registry) = registering(config(), None);
+        assert_eq!(
+            register(&api, registration(json!({}))).await,
+            Err(RsError::Unauthenticated)
+        );
+        assert_eq!(registry.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_registration_is_answered_with_the_reference_and_the_introspection_endpoint() {
+        let (api, registry) = registering(config(), Some("rs-1"));
+        let r = register(&api, registration(json!({}))).await.unwrap();
+        assert_eq!(r["resource_reference"], "ref-for-rs-1");
+        assert_eq!(
+            r["introspection_endpoint"],
+            "https://as.example.test/introspect"
+        );
+        assert!(r.get("instance_id").is_none(), "{r}");
+        assert_eq!(registry.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn the_registry_refusal_passes_through_and_bad_requests_never_reach_it() {
+        let (api, registry) = registering(config(), Some("rs-1"));
+        assert_eq!(
+            register(&api, registration(json!({"access": ["forbidden"]}))).await,
+            Err(RsError::InvalidAccess("not permitted".into()))
+        );
+        assert_eq!(registry.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        for bad in [
+            json!({"resource_server": "rs-1"}),
+            json!({"access": [], "resource_server": "rs-1"}),
+            json!({"access": "a", "resource_server": "rs-1"}),
+            json!({"access": [1], "resource_server": "rs-1"}),
+            json!({"access": [null], "resource_server": "rs-1"}),
+            json!({"access": ["a"]}),
+            registration(json!({"token_formats_supported": "opaque"})),
+            registration(json!({"token_formats_supported": ["opaque", 1]})),
+            registration(json!({"token_introspection_required": "yes"})),
+            registration(json!({"token_introspection_required": 1})),
+        ] {
+            assert!(
+                matches!(
+                    register(&api, bad.clone()).await,
+                    Err(RsError::BadRequest(_))
+                ),
+                "{bad} must be a bad request"
+            );
+        }
+        assert_eq!(registry.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn token_formats_are_checked_against_the_ones_the_as_issues() {
+        let mut c = config();
+        c.token_formats_supported = vec!["opaque".into()];
+        let (api, _) = registering(c, Some("rs-1"));
+        assert!(
+            register(
+                &api,
+                registration(json!({"token_formats_supported": ["jwt"]}))
+            )
+            .await
+            .is_err()
+        );
+        for ok in [
+            json!({}),
+            json!({"token_formats_supported": ["jwt", "opaque"]}),
+        ] {
+            assert!(register(&api, registration(ok)).await.is_ok());
+        }
+        // An AS that does not list its formats leaves the choice to itself.
+        let (api, _) = registering(config(), Some("rs-1"));
+        assert!(
+            register(
+                &api,
+                registration(json!({"token_formats_supported": ["jwt"]}))
+            )
+            .await
+            .is_ok()
+        );
     }
 
     #[tokio::test]

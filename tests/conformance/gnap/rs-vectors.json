@@ -1,10 +1,13 @@
 {
   "suite": "gnap-rs-facing-api",
-  "suite_version": 1,
-  "description": "Language-neutral conformance vectors for the resource-server-facing API of a GNAP authorization server (RFC 9767 section 3): the discovery document and token introspection. Each vector is one HTTP request and assertions on the response.",
+  "suite_version": 2,
+  "description": "Language-neutral conformance vectors for the resource-server-facing API of a GNAP authorization server (RFC 9767 section 3): the discovery document, token introspection and resource set registration. Each vector is one HTTP request and assertions on the response.",
   "server": {
     "grant_request_endpoint": "https://as.example.test/tx",
     "introspection_endpoint": "https://as.example.test/gnap/introspect",
+    "resource_registration_endpoint": "https://as.example.test/gnap/resource",
+    "token_formats_supported": ["opaque"],
+    "registration": { "forbidden_access": ["forbidden-resource"], "resource_reference": "FWWIKYBQ6U56NL1", "instance_id_prefix": "inst-" },
     "rs_credential_header": "x-test-rs-id",
     "tokens": {
       "tok-bound": {
@@ -19,19 +22,20 @@
       "tok-for-rs2": { "access": ["dolphin-metadata"], "expires_in": 600, "audience": ["rs-2"] }
     }
   },
-  "notes": "Authenticating the resource server (RFC 9767 section 3.2) is out of scope for these vectors: the server under test is set up to recognize a resource server by the request header named in rs_credential_header, whose value is the resource server's identifier. A request without that header is from an unknown resource server.",
+  "notes": "Authenticating the resource server (RFC 9767 section 3.2) is out of scope for these vectors: the server under test is set up to recognize a resource server by the request header named in rs_credential_header, whose value is the resource server's identifier. A request without that header is from an unknown resource server. Registration policy is likewise a fixture: the server refuses any access entry listed in registration.forbidden_access, answers every accepted registration with registration.resource_reference, and gives the resource server the instance_id registration.instance_id_prefix plus its identifier.",
   "vectors": [
     {
       "id": "rs-discovery-document",
       "rfc": "RFC 9767", "section": "3.1", "kind": "positive",
-      "description": "The discovery document names the grant request endpoint and the introspection endpoint, and does not advertise features the server lacks.",
+      "description": "The discovery document names the grant request endpoint, the introspection endpoint and the resource registration endpoint, and does not advertise features the server lacks.",
       "request": { "method": "GET", "path": "/.well-known/gnap-as-rs" },
       "expect": {
         "status": 200,
         "assert": [
           { "path": "/grant_request_endpoint", "op": "equals", "value": "https://as.example.test/tx" },
           { "path": "/introspection_endpoint", "op": "equals", "value": "https://as.example.test/gnap/introspect" },
-          { "path": "/resource_registration_endpoint", "op": "absent" },
+          { "path": "/resource_registration_endpoint", "op": "equals", "value": "https://as.example.test/gnap/resource" },
+          { "path": "/token_formats_supported", "op": "equals", "value": ["opaque"] },
           { "path": "/key_proofs_supported", "op": "absent" }
         ]
       }
@@ -190,6 +194,112 @@
       "rfc": "RFC 9767", "section": "3.3", "kind": "negative",
       "description": "Introspection is a POST; another method is refused.",
       "request": { "method": "GET", "path": "/gnap/introspect", "rs": "rs-1" },
+      "expect": { "status": 405 }
+    },
+    {
+      "id": "rs-register-ok",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "positive",
+      "description": "A resource server registers a resource set and receives a resource_reference, with the instance identifier and introspection endpoint it may need later; the answer is not cacheable.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": [{ "type": "photo-api", "actions": ["read"] }, "dolphin-metadata"], "resource_server": "rs-1" } },
+      "expect": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        "assert": [
+          { "path": "/resource_reference", "op": "equals", "value": "FWWIKYBQ6U56NL1" },
+          { "path": "/instance_id", "op": "equals", "value": "inst-rs-1" },
+          { "path": "/introspection_endpoint", "op": "equals", "value": "https://as.example.test/gnap/introspect" }
+        ]
+      }
+    },
+    {
+      "id": "rs-register-optional-members",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "positive",
+      "description": "The optional members token_formats_supported (a format the server issues) and token_introspection_required are accepted.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": [{ "type": "photo-api", "actions": ["read"] }, "dolphin-metadata"], "resource_server": "rs-1", "token_formats_supported": ["opaque"], "token_introspection_required": true } },
+      "expect": { "status": 200, "assert": [{ "path": "/resource_reference", "op": "is_string" }] }
+    },
+    {
+      "id": "rs-register-unsupported-token-format",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "When the server supports none of the token formats the resource server asks for, it returns an error.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": [{ "type": "photo-api", "actions": ["read"] }, "dolphin-metadata"], "resource_server": "rs-1", "token_formats_supported": ["jwt"] } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-unknown-resource-server",
+      "rfc": "RFC 9767", "section": "3.5", "kind": "negative",
+      "description": "A registration from a resource server the server does not recognize is refused with 400 and the invalid_resource_server error.",
+      "request": { "method": "POST", "path": "/gnap/resource", "body": { "access": [{ "type": "photo-api", "actions": ["read"] }, "dolphin-metadata"], "resource_server": "rs-1" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_resource_server" }] }
+    },
+    {
+      "id": "rs-register-access-not-permitted",
+      "rfc": "RFC 9767", "section": "3.5", "kind": "negative",
+      "description": "A resource server that asks to register an access value it is not permitted is refused with 400 and the invalid_access error.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": ["dolphin-metadata", "forbidden-resource"], "resource_server": "rs-1" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_access" }] }
+    },
+    {
+      "id": "rs-register-missing-access",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "A request without access, which is required, is refused with 400.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "resource_server": "rs-1" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-missing-resource-server",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "A request without resource_server, which is required, is refused with 400.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": [{ "type": "photo-api", "actions": ["read"] }, "dolphin-metadata"] } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-access-not-array",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "access must be an array; anything else is refused with 400.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": "dolphin-metadata", "resource_server": "rs-1" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-access-empty",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "An access array with no entries registers nothing and is refused with 400.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": [], "resource_server": "rs-1" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-access-entry-type",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "Each access entry is a string or an object; a number is refused with 400.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": [5], "resource_server": "rs-1" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-token-formats-type",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "token_formats_supported must be an array of strings; a string is refused with 400.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": [{ "type": "photo-api", "actions": ["read"] }, "dolphin-metadata"], "resource_server": "rs-1", "token_formats_supported": "opaque" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-introspection-required-type",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "token_introspection_required must be a boolean; a string is refused with 400.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "body": { "access": [{ "type": "photo-api", "actions": ["read"] }, "dolphin-metadata"], "resource_server": "rs-1", "token_introspection_required": "yes" } },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-not-json",
+      "rfc": "RFC 9767", "section": "3.5", "kind": "negative",
+      "description": "A body that is not JSON is refused with 400 and the invalid_request error.",
+      "request": { "method": "POST", "path": "/gnap/resource", "rs": "rs-1", "raw_body": "not json" },
+      "expect": { "status": 400, "assert": [{ "path": "/error/code", "op": "equals", "value": "invalid_request" }] }
+    },
+    {
+      "id": "rs-register-method",
+      "rfc": "RFC 9767", "section": "3.4", "kind": "negative",
+      "description": "Registration is a POST; another method is refused.",
+      "request": { "method": "GET", "path": "/gnap/resource", "rs": "rs-1" },
       "expect": { "status": 405 }
     }
   ]
