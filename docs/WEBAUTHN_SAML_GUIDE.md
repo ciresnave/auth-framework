@@ -50,9 +50,14 @@ Content-Type: application/json
   "username": "user@example.com",
   "display_name": "Jane Doe",
   "authenticator_attachment": "platform",
-  "user_verification": "preferred"
+  "user_verification": "preferred",
+  "current_password": "the caller's own password"
 }
 ```
+
+`current_password` is required: the caller confirms their own password (the same
+failure counter and lockout as `/auth/login` apply). Without it the call fails with
+`STEP_UP_REQUIRED`; a wrong one fails with `STEP_UP_FAILED`.
 
 Current response shape:
 
