@@ -332,6 +332,10 @@ impl AuthStorage for SqliteStorage {
         Ok(())
     }
 
+    fn lists_kv_keys(&self) -> bool {
+        true
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         let now = chrono::Utc::now().timestamp();
         // `%`, `_` and `\` in the caller's prefix are literals, not LIKE wildcards.

@@ -650,6 +650,10 @@ impl AuthStorage for UnifiedStorage {
         true
     }
 
+    fn lists_kv_keys(&self) -> bool {
+        true
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         let now = SystemTime::now();
         Ok(self

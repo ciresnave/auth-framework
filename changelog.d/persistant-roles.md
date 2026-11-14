@@ -1,1 +1,0 @@
-`PersistantStorage` implements `AuthorizationStorage`: RBAC roles and user-role assignments are kept in the same PersistAnt store as tokens and sessions (key-value, with secondary indexes), so they persist on any backend that serves the token store. Previously only the in-memory store implemented it. Assigning the same user and role again replaces the row.
