@@ -14,17 +14,19 @@
         "transaction_endpoint": "/api/gnap/tx"
       },
       "request": {
-        "access_token": [
-          {
-            "type": "read",
-            "actions": [
-              "list"
-            ],
-            "locations": [
-              "https://api.example.test"
-            ]
-          }
-        ]
+        "access_token": {
+          "access": [
+            {
+              "type": "read",
+              "actions": [
+                "list"
+              ],
+              "locations": [
+                "https://api.example.test"
+              ]
+            }
+          ]
+        }
       },
       "expect": {
         "outcome": "response",
@@ -62,11 +64,13 @@
         "transaction_endpoint": "/api/gnap/tx"
       },
       "request": {
-        "access_token": [
-          {
-            "type": "read"
-          }
-        ]
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        }
       },
       "expect": {
         "outcome": "response",
@@ -130,11 +134,13 @@
         "interaction_base_url": "https://auth.example.test"
       },
       "request": {
-        "access_token": [
-          {
-            "type": "read"
-          }
-        ],
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        },
         "interact": {
           "start": [
             "redirect"
@@ -198,11 +204,13 @@
         "transaction_endpoint": "/api/gnap/tx"
       },
       "request": {
-        "access_token": [
-          {
-            "type": "read"
-          }
-        ]
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        }
       },
       "expect": {
         "outcome": "error"
@@ -221,11 +229,13 @@
         "transaction_endpoint": "/api/gnap/tx"
       },
       "request": {
-        "access_token": [
-          {
-            "type": "read"
-          }
-        ],
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        },
         "interact": {
           "start": [
             "redirect"
@@ -249,11 +259,13 @@
         "transaction_endpoint": "/api/gnap/tx"
       },
       "request": {
-        "access_token": [
-          {
-            "type": "read"
-          }
-        ]
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        }
       },
       "expect": {
         "outcome": "error"
@@ -272,11 +284,13 @@
       "client_key": "dpop",
       "proof": "absent",
       "request": {
-        "access_token": [
-          {
-            "type": "read"
-          }
-        ]
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        }
       },
       "expect": {
         "outcome": "error"
@@ -295,11 +309,13 @@
       "client_key": "dpop",
       "proof": "wrong_key",
       "request": {
-        "access_token": [
-          {
-            "type": "read"
-          }
-        ]
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        }
       },
       "expect": {
         "outcome": "error"
@@ -322,11 +338,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -408,11 +426,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -484,11 +504,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -581,11 +603,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -661,11 +685,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -741,11 +767,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -821,11 +849,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -901,11 +931,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -981,11 +1013,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -1061,11 +1095,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -1154,11 +1190,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -1240,11 +1278,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response",
@@ -1269,11 +1309,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response",
@@ -1314,11 +1356,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response",
@@ -1349,11 +1393,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response"
@@ -1364,11 +1410,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "error"
@@ -1393,14 +1441,16 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read",
-                "actions": [
-                  "list"
-                ]
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response"
@@ -1486,14 +1536,16 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read",
-                "actions": [
-                  "list"
-                ]
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response"
@@ -1557,14 +1609,16 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read",
-                "actions": [
-                  "list"
-                ]
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response"
@@ -1629,14 +1683,16 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read",
-                "actions": [
-                  "list"
-                ]
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response"
@@ -1672,14 +1728,16 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read",
-                "actions": [
-                  "list"
-                ]
-              }
-            ]
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
           },
           "expect": {
             "outcome": "response"
@@ -1743,11 +1801,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"
@@ -1836,11 +1896,13 @@
           "do": "transaction",
           "proof": "valid",
           "request": {
-            "access_token": [
-              {
-                "type": "read"
-              }
-            ],
+            "access_token": {
+              "access": [
+                {
+                  "type": "read"
+                }
+              ]
+            },
             "interact": {
               "start": [
                 "redirect"

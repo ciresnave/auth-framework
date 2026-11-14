@@ -397,7 +397,7 @@ claims a method it does not verify. Rows are Open until their PR lands.
 | G2 | `httpsig` proofing (RFC 9421 + RFC 9530, tag `gnap`). Check crates.io for a maintained crate before writing one; any new dependency is an ASK | Open |
 | G3 | `jwsd`, `jws`, `mtls`, key formats `cert` and `cert#S256`; decide the fate of the non-RFC `dpop` method | Open |
 | G4 | Interaction: start `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push` (SSRF rules of 11.34), `hash_method`, hints, interaction expiry | Open |
-| G5 | Continuation: polling with `wait` and `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, token rotate and revoke with proof, key rotation, `Authorization: GNAP` | Open |
+| G5 | Continuation: polling with `wait` and `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, token rotate and revoke with proof, key rotation, `Authorization: GNAP` | Slice 1 done: the request `access_token` in the RFC shape (`requested_rights`). Next: polling, PATCH, DELETE grant, state machine, key rotation, `Authorization: GNAP` |
 | G6 | Policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style choice, not one hard-wired store); requirements for agents and rooms from board 384 | Open |
 | G7 | HTTP routes (axum, actix) and discovery (9.1 RS-first, 9.2 `OPTIONS`) | Open |
 | G8 | RFC 9767 resource-server connections: RS discovery, introspection, resource set registration, downstream tokens | Open |
