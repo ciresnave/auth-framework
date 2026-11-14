@@ -140,7 +140,12 @@ where
             .map(Some)
     }
 
-    pub(super) async fn put_sealed(&self, key: &str, plaintext: &[u8], ttl: Duration) -> Result<()> {
+    pub(super) async fn put_sealed(
+        &self,
+        key: &str,
+        plaintext: &[u8],
+        ttl: Duration,
+    ) -> Result<()> {
         let sealed = self.seal(key, plaintext)?;
         self.inner.store_kv(key, &sealed, Some(ttl)).await
     }
