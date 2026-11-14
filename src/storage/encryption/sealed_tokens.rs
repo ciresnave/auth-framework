@@ -141,6 +141,18 @@ where
         self.inner.store_kv(key, &sealed, Some(ttl)).await
     }
 
+    /// Like [`Self::put_sealed`], but only when no live value is stored under `key`; `false` means
+    /// a value was already there and is left untouched.
+    pub(super) async fn put_sealed_if_absent(
+        &self,
+        key: &str,
+        plaintext: &[u8],
+        ttl: Duration,
+    ) -> Result<bool> {
+        let sealed = self.seal(key, plaintext)?;
+        self.inner.store_kv_if_absent(key, &sealed, Some(ttl)).await
+    }
+
     /// The sealed token under `token_id`, with the key it was found at.
     async fn read_sealed_token(&self, token_id: &str) -> Result<Option<(AuthToken, String)>> {
         for kid in self.encryption.key_ids() {
@@ -337,6 +349,13 @@ where
             return Ok(None);
         }
         self.put_sealed_token(&legacy, None).await?;
+        // A delete (a revocation) that ran while this read held the legacy row has already removed
+        // it: that delete won, so undo the sealed copy just written instead of resurrecting the
+        // token. Only a delete removes the legacy row before the line below does.
+        if self.inner.get_token(&legacy.token_id).await?.is_none() {
+            self.delete_sealed_token(&legacy.token_id).await?;
+            return Ok(None);
+        }
         self.inner.delete_token(&legacy.token_id).await?;
         Ok(Some(legacy))
     }
@@ -710,6 +729,25 @@ mod tests {
             "now served sealed"
         );
         assert!(!raw_dump(&w).await.contains("old-acc"));
+    }
+
+    /// A revocation that deletes the legacy row between a read-through's fetch and its adoption
+    /// must win: the adoption undoes its sealed copy and the token stays gone.
+    #[tokio::test]
+    async fn an_adoption_that_lost_to_a_delete_does_not_resurrect_the_token() {
+        let w = wrapper(true);
+        // The row as the read fetched it; by adoption time the delete has removed it.
+        let fetched = tok("gone", "u", "gone-acc");
+        assert!(w.inner.get_token("gone").await.unwrap().is_none());
+        assert!(w.adopt_legacy_token(fetched).await.unwrap().is_none());
+        assert!(w.get_token("gone").await.unwrap().is_none());
+        assert!(
+            w.get_token_by_access_token("gone-acc")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(raw_dump(&w).await.is_empty(), "nothing left in the backend");
     }
 
     #[tokio::test]
