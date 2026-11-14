@@ -52,6 +52,9 @@ pub struct SnapshotUserSummary {
     pub email: Option<String>,
     pub roles: Vec<String>,
     pub active: bool,
+    /// Direct permission grants (not those a role brings). Absent from older snapshots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub direct_permissions: Vec<crate::permissions::Permission>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -281,6 +284,7 @@ async fn collect_snapshot(framework: &AuthFramework) -> Result<MaintenanceSnapsh
             email: user.email.clone(),
             roles,
             active: user.active,
+            direct_permissions: framework.direct_permissions_for_user(&user.id).await,
         });
     }
 
@@ -630,6 +634,11 @@ async fn restore_from_file_with(
                     .assign_role(&user.id, role_name)
                     .await?;
             }
+            for permission in &user.direct_permissions {
+                framework
+                    .grant_permission(&user.id, &permission.action, &permission.resource)
+                    .await?;
+            }
         }
     }
 
@@ -736,6 +745,10 @@ mod tests {
             .await
             .unwrap();
         framework
+            .grant_permission(&user_id, "export", "reports")
+            .await
+            .unwrap();
+        framework
             .storage()
             .store_kv("custom:test", b"value", None)
             .await
@@ -756,6 +769,19 @@ mod tests {
         );
 
         restore_from_file(&framework, &path, false).await.unwrap();
+
+        // The direct grant came back too, and is persisted again for the next start.
+        let direct = framework.direct_permissions_for_user(&user_id).await;
+        assert_eq!(direct.len(), 1, "{direct:?}");
+        assert_eq!(direct[0].action, "export");
+        assert!(
+            framework
+                .storage()
+                .get_kv(&format!("rbac:user_perms:{user_id}"))
+                .await
+                .unwrap()
+                .is_some()
+        );
 
         let restored_user = framework.users().get(&user_id).await.unwrap();
         assert_eq!(restored_user.username, "alice");

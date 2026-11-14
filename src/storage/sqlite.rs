@@ -413,6 +413,10 @@ impl AuthStorage for SqliteStorage {
         Ok(())
     }
 
+    fn lists_kv_keys(&self) -> bool {
+        true
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         let now = Utc::now().timestamp();
         let rows = sqlx::query(

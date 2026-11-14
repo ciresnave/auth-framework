@@ -492,6 +492,10 @@ impl AuthStorage for MockStorage {
         Ok(self.kv_store.get(key).map(|entry| entry.value().clone()))
     }
 
+    fn lists_kv_keys(&self) -> bool {
+        true
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         if self.should_fail {
             return Err(AuthError::internal("Mock storage configured to fail"));
