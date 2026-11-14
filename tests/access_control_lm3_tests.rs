@@ -93,3 +93,56 @@ fn an_inactive_creator_is_refused_when_a_registry_is_attached() {
         Err(DelegationError::CreatorLacksAction)
     );
 }
+
+fn trail(e: &InMemoryEngine) -> Vec<(AuditOp, String, String)> {
+    e.audit_log()
+        .iter()
+        .map(|x| (x.op, x.actor.clone(), x.rule_id.clone()))
+        .collect()
+}
+
+#[test]
+fn each_grant_minted_for_a_creator_is_in_the_audit_trail() {
+    let mut e = engine();
+    let before = e.audit_log().len();
+    let ids = e
+        .register_new_principal("b@acct", OBJ, &["synapse:see"])
+        .unwrap();
+    let t = trail(&e);
+    assert_eq!(t.len(), before + 1);
+    assert_eq!(
+        t[before],
+        (AuditOp::GrantAdded, "b@acct".to_string(), ids[0].clone())
+    );
+}
+
+#[test]
+fn a_refused_registration_is_in_the_audit_trail_and_grants_nothing() {
+    let mut e = engine();
+    let before = e.audit_log().len();
+    // an action nobody registered
+    assert_eq!(
+        e.register_new_principal("b@acct", OBJ, &["nope:nothing"]),
+        Err(DelegationError::UnregisteredAction)
+    );
+    // a duplicate: the same registration twice
+    e.register_new_principal("b@acct", OBJ, &["synapse:see"])
+        .unwrap();
+    assert_eq!(
+        e.register_new_principal("b@acct", OBJ, &["synapse:see"]),
+        Err(DelegationError::DuplicateId)
+    );
+    let t = trail(&e);
+    assert_eq!(
+        t[before..],
+        [
+            (AuditOp::Refused, "b@acct".to_string(), OBJ.to_string()),
+            (
+                AuditOp::GrantAdded,
+                "b@acct".to_string(),
+                format!("creator:{OBJ}:synapse:see")
+            ),
+            (AuditOp::Refused, "b@acct".to_string(), OBJ.to_string()),
+        ]
+    );
+}

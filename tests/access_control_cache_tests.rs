@@ -334,3 +334,63 @@ fn the_engine_reports_sensitivity_from_action_object_and_grant() {
     e.mark_object_sensitive("agent:*@acct");
     assert!(e.answer_at(A, "plain", PM, now).sensitive);
 }
+
+fn expiring(expires: DateTime<Utc>) -> CachedAuthorizer<Flaky> {
+    let c = cached();
+    // Replace the plain grant with one that expires.
+    let mut c = c;
+    c.source_mut().inner.remove_grant("g");
+    let mut g = Grant::new("e", A, "synapse:see", PM, Effect::Allow);
+    g.expires = Some(expires);
+    c.source_mut().inner.add_grant(g).unwrap();
+    c
+}
+
+#[test]
+fn a_cached_allow_is_not_served_at_or_after_its_grants_expiry() {
+    let t = Utc::now();
+    let c = expiring(t + Duration::seconds(10));
+    assert!(see(&c, A, Freshness::Cached, t).is_allow());
+    // Control: before the expiry the entry is a cache hit.
+    assert!(see(&c, A, Freshness::Cached, t + Duration::seconds(9)).is_allow());
+    assert_eq!(calls(&c), 1);
+    // The ttl (60 s) has not passed, but the grant has expired.
+    assert!(!see(&c, A, Freshness::Cached, t + Duration::seconds(10)).is_allow());
+    assert!(!see(&c, A, Freshness::Cached, t + Duration::seconds(30)).is_allow());
+}
+
+#[test]
+fn a_cached_allow_through_a_delegation_ends_with_the_earliest_expiry_in_its_chain() {
+    let t = Utc::now();
+    let mut c = expiring(t + Duration::seconds(10));
+    c.source_mut()
+        .inner
+        .delegate_at(
+            DelegationRequest {
+                id: "d".into(),
+                from: "e".into(),
+                delegator: A.into(),
+                delegatee: B.into(),
+                action: "synapse:see".into(),
+                object: PM.into(),
+                expires: Some(t + Duration::seconds(10)),
+                sensitive: false,
+            },
+            t,
+        )
+        .unwrap();
+    assert!(see(&c, B, Freshness::Cached, t).is_allow());
+    assert!(!see(&c, B, Freshness::Cached, t + Duration::seconds(11)).is_allow());
+}
+
+#[test]
+fn the_engine_reports_when_an_answer_stops_being_true() {
+    let t = Utc::now();
+    let c = expiring(t + Duration::seconds(10));
+    let a = c.source().inner.answer_at(A, "synapse:see", PM, t);
+    assert_eq!(a.valid_until, Some(t + Duration::seconds(10)));
+    // A grant without an expiry reports none.
+    let plain = cached();
+    let a = plain.source().inner.answer_at(A, "synapse:see", PM, t);
+    assert_eq!(a.valid_until, None);
+}
