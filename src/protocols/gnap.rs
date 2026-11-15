@@ -16,6 +16,7 @@
 //! - Transaction expiration and cleanup
 
 use crate::errors::{AuthError, Result};
+use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
 use crate::protocols::gnap_wire::{
     GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests,
     validate_access_token_requests_with_flags,
@@ -447,6 +448,8 @@ pub struct GnapService {
     transactions: Arc<RwLock<HashMap<String, GnapTransaction>>>,
     /// Issued access tokens (keyed by token value)
     issued_tokens: Arc<RwLock<HashMap<String, GnapIssuedToken>>>,
+    /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
+    consents: Arc<dyn GnapConsentStore>,
 }
 
 /// The one message every refused `continue_transaction` call returns, so a caller cannot tell an
@@ -473,6 +476,7 @@ impl GnapService {
             policy: None,
             transactions: Arc::new(RwLock::new(HashMap::new())),
             issued_tokens: Arc::new(RwLock::new(HashMap::new())),
+            consents: Arc::new(InMemoryConsentStore::new()),
         }
     }
 
@@ -481,6 +485,38 @@ impl GnapService {
     pub fn with_access_policy(mut self, policy: Arc<dyn GnapAccessPolicy>) -> Self {
         self.policy = Some(policy);
         self
+    }
+
+    /// Keep consent records in this store instead of the default in-memory one. A record is
+    /// written for every access token issued after a resource owner approved an interactive
+    /// transaction; if the store cannot record it, no token is issued.
+    pub fn with_consent_store(mut self, store: Arc<dyn GnapConsentStore>) -> Self {
+        self.consents = store;
+        self
+    }
+
+    /// The consent records of this resource owner, oldest first, withdrawn ones included.
+    pub async fn consents_for_owner(&self, resource_owner: &str) -> Result<Vec<GnapConsent>> {
+        self.consents.list_for_owner(resource_owner).await
+    }
+
+    /// Withdraw a consent: mark the record withdrawn and revoke every access token issued under
+    /// the approval it records. Withdrawing twice is harmless.
+    pub async fn revoke_consent(&self, consent_id: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let consent = self
+            .consents
+            .revoke(consent_id, now)
+            .await?
+            .ok_or_else(|| AuthError::validation("Consent not found"))?;
+        self.issued_tokens
+            .write()
+            .await
+            .retain(|_, t| t.transaction_id != consent.transaction_id);
+        Ok(())
     }
 
     // ── Key Binding Helpers ──────────────────────────────────────────────
@@ -927,6 +963,7 @@ impl GnapService {
         key_thumbprint: &Option<String>,
         key_proof: Option<&str>,
         transaction_id: &str,
+        consent_owner: Option<Option<&str>>,
     ) -> Result<serde_json::Map<String, serde_json::Value>> {
         // The policy, not the request, decides what the token carries.
         let policy = self
@@ -956,6 +993,24 @@ impl GnapService {
             key_proof: key_proof.map(str::to_string),
             transaction_id: transaction_id.to_string(),
         };
+
+        // An approved interactive transaction leaves a consent record, written before the token
+        // exists: a token whose consent could not be recorded is never issued.
+        // `consent_owner` is `Some` exactly for such a transaction; its inner value is the
+        // resource owner the integrator named at approval, if any.
+        if let Some(resource_owner) = consent_owner {
+            self.consents
+                .record(GnapConsent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    transaction_id: transaction_id.to_string(),
+                    resource_owner: resource_owner.map(str::to_string),
+                    client_key_thumbprint: thumbprint.to_string(),
+                    access: access_requests.to_vec(),
+                    granted_at: now,
+                    revoked_at: None,
+                })
+                .await?;
+        }
 
         // Stored before the response is returned: a client that uses the token at once finds it.
         self.issued_tokens
@@ -1114,6 +1169,7 @@ impl GnapService {
                         &key_thumbprint,
                         Self::key_proof_method(&request.client),
                         "direct",
+                        None,
                     )
                     .await?;
                 response.insert(
@@ -1329,6 +1385,7 @@ impl GnapService {
                             &key_thumbprint,
                             Self::key_proof_method(&txn.request.client),
                             transaction_id,
+                            Some(txn.subject_id.as_deref()),
                         )
                         .await
                     {
@@ -2699,6 +2756,219 @@ mod tests {
         assert!(req.interact.is_none());
         assert!(req.access_token.is_none());
         assert!(req.subject.is_none());
+    }
+
+    // ── Consent records (G6) ─────────────────────────────────────────────
+
+    use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// An in-memory store that counts `record` calls and can be told to fail them.
+    #[derive(Default)]
+    struct CountingStore {
+        inner: InMemoryConsentStore,
+        recorded: AtomicUsize,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl GnapConsentStore for CountingStore {
+        async fn record(&self, consent: GnapConsent) -> Result<()> {
+            if self.fail {
+                return Err(AuthError::validation("store down"));
+            }
+            self.recorded.fetch_add(1, Ordering::SeqCst);
+            self.inner.record(consent).await
+        }
+        async fn get(&self, id: &str) -> Result<Option<GnapConsent>> {
+            self.inner.get(id).await
+        }
+        async fn list_for_owner(&self, owner: &str) -> Result<Vec<GnapConsent>> {
+            self.inner.list_for_owner(owner).await
+        }
+        async fn revoke(&self, id: &str, at: u64) -> Result<Option<GnapConsent>> {
+            self.inner.revoke(id, at).await
+        }
+    }
+
+    /// Grants only the first right asked for.
+    struct FirstOnlyPolicy;
+
+    #[async_trait]
+    impl GnapAccessPolicy for FirstOnlyPolicy {
+        async fn grant(&self, _: &str, requested: &[GnapAccessRequest]) -> Vec<GnapAccessRequest> {
+            requested.iter().take(1).cloned().collect()
+        }
+    }
+
+    fn right(kind: &str) -> GnapAccessRequest {
+        GnapAccessRequest {
+            access_type: kind.to_string(),
+            actions: vec![],
+            locations: vec![],
+        }
+    }
+
+    /// Run an interactive transaction for `rights` to approval by `owner` and return the result
+    /// of the final continuation.
+    async fn approved_by(
+        service: &GnapService,
+        owner: Option<&str>,
+        rights: Vec<GnapAccessRequest>,
+    ) -> Result<serde_json::Value> {
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+            }),
+            access_token: Some(rights.into()),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        let (txn_id, cont) = {
+            let txns = service.transactions.read().await;
+            let t = txns.values().next().unwrap();
+            (t.id.clone(), t.continue_token.clone())
+        };
+        service.approve_transaction(&txn_id, owner).await.unwrap();
+        service
+            .continue_transaction(&txn_id, &cont, None, None)
+            .await
+    }
+
+    #[tokio::test]
+    async fn an_approved_interactive_grant_leaves_a_consent_record() {
+        let service = test_service();
+        let resp = approved_by(&service, Some("user-42"), vec![right("read")])
+            .await
+            .unwrap();
+        assert!(resp["access_token"]["value"].is_string());
+
+        let consents = service.consents_for_owner("user-42").await.unwrap();
+        assert_eq!(consents.len(), 1);
+        let c = &consents[0];
+        assert!(c.is_active());
+        assert_eq!(c.resource_owner.as_deref(), Some("user-42"));
+        assert_eq!(c.access.len(), 1);
+        assert_eq!(c.access[0].access_type, "read");
+        assert!(!c.client_key_thumbprint.is_empty());
+        assert!(
+            service
+                .consents_for_owner("someone-else")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_consent_records_what_the_policy_granted_not_what_was_asked() {
+        let service = GnapService::new(test_config()).with_access_policy(Arc::new(FirstOnlyPolicy));
+        approved_by(&service, Some("u"), vec![right("read"), right("write")])
+            .await
+            .unwrap();
+        let consents = service.consents_for_owner("u").await.unwrap();
+        assert_eq!(consents[0].access.len(), 1);
+        assert_eq!(consents[0].access[0].access_type, "read");
+    }
+
+    #[tokio::test]
+    async fn a_direct_grant_with_no_resource_owner_records_no_consent() {
+        let store = Arc::new(CountingStore::default());
+        let service = test_service().with_consent_store(store.clone());
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token: Some(vec![right("read")].into()),
+            subject: None,
+        };
+        let resp = service.handle_transaction(req).await.unwrap();
+        assert!(resp["access_token"]["value"].is_string());
+        assert_eq!(store.recorded.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn withdrawing_a_consent_revokes_the_token_it_produced() {
+        let service = test_service();
+        let resp = approved_by(&service, Some("user-42"), vec![right("read")])
+            .await
+            .unwrap();
+        let token = resp["access_token"]["value"].as_str().unwrap().to_string();
+        assert!(service.introspect_token(&token).await.unwrap().is_some());
+
+        let id = service.consents_for_owner("user-42").await.unwrap()[0]
+            .id
+            .clone();
+        service.revoke_consent(&id).await.unwrap();
+
+        assert!(service.introspect_token(&token).await.unwrap().is_none());
+        let after = service.consents_for_owner("user-42").await.unwrap();
+        assert!(!after[0].is_active());
+    }
+
+    #[tokio::test]
+    async fn a_rotated_token_is_revoked_with_its_consent() {
+        let service = test_service();
+        let resp = approved_by(&service, Some("user-42"), vec![right("read")])
+            .await
+            .unwrap();
+        let old = resp["access_token"]["value"].as_str().unwrap().to_string();
+        let rotated = service.rotate_token(&old).await.unwrap();
+        let new = rotated["value"].as_str().unwrap().to_string();
+        assert!(service.introspect_token(&new).await.unwrap().is_some());
+
+        let id = service.consents_for_owner("user-42").await.unwrap()[0]
+            .id
+            .clone();
+        service.revoke_consent(&id).await.unwrap();
+        assert!(service.introspect_token(&new).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn withdrawing_twice_is_harmless_and_an_unknown_consent_is_refused() {
+        let service = test_service();
+        approved_by(&service, Some("u"), vec![right("read")])
+            .await
+            .unwrap();
+        let id = service.consents_for_owner("u").await.unwrap()[0].id.clone();
+        service.revoke_consent(&id).await.unwrap();
+        let first = service.consents_for_owner("u").await.unwrap()[0].revoked_at;
+        service.revoke_consent(&id).await.unwrap();
+        let second = service.consents_for_owner("u").await.unwrap()[0].revoked_at;
+        assert_eq!(first, second);
+        assert!(service.revoke_consent("no-such-id").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn withdrawing_one_consent_leaves_another_owners_token_alone() {
+        let service = test_service();
+        let a = approved_by(&service, Some("alice"), vec![right("read")])
+            .await
+            .unwrap();
+        let b = approved_by(&service, Some("bob"), vec![right("read")])
+            .await
+            .unwrap();
+        let a_tok = a["access_token"]["value"].as_str().unwrap().to_string();
+        let b_tok = b["access_token"]["value"].as_str().unwrap().to_string();
+        let id = service.consents_for_owner("alice").await.unwrap()[0]
+            .id
+            .clone();
+        service.revoke_consent(&id).await.unwrap();
+        assert!(service.introspect_token(&a_tok).await.unwrap().is_none());
+        assert!(service.introspect_token(&b_tok).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn no_token_is_issued_when_its_consent_cannot_be_recorded() {
+        let store = Arc::new(CountingStore {
+            fail: true,
+            ..Default::default()
+        });
+        let service = test_service().with_consent_store(store);
+        let result = approved_by(&service, Some("user-42"), vec![right("read")]).await;
+        assert!(result.is_err());
+        assert!(service.issued_tokens.read().await.is_empty());
     }
 }
 

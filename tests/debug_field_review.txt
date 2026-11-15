@@ -163,6 +163,7 @@ client_data_json
 client_description
 client_id
 client_ip
+client_key_thumbprint
 client_name
 client_notification_endpoint
 client_principal
@@ -249,6 +250,7 @@ display
 display_name
 display_name_attribute
 dns_name
+dns_names
 docs_url
 documentation_uri
 domain
@@ -590,6 +592,7 @@ requirement
 resource
 resource_id
 resource_name
+resource_owner
 resource_registration_endpoint
 resource_type
 resource_usage

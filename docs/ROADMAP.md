@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc296`
+- Current crate version: `0.6.0-rc303`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -400,7 +400,7 @@ claims a method it does not verify. Rows are Open until their PR lands.
 | G5 | Continuation: polling with `wait` and `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, token rotate and revoke with proof, key rotation, `Authorization: GNAP` | Slice 1 done: the request `access_token` in the RFC shape (`requested_rights`). Next: polling, PATCH, DELETE grant, state machine, key rotation, `Authorization: GNAP` |
 | G6 | Policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style choice, not one hard-wired store); requirements for agents and rooms from board 384 | Open |
 | G7 | HTTP routes (axum, actix) and discovery (9.1 RS-first, 9.2 `OPTIONS`) | Open |
-| G8 | RFC 9767 resource-server connections: RS discovery, introspection, resource set registration, downstream tokens | Open |
+| G8 | RFC 9767 resource-server connections: RS discovery, introspection, resource set registration, downstream tokens | Partly done: discovery, RS authentication, introspection and registration (#424, #425, #472; guide `docs/GNAP_RS_API.md`). Open: downstream tokens (RFC 9767 section 4) and token formats (2.2) |
 | G9 | Agent principals and delegation by an account holder (see AC2, AC5, AC6); the creator of a principal holds a strict-subset grant over it, ancestors may revoke it, the account holder always overrides. Reading of "strict subset": a subset, never wider than the creator holds; equal is allowed (the same rule as delegation). If strictly narrower is wanted, that is a new row | Done (#417, #420, #435, #439, #441, #464) |
 | G10 | Conformance: the RFC example vectors (including the 4.2.3 hash example) and one test per section 11 item | Open |
 | AC1 | Deny effect (deny wins), `decide(principal, action, resource) -> Decision`, action registry for consumers. `permissions.rs` has no deny at 3156a62c; `src/protocols/opa.rs` has a deny-wins `PolicyEffect` (lines 514-523), the candidate base | Done (#409) |
