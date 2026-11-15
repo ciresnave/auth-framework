@@ -20,7 +20,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 2.1 `access_token` object / array of objects | **partial, wire shape differs** | `access_token: Option<Vec<GnapAccessRequest>>` (58) is the array of access objects itself | The RFC's `access_token` is an object `{access, label, flags}` or an array of those. A request in RFC shape (`{"access_token": {"access": [...]}}`) does not deserialize. Needs polymorphism (RFC Appendix E) |
+| 2.1 `access_token` object / array of objects | **done (G5 slice 1)** | `GnapTransactionRequest.access_token` is `gnap_wire::GnapAccessTokenRequests`: `{"access_token":{"access":[...]}}` and the array form both parse; access rights as objects or reference strings. `GnapService::requested_rights` applies the section 2.1.1/2.1.2 checks (empty token, empty type, labels in arrays, `invalid_flag` for any flag, since this server supports none) and refuses more than one token per request | Not carried yet: `datatypes`, `identifier`, `privileges` of an access object (the grant-level right has only type, actions, locations; G6) and several tokens per request |
 | 2.1.1 `label`, `flags` (`bearer`, `split`) | **missing** | none | Label must be echoed back; flags change token behaviour |
 | 2.1.2 multiple access tokens | **missing** | one token per grant | |
 | 2.2 `subject` (`sub_id_formats`, `assertion_formats`, `sub_ids`) | **partial** | formats are parsed (82, 85); `sub_ids` is not a field | `sub_ids` (a specific subject) and assertions are missing |
@@ -51,7 +51,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 4 AS decides what to grant | **partial** | an integrator's `GnapAccessPolicy` (375-382, `with_access_policy` 437) returns the rights granted; empty denies; no policy denies (803-810) | the policy is a yes/narrow function of (client key thumbprint, requested rights): no consent record, no resource owner, no rule model, no deny effect, no engine behind it (slice G6, rows AC1-AC4) |
+| 4 AS decides what to grant | **partial** | an integrator's `GnapAccessPolicy` (375-382, `with_access_policy` 437) returns the rights granted; empty denies; no policy denies (803-810) | the policy is a yes/narrow function of (client key thumbprint, requested rights). The engine behind it exists (`EngineGnapPolicy`, AC1-AC4, #432). Consent records exist (`gnap_consent.rs`, G6 slice 1): an approved interactive grant is recorded per resource owner through a `GnapConsentStore` and can be withdrawn, which revokes its tokens. Still open in G6: storage of transactions and tokens through a trait, agent/room requirements |
 | 4.1 starting interaction | **n/a** | the AS's own UI is the integrator's | |
 | 4.2 completion: one-time `interact_ref`, hash | **partial** | `approve_transaction` returns `{interact_ref, hash}` (1228, struct at 391); continuation of a finish-method transaction needs the reference; hash per 4.2.3 | the AS does not deliver them (no redirect URI built, no `push` callback, SSRF rules of 11.34 not applicable yet); the hash uses `transaction_endpoint` as given, the RFC wants the absolute grant URL the client used (782) |
 | grant states (1.5: pending, processing, approved, finalized) | **partial** | `Pending`, `Approved`, `Denied` (279-283) | no `processing`, no `finalized`; a finished transaction is deleted |

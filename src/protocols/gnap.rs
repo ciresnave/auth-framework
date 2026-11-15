@@ -16,6 +16,11 @@
 //! - Transaction expiration and cleanup
 
 use crate::errors::{AuthError, Result};
+use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
+use crate::protocols::gnap_wire::{
+    GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests,
+    validate_access_token_requests_with_flags,
+};
 use crate::server::security::dpop::DpopManager;
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -54,8 +59,10 @@ impl Default for GnapConfig {
 pub struct GnapTransactionRequest {
     pub client: Option<GnapClientInfo>,
     pub interact: Option<GnapInteractionRequirements>,
-    /// Requested access rights (draft-ietf-gnap-core-protocol §2)
-    pub access_token: Option<Vec<GnapAccessRequest>>,
+    /// The access tokens requested (RFC 9635 section 2.1): one token request, or an array of them, in the
+    /// RFC's own shape. Build one from grant-level rights with `vec_of_rights.into()`; read the rights with
+    /// [`GnapService::requested_rights`].
+    pub access_token: Option<GnapAccessTokenRequests>,
     /// Subject information request
     pub subject: Option<GnapSubjectRequest>,
 }
@@ -72,6 +79,28 @@ pub struct GnapAccessRequest {
     /// Locations/URIs where this access applies
     #[serde(default)]
     pub locations: Vec<String>,
+}
+
+impl From<Vec<GnapAccessRequest>> for GnapAccessTokenRequests {
+    /// One token request that asks for all of `rights` (no label, no flags).
+    fn from(rights: Vec<GnapAccessRequest>) -> Self {
+        let non_empty = |v: Vec<String>| if v.is_empty() { None } else { Some(v) };
+        GnapAccessTokenRequests::One(GnapAccessTokenRequest {
+            access: rights
+                .into_iter()
+                .map(|right| {
+                    GnapAccess::Object(GnapAccessObject {
+                        access_type: right.access_type,
+                        actions: non_empty(right.actions),
+                        locations: non_empty(right.locations),
+                        ..GnapAccessObject::default()
+                    })
+                })
+                .collect(),
+            label: None,
+            flags: Vec::new(),
+        })
+    }
 }
 
 /// Subject information the client is requesting
@@ -265,7 +294,7 @@ impl GnapTransactionRequestBuilder {
             access_token: if self.access_token.is_empty() {
                 None
             } else {
-                Some(self.access_token)
+                Some(self.access_token.into())
             },
             subject: self.subject,
         }
@@ -419,6 +448,8 @@ pub struct GnapService {
     transactions: Arc<RwLock<HashMap<String, GnapTransaction>>>,
     /// Issued access tokens (keyed by token value)
     issued_tokens: Arc<RwLock<HashMap<String, GnapIssuedToken>>>,
+    /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
+    consents: Arc<dyn GnapConsentStore>,
 }
 
 /// The one message every refused `continue_transaction` call returns, so a caller cannot tell an
@@ -445,6 +476,7 @@ impl GnapService {
             policy: None,
             transactions: Arc::new(RwLock::new(HashMap::new())),
             issued_tokens: Arc::new(RwLock::new(HashMap::new())),
+            consents: Arc::new(InMemoryConsentStore::new()),
         }
     }
 
@@ -453,6 +485,38 @@ impl GnapService {
     pub fn with_access_policy(mut self, policy: Arc<dyn GnapAccessPolicy>) -> Self {
         self.policy = Some(policy);
         self
+    }
+
+    /// Keep consent records in this store instead of the default in-memory one. A record is
+    /// written for every access token issued after a resource owner approved an interactive
+    /// transaction; if the store cannot record it, no token is issued.
+    pub fn with_consent_store(mut self, store: Arc<dyn GnapConsentStore>) -> Self {
+        self.consents = store;
+        self
+    }
+
+    /// The consent records of this resource owner, oldest first, withdrawn ones included.
+    pub async fn consents_for_owner(&self, resource_owner: &str) -> Result<Vec<GnapConsent>> {
+        self.consents.list_for_owner(resource_owner).await
+    }
+
+    /// Withdraw a consent: mark the record withdrawn and revoke every access token issued under
+    /// the approval it records. Withdrawing twice is harmless.
+    pub async fn revoke_consent(&self, consent_id: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let consent = self
+            .consents
+            .revoke(consent_id, now)
+            .await?
+            .ok_or_else(|| AuthError::validation("Consent not found"))?;
+        self.issued_tokens
+            .write()
+            .await
+            .retain(|_, t| t.transaction_id != consent.transaction_id);
+        Ok(())
     }
 
     // ── Key Binding Helpers ──────────────────────────────────────────────
@@ -861,12 +925,45 @@ impl GnapService {
 
     // ── Token Issuance Helper ────────────────────────────────────────────
 
+    /// The rights a request asks for, after the checks of RFC 9635 sections 2.1.1 and 2.1.2: an empty token
+    /// request, an empty access type, or a flag this server does not support is refused (this server supports
+    /// no flag, so any is `invalid_flag`), and so is more than one access token in a request, which this
+    /// server does not issue. An access right given as a reference string (section 8.1) is carried as a right
+    /// whose type is that string; `datatypes`, `identifier` and `privileges` of an access object are not
+    /// carried by the grant-level right and are dropped before the policy sees it (G6).
+    pub fn requested_rights(requests: &GnapAccessTokenRequests) -> Result<Vec<GnapAccessRequest>> {
+        validate_access_token_requests_with_flags(requests, &[])
+            .map_err(|e| AuthError::validation(e.to_string()))?;
+        let [request] = requests.as_slice() else {
+            return Err(AuthError::validation(
+                "this server issues one access token per request",
+            ));
+        };
+        Ok(request
+            .access
+            .iter()
+            .map(|access| match access {
+                GnapAccess::Reference(reference) => GnapAccessRequest {
+                    access_type: reference.clone(),
+                    actions: Vec::new(),
+                    locations: Vec::new(),
+                },
+                GnapAccess::Object(object) => GnapAccessRequest {
+                    access_type: object.access_type.clone(),
+                    actions: object.actions.clone().unwrap_or_default(),
+                    locations: object.locations.clone().unwrap_or_default(),
+                },
+            })
+            .collect())
+    }
+
     async fn build_access_token_response(
         &self,
         access_requests: &[GnapAccessRequest],
         key_thumbprint: &Option<String>,
         key_proof: Option<&str>,
         transaction_id: &str,
+        consent_owner: Option<Option<&str>>,
     ) -> Result<serde_json::Map<String, serde_json::Value>> {
         // The policy, not the request, decides what the token carries.
         let policy = self
@@ -896,6 +993,24 @@ impl GnapService {
             key_proof: key_proof.map(str::to_string),
             transaction_id: transaction_id.to_string(),
         };
+
+        // An approved interactive transaction leaves a consent record, written before the token
+        // exists: a token whose consent could not be recorded is never issued.
+        // `consent_owner` is `Some` exactly for such a transaction; its inner value is the
+        // resource owner the integrator named at approval, if any.
+        if let Some(resource_owner) = consent_owner {
+            self.consents
+                .record(GnapConsent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    transaction_id: transaction_id.to_string(),
+                    resource_owner: resource_owner.map(str::to_string),
+                    client_key_thumbprint: thumbprint.to_string(),
+                    access: access_requests.to_vec(),
+                    granted_at: now,
+                    revoked_at: None,
+                })
+                .await?;
+        }
 
         // Stored before the response is returned: a client that uses the token at once finds it.
         self.issued_tokens
@@ -972,6 +1087,12 @@ impl GnapService {
             ));
         }
 
+        // The access token request is checked before anything is stored or issued (RFC 9635 section 2.1)
+        let requested = match &request.access_token {
+            Some(requests) => Some(Self::requested_rights(requests)?),
+            None => None,
+        };
+
         // Validate client key if provided (draft §7.1)
         let key_thumbprint = Self::verify_client_proof(&request.client, dpop).await?;
 
@@ -1041,13 +1162,14 @@ impl GnapService {
             self.transactions.write().await.insert(transaction_id, txn);
         } else {
             // No interaction required — issue token directly if access requested
-            if let Some(ref access_requests) = request.access_token {
+            if let Some(ref access_requests) = requested {
                 let token_obj = self
                     .build_access_token_response(
                         access_requests,
                         &key_thumbprint,
                         Self::key_proof_method(&request.client),
                         "direct",
+                        None,
                     )
                     .await?;
                 response.insert(
@@ -1252,13 +1374,18 @@ impl GnapService {
 
                 // Issue access token (the policy decides what it carries)
                 let mut refused = None;
-                if let Some(ref access_requests) = txn.request.access_token {
+                let requested = match &txn.request.access_token {
+                    Some(requests) => Some(Self::requested_rights(requests)?),
+                    None => None,
+                };
+                if let Some(ref access_requests) = requested {
                     match self
                         .build_access_token_response(
                             access_requests,
                             &key_thumbprint,
                             Self::key_proof_method(&txn.request.client),
                             transaction_id,
+                            Some(txn.subject_id.as_deref()),
                         )
                         .await
                     {
@@ -1859,11 +1986,14 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
@@ -1887,11 +2017,14 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec!["list".to_string()],
-                locations: vec!["https://api.test/resources".to_string()],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec!["list".to_string()],
+                    locations: vec!["https://api.test/resources".to_string()],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -1919,11 +2052,14 @@ mod tests {
                     nonce: "client-nonce-123".to_string(),
                 }),
             }),
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "write".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "write".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -1966,11 +2102,14 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -2022,11 +2161,14 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -2056,11 +2198,14 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -2082,11 +2227,14 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -2115,11 +2263,14 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "write".to_string(),
-                actions: vec!["create".to_string()],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "write".to_string(),
+                    actions: vec!["create".to_string()],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -2166,11 +2317,14 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(ec_jwk.clone())),
             interact: None,
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -2267,11 +2421,14 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -2317,11 +2474,14 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -2355,11 +2515,14 @@ mod tests {
                     nonce: client_nonce.to_string(),
                 }),
             }),
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -2411,11 +2574,14 @@ mod tests {
                     nonce: client_nonce.to_string(),
                 }),
             }),
-            access_token: Some(vec![GnapAccessRequest {
-                access_type: "read".to_string(),
-                actions: vec![],
-                locations: vec![],
-            }]),
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -2560,10 +2726,10 @@ mod tests {
 
         assert!(req.client.is_none());
         assert!(req.interact.is_none());
-        let access = req.access_token.unwrap();
-        assert_eq!(access.len(), 1);
-        assert_eq!(access[0].access_type, "read");
-        assert_eq!(access[0].actions, vec!["list", "get"]);
+        let rights = GnapService::requested_rights(&req.access_token.unwrap()).unwrap();
+        assert_eq!(rights.len(), 1);
+        assert_eq!(rights[0].access_type, "read");
+        assert_eq!(rights[0].actions, vec!["list", "get"]);
     }
 
     #[test]
@@ -2590,6 +2756,219 @@ mod tests {
         assert!(req.interact.is_none());
         assert!(req.access_token.is_none());
         assert!(req.subject.is_none());
+    }
+
+    // ── Consent records (G6) ─────────────────────────────────────────────
+
+    use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// An in-memory store that counts `record` calls and can be told to fail them.
+    #[derive(Default)]
+    struct CountingStore {
+        inner: InMemoryConsentStore,
+        recorded: AtomicUsize,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl GnapConsentStore for CountingStore {
+        async fn record(&self, consent: GnapConsent) -> Result<()> {
+            if self.fail {
+                return Err(AuthError::validation("store down"));
+            }
+            self.recorded.fetch_add(1, Ordering::SeqCst);
+            self.inner.record(consent).await
+        }
+        async fn get(&self, id: &str) -> Result<Option<GnapConsent>> {
+            self.inner.get(id).await
+        }
+        async fn list_for_owner(&self, owner: &str) -> Result<Vec<GnapConsent>> {
+            self.inner.list_for_owner(owner).await
+        }
+        async fn revoke(&self, id: &str, at: u64) -> Result<Option<GnapConsent>> {
+            self.inner.revoke(id, at).await
+        }
+    }
+
+    /// Grants only the first right asked for.
+    struct FirstOnlyPolicy;
+
+    #[async_trait]
+    impl GnapAccessPolicy for FirstOnlyPolicy {
+        async fn grant(&self, _: &str, requested: &[GnapAccessRequest]) -> Vec<GnapAccessRequest> {
+            requested.iter().take(1).cloned().collect()
+        }
+    }
+
+    fn right(kind: &str) -> GnapAccessRequest {
+        GnapAccessRequest {
+            access_type: kind.to_string(),
+            actions: vec![],
+            locations: vec![],
+        }
+    }
+
+    /// Run an interactive transaction for `rights` to approval by `owner` and return the result
+    /// of the final continuation.
+    async fn approved_by(
+        service: &GnapService,
+        owner: Option<&str>,
+        rights: Vec<GnapAccessRequest>,
+    ) -> Result<serde_json::Value> {
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+            }),
+            access_token: Some(rights.into()),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        let (txn_id, cont) = {
+            let txns = service.transactions.read().await;
+            let t = txns.values().next().unwrap();
+            (t.id.clone(), t.continue_token.clone())
+        };
+        service.approve_transaction(&txn_id, owner).await.unwrap();
+        service
+            .continue_transaction(&txn_id, &cont, None, None)
+            .await
+    }
+
+    #[tokio::test]
+    async fn an_approved_interactive_grant_leaves_a_consent_record() {
+        let service = test_service();
+        let resp = approved_by(&service, Some("user-42"), vec![right("read")])
+            .await
+            .unwrap();
+        assert!(resp["access_token"]["value"].is_string());
+
+        let consents = service.consents_for_owner("user-42").await.unwrap();
+        assert_eq!(consents.len(), 1);
+        let c = &consents[0];
+        assert!(c.is_active());
+        assert_eq!(c.resource_owner.as_deref(), Some("user-42"));
+        assert_eq!(c.access.len(), 1);
+        assert_eq!(c.access[0].access_type, "read");
+        assert!(!c.client_key_thumbprint.is_empty());
+        assert!(
+            service
+                .consents_for_owner("someone-else")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_consent_records_what_the_policy_granted_not_what_was_asked() {
+        let service = GnapService::new(test_config()).with_access_policy(Arc::new(FirstOnlyPolicy));
+        approved_by(&service, Some("u"), vec![right("read"), right("write")])
+            .await
+            .unwrap();
+        let consents = service.consents_for_owner("u").await.unwrap();
+        assert_eq!(consents[0].access.len(), 1);
+        assert_eq!(consents[0].access[0].access_type, "read");
+    }
+
+    #[tokio::test]
+    async fn a_direct_grant_with_no_resource_owner_records_no_consent() {
+        let store = Arc::new(CountingStore::default());
+        let service = test_service().with_consent_store(store.clone());
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token: Some(vec![right("read")].into()),
+            subject: None,
+        };
+        let resp = service.handle_transaction(req).await.unwrap();
+        assert!(resp["access_token"]["value"].is_string());
+        assert_eq!(store.recorded.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn withdrawing_a_consent_revokes_the_token_it_produced() {
+        let service = test_service();
+        let resp = approved_by(&service, Some("user-42"), vec![right("read")])
+            .await
+            .unwrap();
+        let token = resp["access_token"]["value"].as_str().unwrap().to_string();
+        assert!(service.introspect_token(&token).await.unwrap().is_some());
+
+        let id = service.consents_for_owner("user-42").await.unwrap()[0]
+            .id
+            .clone();
+        service.revoke_consent(&id).await.unwrap();
+
+        assert!(service.introspect_token(&token).await.unwrap().is_none());
+        let after = service.consents_for_owner("user-42").await.unwrap();
+        assert!(!after[0].is_active());
+    }
+
+    #[tokio::test]
+    async fn a_rotated_token_is_revoked_with_its_consent() {
+        let service = test_service();
+        let resp = approved_by(&service, Some("user-42"), vec![right("read")])
+            .await
+            .unwrap();
+        let old = resp["access_token"]["value"].as_str().unwrap().to_string();
+        let rotated = service.rotate_token(&old).await.unwrap();
+        let new = rotated["value"].as_str().unwrap().to_string();
+        assert!(service.introspect_token(&new).await.unwrap().is_some());
+
+        let id = service.consents_for_owner("user-42").await.unwrap()[0]
+            .id
+            .clone();
+        service.revoke_consent(&id).await.unwrap();
+        assert!(service.introspect_token(&new).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn withdrawing_twice_is_harmless_and_an_unknown_consent_is_refused() {
+        let service = test_service();
+        approved_by(&service, Some("u"), vec![right("read")])
+            .await
+            .unwrap();
+        let id = service.consents_for_owner("u").await.unwrap()[0].id.clone();
+        service.revoke_consent(&id).await.unwrap();
+        let first = service.consents_for_owner("u").await.unwrap()[0].revoked_at;
+        service.revoke_consent(&id).await.unwrap();
+        let second = service.consents_for_owner("u").await.unwrap()[0].revoked_at;
+        assert_eq!(first, second);
+        assert!(service.revoke_consent("no-such-id").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn withdrawing_one_consent_leaves_another_owners_token_alone() {
+        let service = test_service();
+        let a = approved_by(&service, Some("alice"), vec![right("read")])
+            .await
+            .unwrap();
+        let b = approved_by(&service, Some("bob"), vec![right("read")])
+            .await
+            .unwrap();
+        let a_tok = a["access_token"]["value"].as_str().unwrap().to_string();
+        let b_tok = b["access_token"]["value"].as_str().unwrap().to_string();
+        let id = service.consents_for_owner("alice").await.unwrap()[0]
+            .id
+            .clone();
+        service.revoke_consent(&id).await.unwrap();
+        assert!(service.introspect_token(&a_tok).await.unwrap().is_none());
+        assert!(service.introspect_token(&b_tok).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn no_token_is_issued_when_its_consent_cannot_be_recorded() {
+        let store = Arc::new(CountingStore {
+            fail: true,
+            ..Default::default()
+        });
+        let service = test_service().with_consent_store(store);
+        let result = approved_by(&service, Some("user-42"), vec![right("read")]).await;
+        assert!(result.is_err());
+        assert!(service.issued_tokens.read().await.is_empty());
     }
 }
 
@@ -2711,6 +3090,101 @@ mod proof_verification_tests {
             .await
             .unwrap();
         resp["access_token"]["value"].as_str().unwrap().to_string()
+    }
+
+    /// A request in the RFC's own shape: `access_token` given as `access_token_json`.
+    fn rfc_request(
+        key: &ClientKey,
+        access_token_json: serde_json::Value,
+    ) -> GnapTransactionRequest {
+        serde_json::from_value(json!({
+            "client": {"key": {"proof": "dpop", "jwk": serde_json::to_value(&key.jwk).unwrap()}},
+            "access_token": access_token_json,
+        }))
+        .expect("the RFC shape deserializes")
+    }
+
+    async fn send(
+        svc: &GnapService,
+        dpop: &DpopManager,
+        key: &ClientKey,
+        jti: &str,
+        request: GnapTransactionRequest,
+    ) -> Result<serde_json::Value> {
+        let header = dpop_header(key, key, "POST", URI, jti);
+        svc.handle_transaction_with_proof(dpop, &proof(Some(&header), URI), request)
+            .await
+    }
+
+    #[tokio::test]
+    async fn a_request_in_the_rfc_shape_is_parsed_and_issues_a_token() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        // object form (a single token request), access as an object and as a reference string (RFC 9635 2.1, 8)
+        let one = json!({"access": ["ref-right", {"type": "photo-api", "actions": ["read"]}], "label": "t1"});
+        let resp = send(&svc, &dpop, &key, "rfc-one", rfc_request(&key, one))
+            .await
+            .unwrap();
+        let access = resp["access_token"]["access"].to_string();
+        assert!(
+            access.contains("photo-api") && access.contains("ref-right"),
+            "{access}"
+        );
+        // array form with one entry is the same request
+        let many = json!([{"access": [{"type": "photo-api"}], "label": "only"}]);
+        assert!(
+            send(&svc, &dpop, &key, "rfc-arr", rfc_request(&key, many))
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_access_token_request_the_server_cannot_honour_is_refused_before_anything_is_issued()
+    {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let cases = [
+            (
+                "two tokens",
+                json!([{"access": ["a"], "label": "x"}, {"access": ["b"], "label": "y"}]),
+                "one access token",
+            ),
+            (
+                "unsupported flag",
+                json!({"access": ["a"], "flags": ["bearer"]}),
+                "flag",
+            ),
+            ("no access", json!({"access": []}), "no access"),
+            (
+                "empty type",
+                json!({"access": [{"type": ""}]}),
+                "empty type",
+            ),
+        ];
+        for (n, (what, body, expect)) in cases.into_iter().enumerate() {
+            let err = refusal(
+                send(
+                    &svc,
+                    &dpop,
+                    &key,
+                    &format!("neg-{n}"),
+                    rfc_request(&key, body),
+                )
+                .await,
+            );
+            assert!(err.contains(expect), "{what}: {err}");
+        }
+        // control: the same request without the defect is served
+        assert!(
+            send(
+                &svc,
+                &dpop,
+                &key,
+                "neg-ok",
+                rfc_request(&key, json!({"access": ["a"]}))
+            )
+            .await
+            .is_ok()
+        );
     }
 
     async fn is_live(svc: &GnapService, token: &str) -> bool {
@@ -3174,7 +3648,7 @@ mod hardening_tests {
                     nonce: "client-nonce".to_string(),
                 }),
             }),
-            access_token: Some(rights(kinds)),
+            access_token: Some(rights(kinds).into()),
             subject: None,
         }
     }
