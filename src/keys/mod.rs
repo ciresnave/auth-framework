@@ -7,6 +7,7 @@
 //! [`Signer`] trait through which a key signs without its private bytes ever
 //! being returned. Creation (KM2) and storage (KM3) build on these.
 
+mod cert;
 mod export;
 mod generate;
 mod kind;
@@ -15,6 +16,9 @@ mod state;
 mod store;
 mod thumbprint;
 
+pub use cert::{
+    CertSubject, certificate_signing_request, jwk_with_x5c, self_signed_certificate, x5t_s256,
+};
 pub use export::{JwkSet, PublicJwk, spki_pem};
 pub use generate::{LocalKey, SigningAlg, SymmetricKey};
 pub use kind::{KeyKind, Kid, Signer};
