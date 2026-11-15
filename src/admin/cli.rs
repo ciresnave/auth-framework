@@ -1,8 +1,8 @@
 //! Command Line Interface for Auth Framework Administration
 
 use crate::admin::{
-    AppState, CliCommand, ConfigAction, HealthStatus, MaintenanceAction, SecurityAction,
-    ServerAction, ServerRunState, UserAction,
+    AppState, CliCommand, ConfigAction, HealthStatus, KeyAction, KeyAlgArg, KeyKindArg,
+    MaintenanceAction, SecurityAction, ServerAction, ServerRunState, UserAction,
 };
 use crate::errors::{AuthError, Result};
 #[cfg(feature = "cli")]
@@ -29,8 +29,184 @@ pub async fn run_cli(state: AppState, command: CliCommand) -> Result<()> {
         CliCommand::Status { detailed, format } => handle_status(state, detailed, &format).await?,
         CliCommand::Security { action } => handle_security_action(state, action).await?,
         CliCommand::Maintenance { action } => handle_maintenance_action(state, action).await?,
+        CliCommand::Keys { action } => handle_key_action(action).await?,
     }
     Ok(())
+}
+
+#[cfg(feature = "cli")]
+async fn handle_key_action(action: KeyAction) -> Result<()> {
+    let encryption = crate::storage::encryption::StorageEncryption::from_env().map_err(|e| {
+        AuthError::Cli(format!(
+            "Cannot open the key directory: no storage encryption key is configured ({e}). \
+             Set AUTH_STORAGE_ENCRYPTION_KEY / AUTH_STORAGE_ENCRYPTION_KEYS_FILE first."
+        ))
+    })?;
+    println!("{}", key_action_output(action, encryption).await?);
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn signing_alg(arg: KeyAlgArg) -> crate::keys::SigningAlg {
+    match arg {
+        KeyAlgArg::Es256 => crate::keys::SigningAlg::Es256,
+        KeyAlgArg::Es384 => crate::keys::SigningAlg::Es384,
+        KeyAlgArg::Eddsa => crate::keys::SigningAlg::EdDsa,
+        KeyAlgArg::Rs256 => crate::keys::SigningAlg::Rs256,
+    }
+}
+
+#[cfg(feature = "cli")]
+fn alg_from_name(name: &str) -> Result<crate::keys::SigningAlg> {
+    [
+        crate::keys::SigningAlg::Es256,
+        crate::keys::SigningAlg::Es384,
+        crate::keys::SigningAlg::EdDsa,
+        crate::keys::SigningAlg::Rs256,
+    ]
+    .into_iter()
+    .find(|a| a.name() == name)
+    .ok_or_else(|| AuthError::Cli(format!("cannot rotate a key with algorithm '{name}'")))
+}
+
+/// A fresh key of `kind` (symmetric kinds ignore `alg`), as something a store can take.
+#[cfg(feature = "cli")]
+fn new_key(
+    kind: crate::keys::KeyKind,
+    alg: crate::keys::SigningAlg,
+    kid: Option<crate::keys::Kid>,
+) -> Result<crate::keys::NewKey> {
+    if kind.is_asymmetric() {
+        Ok(crate::keys::LocalKey::generate(kind, alg, kid)?.into())
+    } else {
+        let kid = match kid {
+            Some(kid) => kid,
+            None => crate::keys::Kid::new(
+                format!("{kind:?}-{}", uuid::Uuid::new_v4().simple()).to_lowercase(),
+            )?,
+        };
+        Ok(crate::keys::SymmetricKey::generate(kind, kid)?.into())
+    }
+}
+
+/// Run one `keys` action against the key directory and return what to print. Separate from
+/// `handle_key_action` so tests can pass an explicit encryption key.
+#[cfg(feature = "cli")]
+pub(crate) async fn key_action_output(
+    action: KeyAction,
+    encryption: crate::storage::encryption::StorageEncryption,
+) -> Result<String> {
+    use crate::keys::{FileKeyStore, KeyStore, Kid, NewKey, Signer, publish_jwks, revoke, rotate};
+    let open = |dir: String, create: bool| async move {
+        if !create && !std::path::Path::new(&dir).is_dir() {
+            return Err(AuthError::Cli(format!(
+                "key directory '{dir}' does not exist"
+            )));
+        }
+        FileKeyStore::open(dir, encryption).await
+    };
+    match action {
+        KeyAction::List { dir, format } => {
+            let store = open(dir, false).await?;
+            let mut keys = store.list().await?;
+            keys.sort_by(|a, b| {
+                (a.created_at, a.kid.as_str()).cmp(&(b.created_at, b.kid.as_str()))
+            });
+            if format == "json" {
+                let rows: Vec<serde_json::Value> = keys
+                    .iter()
+                    .map(|k| {
+                        serde_json::json!({
+                            "kid": k.kid.as_str(),
+                            "kind": k.kind,
+                            "alg": k.alg,
+                            "state": k.state,
+                            "created_at": k.created_at,
+                            "retiring_at": k.retiring_at,
+                        })
+                    })
+                    .collect();
+                return serde_json::to_string_pretty(&rows)
+                    .map_err(|e| AuthError::Cli(format!("cannot format the key list: {e}")));
+            }
+            let mut out = String::from("KID\tKIND\tALG\tSTATE\tCREATED\n");
+            for k in &keys {
+                out.push_str(&format!(
+                    "{}\t{:?}\t{}\t{:?}\t{}\n",
+                    k.kid, k.kind, k.alg, k.state, k.created_at
+                ));
+            }
+            Ok(out.trim_end().to_string())
+        }
+        KeyAction::Generate {
+            dir,
+            kind,
+            alg,
+            kid,
+        } => {
+            let store = open(dir, true).await?;
+            let kind = key_kind(kind);
+            let kid = kid.map(Kid::new).transpose()?;
+            match new_key(kind, signing_alg(alg), kid)? {
+                NewKey::Local(k) => {
+                    let id = k.kid().clone();
+                    store.insert(*k, crate::keys::KeyState::Active).await?;
+                    Ok(format!(
+                        "generated {id} ({kind:?}, {}) active",
+                        store.info(&id).await?.alg
+                    ))
+                }
+                NewKey::Symmetric(k) => {
+                    let id = k.kid().clone();
+                    store
+                        .insert_symmetric(k, crate::keys::KeyState::Active)
+                        .await?;
+                    Ok(format!("generated {id} ({kind:?}) active"))
+                }
+            }
+        }
+        KeyAction::Rotate { dir, kid } => {
+            let store = open(dir, false).await?;
+            let current = Kid::new(kid)?;
+            let info = store.info(&current).await?;
+            let alg = if info.kind.is_asymmetric() {
+                alg_from_name(&info.alg)?
+            } else {
+                crate::keys::SigningAlg::Es256
+            };
+            let next = new_key(info.kind, alg, None)?;
+            let new = rotate(&store, &current, next).await?;
+            Ok(format!(
+                "rotated {current} -> {new} ({:?}); {current} is retiring",
+                info.kind
+            ))
+        }
+        KeyAction::Revoke { dir, kid } => {
+            let store = open(dir, false).await?;
+            let kid = Kid::new(kid)?;
+            revoke(&store, &kid).await?;
+            Ok(format!("revoked {kid}"))
+        }
+        KeyAction::Jwks { dir } => {
+            let store = open(dir, false).await?;
+            serde_json::to_string_pretty(&publish_jwks(&store).await?.to_value())
+                .map_err(|e| AuthError::Cli(format!("cannot format the JWKS: {e}")))
+        }
+    }
+}
+
+#[cfg(feature = "cli")]
+fn key_kind(arg: KeyKindArg) -> crate::keys::KeyKind {
+    use crate::keys::KeyKind;
+    match arg {
+        KeyKindArg::JwsSigning => KeyKind::JwsSigning,
+        KeyKindArg::Mtls => KeyKind::Mtls,
+        KeyKindArg::Dpop => KeyKind::Dpop,
+        KeyKindArg::HttpSig => KeyKind::HttpSig,
+        KeyKindArg::GnapClient => KeyKind::GnapClient,
+        KeyKindArg::Hmac => KeyKind::Hmac,
+        KeyKindArg::Aead => KeyKind::Aead,
+    }
 }
 
 #[cfg(feature = "cli")]
@@ -1834,5 +2010,274 @@ mod tests {
             err.to_string().contains("could not be decrypted"),
             "the error should explain that some records failed to decrypt, got: {err}"
         );
+    }
+
+    // ---- `keys` commands -------------------------------------------------------------
+
+    struct FixedKey(u8);
+    impl crate::storage::encryption::KeyProvider for FixedKey {
+        fn load_keys(&self) -> Result<crate::storage::encryption::LoadedKeys> {
+            Ok(crate::storage::encryption::LoadedKeys {
+                current_key_id: "k".into(),
+                keys: HashMap::from([("k".to_string(), [self.0; 32])]),
+            })
+        }
+    }
+
+    fn enc(b: u8) -> crate::storage::encryption::StorageEncryption {
+        crate::storage::encryption::StorageEncryption::new(&FixedKey(b)).unwrap()
+    }
+
+    fn generate(dir: &str, kind: KeyKindArg, alg: KeyAlgArg, kid: Option<&str>) -> KeyAction {
+        KeyAction::Generate {
+            dir: dir.to_string(),
+            kind,
+            alg,
+            kid: kid.map(str::to_string),
+        }
+    }
+
+    async fn list_json(dir: &str) -> Vec<serde_json::Value> {
+        let out = key_action_output(
+            KeyAction::List {
+                dir: dir.to_string(),
+                format: "json".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        serde_json::from_str(&out).unwrap()
+    }
+
+    #[tokio::test]
+    async fn generate_then_list_shows_the_key_active_and_never_its_material() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        let out = key_action_output(
+            generate(&d, KeyKindArg::JwsSigning, KeyAlgArg::Eddsa, Some("k1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("k1") && out.contains("EdDSA"), "{out}");
+        let table = key_action_output(
+            KeyAction::List {
+                dir: d.clone(),
+                format: "table".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(table.contains("k1") && table.contains("Active"), "{table}");
+        let rows = list_json(&d).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["kid"], "k1");
+        assert_eq!(rows[0]["state"], "active");
+        assert_eq!(rows[0]["kind"], "jws_signing");
+        let text = serde_json::to_string(&rows).unwrap();
+        for private in ["\"d\"", "pkcs8", "secret"] {
+            assert!(!text.contains(private), "{private} leaked: {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_directory_holds_the_keys_across_runs_and_the_wrong_encryption_key_cannot_open_it()
+    {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        key_action_output(
+            generate(&d, KeyKindArg::Hmac, KeyAlgArg::Es256, Some("h1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let again = key_action_output(
+            KeyAction::List {
+                dir: d.clone(),
+                format: "table".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(again.contains("h1"), "{again}");
+        let wrong = key_action_output(
+            KeyAction::List {
+                dir: d,
+                format: "table".into(),
+            },
+            enc(2),
+        )
+        .await;
+        assert!(
+            wrong.is_err(),
+            "a different encryption key must not open the store"
+        );
+    }
+
+    #[tokio::test]
+    async fn rotate_makes_the_old_key_retiring_and_the_new_one_active_for_every_kind() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        for (kind, alg, kid) in [
+            (KeyKindArg::JwsSigning, KeyAlgArg::Es256, "a-es"),
+            (KeyKindArg::Mtls, KeyAlgArg::Rs256, "a-rsa"),
+            (KeyKindArg::Hmac, KeyAlgArg::Es256, "a-hmac"),
+        ] {
+            key_action_output(generate(&d, kind, alg, Some(kid)), enc(1))
+                .await
+                .unwrap();
+            let out = key_action_output(
+                KeyAction::Rotate {
+                    dir: d.clone(),
+                    kid: kid.to_string(),
+                },
+                enc(1),
+            )
+            .await
+            .unwrap();
+            assert!(out.contains(kid) && out.contains("retiring"), "{out}");
+        }
+        let rows = list_json(&d).await;
+        assert_eq!(rows.len(), 6);
+        for kid in ["a-es", "a-rsa", "a-hmac"] {
+            let old = rows.iter().find(|r| r["kid"] == kid).unwrap();
+            assert_eq!(old["state"], "retiring", "{kid}");
+        }
+        assert_eq!(
+            rows.iter().filter(|r| r["state"] == "active").count(),
+            3,
+            "one replacement per kind"
+        );
+        let rsa_new = rows
+            .iter()
+            .find(|r| r["state"] == "active" && r["kind"] == "mtls")
+            .unwrap();
+        assert_eq!(
+            rsa_new["alg"], "RS256",
+            "the replacement keeps the algorithm"
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_drops_the_key_from_the_jwks_and_cannot_be_repeated() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        for kid in ["k1", "k2"] {
+            key_action_output(
+                generate(&d, KeyKindArg::JwsSigning, KeyAlgArg::Es256, Some(kid)),
+                enc(1),
+            )
+            .await
+            .unwrap();
+        }
+        let jwks = |d: String| async move {
+            let out = key_action_output(KeyAction::Jwks { dir: d }, enc(1))
+                .await
+                .unwrap();
+            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+            v["keys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| k["kid"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        let mut before = jwks(d.clone()).await;
+        before.sort();
+        assert_eq!(before, vec!["k1", "k2"]);
+        let out = key_action_output(
+            KeyAction::Revoke {
+                dir: d.clone(),
+                kid: "k1".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("revoked k1"), "{out}");
+        assert_eq!(jwks(d.clone()).await, vec!["k2"]);
+        assert!(
+            key_action_output(
+                KeyAction::Revoke {
+                    dir: d,
+                    kid: "k1".into()
+                },
+                enc(1)
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn commands_other_than_generate_refuse_a_missing_directory_and_do_not_create_it() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("typo").to_string_lossy().to_string();
+        for action in [
+            KeyAction::List {
+                dir: d.clone(),
+                format: "table".into(),
+            },
+            KeyAction::Jwks { dir: d.clone() },
+            KeyAction::Revoke {
+                dir: d.clone(),
+                kid: "k".into(),
+            },
+            KeyAction::Rotate {
+                dir: d.clone(),
+                kid: "k".into(),
+            },
+        ] {
+            let err = key_action_output(action, enc(1))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("does not exist"), "{err}");
+        }
+        assert!(
+            !std::path::Path::new(&d).exists(),
+            "a typo must not create a directory"
+        );
+    }
+
+    #[test]
+    fn the_keys_subcommand_parses_its_arguments() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Wrapper {
+            #[command(subcommand)]
+            command: CliCommand,
+        }
+        let parsed = Wrapper::try_parse_from([
+            "x",
+            "keys",
+            "generate",
+            "--dir",
+            "d",
+            "--kind",
+            "jws-signing",
+            "--alg",
+            "eddsa",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            CliCommand::Keys {
+                action: KeyAction::Generate {
+                    kind: KeyKindArg::JwsSigning,
+                    alg: KeyAlgArg::Eddsa,
+                    ..
+                }
+            }
+        ));
+        assert!(Wrapper::try_parse_from(["x", "keys", "generate", "--dir", "d"]).is_err());
+        assert!(
+            Wrapper::try_parse_from(["x", "keys", "generate", "--dir", "d", "--kind", "nope"])
+                .is_err()
+        );
+        assert!(Wrapper::try_parse_from(["x", "keys", "revoke", "--dir", "d"]).is_err());
     }
 }
