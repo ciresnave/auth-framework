@@ -103,7 +103,7 @@ Nothing claims a method it does not verify: an unlisted or unverifiable method i
 
 ## 2. RFC 9767 (resource-server connections)
 
-**Missing entirely**: RS-facing discovery (3.1), protecting RS requests to the AS (3.2), token introspection (3.3), resource set registration (3.4), deriving a downstream token (4), token formats (2.2). `introspect_token` (1346) is an in-process lookup with a different response shape, not the RFC 9767 introspection.
+**Done** (`src/protocols/gnap_rs.rs`, `gnap_http.rs`, the axum and actix adapters; guide: `docs/GNAP_RS_API.md`): RS-facing discovery (3.1, #424), authenticating the RS by its own key through the deployer's `ResourceServerAuthenticator` (3.2), token introspection (3.3, #424, #425) and resource set registration (3.4, #472). The suite `tests/conformance/gnap/rs-vectors.json` (version 2) covers all four.  **Still open**: deriving a downstream token (4), and token formats (2.2) beyond advertising the AS's list and intersecting it on registration. The crate ships no RS key proof verifier until G2 (`httpsig`) lands; the deployer supplies one. `introspect_token` (1346) is an in-process lookup with a different response shape, not the RFC 9767 introspection.
 
 ## 3. Facts about tokens and storage
 
@@ -128,7 +128,7 @@ Each slice is one PR, with a born-red test before the code, a mutation check, an
 | G5 | continuation and tokens | polling with `wait` / `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, rotate and revoke with proof, key rotation, `Authorization: GNAP` parsing |
 | G6 | policy, consent, storage | policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style), not one hard-wired store |
 | G7 | HTTP and discovery | axum and actix routes, `OPTIONS` discovery (9.2), RS-first (9.1) |
-| G8 | RFC 9767 | RS connections, introspection, resource set registration, downstream tokens |
+| G8 | RFC 9767 | RS connections, introspection, resource set registration, downstream tokens. Done: 3.1-3.4 (#424, #425, #472). Open: downstream tokens (4), token formats (2.2) |
 | G9 | agents | agent principals and delegation by an account holder (below) |
 | G10 | conformance | RFC example vectors (including the 4.2.3 hash example), one test per 11.x item |
 
