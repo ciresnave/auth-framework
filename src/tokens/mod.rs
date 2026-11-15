@@ -824,6 +824,9 @@ impl JwtClaims {
     }
 }
 
+mod keyring;
+pub use keyring::{KeyRing, MaintenancePolicy, maintain_once};
+
 /// Central token lifecycle manager: creation, validation, refresh, and
 /// revocation.
 ///
@@ -848,6 +851,11 @@ pub struct TokenManager {
 
     /// Unix time of the rotation that made the current previous key "previous".
     previous_rotated_at: Option<i64>,
+
+    /// When set, tokens are signed and verified through this key ring (HS256 keys held by a
+    /// [`KeyStore`](crate::keys::KeyStore)) and the configured secret and previous key are not
+    /// used.
+    keyring: Option<KeyRing>,
 
     /// How long the previous key keeps verifying tokens after a rotation.
     previous_key_grace: Duration,
@@ -1451,6 +1459,7 @@ impl Clone for TokenManager {
                 decoding_key: DecodingKey::from_secret(secret),
                 previous_decoding_key,
                 previous_rotated_at: self.previous_rotated_at,
+                keyring: self.keyring.clone(),
                 previous_key_grace: self.previous_key_grace,
                 previous_key_max_token_lifetime: self.previous_key_max_token_lifetime,
                 key_material: self.key_material.clone(),
@@ -1468,6 +1477,7 @@ impl Clone for TokenManager {
                 decoding_key: DecodingKey::from_rsa_pem(public).expect("RSA public key PEM re-parse failed during Clone — this indicates memory corruption"),
                 previous_decoding_key,
                 previous_rotated_at: self.previous_rotated_at,
+                keyring: self.keyring.clone(),
                 previous_key_grace: self.previous_key_grace,
                 previous_key_max_token_lifetime: self.previous_key_max_token_lifetime,
                 key_material: self.key_material.clone(),
@@ -1566,6 +1576,7 @@ impl TokenManager {
             decoding_key: DecodingKey::from_secret(secret),
             previous_decoding_key: None,
             previous_rotated_at: None,
+            keyring: None,
             previous_key_grace: DEFAULT_PREVIOUS_KEY_WINDOW,
             previous_key_max_token_lifetime: DEFAULT_PREVIOUS_KEY_WINDOW,
             key_material: KeyMaterial::Hmac(secret.to_vec()),
@@ -1621,6 +1632,7 @@ impl TokenManager {
             decoding_key,
             previous_decoding_key: None,
             previous_rotated_at: None,
+            keyring: None,
             previous_key_grace: DEFAULT_PREVIOUS_KEY_WINDOW,
             previous_key_max_token_lifetime: DEFAULT_PREVIOUS_KEY_WINDOW,
             key_material: KeyMaterial::Rsa {
@@ -1688,6 +1700,15 @@ impl TokenManager {
         self.previous_decoding_key = None;
         self.previous_key_material = None;
         self.previous_rotated_at = None;
+    }
+
+    /// Sign and verify through `ring`: the newest active key signs and every active or retiring
+    /// key verifies, selected by the `kid` in the JWT header. A token with no `kid`, an unknown
+    /// `kid` or a key that is no longer live is refused; there is no fallback to the secret this
+    /// manager was built with.
+    pub fn with_keyring(mut self, ring: KeyRing) -> Self {
+        self.keyring = Some(ring);
+        self
     }
 
     /// Set how long the previous key keeps verifying tokens after a rotation (default 24 hours).
@@ -1858,6 +1879,15 @@ impl TokenManager {
             }
         }
 
+        if let Some(ring) = &self.keyring {
+            let (kid, secret) = ring.signing_key()?;
+            let mut header = Header::new(Algorithm::HS256);
+            header.kid = Some(kid);
+            return encode(&header, &claims, &EncodingKey::from_secret(&secret[..])).map_err(|e| {
+                TokenError::creation_failed(format!("JWT encoding failed: {e}")).into()
+            });
+        }
+
         let header = Header::new(self.algorithm);
 
         encode(&header, &claims, &self.encoding_key)
@@ -1870,6 +1900,9 @@ impl TokenManager {
     }
 
     fn validate_jwt_token_at(&self, token: &str, now: i64) -> Result<JwtClaims> {
+        if let Some(ring) = &self.keyring {
+            return self.validate_with_ring(ring, token);
+        }
         let mut validation = Validation::new(self.algorithm);
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&[&self.audience]);
@@ -1901,6 +1934,35 @@ impl TokenManager {
                     })),
                 }
             }
+        }
+    }
+
+    fn validate_with_ring(&self, ring: &KeyRing, token: &str) -> Result<JwtClaims> {
+        let invalid = |message: &str| {
+            AuthError::Token(TokenError::Invalid {
+                message: message.to_string(),
+            })
+        };
+        let header =
+            jsonwebtoken::decode_header(token).map_err(|_| invalid("Invalid token format"))?;
+        let kid = header.kid.ok_or_else(|| invalid("Token has no key id"))?;
+        let secret = ring
+            .verification_key(&kid)
+            .map_err(|_| invalid("Invalid token signature"))?;
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.set_issuer(&[&self.issuer]);
+        validation.set_audience(&[&self.audience]);
+        match decode::<JwtClaims>(token, &DecodingKey::from_secret(&secret[..]), &validation) {
+            Ok(data) => Ok(data.claims),
+            Err(e) => match e.kind() {
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                    Err(AuthError::Token(TokenError::Expired))
+                }
+                jsonwebtoken::errors::ErrorKind::InvalidSignature => {
+                    Err(invalid("Invalid token signature"))
+                }
+                _ => Err(invalid("Invalid token format")),
+            },
         }
     }
 
@@ -2272,6 +2334,7 @@ mod tests {
             decoding_key: DecodingKey::from_secret(b"placeholder-not-used-for-rsa-path"),
             previous_decoding_key: None,
             previous_rotated_at: None,
+            keyring: None,
             previous_key_grace: DEFAULT_PREVIOUS_KEY_WINDOW,
             previous_key_max_token_lifetime: DEFAULT_PREVIOUS_KEY_WINDOW,
             key_material: KeyMaterial::Rsa {

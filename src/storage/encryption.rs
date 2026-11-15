@@ -871,6 +871,7 @@ impl StorageEncryption {
     }
 }
 
+mod sealed_reindex;
 mod sealed_sessions;
 mod sealed_tokens;
 

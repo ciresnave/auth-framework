@@ -339,6 +339,11 @@ where
         Ok(())
     }
 
+    /// Rewrite an already-sealed token under the current key (reindex).
+    pub(super) async fn reseal_token(&self, token: &AuthToken, old_key: &str) -> Result<()> {
+        self.put_sealed_token(token, Some((token, old_key))).await
+    }
+
     /// Seal a legacy typed row and delete it (read-through migration, ADR-011 section 5 rule 2).
     async fn adopt_legacy_token(&self, legacy: AuthToken) -> Result<Option<AuthToken>> {
         if !live(&legacy) {

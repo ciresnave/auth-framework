@@ -174,50 +174,14 @@ async fn build_storage_backend_inner(
         StorageConfig::Postgres {
             connection_string,
             table_prefix,
-        } => {
-            use sqlx::postgres::PgPoolOptions;
-
-            // The backend's table names are fixed; a different prefix would be accepted and
-            // then ignored, so two deployments that chose different prefixes would share tables.
-            if table_prefix != "auth_" {
-                return Err(AuthError::configuration(format!(
-                    "PostgreSQL table_prefix {table_prefix:?} is not supported: the backend uses fixed                      table names, so only the default \"auth_\" is accepted"
-                )));
-            }
-
-            let pool = PgPoolOptions::new()
-                .max_connections(_pool_size.unwrap_or(10))
-                .connect(connection_string)
-                .await
-                .map_err(|e| {
-                    AuthError::configuration(format!("Failed to connect PostgreSQL storage: {e}"))
-                })?;
-
-            let storage = crate::storage::postgres::PostgresStorage::new(pool);
-            storage.migrate().await.map_err(|e| {
-                AuthError::configuration(format!("Failed to initialize PostgreSQL storage: {e}"))
-            })?;
-
-            Ok(Arc::new(storage))
-        }
+        } => connect_postgres(connection_string, table_prefix, _pool_size)
+            .await
+            .map(|storage| Arc::new(storage) as Arc<dyn AuthStorage>),
         #[cfg(feature = "sqlite-storage")]
         StorageConfig::Sqlite { connection_string } => {
-            use sqlx::sqlite::SqlitePoolOptions;
-
-            let pool = SqlitePoolOptions::new()
-                .max_connections(_pool_size.unwrap_or(10))
-                .connect(connection_string)
+            connect_sqlite(connection_string, _pool_size)
                 .await
-                .map_err(|e| {
-                    AuthError::configuration(format!("Failed to connect SQLite storage: {e}"))
-                })?;
-
-            let storage = crate::storage::sqlite::SqliteStorage::new(pool);
-            storage.migrate().await.map_err(|e| {
-                AuthError::configuration(format!("Failed to initialize SQLite storage: {e}"))
-            })?;
-
-            Ok(Arc::new(storage))
+                .map(|storage| Arc::new(storage) as Arc<dyn AuthStorage>)
         }
         StorageConfig::Custom(name) => Err(AuthError::configuration(format!(
             "Custom storage backend '{name}' requires AuthFramework::new_with_storage() or replace_storage()",
@@ -228,6 +192,99 @@ async fn build_storage_backend_inner(
         )]
         _ => Err(AuthError::configuration(
             "Requested storage backend is unavailable in this build. Enable the matching storage feature.",
+        )),
+    }
+}
+
+#[cfg(feature = "postgres-storage")]
+async fn connect_postgres(
+    connection_string: &str,
+    table_prefix: &str,
+    _pool_size: Option<u32>,
+) -> Result<crate::storage::postgres::PostgresStorage> {
+    use sqlx::postgres::PgPoolOptions;
+
+    // The backend's table names are fixed; a different prefix would be accepted and
+    // then ignored, so two deployments that chose different prefixes would share tables.
+    if table_prefix != "auth_" {
+        return Err(AuthError::configuration(format!(
+            "PostgreSQL table_prefix {table_prefix:?} is not supported: the backend uses fixed                      table names, so only the default \"auth_\" is accepted"
+        )));
+    }
+
+    let pool = PgPoolOptions::new()
+        .max_connections(_pool_size.unwrap_or(10))
+        .connect(connection_string)
+        .await
+        .map_err(|e| {
+            AuthError::configuration(format!("Failed to connect PostgreSQL storage: {e}"))
+        })?;
+
+    let storage = crate::storage::postgres::PostgresStorage::new(pool);
+    storage.migrate().await.map_err(|e| {
+        AuthError::configuration(format!("Failed to initialize PostgreSQL storage: {e}"))
+    })?;
+
+    Ok(storage)
+}
+
+#[cfg(feature = "sqlite-storage")]
+async fn connect_sqlite(
+    connection_string: &str,
+    _pool_size: Option<u32>,
+) -> Result<crate::storage::sqlite::SqliteStorage> {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(_pool_size.unwrap_or(10))
+        .connect(connection_string)
+        .await
+        .map_err(|e| AuthError::configuration(format!("Failed to connect SQLite storage: {e}")))?;
+
+    let storage = crate::storage::sqlite::SqliteStorage::new(pool);
+    storage.migrate().await.map_err(|e| {
+        AuthError::configuration(format!("Failed to initialize SQLite storage: {e}"))
+    })?;
+
+    Ok(storage)
+}
+
+/// The configured backend as a [`LegacyRows`](crate::storage::legacy_rows) source: typed-row
+/// enumeration for the `encrypt-tokens` sweep. Never wrapped in [`EncryptedStorage`].
+#[cfg(feature = "cli")]
+pub(crate) async fn build_legacy_rows_source(
+    config: &StorageConfig,
+    _pool_size: Option<u32>,
+) -> Result<Arc<dyn crate::storage::legacy_rows::LegacyRows>> {
+    match config {
+        StorageConfig::Memory => Ok(Arc::new(MemoryStorage::new())),
+        #[cfg(feature = "redis-storage")]
+        StorageConfig::Redis { url, key_prefix } => {
+            crate::storage::RedisStorage::new(url, key_prefix)
+                .map(|s| Arc::new(s) as Arc<dyn crate::storage::legacy_rows::LegacyRows>)
+                .map_err(|e| {
+                    AuthError::configuration(format!("Failed to create Redis storage: {e}"))
+                })
+        }
+        #[cfg(feature = "postgres-storage")]
+        StorageConfig::Postgres {
+            connection_string,
+            table_prefix,
+        } => connect_postgres(connection_string, table_prefix, _pool_size)
+            .await
+            .map(|s| Arc::new(s) as Arc<dyn crate::storage::legacy_rows::LegacyRows>),
+        #[cfg(feature = "sqlite-storage")]
+        StorageConfig::Sqlite { connection_string } => {
+            connect_sqlite(connection_string, _pool_size)
+                .await
+                .map(|s| Arc::new(s) as Arc<dyn crate::storage::legacy_rows::LegacyRows>)
+        }
+        #[allow(
+            unreachable_patterns,
+            reason = "the wildcard is reachable only when a storage feature is disabled"
+        )]
+        _ => Err(AuthError::configuration(
+            "this storage backend has no typed-row enumerator; run the sweep through the library",
         )),
     }
 }
