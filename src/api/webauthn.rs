@@ -181,7 +181,7 @@ pub(crate) fn attestation_supported(preference: &str) -> bool {
 }
 
 /// Request to initiate WebAuthn registration
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct WebAuthnRegistrationInitRequest {
     pub username: String,
     pub display_name: Option<String>,
@@ -191,6 +191,22 @@ pub struct WebAuthnRegistrationInitRequest {
     /// sign in to the account.
     #[serde(default)]
     pub current_password: Option<String>,
+}
+
+// Hand-written so the caller's password never reaches a log line through `{:?}`.
+impl std::fmt::Debug for WebAuthnRegistrationInitRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebAuthnRegistrationInitRequest");
+        d.field("username", &self.username);
+        d.field("display_name", &self.display_name);
+        d.field("authenticator_attachment", &self.authenticator_attachment);
+        d.field("user_verification", &self.user_verification);
+        d.field(
+            "current_password",
+            &crate::utils::redact::redacted(&self.current_password),
+        );
+        d.finish()
+    }
 }
 
 /// WebAuthn registration challenge response
@@ -1319,6 +1335,26 @@ pub async fn delete_webauthn_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_init_request_debug_never_prints_the_password() {
+        let req = WebAuthnRegistrationInitRequest {
+            username: "alice".into(),
+            display_name: None,
+            authenticator_attachment: None,
+            user_verification: None,
+            current_password: Some("hunter2-correct-horse".into()),
+        };
+        let shown = format!("{req:?}");
+        assert!(!shown.contains("hunter2-correct-horse"), "{shown}");
+        assert!(shown.contains("alice"), "{shown}");
+        // Positive control: the same request without a password prints the field as absent, not as the value.
+        let none = WebAuthnRegistrationInitRequest {
+            current_password: None,
+            ..req
+        };
+        assert_ne!(format!("{none:?}"), shown);
+    }
 
     #[test]
     fn test_webauthn_config_default() {
