@@ -315,6 +315,12 @@ pub mod integrations {
 
     #[cfg(feature = "warp-integration")]
     pub mod warp;
+
+    #[cfg(feature = "axum-integration")]
+    pub mod gnap_axum;
+
+    #[cfg(feature = "actix-integration")]
+    pub mod gnap_actix;
 }
 
 // ────────────────────────────────────────────────────────────────────────────

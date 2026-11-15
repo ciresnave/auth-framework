@@ -821,6 +821,11 @@ covered
 flags
 class_id
 cert#S256
+grant_endpoint
+instance_id
+grant_request_endpoint
+key_proofs_supported
+token_formats_supported
 
 [secret_capable]
 actor_token
@@ -1121,3 +1126,6 @@ src/protocols/gnap_wire.rs:GnapAccess:<tuple> | an access right reference string
 src/protocols/gnap_wire.rs:GnapKeyRef:<tuple> | a key reference (RFC 9635 7.1.1): an identifier of a key, not the key
 src/protocols/gnap_wire.rs:GnapErrorCode:<tuple> | the text of an extension error code (RFC 9635 3.6): a registered public label
 src/protocols/gnap_wire.rs:GnapKeyObject:proof | the proofing method name (httpsig, mtls, jwsd, jws; RFC 9635 7.3), not a proof value
+src/protocols/gnap_rs.rs:RsError:<tuple> | a fixed validation message about the request shape; never echoes a token or key
+src/protocols/gnap_rs.rs:RsTokenInfo:key | the key a token is bound to, by value (RFC 9635 7.1): a public JWK, never private key material
+src/protocols/gnap_rs.rs:RsTokenInfo:proof | the proofing method name (httpsig, mtls, jwsd, jws; RFC 9635 7.3), not a proof value
