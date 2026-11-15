@@ -6,5 +6,6 @@ ignore = [
     # Exposed only if we open a SQLite file plus a sibling -wal written by a less trusted party; our
     # storage files are our own. Only via sqlx-sqlite 0.9.0 (newest), which caps libsqlite3-sys below
     # 0.38. Upstream merged the cap bump (transact-rs/sqlx#4502, 2026-11-08), not yet released.
+    # Owner: auth-framework lane. Remove this entry when a sqlx release carrying that cap bump is in Cargo.lock.
     "RUSTSEC-2026-0459",
 ]
