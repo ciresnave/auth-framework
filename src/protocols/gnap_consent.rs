@@ -65,9 +65,17 @@ pub trait GnapConsentStore: Send + Sync {
 }
 
 /// A [`GnapConsentStore`] held in memory.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct InMemoryConsentStore {
     records: RwLock<HashMap<String, GnapConsent>>,
+}
+
+impl std::fmt::Debug for InMemoryConsentStore {
+    /// The records hold resource-owner identifiers, so they are not printed.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InMemoryConsentStore")
+            .finish_non_exhaustive()
+    }
 }
 
 impl InMemoryConsentStore {
