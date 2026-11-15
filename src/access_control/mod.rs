@@ -448,6 +448,23 @@ impl InMemoryEngine {
         false
     }
 
+    /// The earliest expiry along a grant's chain (itself and every ancestor).
+    fn chain_expiry(&self, g: &Grant) -> Option<DateTime<Utc>> {
+        let mut earliest = g.expires;
+        let mut cur = g;
+        for _ in 0..=self.grants.len() {
+            match cur.parent.as_deref().and_then(|p| self.find(p)) {
+                Some(next) => cur = next,
+                None => break,
+            }
+            earliest = match (earliest, cur.expires) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+        }
+        earliest
+    }
+
     /// Share a subset of a grant the delegator holds. Checked at issue (here)
     /// and at every use (`decide_at` requires the whole chain to be alive).
     pub fn delegate(&mut self, req: DelegationRequest) -> Result<(), DelegationError> {
@@ -462,6 +479,10 @@ impl InMemoryEngine {
         req: DelegationRequest,
         now: DateTime<Utc>,
     ) -> Result<(), DelegationError> {
+        if req.delegator == DIRECT_ACTOR {
+            // Not a principal, and a record under it would read as a direct call.
+            return Err(DelegationError::DelegatorInactive);
+        }
         let (delegator, id, from) = (req.delegator.clone(), req.id.clone(), req.from.clone());
         let r = self.try_delegate_at(req, now);
         if r.is_err() {
@@ -556,6 +577,9 @@ impl InMemoryEngine {
         object: &str,
         actions: &[&str],
     ) -> Result<Vec<String>, DelegationError> {
+        if creator == DIRECT_ACTOR {
+            return Err(DelegationError::DelegatorInactive);
+        }
         let now = Utc::now();
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
             self.record(now, creator, AuditOp::Refused, object, Vec::new());
@@ -624,6 +648,7 @@ impl InMemoryEngine {
                     reason: DenyReason::UnregisteredAction,
                 },
                 sensitive: false,
+                valid_until: None,
             };
         }
         if let Some(reg) = &self.principals
@@ -635,6 +660,7 @@ impl InMemoryEngine {
                     reason: DenyReason::PrincipalInactive,
                 },
                 sensitive: true,
+                valid_until: None,
             };
         }
         let mut sensitive = self.registry.is_sensitive(action)
@@ -648,8 +674,10 @@ impl InMemoryEngine {
                     grant_ref: "account-holder".into(),
                 },
                 sensitive,
+                valid_until: None,
             };
         }
+        let mut valid_until: Option<DateTime<Utc>> = None;
         let mut allow: Option<&Grant> = None;
         let mut deny: Option<&Grant> = None;
         for g in self
@@ -658,6 +686,12 @@ impl InMemoryEngine {
             .filter(|g| g.applies(principal, action, object, now) && self.chain_alive(g, now))
         {
             sensitive |= g.sensitive;
+            // Any grant that took part can stop applying: the answer is good
+            // only until the earliest such moment.
+            valid_until = match (valid_until, self.chain_expiry(g)) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
             match g.effect {
                 Effect::Deny => deny = deny.or(Some(g)),
                 Effect::Allow => allow = allow.or(Some(g)),
@@ -679,6 +713,7 @@ impl InMemoryEngine {
         Answer {
             decision,
             sensitive,
+            valid_until,
         }
     }
 }
@@ -696,6 +731,10 @@ pub struct Answer {
     pub decision: Decision,
     /// Sensitive answers are never cached.
     pub sensitive: bool,
+    /// The instant the answer stops being true by the passage of time alone
+    /// (the earliest expiry of any grant, or ancestor of one, that took part).
+    /// A cache must not reuse the answer at or after it. `None`: no expiry.
+    pub valid_until: Option<DateTime<Utc>>,
 }
 
 /// The source could not be reached.
@@ -748,8 +787,14 @@ pub const MAX_CACHE_TTL: Duration = Duration::seconds(60);
 
 type CacheKey = (String, String, String);
 
-/// A cached decision, when it was stored, and the source generation it was read at.
-type CacheEntry = (Decision, DateTime<Utc>, u64);
+/// A cached decision, when it was stored, the source generation it was read
+/// at, and the instant it stops being true on its own (a grant's expiry).
+struct CacheEntry {
+    decision: Decision,
+    at: DateTime<Utc>,
+    generation: u64,
+    valid_until: Option<DateTime<Utc>>,
+}
 
 /// Caches decisions from a [`Source`] for at most 60 s, never caches
 /// sensitive answers, and fails closed when the source is unreachable.
@@ -812,12 +857,13 @@ impl<S: Source> CachedAuthorizer<S> {
         // source answers leaves the stored entry stale (a miss), never fresh.
         let generation = self.source.generation();
         if freshness == Freshness::Cached
-            && let Some((d, at, g)) = self.lock().get(&key)
-            && *g == generation
-            && now >= *at
-            && now - *at < self.ttl
+            && let Some(e) = self.lock().get(&key)
+            && e.generation == generation
+            && now >= e.at
+            && now - e.at < self.ttl
+            && e.valid_until.is_none_or(|v| now < v)
         {
-            return d.clone();
+            return e.decision.clone();
         }
         match self.source.query(principal, action, object, now) {
             Ok(a) => {
@@ -825,7 +871,15 @@ impl<S: Source> CachedAuthorizer<S> {
                 if a.sensitive {
                     c.remove(&key);
                 } else {
-                    c.insert(key, (a.decision.clone(), now, generation));
+                    c.insert(
+                        key,
+                        CacheEntry {
+                            decision: a.decision.clone(),
+                            at: now,
+                            generation,
+                            valid_until: a.valid_until,
+                        },
+                    );
                 }
                 a.decision
             }

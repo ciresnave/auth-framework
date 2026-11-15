@@ -899,6 +899,30 @@ impl RedisStorage {
         }
     }
 
+    /// Every typed row under `{key_prefix}{stem}*`, decoded, found with cursor `SCAN`
+    /// (ADR-011 slice 4 sweep). `stem` is an exact legacy key stem such as `token:`.
+    #[cfg(feature = "cli")]
+    pub(crate) async fn scan_typed_rows<T: serde::de::DeserializeOwned>(
+        &self,
+        stem: &str,
+    ) -> Result<Vec<T>> {
+        let mut conn = self.get_connection().await?;
+        let keys = Self::scan_keys(&mut conn, &self.key(&format!("{stem}*")), stem).await?;
+        let mut out = Vec::new();
+        for key in keys {
+            let raw: Option<String> = redis::AsyncCommands::get(&mut conn, &key)
+                .await
+                .map_err(|e| StorageError::operation_failed(format!("Failed to read key: {e}")))?;
+            if let Some(raw) = raw {
+                out.push(
+                    serde_json::from_str(&raw)
+                        .map_err(|e| StorageError::serialization(e.to_string()))?,
+                );
+            }
+        }
+        Ok(out)
+    }
+
     /// Read `new_key`; on a miss, move a row stored under `legacy_key` (the raw
     /// credential name used before digest naming) to `new_key`, keeping its
     /// remaining lifetime, and return it.
