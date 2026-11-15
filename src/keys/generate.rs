@@ -77,7 +77,9 @@ fn rng_err() -> AuthError {
 }
 
 fn require_signing_kind(kind: KeyKind) -> Result<()> {
-    if kind.is_asymmetric() && kind.jwk_use() == Some("sig") {
+    // A TLS key signs handshakes and certificates but has no JWK `use`, so it is admitted
+    // by name; a JWE key agrees or wraps and does not sign.
+    if kind.is_asymmetric() && (kind.jwk_use() == Some("sig") || kind == KeyKind::Mtls) {
         Ok(())
     } else {
         Err(AuthError::validation(format!(
