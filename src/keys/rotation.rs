@@ -126,7 +126,10 @@ pub async fn due_for_rotation(
 }
 
 /// Withdraw `kid` at once: it becomes `Revoked`, verifies nothing and leaves the JWKS, with
-/// no overlap window. Use it for a key that is compromised or must stop working now; use
+/// no overlap window. This is true of the **store**: `sign`, `publish_jwks` and a fresh
+/// `KeyRing::load` see it immediately. A `KeyRing` that is already loaded keeps trusting the
+/// key until its next refresh (up to its staleness bound), so for a ring that validates
+/// tokens call `KeyRing::revoke`, which does this and refreshes the ring. Use it for a key that is compromised or must stop working now; use
 /// [`rotate`] for routine replacement. Allowed from `Pending`, `Active` or `Retiring`;
 /// an already revoked or destroyed key is an error, so a repeated call is not silent.
 /// A revoked key's material stays in the store (as evidence) until it is destroyed.
@@ -144,7 +147,9 @@ pub async fn revoke(store: &dyn KeyStore, kid: &Kid) -> Result<()> {
     Ok(())
 }
 
-/// Revoke a compromised `current` key and install `next` as its replacement.
+/// Revoke a compromised `current` key and install `next` as its replacement. As with
+/// [`revoke`], only the store changes: a loaded `KeyRing` must be refreshed, which
+/// `KeyRing::compromise` does for you.
 ///
 /// Unlike [`rotate`] the old key is revoked **first**, with no overlap: a compromised
 /// signing key must stop being trusted before anything else happens, even though that
