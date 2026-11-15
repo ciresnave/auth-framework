@@ -208,6 +208,10 @@ impl std::fmt::Debug for WebAuthnRegistrationInitRequest {
             "current_password",
             &crate::utils::redact::redacted(&self.current_password),
         );
+        d.field(
+            "current_mfa_code",
+            &crate::utils::redact::redacted(&self.current_mfa_code),
+        );
         d.finish()
     }
 }
@@ -1348,13 +1352,16 @@ mod tests {
             authenticator_attachment: None,
             user_verification: None,
             current_password: Some("hunter2-correct-horse".into()),
+            current_mfa_code: Some("481516".into()),
         };
         let shown = format!("{req:?}");
         assert!(!shown.contains("hunter2-correct-horse"), "{shown}");
+        assert!(!shown.contains("481516"), "{shown}");
         assert!(shown.contains("alice"), "{shown}");
         // Positive control: the same request without a password prints the field as absent, not as the value.
         let none = WebAuthnRegistrationInitRequest {
             current_password: None,
+            current_mfa_code: None,
             ..req
         };
         assert_ne!(format!("{none:?}"), shown);
