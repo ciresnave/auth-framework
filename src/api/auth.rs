@@ -365,6 +365,67 @@ async fn increment_login_failure(state: &ApiState, lockout_key: &str, window_sec
         .await;
 }
 
+/// Step-up for a sensitive change: the caller proves knowledge of their own password, through
+/// the same per-username failure counter and lockout as `/auth/login`, so a bearer token alone
+/// cannot be used to guess it. Returns the error code and message to answer with.
+pub(crate) async fn require_password_step_up(
+    state: &ApiState,
+    user_id: &str,
+    password: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    const WINDOW_SECS: u64 = 900;
+    const REQUIRED: (&str, &str) = (
+        "STEP_UP_REQUIRED",
+        "Confirm your current password to make this change",
+    );
+    // An account with no local password (it signs in through another method) cannot answer a
+    // password step-up. Say so, and do not count it as a failed attempt.
+    if let Ok(Some(bytes)) = state
+        .auth_framework
+        .storage()
+        .get_kv(&format!("user:{user_id}"))
+        .await
+        && let Ok(record) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        && record["password_hash"].as_str().is_none()
+    {
+        return Err((
+            "STEP_UP_UNAVAILABLE",
+            "This account has no local password, so passkey registration cannot confirm it yet",
+        ));
+    }
+    let Some(password) = password.filter(|p| !p.is_empty()) else {
+        return Err(REQUIRED);
+    };
+    let Ok(username) = state.auth_framework.get_username_by_id(user_id).await else {
+        return Err(REQUIRED);
+    };
+    let lockout_key = format!("login_failures:{username}");
+    if let Ok(Some(bytes)) = state.auth_framework.storage().get_kv(&lockout_key).await
+        && let Ok(text) = std::str::from_utf8(&bytes)
+        && let Ok(count) = text.parse::<u64>()
+        && count >= MAX_FAILED_ATTEMPTS
+    {
+        return Err((
+            "ACCOUNT_LOCKED",
+            "Too many failed attempts. Please try again later.",
+        ));
+    }
+    match state
+        .auth_framework
+        .verify_user_password(user_id, password)
+        .await
+    {
+        Ok(true) => {
+            let _ = state.auth_framework.storage().delete_kv(&lockout_key).await;
+            Ok(())
+        }
+        _ => {
+            increment_login_failure(state, &lockout_key, WINDOW_SECS).await;
+            Err(("STEP_UP_FAILED", "The password is not correct"))
+        }
+    }
+}
+
 /// `POST /auth/login` — authenticate a user with username/password.
 ///
 /// On success returns access + refresh tokens, user metadata, and adaptive
