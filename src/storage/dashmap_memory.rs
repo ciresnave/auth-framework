@@ -833,6 +833,10 @@ impl AuthStorage for DashMapMemoryStorage {
         true
     }
 
+    fn lists_kv_keys(&self) -> bool {
+        true
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         Ok(self
             .kv_store
