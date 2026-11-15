@@ -145,6 +145,41 @@ impl KeyRing {
         self
     }
 
+    /// Revoke `kid` in the store and refresh this ring, so the key stops verifying here at
+    /// once instead of at the next timer pass (up to the staleness bound). Use this, not the
+    /// bare [`crate::keys::revoke`], for a ring that validates tokens. If the store accepted
+    /// the revocation but the refresh fails, the error says so: the key is revoked in the
+    /// store and this ring still trusts it until a refresh succeeds.
+    pub async fn revoke(&self, store: &dyn KeyStore, kid: &Kid) -> Result<()> {
+        crate::keys::revoke(store, kid).await?;
+        self.refresh(store).await.map_err(|e| {
+            AuthError::internal(format!(
+                "{kid} is revoked in the store but the key ring could not refresh and still trusts it: {e}"
+            ))
+        })
+    }
+
+    /// Revoke the compromised `current` key, install `next` as its replacement (see
+    /// [`crate::keys::compromise`]) and refresh this ring, so the old key stops verifying
+    /// here and the new one signs at once. The ring is refreshed even when installing `next`
+    /// failed, because the old key is revoked in the store either way.
+    pub async fn compromise(
+        &self,
+        store: &dyn KeyStore,
+        current: &Kid,
+        next: impl Into<crate::keys::NewKey>,
+    ) -> Result<Kid> {
+        let outcome = crate::keys::compromise(store, current, next).await;
+        let refreshed = self.refresh(store).await;
+        match (outcome, refreshed) {
+            (Ok(kid), Ok(())) => Ok(kid),
+            (Err(e), _) => Err(e),
+            (Ok(_), Err(e)) => Err(AuthError::internal(format!(
+                "{current} is revoked and replaced in the store but the key ring could not refresh and still trusts it: {e}"
+            ))),
+        }
+    }
+
     /// Re-read the store. On an error the previous snapshot stays (and ages towards the
     /// staleness bound).
     pub async fn refresh(&self, store: &dyn KeyStore) -> Result<()> {
@@ -545,5 +580,90 @@ mod tests {
         )
         .unwrap();
         assert!(m.validate_jwt_token(&forged).is_err());
+    }
+
+    #[tokio::test]
+    async fn revoking_through_the_ring_stops_verification_with_no_separate_refresh() {
+        let s = MemoryKeyStore::new();
+        s.insert(asym("a1", crate::keys::SigningAlg::Es256), KeyState::Active)
+            .await
+            .unwrap();
+        let (m, ring) = asym_manager(&s).await;
+        let t = token(&m);
+        assert!(m.validate_jwt_token(&t).is_ok());
+        ring.revoke(&s, &Kid::new("a1").unwrap()).await.unwrap();
+        assert!(
+            m.validate_jwt_token(&t).is_err(),
+            "a revoked key verifies nothing the moment ring.revoke returns"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_bare_store_revoke_leaves_a_loaded_ring_trusting_the_key_until_a_refresh() {
+        let s = MemoryKeyStore::new();
+        s.insert(asym("a1", crate::keys::SigningAlg::Es256), KeyState::Active)
+            .await
+            .unwrap();
+        let (m, ring) = asym_manager(&s).await;
+        let t = token(&m);
+        crate::keys::revoke(&s, &Kid::new("a1").unwrap())
+            .await
+            .unwrap();
+        assert!(
+            m.validate_jwt_token(&t).is_ok(),
+            "documented: the snapshot is not refreshed by a store-level revoke"
+        );
+        ring.refresh(&s).await.unwrap();
+        assert!(m.validate_jwt_token(&t).is_err());
+    }
+
+    #[tokio::test]
+    async fn compromising_through_the_ring_distrusts_the_old_key_and_signs_with_the_new_one() {
+        let s = MemoryKeyStore::new();
+        s.insert(asym("a1", crate::keys::SigningAlg::Es256), KeyState::Active)
+            .await
+            .unwrap();
+        let (m, ring) = asym_manager(&s).await;
+        let old = token(&m);
+        let new_kid = ring
+            .compromise(
+                &s,
+                &Kid::new("a1").unwrap(),
+                asym("a2", crate::keys::SigningAlg::EdDsa),
+            )
+            .await
+            .unwrap();
+        assert_eq!(new_kid.as_str(), "a2");
+        assert!(
+            m.validate_jwt_token(&old).is_err(),
+            "old key distrusted at once"
+        );
+        let fresh = token(&m);
+        assert_eq!(
+            jsonwebtoken::decode_header(&fresh).unwrap().kid.as_deref(),
+            Some("a2")
+        );
+        assert!(m.validate_jwt_token(&fresh).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_failed_replacement_still_distrusts_the_compromised_key_in_the_ring() {
+        let s = MemoryKeyStore::new();
+        s.insert(asym("a1", crate::keys::SigningAlg::Es256), KeyState::Active)
+            .await
+            .unwrap();
+        let (m, ring) = asym_manager(&s).await;
+        let t = token(&m);
+        // The replacement reuses the old key id, so installing it fails after the revoke.
+        let dup = asym("a1", crate::keys::SigningAlg::Es256);
+        assert!(
+            ring.compromise(&s, &Kid::new("a1").unwrap(), dup)
+                .await
+                .is_err()
+        );
+        assert!(
+            m.validate_jwt_token(&t).is_err(),
+            "revoked in the store, so refused in the ring too"
+        );
     }
 }
