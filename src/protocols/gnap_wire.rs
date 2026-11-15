@@ -52,7 +52,7 @@ pub enum GnapAccess {
 }
 
 /// An access right object (RFC 9635 section 8.2). `type` is the only required field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GnapAccessObject {
     /// The API type (section 8.2, REQUIRED).
     #[serde(rename = "type")]
