@@ -20,12 +20,95 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
+/// What one live key signs and verifies with. HMAC keys sign HS256; a `JwsSigning` key signs
+/// ES256 or EdDSA (the `alg` the store reports). A key verifies only its own algorithm, so a
+/// token cannot pick a weaker one for a key id.
+#[derive(Clone)]
+pub(super) enum RingKey {
+    Hmac(Zeroizing<[u8; 32]>),
+    Asymmetric {
+        alg: jsonwebtoken::Algorithm,
+        decoding: jsonwebtoken::DecodingKey,
+        encoding: Option<Arc<jsonwebtoken::EncodingKey>>,
+    },
+}
+
+impl RingKey {
+    pub(super) fn algorithm(&self) -> jsonwebtoken::Algorithm {
+        match self {
+            Self::Hmac(_) => jsonwebtoken::Algorithm::HS256,
+            Self::Asymmetric { alg, .. } => *alg,
+        }
+    }
+    pub(super) fn encoding_key(&self) -> Result<jsonwebtoken::EncodingKey> {
+        match self {
+            Self::Hmac(secret) => Ok(jsonwebtoken::EncodingKey::from_secret(&secret[..])),
+            Self::Asymmetric {
+                encoding: Some(key),
+                ..
+            } => Ok((**key).clone()),
+            Self::Asymmetric { .. } => Err(AuthError::crypto("this ring key cannot sign")),
+        }
+    }
+    pub(super) fn decoding_key(&self) -> jsonwebtoken::DecodingKey {
+        match self {
+            Self::Hmac(secret) => jsonwebtoken::DecodingKey::from_secret(&secret[..]),
+            Self::Asymmetric { decoding, .. } => decoding.clone(),
+        }
+    }
+}
+
+/// Build the ring entry for an asymmetric key: verify from the public JWK, sign from the
+/// exported PKCS8. `None` for an algorithm the token manager does not use.
+async fn asymmetric_entry(
+    store: &dyn KeyStore,
+    info: &crate::keys::KeyInfo,
+    need_private: bool,
+) -> Result<Option<RingKey>> {
+    let alg = match info.alg.as_str() {
+        "ES256" => jsonwebtoken::Algorithm::ES256,
+        "EdDSA" => jsonwebtoken::Algorithm::EdDSA,
+        _ => return Ok(None),
+    };
+    let Some(public) = &info.public else {
+        return Ok(None);
+    };
+    let jwk = public.to_value();
+    let member = |n: &str| jwk.get(n).and_then(|v| v.as_str()).map(str::to_string);
+    let decoding = match alg {
+        jsonwebtoken::Algorithm::ES256 => match (member("x"), member("y")) {
+            (Some(x), Some(y)) => jsonwebtoken::DecodingKey::from_ec_components(&x, &y),
+            _ => return Ok(None),
+        },
+        _ => match member("x") {
+            Some(x) => jsonwebtoken::DecodingKey::from_ed_components(&x),
+            None => return Ok(None),
+        },
+    }
+    .map_err(|e| AuthError::crypto(format!("bad public key in the key store: {e}")))?;
+    // Only an Active key signs, so only it needs its private half exported.
+    let encoding = if need_private {
+        let der = store.export_private_pkcs8(&info.kid).await?;
+        Some(Arc::new(match alg {
+            jsonwebtoken::Algorithm::ES256 => jsonwebtoken::EncodingKey::from_ec_der(&der),
+            _ => jsonwebtoken::EncodingKey::from_ed_der(&der),
+        }))
+    } else {
+        None
+    };
+    Ok(Some(RingKey::Asymmetric {
+        alg,
+        decoding,
+        encoding,
+    }))
+}
+
 const DEFAULT_MAX_STALENESS: Duration = Duration::from_secs(600);
 
 #[derive(Default)]
 struct Snapshot {
-    signing: Option<(String, Zeroizing<[u8; 32]>)>,
-    verify: HashMap<String, Zeroizing<[u8; 32]>>,
+    signing: Option<(String, RingKey)>,
+    verify: HashMap<String, RingKey>,
     loaded: Option<Instant>,
 }
 
@@ -65,13 +148,22 @@ impl KeyRing {
     /// Re-read the store. On an error the previous snapshot stays (and ages towards the
     /// staleness bound).
     pub async fn refresh(&self, store: &dyn KeyStore) -> Result<()> {
-        let mut signing: Option<(u64, String, Zeroizing<[u8; 32]>)> = None;
+        let mut signing: Option<(u64, String, RingKey)> = None;
         let mut verify = HashMap::new();
         for info in store.list().await? {
-            if info.kind != KeyKind::Hmac || !info.state.can_verify() {
+            if !info.state.can_verify() {
                 continue;
             }
-            let secret = store.export_symmetric(&info.kid).await?;
+            let secret = match info.kind {
+                KeyKind::Hmac => RingKey::Hmac(store.export_symmetric(&info.kid).await?),
+                KeyKind::JwsSigning => {
+                    match asymmetric_entry(store, &info, info.state == KeyState::Active).await? {
+                        Some(entry) => entry,
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
             if info.state == KeyState::Active {
                 let newer = match &signing {
                     Some((created, kid, _)) => {
@@ -102,7 +194,7 @@ impl KeyRing {
     }
 
     /// The key to sign with now: its id and secret.
-    pub(super) fn signing_key(&self) -> Result<(String, Zeroizing<[u8; 32]>)> {
+    pub(super) fn signing_key(&self) -> Result<(String, RingKey)> {
         let snap = self
             .inner
             .read()
@@ -114,7 +206,7 @@ impl KeyRing {
 
     /// The secret that verifies tokens carrying `kid`; refused for an unknown, revoked,
     /// destroyed or pending key and for a stale snapshot.
-    pub(super) fn verification_key(&self, kid: &str) -> Result<Zeroizing<[u8; 32]>> {
+    pub(super) fn verification_key(&self, kid: &str) -> Result<RingKey> {
         let snap = self
             .inner
             .read()
@@ -383,5 +475,75 @@ mod tests {
             Some("b1")
         );
         assert!(m.validate_jwt_token(&t).is_ok());
+    }
+
+    fn asym(id: &str, alg: crate::keys::SigningAlg) -> crate::keys::LocalKey {
+        crate::keys::LocalKey::generate(KeyKind::JwsSigning, alg, Some(Kid::new(id).unwrap()))
+            .unwrap()
+    }
+
+    async fn asym_manager(s: &MemoryKeyStore) -> (TokenManager, KeyRing) {
+        manager(s).await
+    }
+
+    #[tokio::test]
+    async fn es256_and_eddsa_keys_sign_and_verify_through_the_ring() {
+        for (alg, name) in [
+            (crate::keys::SigningAlg::Es256, "ES256"),
+            (crate::keys::SigningAlg::EdDsa, "EdDSA"),
+        ] {
+            let s = MemoryKeyStore::new();
+            s.insert(asym("a1", alg), KeyState::Active).await.unwrap();
+            let (m, _) = asym_manager(&s).await;
+            let t = token(&m);
+            let h = jsonwebtoken::decode_header(&t).unwrap();
+            assert_eq!(format!("{:?}", h.alg).to_uppercase(), name.to_uppercase());
+            assert_eq!(h.kid.as_deref(), Some("a1"));
+            assert_eq!(m.validate_jwt_token(&t).unwrap().sub, "user-1");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_asymmetric_rotation_keeps_the_old_token_valid_and_revocation_ends_it() {
+        let s = MemoryKeyStore::new();
+        s.insert(asym("a1", crate::keys::SigningAlg::Es256), KeyState::Active)
+            .await
+            .unwrap();
+        let (m, ring) = asym_manager(&s).await;
+        let old = token(&m);
+        let next = asym("a2", crate::keys::SigningAlg::EdDsa);
+        rotate(&s, &Kid::new("a1").unwrap(), next).await.unwrap();
+        ring.refresh(&s).await.unwrap();
+        assert!(m.validate_jwt_token(&old).is_ok(), "retiring key verifies");
+        let new = token(&m);
+        assert_eq!(
+            jsonwebtoken::decode_header(&new).unwrap().kid.as_deref(),
+            Some("a2")
+        );
+        s.set_state(&Kid::new("a1").unwrap(), KeyState::Revoked)
+            .await
+            .unwrap();
+        ring.refresh(&s).await.unwrap();
+        assert!(m.validate_jwt_token(&old).is_err());
+        assert!(m.validate_jwt_token(&new).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_token_cannot_use_another_algorithm_for_an_asymmetric_key_id() {
+        let s = MemoryKeyStore::new();
+        s.insert(asym("a1", crate::keys::SigningAlg::Es256), KeyState::Active)
+            .await
+            .unwrap();
+        let (m, _) = asym_manager(&s).await;
+        let claims = m.validate_jwt_token(&token(&m)).unwrap();
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        header.kid = Some("a1".into());
+        let forged = jsonwebtoken::encode(
+            &header,
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(b"anything"),
+        )
+        .unwrap();
+        assert!(m.validate_jwt_token(&forged).is_err());
     }
 }
