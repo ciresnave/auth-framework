@@ -163,6 +163,7 @@ client_data_json
 client_description
 client_id
 client_ip
+client_key_thumbprint
 client_name
 client_notification_endpoint
 client_principal
@@ -590,6 +591,7 @@ requirement
 resource
 resource_id
 resource_name
+resource_owner
 resource_registration_endpoint
 resource_type
 resource_usage

@@ -125,6 +125,77 @@ pub async fn due_for_rotation(
     Ok(due)
 }
 
+/// Withdraw `kid` at once: it becomes `Revoked`, verifies nothing and leaves the JWKS, with
+/// no overlap window. This is true of the **store**: `sign`, `publish_jwks` and a fresh
+/// `KeyRing::load` see it immediately. A `KeyRing` that is already loaded keeps trusting the
+/// key until its next refresh (up to its staleness bound), so for a ring that validates
+/// tokens call `KeyRing::revoke`, which does this and refreshes the ring. Use it for a key that is compromised or must stop working now; use
+/// [`rotate`] for routine replacement. Allowed from `Pending`, `Active` or `Retiring`;
+/// an already revoked or destroyed key is an error, so a repeated call is not silent.
+/// A revoked key's material stays in the store (as evidence) until it is destroyed.
+pub async fn revoke(store: &dyn KeyStore, kid: &Kid) -> Result<()> {
+    let _one_at_a_time = store.lock_rotation().await;
+    let info = store.info(kid).await?;
+    if !info.state.can_become(KeyState::Revoked) {
+        return Err(AuthError::validation(format!(
+            "key {kid} is {:?}: it cannot be revoked",
+            info.state
+        )));
+    }
+    store.set_state(kid, KeyState::Revoked).await?;
+    tracing::warn!(kid = %kid, was = ?info.state, "key revoked");
+    Ok(())
+}
+
+/// Revoke a compromised `current` key and install `next` as its replacement. As with
+/// [`revoke`], only the store changes: a loaded `KeyRing` must be refreshed, which
+/// `KeyRing::compromise` does for you.
+///
+/// Unlike [`rotate`] the old key is revoked **first**, with no overlap: a compromised
+/// signing key must stop being trusted before anything else happens, even though that
+/// leaves a short moment with no `Active` key. If installing `next` then fails, the old
+/// key stays revoked and the error says so, so the caller can retry with `insert`.
+/// `next` must be the same kind as `current`. Nothing is touched when `current` cannot
+/// be revoked or `next` is the wrong kind.
+pub async fn compromise(
+    store: &dyn KeyStore,
+    current: &Kid,
+    next: impl Into<NewKey>,
+) -> Result<Kid> {
+    let next = next.into();
+    let _one_at_a_time = store.lock_rotation().await;
+    let old = store.info(current).await?;
+    if !old.state.can_become(KeyState::Revoked) {
+        return Err(AuthError::validation(format!(
+            "key {current} is {:?}: it cannot be revoked",
+            old.state
+        )));
+    }
+    let (next_kind, next_kid) = match &next {
+        NewKey::Local(k) => (k.kind(), k.kid().clone()),
+        NewKey::Symmetric(k) => (k.kind(), k.kid().clone()),
+    };
+    if next_kind != old.kind {
+        return Err(AuthError::validation(format!(
+            "replacement is a {next_kind:?} key but {current} is {:?}",
+            old.kind
+        )));
+    }
+    store.set_state(current, KeyState::Revoked).await?;
+    tracing::warn!(kid = %current, was = ?old.state, "key revoked as compromised");
+    let installed = match next {
+        NewKey::Local(k) => store.insert(*k, KeyState::Active).await,
+        NewKey::Symmetric(k) => store.insert_symmetric(k, KeyState::Active).await,
+    };
+    installed.map_err(|e| {
+        AuthError::internal(format!(
+            "{current} is revoked but the replacement {next_kid} could not be installed: {e}"
+        ))
+    })?;
+    tracing::info!(old = %current, new = %next_kid, "compromised key replaced");
+    Ok(next_kid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +481,80 @@ mod tests {
         let new = SymmetricKey::generate(KeyKind::Hmac, Kid::new("h9").unwrap()).unwrap();
         assert!(rotate(&s, &old, new).await.is_err());
         assert_eq!(s.info(&old).await.unwrap().state, KeyState::Active);
+    }
+
+    #[tokio::test]
+    async fn revoking_an_active_key_removes_it_from_signing_and_the_jwks_at_once() {
+        let (s, kid) = seeded().await;
+        revoke(&s, &kid).await.unwrap();
+        assert_eq!(s.info(&kid).await.unwrap().state, KeyState::Revoked);
+        assert!(s.sign(&kid, b"m").await.is_err(), "revoked cannot sign");
+        assert_eq!(publish_jwks(&s).await.unwrap().keys.len(), 0);
+        assert!(
+            revoke(&s, &kid).await.is_err(),
+            "a second revoke is an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retiring_key_can_be_revoked_before_its_overlap_ends() {
+        let (s, old) = seeded().await;
+        let new = rotate(&s, &old, key(KeyKind::JwsSigning)).await.unwrap();
+        revoke(&s, &old).await.unwrap();
+        assert_eq!(s.info(&old).await.unwrap().state, KeyState::Revoked);
+        assert_eq!(s.info(&new).await.unwrap().state, KeyState::Active);
+        assert_eq!(publish_jwks(&s).await.unwrap().keys.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_destroyed_key_cannot_be_revoked_and_an_unknown_one_errors() {
+        let (s, kid) = seeded().await;
+        s.set_state(&kid, KeyState::Retiring).await.unwrap();
+        s.set_state(&kid, KeyState::Destroyed).await.unwrap();
+        assert!(revoke(&s, &kid).await.is_err());
+        assert!(revoke(&s, &Kid::new("nope").unwrap()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn compromise_revokes_the_old_key_with_no_overlap_and_activates_the_new_one() {
+        let (s, old) = seeded().await;
+        let new = compromise(&s, &old, key(KeyKind::JwsSigning))
+            .await
+            .unwrap();
+        assert_eq!(s.info(&old).await.unwrap().state, KeyState::Revoked);
+        assert_eq!(s.info(&new).await.unwrap().state, KeyState::Active);
+        assert!(s.sign(&old, b"m").await.is_err());
+        assert!(s.sign(&new, b"m").await.is_ok());
+        assert_eq!(
+            publish_jwks(&s).await.unwrap().keys.len(),
+            1,
+            "only the replacement is published, unlike a rotation"
+        );
+    }
+
+    #[tokio::test]
+    async fn compromise_with_the_wrong_kind_or_a_dead_key_touches_nothing() {
+        let (s, old) = seeded().await;
+        assert!(compromise(&s, &old, key(KeyKind::Dpop)).await.is_err());
+        assert_eq!(s.info(&old).await.unwrap().state, KeyState::Active);
+        assert_eq!(s.list().await.unwrap().len(), 1);
+        revoke(&s, &old).await.unwrap();
+        assert!(
+            compromise(&s, &old, key(KeyKind::JwsSigning))
+                .await
+                .is_err(),
+            "already revoked"
+        );
+        assert_eq!(s.list().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_replacement_leaves_the_compromised_key_revoked() {
+        let (s, old) = seeded().await;
+        let dup =
+            LocalKey::generate(KeyKind::JwsSigning, SigningAlg::Es256, Some(old.clone())).unwrap();
+        let err = compromise(&s, &old, dup).await.unwrap_err().to_string();
+        assert!(err.contains("revoked"), "{err}");
+        assert_eq!(s.info(&old).await.unwrap().state, KeyState::Revoked);
     }
 }
