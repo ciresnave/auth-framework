@@ -250,6 +250,7 @@ display
 display_name
 display_name_attribute
 dns_name
+dns_names
 docs_url
 documentation_uri
 domain
