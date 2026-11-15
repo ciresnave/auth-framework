@@ -6,14 +6,35 @@
 //! the JWKS) for the overlap window. [`retire_expired`] then destroys retiring keys
 //! whose window has passed. Every step is logged through `tracing`.
 
-use super::{KeyInfo, KeyState, KeyStore, Kid, LocalKey, Signer};
+use super::{KeyInfo, KeyState, KeyStore, Kid, LocalKey, Signer, SymmetricKey};
 use crate::errors::{AuthError, Result};
+
+/// A replacement key for [`rotate`]: an asymmetric [`LocalKey`] or a [`SymmetricKey`].
+pub enum NewKey {
+    /// An asymmetric signing, agreement or TLS key.
+    Local(Box<LocalKey>),
+    /// An HMAC or AEAD key.
+    Symmetric(SymmetricKey),
+}
+
+impl From<LocalKey> for NewKey {
+    fn from(k: LocalKey) -> Self {
+        NewKey::Local(Box::new(k))
+    }
+}
+
+impl From<SymmetricKey> for NewKey {
+    fn from(k: SymmetricKey) -> Self {
+        NewKey::Symmetric(k)
+    }
+}
 
 /// Replace `current` with `next`: `next` becomes `Active` and `current`, which must be
 /// `Active`, becomes `Retiring`. Fails without touching anything when `current` is not
 /// active. If the second step fails both keys stay `Active` (still safe to sign with),
 /// and the error says so.
-pub async fn rotate(store: &dyn KeyStore, current: &Kid, next: LocalKey) -> Result<Kid> {
+pub async fn rotate(store: &dyn KeyStore, current: &Kid, next: impl Into<NewKey>) -> Result<Kid> {
+    let next = next.into();
     // One rotation at a time per store: without this, two callers could both pass the
     // `Active` check and leave two new `Active` keys behind.
     let _one_at_a_time = store.lock_rotation().await;
@@ -24,15 +45,20 @@ pub async fn rotate(store: &dyn KeyStore, current: &Kid, next: LocalKey) -> Resu
             old.state
         )));
     }
-    if next.kind() != old.kind {
+    let (next_kind, next_kid) = match &next {
+        NewKey::Local(k) => (k.kind(), k.kid().clone()),
+        NewKey::Symmetric(k) => (k.kind(), k.kid().clone()),
+    };
+    if next_kind != old.kind {
         return Err(AuthError::validation(format!(
-            "replacement is a {:?} key but {current} is {:?}",
-            next.kind(),
+            "replacement is a {next_kind:?} key but {current} is {:?}",
             old.kind
         )));
     }
-    let next_kid = next.kid().clone();
-    store.insert(next, KeyState::Active).await?;
+    match next {
+        NewKey::Local(k) => store.insert(*k, KeyState::Active).await?,
+        NewKey::Symmetric(k) => store.insert_symmetric(k, KeyState::Active).await?,
+    }
     store
         .set_state(current, KeyState::Retiring)
         .await
@@ -203,6 +229,13 @@ mod tests {
             tokio::task::yield_now().await;
             self.0.insert(key, state).await
         }
+        async fn insert_symmetric(&self, key: SymmetricKey, state: KeyState) -> Result<()> {
+            tokio::task::yield_now().await;
+            self.0.insert_symmetric(key, state).await
+        }
+        async fn export_symmetric(&self, kid: &Kid) -> Result<zeroize::Zeroizing<[u8; 32]>> {
+            self.0.export_symmetric(kid).await
+        }
         async fn info(&self, kid: &Kid) -> Result<KeyInfo> {
             tokio::task::yield_now().await;
             self.0.info(kid).await
@@ -346,5 +379,36 @@ mod tests {
         let since = info.retiring_at.expect("retiring time persisted");
         assert!(retire_expired(&s, since + 10, 60).await.unwrap().is_empty());
         assert_eq!(retire_expired(&s, since + 60, 60).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_hmac_key_rotates_like_any_other() {
+        let s = MemoryKeyStore::new();
+        let old = SymmetricKey::generate(KeyKind::Hmac, Kid::new("h1").unwrap()).unwrap();
+        s.insert_symmetric(old, KeyState::Active).await.unwrap();
+        let new = SymmetricKey::generate(KeyKind::Hmac, Kid::new("h2").unwrap()).unwrap();
+        let next = rotate(&s, &Kid::new("h1").unwrap(), new).await.unwrap();
+        assert_eq!(
+            s.info(&Kid::new("h1").unwrap()).await.unwrap().state,
+            KeyState::Retiring
+        );
+        assert_eq!(s.info(&next).await.unwrap().state, KeyState::Active);
+        assert!(s.sign(&Kid::new("h1").unwrap(), b"m").await.is_err());
+        assert!(s.sign(&next, b"m").await.is_ok());
+        assert!(
+            publish_jwks(&s).await.unwrap().keys.is_empty(),
+            "a secret is never published"
+        );
+        let gone = retire_expired(&s, unix_now() + 10, 1).await.unwrap();
+        assert_eq!(gone, vec![Kid::new("h1").unwrap()]);
+        assert!(s.export_symmetric(&Kid::new("h1").unwrap()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_symmetric_key_cannot_replace_an_asymmetric_one() {
+        let (s, old) = seeded().await;
+        let new = SymmetricKey::generate(KeyKind::Hmac, Kid::new("h9").unwrap()).unwrap();
+        assert!(rotate(&s, &old, new).await.is_err());
+        assert_eq!(s.info(&old).await.unwrap().state, KeyState::Active);
     }
 }

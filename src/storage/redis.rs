@@ -462,6 +462,10 @@ impl AuthStorage for RedisStorage {
         Ok(())
     }
 
+    fn lists_kv_keys(&self) -> bool {
+        true
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         let mut conn = self.get_connection().await?;
         let kv_prefix = self.kv_key("");

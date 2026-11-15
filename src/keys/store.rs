@@ -7,7 +7,7 @@
 //! [`MemoryKeyStore`] and [`FileKeyStore`] (one AES-256-GCM encrypted file per key,
 //! sealed with the existing [`StorageEncryption`] / `KeyProvider` seam).
 
-use super::{JwkSet, KeyKind, KeyState, Kid, LocalKey, PublicJwk, Signer};
+use super::{JwkSet, KeyKind, KeyState, Kid, LocalKey, PublicJwk, Signer, SymmetricKey};
 use crate::errors::{AuthError, Result};
 use crate::storage::StorageEncryption;
 use async_trait::async_trait;
@@ -39,8 +39,8 @@ pub struct KeyInfo {
     pub state: KeyState,
     /// JWS algorithm name.
     pub alg: String,
-    /// Public half.
-    pub public: PublicJwk,
+    /// Public half; `None` for a symmetric (HMAC or AEAD) key, which has none.
+    pub public: Option<PublicJwk>,
     /// Unix seconds when the store first saw the key.
     pub created_at: u64,
     /// Unix seconds when it became `Retiring`, if it has.
@@ -68,6 +68,13 @@ pub trait KeyStore: Send + Sync {
     /// Add a key in `state`. Fails if the key id is already taken or `state` is
     /// `Destroyed` (a key is destroyed through [`KeyStore::set_state`], which erases it).
     async fn insert(&self, key: LocalKey, state: KeyState) -> Result<()>;
+    /// Add a symmetric (HMAC or AEAD) key in `state`. Same lifecycle as any other key; it is
+    /// never published ([`publish_jwks`] lists public halves only). Refuses a key id that
+    /// already exists and `Destroyed`.
+    async fn insert_symmetric(&self, key: SymmetricKey, state: KeyState) -> Result<()>;
+    /// The 32 secret bytes of a symmetric key, for a verifier that must recompute (an HMAC
+    /// verifier needs the secret). Refused for a destroyed key and by a non-exportable store.
+    async fn export_symmetric(&self, kid: &Kid) -> Result<Zeroizing<[u8; 32]>>;
     /// Describe one key.
     async fn info(&self, kid: &Kid) -> Result<KeyInfo>;
     /// Describe every key, ordered by key id.
@@ -89,7 +96,7 @@ pub async fn publish_jwks(store: &dyn KeyStore) -> Result<JwkSet> {
             .await?
             .into_iter()
             .filter(|i| i.state.is_published())
-            .map(|i| i.public)
+            .filter_map(|i| i.public)
             .collect(),
     })
 }
@@ -97,8 +104,9 @@ pub async fn publish_jwks(store: &dyn KeyStore) -> Result<JwkSet> {
 struct Entry {
     kind: KeyKind,
     state: KeyState,
-    public: PublicJwk,
+    public: Option<PublicJwk>,
     key: Option<LocalKey>,
+    secret: Option<SymmetricKey>,
     created_at: u64,
     retiring_at: Option<u64>,
 }
@@ -115,6 +123,7 @@ impl Entry {
         }
         if next == KeyState::Destroyed {
             self.key = None;
+            self.secret = None;
         }
         Ok(())
     }
@@ -124,7 +133,11 @@ impl Entry {
             kid: kid.clone(),
             kind: self.kind,
             state: self.state,
-            alg: self.public.alg.clone().unwrap_or_default(),
+            alg: match (&self.public, self.kind) {
+                (Some(p), _) => p.alg.clone().unwrap_or_default(),
+                (None, KeyKind::Hmac) => "HS256".to_string(),
+                (None, _) => String::new(),
+            },
             public: self.public.clone(),
             created_at: self.created_at,
             retiring_at: self.retiring_at,
@@ -151,8 +164,21 @@ fn entry_of(key: LocalKey, state: KeyState) -> Entry {
     Entry {
         kind: key.kind(),
         state,
-        public: key.public().clone(),
+        public: Some(key.public().clone()),
         key: Some(key),
+        secret: None,
+        created_at: unix_now(),
+        retiring_at: None,
+    }
+}
+
+fn entry_of_symmetric(key: SymmetricKey, state: KeyState) -> Entry {
+    Entry {
+        kind: key.kind(),
+        state,
+        public: None,
+        key: None,
+        secret: Some(key),
         created_at: unix_now(),
         retiring_at: None,
     }
@@ -166,18 +192,36 @@ fn sign_with(map: &HashMap<Kid, Entry>, kid: &Kid, message: &[u8]) -> Result<Vec
             e.state
         )));
     }
+    if let Some(secret) = &e.secret {
+        // HS256 over the message; only HMAC keys sign, an AEAD key does not.
+        if e.kind != KeyKind::Hmac {
+            return Err(AuthError::validation(format!(
+                "key {kid} is {:?}: only an HMAC key signs",
+                e.kind
+            )));
+        }
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.expose_secret());
+        return Ok(ring::hmac::sign(&key, message).as_ref().to_vec());
+    }
     e.key
         .as_ref()
         .ok_or_else(|| AuthError::crypto("active key has no private material"))?
         .sign(message)
 }
 
+fn export_symmetric_from(map: &HashMap<Kid, Entry>, kid: &Kid) -> Result<Zeroizing<[u8; 32]>> {
+    let e = map.get(kid).ok_or_else(|| not_found(kid))?;
+    let k = e.secret.as_ref().ok_or_else(|| {
+        AuthError::validation(format!("key {kid} is destroyed or not a symmetric key"))
+    })?;
+    Ok(Zeroizing::new(*k.expose_secret()))
+}
+
 fn export_from(map: &HashMap<Kid, Entry>, kid: &Kid) -> Result<Zeroizing<Vec<u8>>> {
     let e = map.get(kid).ok_or_else(|| not_found(kid))?;
-    let k = e
-        .key
-        .as_ref()
-        .ok_or_else(|| AuthError::validation(format!("key {kid} is destroyed")))?;
+    let k = e.key.as_ref().ok_or_else(|| {
+        AuthError::validation(format!("key {kid} is destroyed or has no PKCS#8 form"))
+    })?;
     Ok(Zeroizing::new(k.to_pkcs8_der().to_vec()))
 }
 
@@ -222,6 +266,23 @@ impl KeyStore for MemoryKeyStore {
         Ok(())
     }
 
+    async fn insert_symmetric(&self, key: SymmetricKey, state: KeyState) -> Result<()> {
+        refuse_destroyed(state)?;
+        let kid = key.kid().clone();
+        let mut map = self.keys.write().await;
+        if map.contains_key(&kid) {
+            return Err(AuthError::validation(format!(
+                "key id {kid} already exists"
+            )));
+        }
+        map.insert(kid, entry_of_symmetric(key, state));
+        Ok(())
+    }
+
+    async fn export_symmetric(&self, kid: &Kid) -> Result<Zeroizing<[u8; 32]>> {
+        export_symmetric_from(&*self.keys.read().await, kid)
+    }
+
     async fn info(&self, kid: &Kid) -> Result<KeyInfo> {
         let map = self.keys.read().await;
         Ok(map.get(kid).ok_or_else(|| not_found(kid))?.info(kid))
@@ -254,8 +315,11 @@ struct Record {
     v: u8,
     kind: KeyKind,
     state: KeyState,
-    public: serde_json::Value,
+    #[serde(default)]
+    public: Option<serde_json::Value>,
     pkcs8: Option<String>,
+    #[serde(default)]
+    secret: Option<String>,
     #[serde(default)]
     created_at: u64,
     #[serde(default)]
@@ -361,11 +425,18 @@ fn record_of(e: &Entry, state: KeyState, keep_private: bool, now: u64) -> Record
         v: 1,
         kind: e.kind,
         state,
-        public: e.public.to_value(),
+        public: e.public.as_ref().map(PublicJwk::to_value),
         pkcs8: if keep_private {
             e.key
                 .as_ref()
                 .map(|k| base64::engine::general_purpose::STANDARD.encode(k.to_pkcs8_der()))
+        } else {
+            None
+        },
+        secret: if keep_private {
+            e.secret
+                .as_ref()
+                .map(|k| base64::engine::general_purpose::STANDARD.encode(k.expose_secret()))
         } else {
             None
         },
@@ -376,25 +447,45 @@ fn entry_from_record(kid: &Kid, rec: Record) -> Result<Entry> {
     if rec.v != 1 {
         return Err(AuthError::validation("unsupported key record version"));
     }
-    let public = PublicJwk::from_value(&rec.public)?;
-    let key = match rec.pkcs8 {
-        Some(b64) => {
+    let bad = || AuthError::validation("key record is not valid");
+    let mut key = None;
+    let mut secret = None;
+    let mut public = None;
+    if rec.kind.is_asymmetric() {
+        let p = PublicJwk::from_value(rec.public.as_ref().ok_or_else(bad)?)?;
+        if rec.secret.is_some() {
+            return Err(bad());
+        }
+        if let Some(b64) = rec.pkcs8 {
             let der = Zeroizing::new(
                 base64::engine::general_purpose::STANDARD
                     .decode(b64)
-                    .map_err(|_| AuthError::validation("key record is not valid"))?,
+                    .map_err(|_| bad())?,
             );
             let k = LocalKey::from_pkcs8_der(&der, rec.kind, Some(kid.clone()))?;
-            if k.public().thumbprint()? != public.thumbprint()? {
+            if k.public().thumbprint()? != p.thumbprint()? {
                 return Err(AuthError::validation(
                     "key record's private and public halves do not match",
                 ));
             }
-            Some(k)
+            key = Some(k);
         }
-        None => None,
-    };
-    if key.is_none() && rec.state != KeyState::Destroyed {
+        public = Some(p);
+    } else {
+        if rec.public.is_some() || rec.pkcs8.is_some() {
+            return Err(bad());
+        }
+        if let Some(b64) = rec.secret {
+            let raw = Zeroizing::new(
+                base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|_| bad())?,
+            );
+            let bytes: [u8; 32] = raw.as_slice().try_into().map_err(|_| bad())?;
+            secret = Some(SymmetricKey::from_bytes(rec.kind, kid.clone(), bytes)?);
+        }
+    }
+    if key.is_none() && secret.is_none() && rec.state != KeyState::Destroyed {
         return Err(AuthError::validation(
             "a key record without private material must be destroyed",
         ));
@@ -404,6 +495,7 @@ fn entry_from_record(kid: &Kid, rec: Record) -> Result<Entry> {
         state: rec.state,
         public,
         key,
+        secret,
         created_at: rec.created_at,
         retiring_at: rec.retiring_at,
     })
@@ -437,6 +529,26 @@ impl KeyStore for FileKeyStore {
             .await?;
         map.insert(kid, entry);
         Ok(())
+    }
+
+    async fn insert_symmetric(&self, key: SymmetricKey, state: KeyState) -> Result<()> {
+        refuse_destroyed(state)?;
+        let kid = key.kid().clone();
+        let mut map = self.keys.write().await;
+        if map.contains_key(&kid) {
+            return Err(AuthError::validation(format!(
+                "key id {kid} already exists"
+            )));
+        }
+        let entry = entry_of_symmetric(key, state);
+        self.persist(&kid, &record_of(&entry, state, true, unix_now()))
+            .await?;
+        map.insert(kid, entry);
+        Ok(())
+    }
+
+    async fn export_symmetric(&self, kid: &Kid) -> Result<Zeroizing<[u8; 32]>> {
+        export_symmetric_from(&*self.keys.read().await, kid)
     }
 
     async fn info(&self, kid: &Kid) -> Result<KeyInfo> {
@@ -645,7 +757,7 @@ mod tests {
         let list = s.list().await.unwrap();
         assert_eq!(list.len(), 2);
         let info = s.info(&kid).await.unwrap();
-        assert_eq!((info.state, info.public), (KeyState::Active, public));
+        assert_eq!((info.state, info.public), (KeyState::Active, Some(public)));
         assert!(!s.sign(&kid, b"m").await.unwrap().is_empty());
         let destroyed = list
             .iter()
@@ -684,5 +796,96 @@ mod tests {
         let bytes_a = std::fs::read(&pa).unwrap();
         std::fs::write(&pb, bytes_a).unwrap();
         assert!(FileKeyStore::open(dir.path(), enc(3)).await.is_err());
+    }
+
+    fn hmac(id: &str) -> SymmetricKey {
+        SymmetricKey::generate(KeyKind::Hmac, Kid::new(id).unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_hmac_key_signs_hs256_only_while_active_and_is_never_published() {
+        let s = MemoryKeyStore::new();
+        let k = hmac("h1");
+        let secret = *k.expose_secret();
+        let kid = k.kid().clone();
+        s.insert_symmetric(k, KeyState::Pending).await.unwrap();
+        assert!(s.sign(&kid, b"m").await.is_err(), "pending");
+        s.set_state(&kid, KeyState::Active).await.unwrap();
+        let want = ring::hmac::sign(
+            &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &secret),
+            b"m",
+        );
+        assert_eq!(s.sign(&kid, b"m").await.unwrap(), want.as_ref());
+        assert_eq!(s.info(&kid).await.unwrap().alg, "HS256");
+        assert!(s.info(&kid).await.unwrap().public.is_none());
+        assert!(publish_jwks(&s).await.unwrap().keys.is_empty());
+        assert_eq!(*s.export_symmetric(&kid).await.unwrap(), secret);
+        s.set_state(&kid, KeyState::Revoked).await.unwrap();
+        assert!(s.sign(&kid, b"m").await.is_err(), "revoked");
+        s.set_state(&kid, KeyState::Destroyed).await.unwrap();
+        assert!(s.export_symmetric(&kid).await.is_err(), "destroyed");
+    }
+
+    #[tokio::test]
+    async fn an_aead_key_does_not_sign_and_an_asymmetric_key_has_no_symmetric_export() {
+        let s = MemoryKeyStore::new();
+        let a = SymmetricKey::generate(KeyKind::Aead, Kid::new("a1").unwrap()).unwrap();
+        s.insert_symmetric(a, KeyState::Active).await.unwrap();
+        assert!(s.sign(&Kid::new("a1").unwrap(), b"m").await.is_err());
+        let k = key(SigningAlg::Es256);
+        let kid = k.kid().clone();
+        s.insert(k, KeyState::Active).await.unwrap();
+        assert!(s.export_symmetric(&kid).await.is_err());
+        assert!(
+            s.export_private_pkcs8(&Kid::new("a1").unwrap())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_store_keeps_an_hmac_key_across_a_reopen_and_erases_it_on_destroy() {
+        let dir = tempfile::tempdir().unwrap();
+        let k = hmac("h1");
+        let secret = *k.expose_secret();
+        let kid = k.kid().clone();
+        {
+            let s = FileKeyStore::open(dir.path(), enc(7)).await.unwrap();
+            s.insert_symmetric(k, KeyState::Active).await.unwrap();
+        }
+        let s = FileKeyStore::open(dir.path(), enc(7)).await.unwrap();
+        assert_eq!(*s.export_symmetric(&kid).await.unwrap(), secret);
+        assert_eq!(s.info(&kid).await.unwrap().state, KeyState::Active);
+        // The record is sealed: the secret does not appear in the file in the clear.
+        let raw = std::fs::read(s.path(&kid)).unwrap();
+        assert!(!raw.windows(32).any(|w| w == secret));
+        s.set_state(&kid, KeyState::Revoked).await.unwrap();
+        s.set_state(&kid, KeyState::Destroyed).await.unwrap();
+        drop(s);
+        let s = FileKeyStore::open(dir.path(), enc(7)).await.unwrap();
+        assert_eq!(s.info(&kid).await.unwrap().state, KeyState::Destroyed);
+        assert!(s.export_symmetric(&kid).await.is_err());
+        assert!(
+            FileKeyStore::open(dir.path(), enc(8)).await.is_err(),
+            "wrong key"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_duplicate_hmac_id_and_a_destroyed_insert_are_refused() {
+        let s = MemoryKeyStore::new();
+        s.insert_symmetric(hmac("h1"), KeyState::Active)
+            .await
+            .unwrap();
+        assert!(
+            s.insert_symmetric(hmac("h1"), KeyState::Active)
+                .await
+                .is_err()
+        );
+        assert!(
+            s.insert_symmetric(hmac("h2"), KeyState::Destroyed)
+                .await
+                .is_err()
+        );
     }
 }
