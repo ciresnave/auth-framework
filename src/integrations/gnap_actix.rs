@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! actix-web routes for the GNAP RS-facing API (RFC 9767 section 3): the discovery document and
-//! token introspection. All routing, status codes and headers come from [`GnapRsHttp`]; this module
-//! only moves a request in and a response out.
+//! actix-web routes for the GNAP RS-facing API (RFC 9767 section 3): the discovery document,
+//! token introspection and resource set registration. All routing, status codes and headers come
+//! from [`GnapRsHttp`]; this module only moves a request in and a response out.
 //!
 //! A body over the payload limit this module configures (one byte past
 //! [`MAX_BODY_BYTES`]) is refused by actix itself with 413 before it reaches the handler.
@@ -15,16 +15,21 @@ use crate::protocols::gnap_http::{GnapHttpRequest, GnapRsHttp, MAX_BODY_BYTES};
 use actix_web::{HttpRequest, HttpResponse, http::StatusCode, web};
 use std::sync::Arc;
 
-/// Register the discovery and introspection routes at the paths `http` reports.
+/// Register the discovery and introspection routes, and the registration route when `http`
+/// offers registration, at the paths `http` reports.
 pub fn gnap_configure(cfg: &mut web::ServiceConfig, http: Arc<GnapRsHttp>) {
     let (discovery, introspection) = {
         let (d, i) = http.paths();
         (d.to_string(), i.to_string())
     };
+    let registration = http.registration_path().map(str::to_string);
     cfg.app_data(web::Data::from(http))
         .app_data(web::PayloadConfig::new(MAX_BODY_BYTES + 1))
         .service(web::resource(discovery).route(web::route().to(serve)))
         .service(web::resource(introspection).route(web::route().to(serve)));
+    if let Some(path) = registration {
+        cfg.service(web::resource(path).route(web::route().to(serve)));
+    }
 }
 
 async fn serve(req: HttpRequest, body: web::Bytes, http: web::Data<GnapRsHttp>) -> HttpResponse {
@@ -52,7 +57,7 @@ async fn serve(req: HttpRequest, body: web::Bytes, http: web::Data<GnapRsHttp>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::gnap_http::tests::handler;
+    use crate::protocols::gnap_http::tests::{handler, handler_with_registry};
     use actix_web::{App, test};
 
     const GOOD: &str = r#"{"access_token":"tok-1","resource_server":"rs-1"}"#;
@@ -113,6 +118,33 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[actix_web::test]
+    async fn registration_is_routed_only_when_offered() {
+        let http = Arc::new(handler_with_registry());
+        let app =
+            test::init_service(App::new().configure(move |cfg| gnap_configure(cfg, http.clone())))
+                .await;
+        let req = test::TestRequest::post()
+            .uri("/gnap/resource")
+            .insert_header(("X-Test-Rs", "rs-1"))
+            .set_payload(r#"{"access":["dolphin-metadata"],"resource_server":"rs-1"}"#)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+
+        let app = app!();
+        let req = test::TestRequest::post()
+            .uri("/gnap/resource")
+            .insert_header(("X-Test-Rs", "rs-1"))
+            .set_payload(GOOD)
+            .to_request();
+        assert_eq!(
+            test::call_service(&app, req).await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[actix_web::test]
