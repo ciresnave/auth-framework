@@ -590,7 +590,66 @@ async fn restore_from_file_with(
     // Decode every KV entry BEFORE anything is reset, so a bad entry
     // cannot leave the store wiped and half-restored.
     let now = Utc::now();
-    let mut kv_to_restore = Vec::with_capacity(snapshot.kv_entries.len());
+    let kv_to_restore = decode_kv_entries(&snapshot, now)?;
+
+    if dry_run {
+        let reset_report = reset_runtime_data(framework, true).await?;
+        return Ok(RestoreReport {
+            manifest: snapshot.manifest,
+            input_path,
+            reset_report,
+            dry_run,
+        });
+    }
+
+    // Keep what is there now: the storage has no transactions, so a restore that fails after the
+    // wipe is undone by putting this back, not by hoping the writes all succeed.
+    let rollback = collect_snapshot(framework).await?;
+    let rollback_kv = decode_kv_entries(&rollback, now)?;
+
+    let attempt = async {
+        let reset_report = reset_runtime_data(framework, false).await?;
+        write_snapshot(framework, &snapshot, &kv_to_restore).await?;
+        Ok::<_, AuthError>(reset_report)
+    }
+    .await;
+
+    match attempt {
+        Ok(reset_report) => Ok(RestoreReport {
+            manifest: snapshot.manifest,
+            input_path,
+            reset_report,
+            dry_run,
+        }),
+        Err(error) => {
+            let undo = async {
+                reset_runtime_data(framework, false).await?;
+                write_snapshot(framework, &rollback, &rollback_kv).await
+            }
+            .await;
+            match undo {
+                Ok(()) => Err(AuthError::internal(format!(
+                    "Restore failed and the previous state was put back: {error}"
+                ))),
+                Err(undo_error) => Err(AuthError::internal(format!(
+                    "Restore failed ({error}) and the previous state could not be put back \
+                     ({undo_error}); the store may be incomplete, restore a snapshot again"
+                ))),
+            }
+        }
+    }
+}
+
+/// A decoded snapshot KV entry: key, value, and the time to live it still has.
+type RestoredKv = (String, Vec<u8>, Option<std::time::Duration>);
+
+/// A snapshot's KV entries, decoded, with the time to live each still has (entries that expired
+/// since the snapshot was taken are left out).
+fn decode_kv_entries(
+    snapshot: &MaintenanceSnapshot,
+    now: DateTime<Utc>,
+) -> Result<Vec<RestoredKv>> {
+    let mut decoded = Vec::with_capacity(snapshot.kv_entries.len());
     for entry in &snapshot.kv_entries {
         let value = BASE64_STANDARD.decode(&entry.value_base64).map_err(|e| {
             AuthError::validation(format!(
@@ -603,51 +662,49 @@ async fn restore_from_file_with(
             RestoreTtl::Remaining(remaining) => Some(remaining),
             RestoreTtl::Expired => continue,
         };
-        kv_to_restore.push((entry.key.as_str(), value, ttl));
+        decoded.push((entry.key.clone(), value, ttl));
+    }
+    Ok(decoded)
+}
+
+/// Write a snapshot's contents into an emptied store and rebuild the authorization state.
+async fn write_snapshot(
+    framework: &AuthFramework,
+    snapshot: &MaintenanceSnapshot,
+    kv_to_restore: &[RestoredKv],
+) -> Result<()> {
+    let storage = framework.storage();
+
+    for (key, value, ttl) in kv_to_restore {
+        storage.store_kv(key, value, *ttl).await?;
     }
 
-    let reset_report = reset_runtime_data(framework, dry_run).await?;
-
-    if !dry_run {
-        let storage = framework.storage();
-
-        for (key, value, ttl) in &kv_to_restore {
-            storage.store_kv(key, value, *ttl).await?;
-        }
-
-        for token in &snapshot.tokens {
-            storage.store_token(token).await?;
-        }
-
-        for session in &snapshot.sessions {
-            storage.store_session(&session.session_id, session).await?;
-        }
-
-        framework.reset_authorization_runtime().await;
-        for role in &snapshot.roles {
-            framework.authorization().create_role(role.clone()).await?;
-        }
-        for user in &snapshot.users {
-            for role_name in &user.roles {
-                framework
-                    .authorization()
-                    .assign_role(&user.id, role_name)
-                    .await?;
-            }
-            for permission in &user.direct_permissions {
-                framework
-                    .grant_permission(&user.id, &permission.action, &permission.resource)
-                    .await?;
-            }
-        }
+    for token in &snapshot.tokens {
+        storage.store_token(token).await?;
     }
 
-    Ok(RestoreReport {
-        manifest: snapshot.manifest,
-        input_path,
-        reset_report,
-        dry_run,
-    })
+    for session in &snapshot.sessions {
+        storage.store_session(&session.session_id, session).await?;
+    }
+
+    framework.reset_authorization_runtime().await;
+    for role in &snapshot.roles {
+        framework.authorization().create_role(role.clone()).await?;
+    }
+    for user in &snapshot.users {
+        for role_name in &user.roles {
+            framework
+                .authorization()
+                .assign_role(&user.id, role_name)
+                .await?;
+        }
+        for permission in &user.direct_permissions {
+            framework
+                .grant_permission(&user.id, &permission.action, &permission.resource)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 fn build_migration_template(backend: &str, migration_name: &str, original_name: &str) -> String {
@@ -709,6 +766,68 @@ mod tests {
         framework.register_method("jwt", AuthMethodEnum::Jwt(JwtMethod::new()));
         framework.initialize().await.unwrap();
         framework
+    }
+
+    #[tokio::test]
+    async fn a_restore_that_fails_after_the_wipe_puts_the_previous_state_back() {
+        let framework = create_framework().await;
+        let alice = framework
+            .users()
+            .register("alice", "alice@example.com", "Password123!")
+            .await
+            .unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snapshot.json");
+        backup_to_file(&framework, &path, false).await.unwrap();
+
+        // The live state moves on: alice is gone, bob and a marker exist.
+        framework.users().delete_by_id(&alice).await.unwrap();
+        let bob = framework
+            .users()
+            .register("bobby", "bobby@example.com", "Password123!")
+            .await
+            .unwrap();
+        framework
+            .storage()
+            .store_kv("live:marker", b"current", None)
+            .await
+            .unwrap();
+
+        // A snapshot whose last step fails (a user holds a role it does not define), with a
+        // checksum that still matches so validation lets it through to the wipe.
+        let mut snapshot: MaintenanceSnapshot =
+            serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+        snapshot.users[0].roles.push("ghost-role".to_string());
+        snapshot.manifest.checksum_sha256 = checksum_snapshot(
+            &snapshot.users,
+            &snapshot.roles,
+            &snapshot.tokens,
+            &snapshot.sessions,
+            &snapshot.kv_entries,
+        )
+        .unwrap();
+        tokio::fs::write(&path, serde_json::to_vec(&snapshot).unwrap())
+            .await
+            .unwrap();
+
+        let error = restore_from_file(&framework, &path, false)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("previous state was put back"), "{error}");
+
+        // What was there before the restore is still there; nothing of the snapshot is.
+        assert!(framework.users().get(&bob).await.is_ok(), "bob is back");
+        assert!(framework.users().get(&alice).await.is_err(), "alice is not");
+        assert_eq!(
+            framework
+                .storage()
+                .get_kv("live:marker")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(&b"current"[..])
+        );
     }
 
     #[tokio::test]
