@@ -31,7 +31,7 @@ pub(super) enum RingKey {
         decoding: jsonwebtoken::DecodingKey,
         encoding: Option<Arc<jsonwebtoken::EncodingKey>>,
         /// The public half as published (no private member), for the JWKS.
-        jwk: crate::keys::PublicJwk,
+        jwk: Box<crate::keys::PublicJwk>,
     },
 }
 
@@ -102,7 +102,7 @@ async fn asymmetric_entry(
         alg,
         decoding,
         encoding,
-        jwk: public.clone(),
+        jwk: Box::new(public.clone()),
     }))
 }
 
@@ -241,7 +241,7 @@ impl KeyRing {
             .verify
             .values()
             .filter_map(|k| match k {
-                RingKey::Asymmetric { jwk, .. } => Some(jwk.clone()),
+                RingKey::Asymmetric { jwk, .. } => Some((**jwk).clone()),
                 RingKey::Hmac(_) => None,
             })
             .collect();
