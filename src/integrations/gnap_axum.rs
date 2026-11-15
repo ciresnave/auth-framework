@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! axum routes for the GNAP RS-facing API (RFC 9767 section 3): the discovery document and token
-//! introspection. All routing, status codes and headers come from [`GnapRsHttp`]; this module only
-//! moves a request in and a response out.
+//! axum routes for the GNAP RS-facing API (RFC 9767 section 3): the discovery document, token
+//! introspection and resource set registration. All routing, status codes and headers come from
+//! [`GnapRsHttp`]; this module only moves a request in and a response out.
 //!
 //! ```rust,ignore
 //! let http = Arc::new(GnapRsHttp::new(Arc::new(api)));
@@ -19,15 +19,18 @@ use axum::{
 };
 use std::sync::Arc;
 
-/// A router with the discovery and introspection routes registered at the paths `http` reports.
+/// A router with the discovery and introspection routes, and the registration route when `http`
+/// offers registration, registered at the paths `http` reports.
 pub fn gnap_router(http: Arc<GnapRsHttp>) -> Router {
     let (discovery, introspection) = {
         let (d, i) = http.paths();
         (d.to_string(), i.to_string())
     };
+    let registration = http.registration_path().map(str::to_string);
     let for_discovery = http.clone();
-    let for_introspection = http;
-    Router::new()
+    let for_introspection = http.clone();
+    let for_registration = http;
+    let mut router = Router::new()
         .route(
             &discovery,
             any(move |req: Request| serve(for_discovery.clone(), req)),
@@ -35,7 +38,14 @@ pub fn gnap_router(http: Arc<GnapRsHttp>) -> Router {
         .route(
             &introspection,
             any(move |req: Request| serve(for_introspection.clone(), req)),
-        )
+        );
+    if let Some(path) = registration {
+        router = router.route(
+            &path,
+            any(move |req: Request| serve(for_registration.clone(), req)),
+        );
+    }
+    router
 }
 
 async fn serve(http: Arc<GnapRsHttp>, req: Request) -> Response {
@@ -75,7 +85,7 @@ fn to_response(r: GnapHttpResponse) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::gnap_http::tests::handler;
+    use crate::protocols::gnap_http::tests::{handler, handler_with_registry};
     use axum::http::Request as HttpRequest;
     use tower::ServiceExt;
 
@@ -142,6 +152,24 @@ mod tests {
         let (status, _, body) = call("POST", "/gnap/introspect", true, &big).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn registration_is_routed_only_when_offered() {
+        let app = gnap_router(Arc::new(handler_with_registry()));
+        let req = HttpRequest::builder()
+            .method("POST")
+            .uri("/gnap/resource")
+            .header("X-Test-Rs", "rs-1")
+            .body(Body::from(
+                r#"{"access":["dolphin-metadata"],"resource_server":"rs-1"}"#,
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+        let (status, _, _) = call("POST", "/gnap/resource", true, GOOD).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
