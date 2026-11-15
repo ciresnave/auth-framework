@@ -14,7 +14,7 @@ use axum::{Json, extract::State, http::HeaderMap};
 use base32::Alphabet;
 use rand::Rng as _;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
+
 use subtle::ConstantTimeEq as _;
 
 /// Response returned after initiating MFA setup.
@@ -101,32 +101,37 @@ pub struct MfaStatusResponse {
 /// Generate a cryptographically-secure TOTP secret and ten single-use backup
 /// codes.  Returns `(plaintext_codes, sha256_hex_hashes)`.
 fn generate_backup_codes() -> (Vec<String>, Vec<String>) {
-    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Crockford-like, unambiguous
-    let mut plaintext = Vec::with_capacity(10);
-    let mut hashed = Vec::with_capacity(10);
-    let mut buf = [0u8; 8];
-    for _ in 0..10 {
-        rand::rng().fill_bytes(&mut buf);
-        let code: String = buf
-            .iter()
-            .map(|b| ALPHABET[(*b as usize) % ALPHABET.len()] as char)
-            .collect();
-        let hash = hex::encode(Sha256::digest(code.as_bytes()));
-        plaintext.push(code);
-        hashed.push(hash);
-    }
+    let plaintext = crate::auth_modular::mfa::backup_codes::generate_plaintext(10);
+    let hashed = plaintext
+        .iter()
+        .map(|code| crate::auth_modular::mfa::backup_codes::hash_code(code))
+        .collect();
     (plaintext, hashed)
 }
 
 /// Hash a backup code for constant-time comparison.
 fn hash_backup_code(code: &str) -> String {
-    hex::encode(Sha256::digest(code.as_bytes()))
+    crate::auth_modular::mfa::backup_codes::hash_code(code)
+}
+
+/// The account's active TOTP secret (the one `/mfa/setup` + `/mfa/verify` enrolled), if it has
+/// one. `None`: no authenticator app is enrolled (or the stored secret is unreadable).
+pub(crate) async fn active_totp_secret(
+    storage: &dyn crate::storage::AuthStorage,
+    user_id: &str,
+) -> Option<Vec<u8>> {
+    let data = storage
+        .get_kv(&format!("mfa_secret:{user_id}"))
+        .await
+        .ok()??;
+    let secret_b32 = String::from_utf8_lossy(&data).to_string();
+    base32::decode(Alphabet::Rfc4648 { padding: false }, &secret_b32)
 }
 
 /// Verify a 6-digit TOTP code against a raw secret with ±1 window tolerance.
 /// Always checks all three time windows regardless of whether an earlier window
 /// matched, preventing timing side-channels that reveal which window matched.
-fn verify_totp_code(provided: &str, secret_bytes: &[u8], now: u64) -> bool {
+pub(crate) fn verify_totp_code(provided: &str, secret_bytes: &[u8], now: u64) -> bool {
     use subtle::ConstantTimeEq as _;
     use totp_lite::{Sha1, totp_custom};
     const STEP: u64 = 30;

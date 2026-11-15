@@ -175,7 +175,7 @@ mod webauthn_ceremony_tests {
             "POST",
             "/webauthn/registration/init",
             Some(bearer),
-            json!({"username": username}),
+            json!({"username": username, "current_password": "SecurePass123!"}),
         )
         .await;
         assert_eq!(init["success"], true, "legitimate init must work: {init}");
@@ -266,7 +266,7 @@ mod webauthn_ceremony_tests {
             "POST",
             "/webauthn/registration/init",
             Some(&alice_token),
-            json!({"username": "bobby"}),
+            json!({"username": "bobby", "current_password": "SecurePass123!"}),
         )
         .await;
         assert_eq!(resp["success"], false, "A must not register for B: {resp}");
@@ -282,7 +282,7 @@ mod webauthn_ceremony_tests {
             "POST",
             "/webauthn/registration/init",
             Some(&alice_token),
-            json!({"username": "ghost"}),
+            json!({"username": "ghost", "current_password": "SecurePass123!"}),
         )
         .await;
         assert_eq!(resp["success"], false, "{resp}");
@@ -300,11 +300,193 @@ mod webauthn_ceremony_tests {
                 "POST",
                 "/webauthn/registration/init",
                 Some(token),
-                json!({"username": "alice"}),
+                json!({"username": "alice", "current_password": "SecurePass123!"}),
             )
             .await;
             assert_eq!(resp["success"], true, "{who} must be allowed: {resp}");
         }
+    }
+
+    async fn init_with(env: &Env, token: &str, body: serde_json::Value) -> serde_json::Value {
+        call(
+            &env.app,
+            "POST",
+            "/webauthn/registration/init",
+            Some(token),
+            body,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn registration_init_needs_the_callers_own_password() {
+        let env = env().await;
+        let (_, token) = user(&env, "stepup_user").await;
+
+        let none = init_with(&env, &token, json!({"username": "stepup_user"})).await;
+        assert_eq!(none["success"], false, "{none}");
+        assert_eq!(error_code(&none), "STEP_UP_REQUIRED");
+
+        let empty = init_with(
+            &env,
+            &token,
+            json!({"username": "stepup_user", "current_password": ""}),
+        )
+        .await;
+        assert_eq!(error_code(&empty), "STEP_UP_REQUIRED");
+
+        let wrong = init_with(
+            &env,
+            &token,
+            json!({"username": "stepup_user", "current_password": "NotThePassword1!"}),
+        )
+        .await;
+        assert_eq!(wrong["success"], false, "{wrong}");
+        assert_eq!(error_code(&wrong), "STEP_UP_FAILED");
+
+        let right = init_with(
+            &env,
+            &token,
+            json!({"username": "stepup_user", "current_password": "SecurePass123!"}),
+        )
+        .await;
+        assert_eq!(right["success"], true, "{right}");
+    }
+
+    #[tokio::test]
+    async fn an_account_without_a_local_password_is_told_what_is_missing() {
+        let env = env().await;
+        let (user_id, token) = user(&env, "nopass_user").await;
+        // Make it an account that signs in some other way: no password hash on the record.
+        let key = format!("user:{user_id}");
+        let storage = env.fw.storage();
+        let bytes = storage.get_kv(&key).await.unwrap().unwrap();
+        let mut record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        record.as_object_mut().unwrap().remove("password_hash");
+        storage
+            .store_kv(&key, record.to_string().as_bytes(), None)
+            .await
+            .unwrap();
+
+        // The password (right or not) is irrelevant, and nothing is counted against the account.
+        for _ in 0..6 {
+            let r = init_with(
+                &env,
+                &token,
+                json!({"username": "nopass_user", "current_password": "SecurePass123!"}),
+            )
+            .await;
+            assert_eq!(r["success"], false, "{r}");
+            assert_eq!(error_code(&r), "STEP_UP_UNAVAILABLE");
+        }
+    }
+
+    /// Make the account passwordless and enrol an authenticator app; returns its secret.
+    async fn passwordless_with_totp(env: &Env, user_id: &str) -> Vec<u8> {
+        let key = format!("user:{user_id}");
+        let storage = env.fw.storage();
+        let bytes = storage.get_kv(&key).await.unwrap().unwrap();
+        let mut record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        record.as_object_mut().unwrap().remove("password_hash");
+        storage
+            .store_kv(&key, record.to_string().as_bytes(), None)
+            .await
+            .unwrap();
+        let secret = b"12345678901234567890".to_vec();
+        let b32 = base32::encode(base32::Alphabet::Rfc4648 { padding: false }, &secret);
+        storage
+            .store_kv(&format!("mfa_secret:{user_id}"), b32.as_bytes(), None)
+            .await
+            .unwrap();
+        secret
+    }
+
+    fn totp_now(secret: &[u8]) -> String {
+        let now = chrono::Utc::now().timestamp() as u64;
+        totp_lite::totp_custom::<totp_lite::Sha1>(30, 6, secret, now)
+    }
+
+    #[tokio::test]
+    async fn an_account_with_an_authenticator_app_confirms_with_its_code() {
+        let env = env().await;
+        let (user_id, token) = user(&env, "totp_user").await;
+        let secret = passwordless_with_totp(&env, &user_id).await;
+
+        let none = init_with(&env, &token, json!({"username": "totp_user"})).await;
+        assert_eq!(error_code(&none), "STEP_UP_REQUIRED", "{none}");
+
+        let wrong = init_with(
+            &env,
+            &token,
+            json!({"username": "totp_user", "current_mfa_code": "000000"}),
+        )
+        .await;
+        assert_eq!(error_code(&wrong), "STEP_UP_FAILED", "{wrong}");
+
+        let code = totp_now(&secret);
+        let right = init_with(
+            &env,
+            &token,
+            json!({"username": "totp_user", "current_mfa_code": code}),
+        )
+        .await;
+        assert_eq!(right["success"], true, "{right}");
+
+        // The same code is not accepted a second time.
+        let again = init_with(
+            &env,
+            &token,
+            json!({"username": "totp_user", "current_mfa_code": code}),
+        )
+        .await;
+        assert_eq!(error_code(&again), "STEP_UP_FAILED", "{again}");
+    }
+
+    #[tokio::test]
+    async fn the_authenticator_step_up_cannot_be_used_to_guess_codes() {
+        let env = env().await;
+        let (user_id, token) = user(&env, "totp_guess").await;
+        let secret = passwordless_with_totp(&env, &user_id).await;
+        for _ in 0..5 {
+            let r = init_with(
+                &env,
+                &token,
+                json!({"username": "totp_guess", "current_mfa_code": "000000"}),
+            )
+            .await;
+            assert_eq!(error_code(&r), "STEP_UP_FAILED");
+        }
+        let r = init_with(
+            &env,
+            &token,
+            json!({"username": "totp_guess", "current_mfa_code": totp_now(&secret)}),
+        )
+        .await;
+        assert_eq!(error_code(&r), "ACCOUNT_LOCKED", "{r}");
+    }
+
+    #[tokio::test]
+    async fn the_step_up_cannot_be_used_to_guess_the_password() {
+        let env = env().await;
+        let (_, token) = user(&env, "guess_user").await;
+        for _ in 0..5 {
+            let r = init_with(
+                &env,
+                &token,
+                json!({"username": "guess_user", "current_password": "WrongGuess123!"}),
+            )
+            .await;
+            assert_eq!(error_code(&r), "STEP_UP_FAILED");
+        }
+        // Locked: even the right password is refused until the window passes.
+        let r = init_with(
+            &env,
+            &token,
+            json!({"username": "guess_user", "current_password": "SecurePass123!"}),
+        )
+        .await;
+        assert_eq!(r["success"], false, "{r}");
+        assert_eq!(error_code(&r), "ACCOUNT_LOCKED");
     }
 
     #[tokio::test]
@@ -318,7 +500,7 @@ mod webauthn_ceremony_tests {
             "POST",
             "/webauthn/registration/init",
             Some(&alice_token),
-            json!({"username": "alice"}),
+            json!({"username": "alice", "current_password": "SecurePass123!"}),
         )
         .await;
         let session_id = init["data"]["session_id"].as_str().unwrap();
@@ -369,7 +551,7 @@ mod webauthn_ceremony_tests {
             "POST",
             "/webauthn/registration/init",
             Some(&alice_token),
-            json!({"username": "alice"}),
+            json!({"username": "alice", "current_password": "SecurePass123!"}),
         )
         .await;
         let session_id = init["data"]["session_id"].as_str().unwrap();
@@ -561,7 +743,7 @@ mod webauthn_ceremony_tests {
             "POST",
             "/webauthn/registration/init",
             Some(&alice_token),
-            json!({"username": "alice"}),
+            json!({"username": "alice", "current_password": "SecurePass123!"}),
         )
         .await;
         let session_id = init["data"]["session_id"].as_str().unwrap();
@@ -620,7 +802,7 @@ mod webauthn_ceremony_tests {
             "POST",
             "/webauthn/registration/init",
             Some(&alice_token),
-            json!({"username": "alice"}),
+            json!({"username": "alice", "current_password": "SecurePass123!"}),
         )
         .await;
         let session_id = init["data"]["session_id"].as_str().unwrap();

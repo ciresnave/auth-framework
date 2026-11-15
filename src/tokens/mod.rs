@@ -767,10 +767,21 @@ pub struct TokenManager {
 
     /// Optional previous decoding key retained during key-rotation grace period.
     ///
-    /// Tokens signed with the previous key are still accepted until they expire
-    /// naturally.  Once operators are satisfied all pre-rotation tokens have
-    /// expired, they can call [`TokenManager::retire_previous_key`] to remove it.
+    /// Tokens signed with the previous key are accepted only while the previous key is
+    /// live: inside the grace window after the rotation, for a token issued before the
+    /// rotation and with a lifetime no longer than the configured maximum. After the
+    /// grace window the key is treated as retired without anyone calling
+    /// [`TokenManager::retire_previous_key`] (which still retires it at once).
     previous_decoding_key: Option<DecodingKey>,
+
+    /// Unix time of the rotation that made the current previous key "previous".
+    previous_rotated_at: Option<i64>,
+
+    /// How long the previous key keeps verifying tokens after a rotation.
+    previous_key_grace: Duration,
+
+    /// Longest token lifetime (`exp - iat`) accepted under the previous key.
+    previous_key_max_token_lifetime: Duration,
 
     /// Key material for recreating keys during clone
     key_material: KeyMaterial,
@@ -790,6 +801,10 @@ pub struct TokenManager {
     /// Default token lifetime
     default_lifetime: Duration,
 }
+
+/// Default grace window, and default longest token lifetime, for the previous key after a
+/// rotation (24 hours).
+const DEFAULT_PREVIOUS_KEY_WINDOW: Duration = Duration::from_secs(24 * 3600);
 
 /// Key material for cloning TokenManager
 #[derive(Clone)]
@@ -1357,6 +1372,9 @@ impl Clone for TokenManager {
                 encoding_key: EncodingKey::from_secret(secret),
                 decoding_key: DecodingKey::from_secret(secret),
                 previous_decoding_key,
+                previous_rotated_at: self.previous_rotated_at,
+                previous_key_grace: self.previous_key_grace,
+                previous_key_max_token_lifetime: self.previous_key_max_token_lifetime,
                 key_material: self.key_material.clone(),
                 previous_key_material,
                 algorithm: self.algorithm,
@@ -1371,6 +1389,9 @@ impl Clone for TokenManager {
                 encoding_key: EncodingKey::from_rsa_pem(private).expect("RSA private key PEM re-parse failed during Clone — this indicates memory corruption"),
                 decoding_key: DecodingKey::from_rsa_pem(public).expect("RSA public key PEM re-parse failed during Clone — this indicates memory corruption"),
                 previous_decoding_key,
+                previous_rotated_at: self.previous_rotated_at,
+                previous_key_grace: self.previous_key_grace,
+                previous_key_max_token_lifetime: self.previous_key_max_token_lifetime,
                 key_material: self.key_material.clone(),
                 previous_key_material,
                 algorithm: self.algorithm,
@@ -1435,7 +1456,9 @@ impl TokenManager {
             keys.push(Self::jwks_from_public_pem(public, self.algorithm)?);
         }
 
-        if let Some(KeyMaterial::Rsa { public, .. }) = &self.previous_key_material {
+        if self.previous_key_live(Utc::now().timestamp())
+            && let Some(KeyMaterial::Rsa { public, .. }) = &self.previous_key_material
+        {
             let previous = Self::jwks_from_public_pem(public, self.algorithm)?;
             if !keys.iter().any(|key| key.kid == previous.kid) {
                 keys.push(previous);
@@ -1451,6 +1474,9 @@ impl TokenManager {
             encoding_key: EncodingKey::from_secret(secret),
             decoding_key: DecodingKey::from_secret(secret),
             previous_decoding_key: None,
+            previous_rotated_at: None,
+            previous_key_grace: DEFAULT_PREVIOUS_KEY_WINDOW,
+            previous_key_max_token_lifetime: DEFAULT_PREVIOUS_KEY_WINDOW,
             key_material: KeyMaterial::Hmac(secret.to_vec()),
             previous_key_material: None,
             algorithm: Algorithm::HS256,
@@ -1503,6 +1529,9 @@ impl TokenManager {
             encoding_key,
             decoding_key,
             previous_decoding_key: None,
+            previous_rotated_at: None,
+            previous_key_grace: DEFAULT_PREVIOUS_KEY_WINDOW,
+            previous_key_max_token_lifetime: DEFAULT_PREVIOUS_KEY_WINDOW,
             key_material: KeyMaterial::Rsa {
                 private: private_key.to_vec(),
                 public: public_key.to_vec(),
@@ -1518,10 +1547,15 @@ impl TokenManager {
     /// Rotate HMAC key, keeping the current key as the previous decoding key
     /// to seamlessly allow verification of tokens signed with the old key.
     pub fn rotate_hmac_key(&mut self, new_secret: &[u8]) {
+        self.rotate_hmac_key_at(new_secret, Utc::now().timestamp());
+    }
+
+    fn rotate_hmac_key_at(&mut self, new_secret: &[u8], now: i64) {
         // Move current key to previous
         if let KeyMaterial::Hmac(secret) = &self.key_material {
             self.previous_decoding_key = Some(DecodingKey::from_secret(secret));
             self.previous_key_material = Some(KeyMaterial::Hmac(secret.clone()));
+            self.previous_rotated_at = Some(now);
         }
 
         // Set new key
@@ -1543,6 +1577,7 @@ impl TokenManager {
         if let KeyMaterial::Rsa { public, .. } = &self.key_material {
             self.previous_decoding_key = DecodingKey::from_rsa_pem(public).ok();
             self.previous_key_material = Some(self.key_material.clone());
+            self.previous_rotated_at = Some(Utc::now().timestamp());
         }
 
         // Set new key
@@ -1561,6 +1596,40 @@ impl TokenManager {
     pub fn retire_previous_key(&mut self) {
         self.previous_decoding_key = None;
         self.previous_key_material = None;
+        self.previous_rotated_at = None;
+    }
+
+    /// Set how long the previous key keeps verifying tokens after a rotation (default 24 hours).
+    pub fn with_previous_key_grace(mut self, grace: Duration) -> Self {
+        self.previous_key_grace = grace;
+        self
+    }
+
+    /// Set the longest token lifetime (`exp - iat`) accepted under the previous key
+    /// (default 24 hours).
+    pub fn with_previous_key_max_token_lifetime(mut self, max: Duration) -> Self {
+        self.previous_key_max_token_lifetime = max;
+        self
+    }
+
+    /// Whether the previous key may still verify tokens at unix time `now`.
+    fn previous_key_live(&self, now: i64) -> bool {
+        match self.previous_rotated_at {
+            Some(at) => now.saturating_sub(at) <= self.previous_key_grace.as_secs() as i64,
+            None => false,
+        }
+    }
+
+    /// Whether `claims` may be accepted under the previous key: it was issued before the
+    /// rotation and its lifetime is within the configured maximum.
+    fn previous_key_accepts(&self, claims: &JwtClaims, now: i64) -> bool {
+        let Some(at) = self.previous_rotated_at else {
+            return false;
+        };
+        self.previous_key_live(now)
+            && claims.iat <= at
+            && claims.exp.saturating_sub(claims.iat)
+                <= self.previous_key_max_token_lifetime.as_secs() as i64
     }
 
     /// Set the default token lifetime.
@@ -1639,6 +1708,10 @@ impl TokenManager {
 
     /// Validate and decode a JWT token.
     pub fn validate_jwt_token(&self, token: &str) -> Result<JwtClaims> {
+        self.validate_jwt_token_at(token, Utc::now().timestamp())
+    }
+
+    fn validate_jwt_token_at(&self, token: &str, now: i64) -> Result<JwtClaims> {
         let mut validation = Validation::new(self.algorithm);
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&[&self.audience]);
@@ -1652,9 +1725,11 @@ impl TokenManager {
                     }
                     jsonwebtoken::errors::ErrorKind::InvalidSignature => {
                         // If signature is invalid, try the previous key if configured
-                        if let Some(prev_key) = &self.previous_decoding_key
+                        if self.previous_key_live(now)
+                            && let Some(prev_key) = &self.previous_decoding_key
                             && let Ok(prev_token_data) =
                                 decode::<JwtClaims>(token, prev_key, &validation)
+                            && self.previous_key_accepts(&prev_token_data.claims, now)
                         {
                             return Ok(prev_token_data.claims);
                         }
@@ -2026,5 +2101,90 @@ mod tests {
         assert_eq!(jwks.len(), 1);
         assert!(!jwks[0].n.is_empty());
         assert!(!jwks[0].e.is_empty());
+    }
+
+    const OLD_SECRET: &[u8] = b"old-secret-old-secret-old-secret-0";
+    const NEW_SECRET: &[u8] = b"new-secret-new-secret-new-secret-1";
+
+    /// A manager that has rotated from `OLD_SECRET` to `NEW_SECRET`, plus a token the old key
+    /// signed with the given lifetime. Returns (manager, token, rotation unix time).
+    fn rotated_with_old_token(old_lifetime: Duration) -> (TokenManager, String, i64) {
+        let old = TokenManager::new_hmac(OLD_SECRET, "iss", "aud");
+        let token = old
+            .create_jwt_token("user-1", vec!["read".into()], Some(old_lifetime))
+            .unwrap();
+        let at = Utc::now().timestamp();
+        let mut manager = old;
+        manager.rotate_hmac_key_at(NEW_SECRET, at);
+        (manager, token, at)
+    }
+
+    #[test]
+    fn the_previous_key_verifies_old_tokens_inside_the_grace_window() {
+        let (m, token, at) = rotated_with_old_token(Duration::from_secs(3600));
+        assert!(m.validate_jwt_token_at(&token, at + 60).is_ok());
+    }
+
+    #[test]
+    fn the_previous_key_stops_verifying_after_the_grace_window_without_a_retire_call() {
+        let (m, token, at) = rotated_with_old_token(Duration::from_secs(3600));
+        let grace = m.previous_key_grace.as_secs() as i64;
+        assert!(m.validate_jwt_token_at(&token, at + grace).is_ok());
+        assert!(m.validate_jwt_token_at(&token, at + grace + 1).is_err());
+    }
+
+    #[test]
+    fn the_grace_window_is_configurable() {
+        let (m, token, at) = rotated_with_old_token(Duration::from_secs(3600));
+        let m = m.with_previous_key_grace(Duration::from_secs(10));
+        assert!(m.validate_jwt_token_at(&token, at + 10).is_ok());
+        assert!(m.validate_jwt_token_at(&token, at + 11).is_err());
+    }
+
+    #[test]
+    fn a_token_issued_after_the_rotation_is_not_accepted_under_the_previous_key() {
+        // The rotation is recorded as having happened in the past, so a token the old key signs
+        // now was "issued" after it.
+        let old = TokenManager::new_hmac(OLD_SECRET, "iss", "aud");
+        let mut m = old.clone();
+        m.rotate_hmac_key_at(NEW_SECRET, Utc::now().timestamp() - 100);
+        let late = old
+            .create_jwt_token("user-1", vec![], Some(Duration::from_secs(3600)))
+            .unwrap();
+        assert!(m.validate_jwt_token(&late).is_err());
+    }
+
+    #[test]
+    fn a_long_lived_token_is_not_accepted_under_the_previous_key() {
+        let (m, long, at) = rotated_with_old_token(Duration::from_secs(48 * 3600));
+        assert!(m.validate_jwt_token_at(&long, at + 1).is_err());
+        let m = m.with_previous_key_max_token_lifetime(Duration::from_secs(72 * 3600));
+        assert!(m.validate_jwt_token_at(&long, at + 1).is_ok());
+    }
+
+    #[test]
+    fn retire_previous_key_still_retires_at_once() {
+        let (mut m, token, at) = rotated_with_old_token(Duration::from_secs(3600));
+        m.retire_previous_key();
+        assert!(m.validate_jwt_token_at(&token, at + 1).is_err());
+    }
+
+    #[test]
+    fn tokens_from_the_current_key_are_unaffected_by_the_grace_window() {
+        let (m, _, at) = rotated_with_old_token(Duration::from_secs(3600));
+        let fresh = m
+            .create_jwt_token("user-2", vec![], Some(Duration::from_secs(3600)))
+            .unwrap();
+        let grace = m.previous_key_grace.as_secs() as i64;
+        assert!(m.validate_jwt_token_at(&fresh, at + grace + 1000).is_ok());
+    }
+
+    #[test]
+    fn a_clone_keeps_the_rotation_time_and_the_bounds() {
+        let (m, token, at) = rotated_with_old_token(Duration::from_secs(3600));
+        let m = m.with_previous_key_grace(Duration::from_secs(10));
+        let c = m.clone();
+        assert!(c.validate_jwt_token_at(&token, at + 10).is_ok());
+        assert!(c.validate_jwt_token_at(&token, at + 11).is_err());
     }
 }

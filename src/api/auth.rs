@@ -297,6 +297,124 @@ async fn increment_login_failure(state: &ApiState, lockout_key: &str, window_sec
         .await;
 }
 
+/// Step-up for a sensitive change: the caller proves knowledge of their own password, through
+/// the same per-username failure counter and lockout as `/auth/login`, so a bearer token alone
+/// cannot be used to guess it. Returns the error code and message to answer with.
+pub(crate) async fn require_password_step_up(
+    state: &ApiState,
+    user_id: &str,
+    password: Option<&str>,
+    mfa_code: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    const WINDOW_SECS: u64 = 900;
+    const MAX_FAILED_ATTEMPTS: u64 = 5; // the login limit
+    const REQUIRED: (&str, &str) = (
+        "STEP_UP_REQUIRED",
+        "Confirm your current password to make this change",
+    );
+    // An account with no local password (it signs in through another method) cannot answer a
+    // password step-up: it confirms with the current code of its enrolled authenticator app, or,
+    // with none enrolled, is told what to enrol.
+    if let Ok(Some(bytes)) = state
+        .auth_framework
+        .storage()
+        .get_kv(&format!("user:{user_id}"))
+        .await
+        && let Ok(record) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        && record["password_hash"].as_str().is_none()
+    {
+        return authenticator_step_up(state, user_id, mfa_code).await;
+    }
+    let Some(password) = password.filter(|p| !p.is_empty()) else {
+        return Err(REQUIRED);
+    };
+    let Ok(username) = state.auth_framework.get_username_by_id(user_id).await else {
+        return Err(REQUIRED);
+    };
+    let lockout_key = format!("login_failures:{username}");
+    if let Ok(Some(bytes)) = state.auth_framework.storage().get_kv(&lockout_key).await
+        && let Ok(text) = std::str::from_utf8(&bytes)
+        && let Ok(count) = text.parse::<u64>()
+        && count >= MAX_FAILED_ATTEMPTS
+    {
+        return Err((
+            "ACCOUNT_LOCKED",
+            "Too many failed attempts. Please try again later.",
+        ));
+    }
+    match state
+        .auth_framework
+        .verify_user_password(user_id, password)
+        .await
+    {
+        Ok(true) => {
+            let _ = state.auth_framework.storage().delete_kv(&lockout_key).await;
+            Ok(())
+        }
+        _ => {
+            increment_login_failure(state, &lockout_key, WINDOW_SECS).await;
+            Err(("STEP_UP_FAILED", "The password is not correct"))
+        }
+    }
+}
+
+/// Step-up for an account with no local password: the current code of its enrolled
+/// authenticator app (`current_mfa_code`), with the same failure counter and lockout as the
+/// password step-up. A code is accepted once.
+async fn authenticator_step_up(
+    state: &ApiState,
+    user_id: &str,
+    mfa_code: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    const WINDOW_SECS: u64 = 900;
+    const MAX_FAILED_ATTEMPTS: u64 = 5; // the login limit
+    let storage = state.auth_framework.storage();
+    let Some(secret) = super::mfa::active_totp_secret(storage.as_ref(), user_id).await else {
+        return Err((
+            "STEP_UP_UNAVAILABLE",
+            "This account has no local password and no authenticator app; enrol one (POST /mfa/setup) to register passkeys",
+        ));
+    };
+    let Some(code) = mfa_code.filter(|c| !c.is_empty()) else {
+        return Err((
+            "STEP_UP_REQUIRED",
+            "Send the current code of your authenticator app as current_mfa_code",
+        ));
+    };
+    let lockout_key = format!("login_failures:{user_id}");
+    if let Ok(Some(bytes)) = storage.get_kv(&lockout_key).await
+        && let Ok(text) = std::str::from_utf8(&bytes)
+        && let Ok(count) = text.parse::<u64>()
+        && count >= MAX_FAILED_ATTEMPTS
+    {
+        return Err((
+            "ACCOUNT_LOCKED",
+            "Too many failed attempts. Please try again later.",
+        ));
+    }
+    let now = chrono::Utc::now().timestamp() as u64;
+    let valid = code.len() == 6
+        && code.chars().all(|c| c.is_ascii_digit())
+        && super::mfa::verify_totp_code(code, &secret, now);
+    // A code that was already used for a step-up is not accepted again.
+    let fresh = valid
+        && storage
+            .store_kv_if_absent(
+                &format!("stepup_totp_used:{user_id}:{code}"),
+                b"1",
+                Some(std::time::Duration::from_secs(120)),
+            )
+            .await
+            .unwrap_or(false);
+    if fresh {
+        let _ = storage.delete_kv(&lockout_key).await;
+        Ok(())
+    } else {
+        increment_login_failure(state, &lockout_key, WINDOW_SECS).await;
+        Err(("STEP_UP_FAILED", "The authenticator code is not correct"))
+    }
+}
+
 /// `POST /auth/login` — authenticate a user with username/password.
 ///
 /// On success returns access + refresh tokens, user metadata, and adaptive
@@ -542,6 +660,21 @@ pub async fn refresh_token(
                         );
                     }
                 }
+            }
+
+            // A refresh token issued before the account's credentials were reset is refused.
+            if crate::account_state::ensure_issued_after_revocation(
+                state.auth_framework.storage().as_ref(),
+                &claims.sub,
+                claims.iat.saturating_mul(1000),
+            )
+            .await
+            .is_err()
+            {
+                return ApiResponse::error_typed(
+                    "INVALID_TOKEN",
+                    "Refresh token is no longer valid",
+                );
             }
 
             let permissions: Vec<String> = match state

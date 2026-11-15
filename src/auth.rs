@@ -834,6 +834,23 @@ impl AuthFramework {
         };
         match validated {
             Ok(claims) => {
+                // A token issued before the account's credentials were reset, or for a
+                // deactivated account, is refused.
+                if let Err(e) =
+                    crate::account_state::ensure_account_active(self.storage.as_ref(), &claims.sub)
+                        .await
+                {
+                    return Ok(AuthResult::Failure(e.to_string()));
+                }
+                if let Err(e) = crate::account_state::ensure_issued_after_revocation(
+                    self.storage.as_ref(),
+                    &claims.sub,
+                    claims.iat.saturating_mul(1000),
+                )
+                .await
+                {
+                    return Ok(AuthResult::Failure(e.to_string()));
+                }
                 let token =
                     Self::build_validated_jwt_auth_token(token, claims, metadata, auth_method);
                 Ok(AuthResult::Success(Box::new(token)))
@@ -1121,7 +1138,19 @@ impl AuthFramework {
     /// Validate a token.
     pub async fn validate_token(&self, token: &AuthToken) -> Result<bool> {
         self.require_initialized()?;
-        let valid = token.is_valid()
+        let account_live =
+            crate::account_state::ensure_account_active(self.storage.as_ref(), &token.user_id)
+                .await
+                .is_ok()
+                && crate::account_state::ensure_issued_after_revocation(
+                    self.storage.as_ref(),
+                    &token.user_id,
+                    token.issued_at.timestamp_millis(),
+                )
+                .await
+                .is_ok();
+        let valid = account_live
+            && token.is_valid()
             && self.token_manager.validate_auth_token(token).is_ok()
             && self.touch_stored_token(token).await?;
         self.monitoring_manager.record_token_validation(valid).await;
