@@ -51,7 +51,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 4 AS decides what to grant | **partial** | an integrator's `GnapAccessPolicy` (375-382, `with_access_policy` 437) returns the rights granted; empty denies; no policy denies (803-810) | the policy is a yes/narrow function of (client key thumbprint, requested rights): no consent record, no resource owner, no rule model, no deny effect, no engine behind it (slice G6, rows AC1-AC4) |
+| 4 AS decides what to grant | **partial** | an integrator's `GnapAccessPolicy` (375-382, `with_access_policy` 437) returns the rights granted; empty denies; no policy denies (803-810) | the policy is a yes/narrow function of (client key thumbprint, requested rights). The engine behind it exists (`EngineGnapPolicy`, AC1-AC4, #432). Consent records exist (`gnap_consent.rs`, G6 slice 1): an approved interactive grant is recorded per resource owner through a `GnapConsentStore` and can be withdrawn, which revokes its tokens. Still open in G6: storage of transactions and tokens through a trait, agent/room requirements |
 | 4.1 starting interaction | **n/a** | the AS's own UI is the integrator's | |
 | 4.2 completion: one-time `interact_ref`, hash | **partial** | `approve_transaction` returns `{interact_ref, hash}` (1228, struct at 391); continuation of a finish-method transaction needs the reference; hash per 4.2.3 | the AS does not deliver them (no redirect URI built, no `push` callback, SSRF rules of 11.34 not applicable yet); the hash uses `transaction_endpoint` as given, the RFC wants the absolute grant URL the client used (782) |
 | grant states (1.5: pending, processing, approved, finalized) | **partial** | `Pending`, `Approved`, `Denied` (279-283) | no `processing`, no `finalized`; a finished transaction is deleted |
@@ -103,7 +103,7 @@ Nothing claims a method it does not verify: an unlisted or unverifiable method i
 
 ## 2. RFC 9767 (resource-server connections)
 
-**Missing entirely**: RS-facing discovery (3.1), protecting RS requests to the AS (3.2), token introspection (3.3), resource set registration (3.4), deriving a downstream token (4), token formats (2.2). `introspect_token` (1346) is an in-process lookup with a different response shape, not the RFC 9767 introspection.
+**Done** (`src/protocols/gnap_rs.rs`, `gnap_http.rs`, the axum and actix adapters; guide: `docs/GNAP_RS_API.md`): RS-facing discovery (3.1, #424), authenticating the RS by its own key through the deployer's `ResourceServerAuthenticator` (3.2), token introspection (3.3, #424, #425) and resource set registration (3.4, #472). The suite `tests/conformance/gnap/rs-vectors.json` (version 2) covers all four.  **Still open**: deriving a downstream token (4), and token formats (2.2) beyond advertising the AS's list and intersecting it on registration. The crate ships no RS key proof verifier until G2 (`httpsig`) lands; the deployer supplies one. `introspect_token` (1346) is an in-process lookup with a different response shape, not the RFC 9767 introspection.
 
 ## 3. Facts about tokens and storage
 
@@ -128,7 +128,7 @@ Each slice is one PR, with a born-red test before the code, a mutation check, an
 | G5 | continuation and tokens | polling with `wait` / `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, rotate and revoke with proof, key rotation, `Authorization: GNAP` parsing |
 | G6 | policy, consent, storage | policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style), not one hard-wired store |
 | G7 | HTTP and discovery | axum and actix routes, `OPTIONS` discovery (9.2), RS-first (9.1) |
-| G8 | RFC 9767 | RS connections, introspection, resource set registration, downstream tokens |
+| G8 | RFC 9767 | RS connections, introspection, resource set registration, downstream tokens. Done: 3.1-3.4 (#424, #425, #472). Open: downstream tokens (4), token formats (2.2) |
 | G9 | agents | agent principals and delegation by an account holder (below) |
 | G10 | conformance | RFC example vectors (including the 4.2.3 hash example), one test per 11.x item |
 
