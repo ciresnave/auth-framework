@@ -1769,7 +1769,7 @@ impl AuthFramework {
 
         let remaining = self
             .session_manager
-            .count_active_sessions()
+            .count_active_sessions_cached()
             .await
             .unwrap_or(0);
         self.monitoring_manager
@@ -2646,6 +2646,16 @@ impl AuthFramework {
         self.require_initialized()?;
         self.authorization_manager
             .set_role_inheritance(child_role, parent_role)
+            .await
+    }
+
+    /// The direct permissions granted to a user (for a snapshot).
+    pub(crate) async fn direct_permissions_for_user(
+        &self,
+        user_id: &str,
+    ) -> Vec<crate::permissions::Permission> {
+        self.authorization_manager
+            .direct_permissions_for_user(user_id)
             .await
     }
 

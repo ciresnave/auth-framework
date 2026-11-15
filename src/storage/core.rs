@@ -241,6 +241,15 @@ pub trait AuthStorage: Send + Sync {
     /// Delete arbitrary key-value data.
     async fn delete_kv(&self, key: &str) -> Result<()>;
 
+    /// Whether this storage really lists its KV keys ([`list_kv_keys`](Self::list_kv_keys) is
+    /// overridden and returns the live keys). `false` (the default) means the default
+    /// `list_kv_keys`, which fails. Anything that must enumerate keys to be correct (sealed token and
+    /// session indexes: a user's tokens that are not listed are not revoked) refuses a storage that
+    /// reports `false`. A wrapper around another storage must forward this.
+    fn lists_kv_keys(&self) -> bool {
+        false
+    }
+
     /// List keys with a specific prefix.
     ///
     /// **Important:** every storage backend must override this method. The default
@@ -385,6 +394,10 @@ impl AuthStorage for Arc<dyn AuthStorage> {
 
     fn encrypts_kv_at_rest(&self) -> bool {
         (**self).encrypts_kv_at_rest()
+    }
+
+    fn lists_kv_keys(&self) -> bool {
+        (**self).lists_kv_keys()
     }
 
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
@@ -762,6 +775,10 @@ impl AuthStorage for MemoryStorage {
         self.inner.delete_kv(key).await
     }
 
+    fn lists_kv_keys(&self) -> bool {
+        true
+    }
+
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
         Ok(self.inner.list_kv_keys_by_prefix(prefix))
     }
@@ -880,6 +897,30 @@ impl RedisStorage {
             }
             cursor = next;
         }
+    }
+
+    /// Every typed row under `{key_prefix}{stem}*`, decoded, found with cursor `SCAN`
+    /// (ADR-011 slice 4 sweep). `stem` is an exact legacy key stem such as `token:`.
+    #[cfg(feature = "cli")]
+    pub(crate) async fn scan_typed_rows<T: serde::de::DeserializeOwned>(
+        &self,
+        stem: &str,
+    ) -> Result<Vec<T>> {
+        let mut conn = self.get_connection().await?;
+        let keys = Self::scan_keys(&mut conn, &self.key(&format!("{stem}*")), stem).await?;
+        let mut out = Vec::new();
+        for key in keys {
+            let raw: Option<String> = redis::AsyncCommands::get(&mut conn, &key)
+                .await
+                .map_err(|e| StorageError::operation_failed(format!("Failed to read key: {e}")))?;
+            if let Some(raw) = raw {
+                out.push(
+                    serde_json::from_str(&raw)
+                        .map_err(|e| StorageError::serialization(e.to_string()))?,
+                );
+            }
+        }
+        Ok(out)
     }
 
     /// Read `new_key`; on a miss, move a row stored under `legacy_key` (the raw
@@ -1337,6 +1378,10 @@ impl AuthStorage for RedisStorage {
             .map_err(|e| StorageError::operation_failed(format!("Failed to delete KV: {e}")))?;
 
         Ok(())
+    }
+
+    fn lists_kv_keys(&self) -> bool {
+        true
     }
 
     async fn list_kv_keys(&self, prefix: &str) -> Result<Vec<String>> {
