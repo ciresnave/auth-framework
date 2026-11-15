@@ -479,6 +479,10 @@ impl InMemoryEngine {
         req: DelegationRequest,
         now: DateTime<Utc>,
     ) -> Result<(), DelegationError> {
+        if req.delegator == DIRECT_ACTOR {
+            // Not a principal, and a record under it would read as a direct call.
+            return Err(DelegationError::DelegatorInactive);
+        }
         let (delegator, id, from) = (req.delegator.clone(), req.id.clone(), req.from.clone());
         let r = self.try_delegate_at(req, now);
         if r.is_err() {
@@ -573,6 +577,9 @@ impl InMemoryEngine {
         object: &str,
         actions: &[&str],
     ) -> Result<Vec<String>, DelegationError> {
+        if creator == DIRECT_ACTOR {
+            return Err(DelegationError::DelegatorInactive);
+        }
         let now = Utc::now();
         if actions.iter().any(|a| !self.registry.is_registered(a)) {
             self.record(now, creator, AuditOp::Refused, object, Vec::new());
