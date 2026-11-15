@@ -35,8 +35,9 @@ pub enum AuditOp {
 
 /// The actor recorded for `add_grant` and `remove_grant`, which take no actor:
 /// the embedding application calling the engine directly. The name is
-/// reserved: an editor called this may not edit rules, so a trail entry under
-/// it always means a direct call.
+/// reserved: no principal can be created with it, and it is refused as the
+/// actor of a rule edit, a delegation or a creator grant, so a trail entry
+/// under it always means a direct call.
 pub const DIRECT_ACTOR: &str = "(direct)";
 
 /// One entry of the audit trail: who did what to which rule, and the chain it
@@ -194,6 +195,11 @@ impl InMemoryEngine {
         mut rule: Grant,
         now: DateTime<Utc>,
     ) -> Result<(), RuleError> {
+        if actor == DIRECT_ACTOR {
+            // The reserved name is not an editor, and a refusal recorded under
+            // it would read as a direct call.
+            return Err(RuleError::NotAuthorized);
+        }
         if !self.can_edit_rules_about(actor, &rule.object, now) {
             self.record(now, actor, AuditOp::Refused, &rule.id, Vec::new());
             return Err(RuleError::NotAuthorized);
@@ -230,6 +236,9 @@ impl InMemoryEngine {
         id: &str,
         now: DateTime<Utc>,
     ) -> Result<(), RuleError> {
+        if actor == DIRECT_ACTOR {
+            return Err(RuleError::NotAuthorized);
+        }
         let g = self.find(id).cloned().ok_or(RuleError::UnknownRule)?;
         let chain = self.chain_of(id);
         let by_issuer = g.issuer.as_deref() == Some(actor)
