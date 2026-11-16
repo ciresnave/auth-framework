@@ -536,6 +536,33 @@ pub enum KeyAction {
         /// Key id to revoke
         kid: String,
     },
+    /// Revoke a compromised key at once and install a replacement of the same kind and
+    /// algorithm. A running service must refresh its key ring (or revoke through
+    /// `KeyRing::compromise`) before it distrusts the key
+    Compromise {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+        /// Key id of the compromised key
+        kid: String,
+    },
+    /// Destroy a retiring, revoked or pending key: its private material is erased
+    Destroy {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+        /// Key id to destroy
+        kid: String,
+    },
+    /// Destroy every retiring key whose overlap window has passed
+    RetireExpired {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+        /// Seconds a key keeps verifying after it began retiring
+        #[arg(long)]
+        overlap_secs: u64,
+    },
     /// Print the JWK Set of the live public keys
     Jwks {
         /// Key directory

@@ -96,7 +96,10 @@ pub(crate) async fn key_action_output(
     action: KeyAction,
     encryption: crate::storage::encryption::StorageEncryption,
 ) -> Result<String> {
-    use crate::keys::{FileKeyStore, KeyStore, Kid, NewKey, Signer, publish_jwks, revoke, rotate};
+    use crate::keys::{
+        FileKeyStore, KeyState, KeyStore, Kid, NewKey, Signer, compromise, publish_jwks,
+        retire_expired, revoke, rotate, unix_now,
+    };
     let open = |dir: String, create: bool| async move {
         if !create && !std::path::Path::new(&dir).is_dir() {
             return Err(AuthError::Cli(format!(
@@ -186,6 +189,40 @@ pub(crate) async fn key_action_output(
             let kid = Kid::new(kid)?;
             revoke(&store, &kid).await?;
             Ok(format!("revoked {kid}"))
+        }
+        KeyAction::Compromise { dir, kid } => {
+            let store = open(dir, false).await?;
+            let current = Kid::new(kid)?;
+            let info = store.info(&current).await?;
+            let alg = if info.kind.is_asymmetric() {
+                alg_from_name(&info.alg)?
+            } else {
+                crate::keys::SigningAlg::Es256
+            };
+            let new = compromise(&store, &current, new_key(info.kind, alg, None)?).await?;
+            Ok(format!(
+                "revoked {current} as compromised and replaced it with {new} ({:?});                  a running service distrusts {current} at its next key ring refresh",
+                info.kind
+            ))
+        }
+        KeyAction::Destroy { dir, kid } => {
+            let store = open(dir, false).await?;
+            let kid = Kid::new(kid)?;
+            store.set_state(&kid, KeyState::Destroyed).await?;
+            Ok(format!("destroyed {kid}: its private material is erased"))
+        }
+        KeyAction::RetireExpired { dir, overlap_secs } => {
+            let store = open(dir, false).await?;
+            let gone = retire_expired(&store, unix_now(), overlap_secs).await?;
+            if gone.is_empty() {
+                Ok("no retiring key is past its overlap window".to_string())
+            } else {
+                Ok(format!(
+                    "destroyed {} retired key(s): {}",
+                    gone.len(),
+                    gone.iter().map(Kid::as_str).collect::<Vec<_>>().join(", ")
+                ))
+            }
         }
         KeyAction::Jwks { dir } => {
             let store = open(dir, false).await?;
@@ -2279,5 +2316,202 @@ mod tests {
                 .is_err()
         );
         assert!(Wrapper::try_parse_from(["x", "keys", "revoke", "--dir", "d"]).is_err());
+    }
+
+    fn state_of(rows: &[serde_json::Value], kid: &str) -> String {
+        rows.iter().find(|r| r["kid"] == kid).unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn compromise_revokes_the_key_with_no_overlap_and_installs_a_same_algorithm_replacement()
+    {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        key_action_output(
+            generate(&d, KeyKindArg::JwsSigning, KeyAlgArg::Eddsa, Some("k1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let out = key_action_output(
+            KeyAction::Compromise {
+                dir: d.clone(),
+                kid: "k1".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("revoked k1 as compromised"), "{out}");
+        let rows = list_json(&d).await;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(state_of(&rows, "k1"), "revoked", "not retiring: no overlap");
+        let new = rows.iter().find(|r| r["state"] == "active").unwrap();
+        assert_eq!(new["alg"], "EdDSA");
+        let jwks = key_action_output(KeyAction::Jwks { dir: d }, enc(1))
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&jwks).unwrap();
+        assert_eq!(
+            v["keys"].as_array().unwrap().len(),
+            1,
+            "only the replacement is published"
+        );
+        assert_eq!(v["keys"][0]["kid"], new["kid"]);
+    }
+
+    #[tokio::test]
+    async fn destroy_erases_a_revoked_key_and_refuses_a_live_one() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        key_action_output(
+            generate(&d, KeyKindArg::Hmac, KeyAlgArg::Es256, Some("h1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let destroy = |d: String| async move {
+            key_action_output(
+                KeyAction::Destroy {
+                    dir: d,
+                    kid: "h1".into(),
+                },
+                enc(1),
+            )
+            .await
+        };
+        assert!(
+            destroy(d.clone()).await.is_err(),
+            "an active key cannot be destroyed"
+        );
+        assert_eq!(state_of(&list_json(&d).await, "h1"), "active");
+        key_action_output(
+            KeyAction::Revoke {
+                dir: d.clone(),
+                kid: "h1".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let out = destroy(d.clone()).await.unwrap();
+        assert!(out.contains("destroyed h1"), "{out}");
+        assert_eq!(state_of(&list_json(&d).await, "h1"), "destroyed");
+    }
+
+    #[tokio::test]
+    async fn retire_expired_destroys_only_retiring_keys_past_the_overlap() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        key_action_output(
+            generate(&d, KeyKindArg::JwsSigning, KeyAlgArg::Es256, Some("k1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        key_action_output(
+            KeyAction::Rotate {
+                dir: d.clone(),
+                kid: "k1".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let retire = |d: String, overlap_secs: u64| async move {
+            key_action_output(
+                KeyAction::RetireExpired {
+                    dir: d,
+                    overlap_secs,
+                },
+                enc(1),
+            )
+            .await
+            .unwrap()
+        };
+        let within = retire(d.clone(), 3600).await;
+        assert!(within.contains("no retiring key"), "{within}");
+        assert_eq!(state_of(&list_json(&d).await, "k1"), "retiring");
+        let past = retire(d.clone(), 0).await;
+        assert!(
+            past.contains("destroyed 1") && past.contains("k1"),
+            "{past}"
+        );
+        let rows = list_json(&d).await;
+        assert_eq!(state_of(&rows, "k1"), "destroyed");
+        assert_eq!(
+            rows.iter().filter(|r| r["state"] == "active").count(),
+            1,
+            "the active replacement is untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_lifecycle_commands_refuse_a_missing_directory() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("typo").to_string_lossy().to_string();
+        for action in [
+            KeyAction::Compromise {
+                dir: d.clone(),
+                kid: "k".into(),
+            },
+            KeyAction::Destroy {
+                dir: d.clone(),
+                kid: "k".into(),
+            },
+            KeyAction::RetireExpired {
+                dir: d.clone(),
+                overlap_secs: 0,
+            },
+        ] {
+            let err = key_action_output(action, enc(1))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("does not exist"), "{err}");
+        }
+        assert!(!std::path::Path::new(&d).exists());
+    }
+
+    #[test]
+    fn the_lifecycle_subcommands_parse() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Wrapper {
+            #[command(subcommand)]
+            command: CliCommand,
+        }
+        let ok = |args: &[&str]| Wrapper::try_parse_from(args).is_ok();
+        assert!(ok(&["x", "keys", "compromise", "--dir", "d", "k1"]));
+        assert!(ok(&["x", "keys", "destroy", "--dir", "d", "k1"]));
+        assert!(ok(&[
+            "x",
+            "keys",
+            "retire-expired",
+            "--dir",
+            "d",
+            "--overlap-secs",
+            "60"
+        ]));
+        assert!(
+            !ok(&["x", "keys", "retire-expired", "--dir", "d"]),
+            "the overlap is required"
+        );
+        assert!(!ok(&[
+            "x",
+            "keys",
+            "retire-expired",
+            "--dir",
+            "d",
+            "--overlap-secs",
+            "x"
+        ]));
+        assert!(
+            !ok(&["x", "keys", "compromise", "--dir", "d"]),
+            "a key id is required"
+        );
     }
 }
