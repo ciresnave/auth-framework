@@ -579,7 +579,7 @@ impl GnapService {
                     .client
                     .as_ref()
                     .and_then(|c| c.key.as_ref())
-                    .and_then(|k| Self::jwk_thumbprint(&k.jwk).ok());
+                    .and_then(|k| Self::key_binding(k).ok());
                 bound.as_deref() != Some(thumbprint)
             });
             before - txns.len()
