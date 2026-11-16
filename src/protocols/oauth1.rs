@@ -12,18 +12,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
 /// OAuth 1.0a consumer credentials (application).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthConsumer {
     pub key: String,
     pub secret: Zeroizing<String>,
 }
 
+crate::utils::redact::redacting_debug!(OAuthConsumer, plain: [key], secret: [secret]);
+
 /// OAuth 1.0a token credentials (user-authorized).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthToken {
     pub token: String,
     pub secret: Zeroizing<String>,
 }
+
+crate::utils::redact::redacting_debug!(OAuthToken, plain: [], secret: [token, secret]);
 
 /// OAuth 1.0a signature method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
