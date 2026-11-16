@@ -168,7 +168,7 @@ pub struct PrometheusConfig {
     pub rule_files: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct GrafanaConfig {
     pub endpoint: String,
     pub api_key: Zeroizing<String>,
@@ -176,6 +176,8 @@ pub struct GrafanaConfig {
     pub datasource: String,
     pub auto_provision: bool,
 }
+
+crate::utils::redact::redacting_debug!(GrafanaConfig, plain: [endpoint, organization, datasource, auto_provision], secret: [api_key]);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertManagerConfig {
