@@ -44,10 +44,12 @@ pub fn gnap_as_configure(cfg: &mut web::ServiceConfig, http: Arc<GnapAsHttp>) {
         let (g, m) = http.paths();
         (g.to_string(), m.to_string())
     };
+    let http_continue = http.continue_route();
     cfg.app_data(web::Data::from(http))
         .app_data(web::PayloadConfig::new(MAX_BODY_BYTES + 1))
         .service(web::resource(grant).route(web::route().to(serve_as)))
-        .service(web::resource(manage).route(web::route().to(serve_as)));
+        .service(web::resource(manage).route(web::route().to(serve_as)))
+        .service(web::resource(http_continue).route(web::route().to(serve_as)));
 }
 
 async fn serve_as(req: HttpRequest, body: web::Bytes, http: web::Data<GnapAsHttp>) -> HttpResponse {
@@ -221,5 +223,28 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         let body = test::read_body(resp).await;
         assert!(!String::from_utf8_lossy(&body).contains("access_token"));
+    }
+
+    #[actix_web::test]
+    async fn the_as_app_routes_continuation() {
+        let http = Arc::new(crate::protocols::gnap_as_http::tests::handler());
+        let app = test::init_service(
+            App::new().configure(move |cfg| gnap_as_configure(cfg, http.clone())),
+        )
+        .await;
+        let req = test::TestRequest::get()
+            .uri("/api/gnap/tx/continue/abc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST");
+        let req = test::TestRequest::post()
+            .uri("/api/gnap/tx/continue/abc")
+            .insert_header(("Authorization", "GNAP nope"))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let doc: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(doc["error"]["code"], "invalid_continuation");
     }
 }
