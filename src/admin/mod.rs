@@ -474,6 +474,11 @@ pub enum CliCommand {
         #[command(subcommand)]
         action: MaintenanceAction,
     },
+    /// Key management: generate, list, rotate, revoke and publish keys in a key directory
+    Keys {
+        #[command(subcommand)]
+        action: KeyAction,
+    },
     /// Show system status
     Status {
         /// Show detailed information
@@ -483,6 +488,92 @@ pub enum CliCommand {
         #[arg(long, default_value = "table")]
         format: String,
     },
+}
+
+/// What a `keys` command does to the key directory (an encrypted `FileKeyStore`; the
+/// encryption key comes from `AUTH_STORAGE_ENCRYPTION_KEY` / `AUTH_STORAGE_ENCRYPTION_KEYS_FILE`,
+/// never from the command line).
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum KeyAction {
+    /// List the keys: id, purpose, algorithm, state and creation time (never key material)
+    List {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+        /// Output format (table, json)
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
+    /// Generate a key and make it active
+    Generate {
+        /// Key directory (created if missing)
+        #[arg(long)]
+        dir: String,
+        /// What the key is for
+        #[arg(long, value_enum)]
+        kind: KeyKindArg,
+        /// Signature algorithm (asymmetric kinds only)
+        #[arg(long, value_enum, default_value = "es256")]
+        alg: KeyAlgArg,
+        /// Key id (default: the key's RFC 7638 thumbprint, or a random id for a symmetric key)
+        #[arg(long)]
+        kid: Option<String>,
+    },
+    /// Replace an active key with a new one of the same kind; the old key keeps verifying
+    /// (retiring) until it is destroyed
+    Rotate {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+        /// Key id to rotate
+        kid: String,
+    },
+    /// Withdraw a key at once: it verifies and signs nothing and leaves the JWKS
+    Revoke {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+        /// Key id to revoke
+        kid: String,
+    },
+    /// Print the JWK Set of the live public keys
+    Jwks {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+    },
+}
+
+/// A key purpose for the `keys generate` command.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum KeyKindArg {
+    /// JWS/JWT signing key
+    JwsSigning,
+    /// TLS / mTLS key pair
+    Mtls,
+    /// DPoP proof key
+    Dpop,
+    /// HTTP message signature key
+    HttpSig,
+    /// GNAP client key
+    GnapClient,
+    /// Symmetric HMAC key
+    Hmac,
+    /// Symmetric AEAD key
+    Aead,
+}
+
+/// A signature algorithm for the `keys generate` command.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum KeyAlgArg {
+    /// ECDSA P-256 with SHA-256
+    Es256,
+    /// ECDSA P-384 with SHA-384
+    Es384,
+    /// Ed25519
+    Eddsa,
+    /// RSASSA-PKCS1-v1_5 with SHA-256
+    Rs256,
 }
 
 #[derive(Debug, Clone, clap::Subcommand)]

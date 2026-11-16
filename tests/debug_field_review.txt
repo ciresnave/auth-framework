@@ -245,6 +245,7 @@ device_type
 digest
 digest_method
 digest_value
+dir
 directory_url
 display
 display_name
