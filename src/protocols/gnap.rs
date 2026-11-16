@@ -128,8 +128,18 @@ pub struct GnapClientInfo {
 pub struct GnapClientKey {
     /// Proof method: "httpsig", "mtls", "dpop", "jws", or "test"
     pub proof: String,
-    /// JWK representation of the client's public key
-    pub jwk: GnapJwk,
+    /// The client's public key as a JWK. Exactly one of `jwk`, `cert` and `cert#S256` is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jwk: Option<GnapJwk>,
+    /// The key as an X.509 certificate, base64 DER (RFC 9635 section 7.1). Proved by `mtls`, which
+    /// matches the presented certificate against this one; the chain is **not** validated here
+    /// (see [`GnapProof::client_certificate_der`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert: Option<String>,
+    /// The key as the base64url SHA-256 of a certificate's DER (RFC 9635 section 7.1). Proved by
+    /// `mtls` like `cert`, and equally without any chain validation.
+    #[serde(default, rename = "cert#S256", skip_serializing_if = "Option::is_none")]
+    pub cert_s256: Option<String>,
 }
 
 /// Minimal JWK representation sufficient for GNAP key binding
@@ -222,7 +232,37 @@ impl GnapTransactionRequestBuilder {
         self.client = Some(GnapClientInfo {
             key: Some(GnapClientKey {
                 proof: proof.into(),
-                jwk,
+                jwk: Some(jwk),
+                cert: None,
+                cert_s256: None,
+            }),
+            display: None,
+        });
+        self
+    }
+
+    /// Set client info from a certificate (base64 DER), proved with `mtls`.
+    pub fn client_key_cert(mut self, cert_der_base64: impl Into<String>) -> Self {
+        self.client = Some(GnapClientInfo {
+            key: Some(GnapClientKey {
+                proof: "mtls".to_string(),
+                jwk: None,
+                cert: Some(cert_der_base64.into()),
+                cert_s256: None,
+            }),
+            display: None,
+        });
+        self
+    }
+
+    /// Set client info from a certificate's SHA-256 thumbprint (base64url), proved with `mtls`.
+    pub fn client_key_cert_s256(mut self, thumbprint: impl Into<String>) -> Self {
+        self.client = Some(GnapClientInfo {
+            key: Some(GnapClientKey {
+                proof: "mtls".to_string(),
+                jwk: None,
+                cert: None,
+                cert_s256: Some(thumbprint.into()),
             }),
             display: None,
         });
@@ -366,6 +406,16 @@ pub struct GnapProof<'a> {
     pub dpop_proof: Option<&'a str>,
     /// A server-issued DPoP nonce the proof must carry, if the caller uses them.
     pub expected_nonce: Option<&'a str>,
+    /// The DER of the client certificate the TLS layer authenticated on this request, for the
+    /// `mtls` proof method. The caller's TLS terminator must have verified the handshake (proof
+    /// of the private key); this crate then checks the certificate is the one the key names.
+    ///
+    /// **Chain validation stays with the integrator.** The `cert` and `cert#S256` key forms are
+    /// matched by value or thumbprint only: this crate does not build or validate a certificate
+    /// chain, check revocation or expiry, or decide which CAs to trust. RFC 9635 sections 11.3 and
+    /// 11.4 leave that trust to registration or first use, so an integrator who needs it must
+    /// enforce it in the TLS terminator or before calling the `_with_proof` entry points.
+    pub client_certificate_der: Option<&'a [u8]>,
 }
 
 /// Decides which access rights a client key is granted.
@@ -441,6 +491,9 @@ const INVALID_CONTINUATION: &str = "Invalid continuation request";
 const PROOF_NOT_SUPPORTED: &str = "GNAP proof method not supported";
 /// Refusal of a client key that came without the proof material to check it.
 const PROOF_REQUIRED: &str = "GNAP client key proof required: use the _with_proof entry point with the request's DPoP header";
+/// Refusal of a certificate key that came without the client certificate the TLS layer saw.
+const MTLS_REQUIRED: &str =
+    "GNAP client key proof required: the request's client certificate (mtls) was not presented";
 /// Refusal of a client key proof that did not verify.
 const PROOF_INVALID: &str = "GNAP client key proof invalid";
 /// Refusal of a request that names no client key (RFC 9635 section 2.3).
@@ -526,7 +579,7 @@ impl GnapService {
                     .client
                     .as_ref()
                     .and_then(|c| c.key.as_ref())
-                    .and_then(|k| Self::jwk_thumbprint(&k.jwk).ok());
+                    .and_then(|k| Self::key_binding(k).ok());
                 bound.as_deref() != Some(thumbprint)
             });
             before - txns.len()
@@ -569,6 +622,59 @@ impl GnapService {
     }
 
     // ── Key Binding Helpers ──────────────────────────────────────────────
+
+    /// The identifier a client key binds a token to, after checking the key is well formed.
+    /// A JWK binds by its RFC 7638 thumbprint; a certificate (`cert` or `cert#S256`) binds as
+    /// `x5t#S256:` followed by the base64url SHA-256 of its DER, so the two forms of one
+    /// certificate are the same key and can never collide with a JWK thumbprint.
+    fn key_binding(key: &GnapClientKey) -> Result<String> {
+        use base64::Engine;
+        let given = [
+            key.jwk.is_some(),
+            key.cert.is_some(),
+            key.cert_s256.is_some(),
+        ]
+        .iter()
+        .filter(|g| **g)
+        .count();
+        if given != 1 {
+            return Err(AuthError::validation(
+                "GNAP client key needs exactly one of jwk, cert and cert#S256",
+            ));
+        }
+        let is_cert = key.jwk.is_none();
+        if is_cert != (key.proof == "mtls") && key.proof != "test" {
+            return Err(AuthError::validation(
+                "GNAP certificate keys use the mtls proof method, and mtls needs a certificate key",
+            ));
+        }
+        if let Some(jwk) = &key.jwk {
+            Self::validate_jwk_fields(jwk)?;
+            return Self::jwk_thumbprint(jwk);
+        }
+        let hash = if let Some(cert) = &key.cert {
+            use sha2::Digest;
+            let der = base64::engine::general_purpose::STANDARD
+                .decode(cert)
+                .map_err(|_| AuthError::validation("GNAP cert is not base64"))?;
+            x509_parser::parse_x509_certificate(&der)
+                .map_err(|_| AuthError::validation("GNAP cert is not an X.509 certificate"))?;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(&der))
+        } else {
+            let given = key.cert_s256.as_deref().unwrap_or_default();
+            let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(given)
+                .map_err(|_| AuthError::validation("GNAP cert#S256 is not base64url"))?;
+            if raw.len() != 32 {
+                return Err(AuthError::validation(
+                    "GNAP cert#S256 is not a SHA-256 thumbprint",
+                ));
+            }
+            // Re-encode so a non-canonical spelling cannot bind a second identifier.
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
+        };
+        Ok(format!("x5t#S256:{hash}"))
+    }
 
     /// Compute the JWK thumbprint (RFC 7638) for key binding.
     /// Uses the required members in lexicographic order per key type.
@@ -766,10 +872,8 @@ impl GnapService {
             }
         }
 
-        // Validate key type and required fields
-        Self::validate_jwk_fields(&key.jwk)?;
-
-        let thumbprint = Self::jwk_thumbprint(&key.jwk)?;
+        // Validate the key's form and required fields
+        let thumbprint = Self::key_binding(key)?;
 
         // A signature over bytes the caller chose is not a proof of the request, so no method
         // is accepted here: use `handle_transaction_with_proof` for `dpop`. Only the unit-test
@@ -839,9 +943,7 @@ impl GnapService {
             }
         }
 
-        Self::validate_jwk_fields(&key.jwk)?;
-        let thumbprint = Self::jwk_thumbprint(&key.jwk)?;
-        Ok(Some(thumbprint))
+        Ok(Some(Self::key_binding(key)?))
     }
 
     /// Prove the client holds the key it named, and return that key's thumbprint.
@@ -877,12 +979,29 @@ impl GnapService {
     ) -> Result<()> {
         match method {
             "dpop" => Self::check_dpop_proof(thumbprint, dpop).await,
+            "mtls" => Self::check_mtls_proof(thumbprint, dpop.map(|(_, proof)| proof)),
             #[cfg(test)]
             "test" => Ok(()),
             other => Err(AuthError::validation(format!(
                 "{PROOF_NOT_SUPPORTED}: {other}"
             ))),
         }
+    }
+
+    /// Check that the certificate the TLS layer authenticated on this request is the one the key
+    /// names (RFC 9635 section 7.3.2). `binding` is `x5t#S256:` and the certificate's SHA-256, which
+    /// both the `cert` and `cert#S256` forms reduce to, so one comparison serves both. No
+    /// certificate is a refusal, never a pass; the TLS handshake itself (proof of the private
+    /// key) is the integrator's terminator's job and is stated on [`GnapProof`].
+    fn check_mtls_proof(binding: &str, proof: Option<&GnapProof<'_>>) -> Result<()> {
+        let Some(der) = proof.and_then(|p| p.client_certificate_der) else {
+            return Err(AuthError::validation(MTLS_REQUIRED));
+        };
+        let Some(hash) = binding.strip_prefix("x5t#S256:") else {
+            return Err(AuthError::validation(PROOF_INVALID));
+        };
+        super::gnap_jws::verify_mtls(der, None, Some(hash))
+            .map_err(|_| AuthError::validation(PROOF_INVALID))
     }
 
     /// Check that the request's `DPoP` header is a fresh proof signed by the key with `thumbprint`, for this
@@ -1871,7 +1990,9 @@ mod tests {
         GnapClientInfo {
             key: Some(GnapClientKey {
                 proof: "test".to_string(),
-                jwk,
+                jwk: Some(jwk),
+                cert: None,
+                cert_s256: None,
             }),
             display: Some(GnapClientDisplay {
                 name: Some("Test Client".to_string()),
@@ -1982,7 +2103,9 @@ mod tests {
         let client = Some(GnapClientInfo {
             key: Some(GnapClientKey {
                 proof: "invalid_method".to_string(),
-                jwk: test_ec_jwk(),
+                jwk: Some(test_ec_jwk()),
+                cert: None,
+                cert_s256: None,
             }),
             display: None,
         });
@@ -3398,6 +3521,7 @@ mod proof_verification_tests {
             http_uri: uri,
             dpop_proof: header,
             expected_nonce: None,
+            client_certificate_der: None,
         }
     }
 
@@ -3760,7 +3884,8 @@ mod proof_verification_tests {
         let (svc, dpop, key) = (service(), manager(), client_key());
         // A valid DPoP header does not rescue a method that is not DPoP.
         let header = dpop_header(&key, &key, "POST", URI, "jti-other-method");
-        for method in ["httpsig", "mtls", "jws", "no-such-method"] {
+        // `mtls` is exercised with a certificate key in the KM7 tests below: with a JWK it is a malformed key.
+        for method in ["httpsig", "jws", "no-such-method"] {
             let msg = refusal(svc.handle_transaction(request(&key, method, false)).await);
             assert!(
                 msg.contains("proof method not supported"),
@@ -3796,12 +3921,14 @@ mod proof_verification_tests {
         let not_supported = |e: AuthError| e.to_string().contains(PROOF_NOT_SUPPORTED);
         let mut admitted = Vec::new();
         for method in [
-            "dpop", "test", "httpsig", "mtls", "jws", "", "DPOP", "none", "bogus",
+            "dpop", "test", "httpsig", "jws", "", "DPOP", "none", "bogus",
         ] {
             let client = Some(GnapClientInfo {
                 key: Some(GnapClientKey {
                     proof: method.to_string(),
-                    jwk: key.jwk.clone(),
+                    jwk: Some(key.jwk.clone()),
+                    cert: None,
+                    cert_s256: None,
                 }),
                 display: None,
             });
@@ -3837,11 +3964,13 @@ mod proof_verification_tests {
     fn the_unit_test_proof_method_is_not_a_way_around_the_refusals() {
         // `validate_client_key_with_proof` has no proof to check, so it refuses a real method.
         let key = client_key();
-        for method in ["dpop", "httpsig", "mtls", "jws"] {
+        for method in ["dpop", "httpsig", "jws"] {
             let client = Some(GnapClientInfo {
                 key: Some(GnapClientKey {
                     proof: method.to_string(),
-                    jwk: key.jwk.clone(),
+                    jwk: Some(key.jwk.clone()),
+                    cert: None,
+                    cert_s256: None,
                 }),
                 display: None,
             });
@@ -3915,6 +4044,214 @@ mod proof_verification_tests {
             .unwrap();
         assert!(done["access_token"]["value"].is_string());
     }
+    // ── KM7: certificate key forms (RFC 9635 section 7.1) proved by mtls ──
+
+    /// A self-signed certificate as DER, its standard-base64 form (`cert`) and its base64url
+    /// SHA-256 (`cert#S256`).
+    fn certificate() -> (Vec<u8>, String, String) {
+        use sha2::Digest;
+        let key = crate::keys::LocalKey::generate(
+            crate::keys::KeyKind::GnapClient,
+            crate::keys::SigningAlg::Es256,
+            None,
+        )
+        .unwrap();
+        let pem = crate::keys::self_signed_certificate(
+            &key,
+            &crate::keys::CertSubject {
+                common_name: "gnap-client.example.test".to_string(),
+                dns_names: vec![],
+                valid_for: std::time::Duration::from_secs(3600),
+            },
+        )
+        .unwrap();
+        let (_, parsed) = x509_parser::pem::parse_x509_pem(pem.as_bytes()).unwrap();
+        let der = parsed.contents;
+        let std = base64::engine::general_purpose::STANDARD.encode(&der);
+        let s256 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(&der));
+        (der, std, s256)
+    }
+
+    fn mtls_proof(der: Option<&[u8]>) -> GnapProof<'_> {
+        GnapProof {
+            http_method: "POST",
+            http_uri: URI,
+            dpop_proof: None,
+            expected_nonce: None,
+            client_certificate_der: der,
+        }
+    }
+
+    fn cert_request(form: &str, std: &str, s256: &str) -> GnapTransactionRequest {
+        let builder = GnapTransactionRequest::builder().access_type("read");
+        match form {
+            "cert" => builder.client_key_cert(std),
+            _ => builder.client_key_cert_s256(s256),
+        }
+        .build()
+    }
+
+    #[tokio::test]
+    async fn a_certificate_key_is_proved_by_the_presented_certificate_in_both_forms() {
+        let (der, std, s256) = certificate();
+        let (other_der, _, _) = certificate();
+        let dpop = manager();
+        for form in ["cert", "cert#S256"] {
+            let svc = service();
+            // Refutations: no certificate, and another certificate, are refused.
+            let none = svc
+                .handle_transaction_with_proof(
+                    &dpop,
+                    &mtls_proof(None),
+                    cert_request(form, &std, &s256),
+                )
+                .await;
+            assert!(none.is_err(), "{form}: no certificate presented must fail");
+            let wrong = svc
+                .handle_transaction_with_proof(
+                    &dpop,
+                    &mtls_proof(Some(&other_der)),
+                    cert_request(form, &std, &s256),
+                )
+                .await;
+            assert!(wrong.is_err(), "{form}: another certificate must fail");
+            // Positive control, built the same way: the named certificate is accepted.
+            let ok = svc
+                .handle_transaction_with_proof(
+                    &dpop,
+                    &mtls_proof(Some(&der)),
+                    cert_request(form, &std, &s256),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("{form}: the named certificate must be accepted: {e}"));
+            assert!(ok["access_token"]["value"].is_string());
+        }
+    }
+
+    #[tokio::test]
+    async fn both_forms_of_one_certificate_bind_the_same_identifier_and_never_a_jwk_thumbprint() {
+        let (der, std, s256) = certificate();
+        let dpop = manager();
+        let svc = service();
+        let mut bindings = Vec::new();
+        for form in ["cert", "cert#S256"] {
+            let resp = svc
+                .handle_transaction_with_proof(
+                    &dpop,
+                    &mtls_proof(Some(&der)),
+                    cert_request(form, &std, &s256),
+                )
+                .await
+                .unwrap();
+            let token = resp["access_token"]["value"].as_str().unwrap().to_string();
+            let info = svc.introspect_token(&token).await.unwrap().unwrap();
+            bindings.push(info["key_thumbprint"].as_str().unwrap().to_string());
+        }
+        assert_eq!(bindings[0], bindings[1]);
+        assert_eq!(bindings[0], format!("x5t#S256:{s256}"));
+    }
+
+    #[tokio::test]
+    async fn managing_a_certificate_bound_token_needs_the_same_certificate() {
+        let (der, std, s256) = certificate();
+        let (other_der, _, _) = certificate();
+        let dpop = manager();
+        let svc = service();
+        let resp = svc
+            .handle_transaction_with_proof(
+                &dpop,
+                &mtls_proof(Some(&der)),
+                cert_request("cert", &std, &s256),
+            )
+            .await
+            .unwrap();
+        let token = resp["access_token"]["value"].as_str().unwrap().to_string();
+        // Another certificate cannot rotate or revoke it, and the token survives the attempt.
+        assert!(
+            svc.rotate_token_with_proof(&dpop, &mtls_proof(Some(&other_der)), &token)
+                .await
+                .is_err()
+        );
+        assert!(
+            svc.revoke_token_with_proof(&dpop, &mtls_proof(Some(&other_der)), &token)
+                .await
+                .is_err()
+        );
+        assert!(svc.introspect_token(&token).await.unwrap().is_some());
+        // The named certificate can: rotation issues a replacement, revocation removes it.
+        let rotated = svc
+            .rotate_token_with_proof(&dpop, &mtls_proof(Some(&der)), &token)
+            .await
+            .unwrap();
+        let new_token = rotated["value"].as_str().unwrap().to_string();
+        svc.revoke_token_with_proof(&dpop, &mtls_proof(Some(&der)), &new_token)
+            .await
+            .unwrap();
+        assert!(svc.introspect_token(&new_token).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn malformed_certificate_keys_are_refused() {
+        let (_, std, s256) = certificate();
+        let key = |proof: &str, jwk: bool, cert: Option<&str>, s: Option<&str>| {
+            Some(GnapClientInfo {
+                key: Some(GnapClientKey {
+                    proof: proof.to_string(),
+                    jwk: jwk.then(|| client_key().jwk),
+                    cert: cert.map(str::to_string),
+                    cert_s256: s.map(str::to_string),
+                }),
+                display: None,
+            })
+        };
+        let bad: Vec<(&str, Option<GnapClientInfo>)> = vec![
+            ("no key form", key("mtls", false, None, None)),
+            ("two forms", key("mtls", false, Some(&std), Some(&s256))),
+            ("jwk and cert", key("mtls", true, Some(&std), None)),
+            ("cert under dpop", key("dpop", false, Some(&std), None)),
+            ("jwk under mtls", key("mtls", true, None, None)),
+            ("cert not base64", key("mtls", false, Some("!!!"), None)),
+            ("cert not x509", key("mtls", false, Some("AAAA"), None)),
+            ("hash not base64url", key("mtls", false, None, Some("!!!"))),
+            ("hash wrong length", key("mtls", false, None, Some("AAAA"))),
+        ];
+        for (why, client) in bad {
+            assert!(
+                GnapService::validate_client_key(&client).is_err(),
+                "{why} must be refused"
+            );
+        }
+        // Positive controls: the two well formed certificate keys pass.
+        assert!(GnapService::validate_client_key(&key("mtls", false, Some(&std), None)).is_ok());
+        assert!(GnapService::validate_client_key(&key("mtls", false, None, Some(&s256))).is_ok());
+    }
+
+    #[test]
+    fn a_non_canonical_hash_spelling_binds_the_same_identifier() {
+        let (_, _, s256) = certificate();
+        let mut padded = s256.clone();
+        padded.push('=');
+        let key = |s: &str| {
+            Some(GnapClientInfo {
+                key: Some(GnapClientKey {
+                    proof: "mtls".to_string(),
+                    jwk: None,
+                    cert: None,
+                    cert_s256: Some(s.to_string()),
+                }),
+                display: None,
+            })
+        };
+        let canonical = GnapService::validate_client_key(&key(&s256));
+        let other = GnapService::validate_client_key(&key(&padded));
+        assert_eq!(
+            canonical.as_ref().unwrap(),
+            &Some(format!("x5t#S256:{s256}"))
+        );
+        // Padding is either refused or normalised to the same identifier, never a second one.
+        assert!(other.is_err() || other.unwrap() == canonical.unwrap());
+    }
 }
 
 /// Access is granted by an integrator's policy, a client key is required, a finished interaction
@@ -3950,7 +4287,9 @@ mod hardening_tests {
         Some(GnapClientInfo {
             key: Some(GnapClientKey {
                 proof: "test".to_string(),
-                jwk: jwk(),
+                jwk: Some(jwk()),
+                cert: None,
+                cert_s256: None,
             }),
             display: None,
         })
