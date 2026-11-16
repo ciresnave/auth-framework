@@ -1334,7 +1334,10 @@ impl GnapService {
                 subject_id: None,
                 interact_ref: None,
             };
-            self.transactions.write().await.insert(transaction_id, txn);
+            self.transactions
+                .write()
+                .await
+                .insert(transaction_id.clone(), txn);
         } else {
             // No interaction required — issue token directly if access requested
             if let Some(ref access_requests) = requested {
@@ -1376,7 +1379,7 @@ impl GnapService {
         );
         continue_obj.insert(
             "uri".to_string(),
-            serde_json::Value::String(format!("{}/continue", self.config.transaction_endpoint)),
+            serde_json::Value::String(self.continue_uri(&transaction_id)),
         );
 
         response.insert(
@@ -1385,6 +1388,16 @@ impl GnapService {
         );
 
         Ok(serde_json::Value::Object(response))
+    }
+
+    /// The continuation URI of a transaction: `{transaction_endpoint}/continue/{id}`. RFC 9635
+    /// section 5 lets the AS choose it, and naming the transaction lets a request that carries only
+    /// the continuation token and a proof be routed to it.
+    fn continue_uri(&self, transaction_id: &str) -> String {
+        format!(
+            "{}/continue/{}",
+            self.config.transaction_endpoint, transaction_id
+        )
     }
 
     /// Continue a transaction without proof material. Tests only: in a build every continuation
@@ -1527,10 +1540,7 @@ impl GnapService {
                 let mut cont = serde_json::Map::new();
                 cont.insert(
                     "uri".to_string(),
-                    serde_json::Value::String(format!(
-                        "{}/continue",
-                        self.config.transaction_endpoint
-                    )),
+                    serde_json::Value::String(self.continue_uri(transaction_id)),
                 );
                 cont.insert("wait".to_string(), serde_json::Value::Number(5.into()));
                 let mut ct = serde_json::Map::new();
@@ -4044,6 +4054,70 @@ mod proof_verification_tests {
             .unwrap();
         assert!(done["access_token"]["value"].is_string());
     }
+
+    /// The continuation URI the server issues names its transaction, so a POST that carries only
+    /// `Authorization: GNAP <continue token>` and a DPoP proof can be routed to it (RFC 9635
+    /// section 5: the AS chooses the URI). The token and the id come from the issued response
+    /// alone, as a client's HTTP request would supply them.
+    #[tokio::test]
+    async fn continue_uri_names_the_transaction() {
+        let svc = service();
+        let dpop = manager();
+        let key = client_key();
+        let first = dpop_header(&key, &key, "POST", URI, "jti-uri-0");
+        let resp = svc
+            .handle_transaction_with_proof(
+                &dpop,
+                &proof(Some(&first), URI),
+                request(&key, "dpop", true),
+            )
+            .await
+            .unwrap();
+        let uri = resp["continue"]["uri"].as_str().unwrap().to_string();
+        let token = resp["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let stored_id = svc.transactions.read().await.keys().next().unwrap().clone();
+        assert_eq!(uri, format!("/api/gnap/tx/continue/{stored_id}"));
+
+        // The route's path parameter is the last segment of the issued URI.
+        let routed_id = uri.rsplit('/').next().unwrap();
+        let abs = format!("https://as.example.test{uri}");
+        let h1 = dpop_header(&key, &key, "POST", &abs, "jti-uri-1");
+        let polled = svc
+            .continue_transaction_with_proof(
+                &dpop,
+                &proof(Some(&h1), &abs),
+                routed_id,
+                &token,
+                None,
+                None,
+            )
+            .await
+            .expect("a continuation at the issued URI finds its transaction");
+        // The next URI names the transaction too, and the rotated token works there.
+        let next_uri = polled["continue"]["uri"].as_str().unwrap().to_string();
+        assert_eq!(next_uri, uri);
+        let next_token = polled["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(next_token, token);
+        let abs2 = format!("https://as.example.test{next_uri}");
+        let h2 = dpop_header(&key, &key, "POST", &abs2, "jti-uri-2");
+        svc.continue_transaction_with_proof(
+            &dpop,
+            &proof(Some(&h2), &abs2),
+            next_uri.rsplit('/').next().unwrap(),
+            &next_token,
+            None,
+            None,
+        )
+        .await
+        .expect("the rotated token works at the URI the poll returned");
+    }
+
     // ── KM7: certificate key forms (RFC 9635 section 7.1) proved by mtls ──
 
     /// A self-signed certificate as DER, its standard-base64 form (`cert`) and its base64url
