@@ -520,7 +520,7 @@ pub struct RarResourceDiscoveryRequest {
 }
 
 /// Resource discovery response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RarResourceDiscoveryResponse {
     /// Discovered resources
     pub resources: Vec<RarDiscoveredResource>,
@@ -531,6 +531,8 @@ pub struct RarResourceDiscoveryResponse {
     /// Continuation token for pagination
     pub continuation_token: Option<String>,
 }
+
+crate::utils::redact::redacting_debug!(RarResourceDiscoveryResponse, plain: [resources, has_more], secret: [continuation_token]);
 
 /// Discovered resource information
 #[derive(Debug, Clone, Serialize, Deserialize)]

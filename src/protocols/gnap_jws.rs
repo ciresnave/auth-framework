@@ -62,7 +62,7 @@ fn mismatch(why: impl Into<String>) -> JwsProofError {
 }
 
 /// What the request is checked against.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct JwsProofContext<'a> {
     /// The client's public JWK.
     pub jwk: &'a Value,
@@ -79,6 +79,8 @@ pub struct JwsProofContext<'a> {
     /// How far `created` may differ from now, in seconds, either way.
     pub max_skew_secs: u64,
 }
+
+crate::utils::redact::redacting_debug!(JwsProofContext<'a>, plain: [jwk, method, uri, body, now, max_skew_secs], secret: [access_token]);
 
 /// The facts of an accepted proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
