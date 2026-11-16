@@ -137,7 +137,7 @@ impl EnhancedAuthorizationCode {
 }
 
 /// Enhanced client credentials with proper secret validation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EnhancedClientCredentials {
     pub client_id: String,
     pub client_secret_hash: Zeroizing<String>,
@@ -148,6 +148,8 @@ pub struct EnhancedClientCredentials {
     pub created_at: SystemTime,
     pub is_active: bool,
 }
+
+crate::utils::redact::redacting_debug!(EnhancedClientCredentials, plain: [client_id, client_type, redirect_uris, allowed_scopes, grant_types, created_at, is_active], secret: [client_secret_hash]);
 
 impl EnhancedClientCredentials {
     pub fn new_confidential(
