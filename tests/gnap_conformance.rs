@@ -277,6 +277,7 @@ async fn gnap_vectors() {
                         http_uri: URI,
                         dpop_proof: header.as_deref(),
                         expected_nonce: None,
+                        client_certificate_der: None,
                     };
                     let result = service
                         .handle_transaction_with_proof(&dpop, &proof, request)
@@ -303,6 +304,7 @@ async fn gnap_vectors() {
                         http_uri: CONTINUE_URI,
                         dpop_proof: header.as_deref(),
                         expected_nonce: None,
+                        client_certificate_der: None,
                     };
                     let result = service
                         .continue_transaction_with_proof(
@@ -343,6 +345,7 @@ async fn gnap_vectors() {
                         http_uri: MANAGE_URI,
                         dpop_proof: header.as_deref(),
                         expected_nonce: None,
+                        client_certificate_der: None,
                     };
                     let result = service.rotate_token_with_proof(&dpop, &proof, &token).await;
                     finish_step(id, step, &mut vars, result);
@@ -363,6 +366,7 @@ async fn gnap_vectors() {
                         http_uri: MANAGE_URI,
                         dpop_proof: header.as_deref(),
                         expected_nonce: None,
+                        client_certificate_der: None,
                     };
                     let result = service
                         .revoke_token_with_proof(&dpop, &proof, &token)
