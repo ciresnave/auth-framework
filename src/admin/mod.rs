@@ -563,6 +563,37 @@ pub enum KeyAction {
         #[arg(long)]
         overlap_secs: u64,
     },
+    /// Print a self-signed X.509 certificate (PEM) for an active key
+    SelfSigned {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+        /// Key id of an active asymmetric key
+        kid: String,
+        /// Subject common name
+        #[arg(long)]
+        cn: String,
+        /// DNS subject alternative name (repeatable)
+        #[arg(long = "dns")]
+        dns: Vec<String>,
+        /// Days the certificate is valid from now
+        #[arg(long, default_value_t = 365)]
+        days: u32,
+    },
+    /// Print a PKCS#10 certificate signing request (PEM) for an active key, to send to a CA
+    Csr {
+        /// Key directory
+        #[arg(long)]
+        dir: String,
+        /// Key id of an active asymmetric key
+        kid: String,
+        /// Subject common name
+        #[arg(long)]
+        cn: String,
+        /// DNS subject alternative name (repeatable)
+        #[arg(long = "dns")]
+        dns: Vec<String>,
+    },
     /// Print the JWK Set of the live public keys
     Jwks {
         /// Key directory
