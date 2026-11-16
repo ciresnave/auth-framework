@@ -89,6 +89,38 @@ fn new_key(
     }
 }
 
+/// The signing key behind `kid`, rebuilt from the store for a certificate or request. Only an
+/// active asymmetric key in a store that can export it: a retiring, revoked or destroyed key
+/// must not get a fresh certificate, and a symmetric key has none.
+#[cfg(feature = "cli")]
+async fn certificate_key(
+    store: &crate::keys::FileKeyStore,
+    kid: &crate::keys::Kid,
+) -> Result<crate::keys::LocalKey> {
+    use crate::keys::{KeyState, KeyStore};
+    let info = store.info(kid).await?;
+    if info.state != KeyState::Active {
+        return Err(AuthError::Cli(format!(
+            "key {kid} is {:?}: only an active key gets a certificate or request",
+            info.state
+        )));
+    }
+    if !info.kind.is_asymmetric() {
+        return Err(AuthError::Cli(format!(
+            "key {kid} is a {:?} key: only an asymmetric key has a certificate",
+            info.kind
+        )));
+    }
+    if !store.capabilities().exportable {
+        return Err(AuthError::Cli(
+            "this key store cannot export its private keys, so it cannot build a certificate here"
+                .to_string(),
+        ));
+    }
+    let der = store.export_private_pkcs8(kid).await?;
+    crate::keys::LocalKey::from_pkcs8_der(&der, info.kind, Some(kid.clone()))
+}
+
 /// Run one `keys` action against the key directory and return what to print. Separate from
 /// `handle_key_action` so tests can pass an explicit encryption key.
 #[cfg(feature = "cli")]
@@ -223,6 +255,38 @@ pub(crate) async fn key_action_output(
                     gone.iter().map(Kid::as_str).collect::<Vec<_>>().join(", ")
                 ))
             }
+        }
+        KeyAction::SelfSigned {
+            dir,
+            kid,
+            cn,
+            dns,
+            days,
+        } => {
+            let store = open(dir, false).await?;
+            let key = certificate_key(&store, &Kid::new(kid)?).await?;
+            crate::keys::self_signed_certificate(
+                &key,
+                &crate::keys::CertSubject {
+                    common_name: cn,
+                    dns_names: dns,
+                    valid_for: std::time::Duration::from_secs(u64::from(days) * 86_400),
+                },
+            )
+            .map(|pem| pem.trim_end().to_string())
+        }
+        KeyAction::Csr { dir, kid, cn, dns } => {
+            let store = open(dir, false).await?;
+            let key = certificate_key(&store, &Kid::new(kid)?).await?;
+            crate::keys::certificate_signing_request(
+                &key,
+                &crate::keys::CertSubject {
+                    common_name: cn,
+                    dns_names: dns,
+                    valid_for: std::time::Duration::ZERO,
+                },
+            )
+            .map(|pem| pem.trim_end().to_string())
         }
         KeyAction::Jwks { dir } => {
             let store = open(dir, false).await?;
@@ -2512,6 +2576,203 @@ mod tests {
         assert!(
             !ok(&["x", "keys", "compromise", "--dir", "d"]),
             "a key id is required"
+        );
+    }
+
+    fn self_signed(dir: &str, kid: &str, days: u32) -> KeyAction {
+        KeyAction::SelfSigned {
+            dir: dir.to_string(),
+            kid: kid.to_string(),
+            cn: "client.example".into(),
+            dns: vec!["a.example".into(), "b.example".into()],
+            days,
+        }
+    }
+
+    async fn mtls_key(d: &str, kid: &str) {
+        key_action_output(
+            generate(d, KeyKindArg::Mtls, KeyAlgArg::Es256, Some(kid)),
+            enc(1),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn self_signed_prints_a_certificate_for_the_stored_key() {
+        use x509_parser::prelude::*;
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        mtls_key(&d, "m1").await;
+        let pem = key_action_output(self_signed(&d, "m1", 30), enc(1))
+            .await
+            .unwrap();
+        let (_, block) = x509_parser::pem::parse_x509_pem(pem.as_bytes()).unwrap();
+        assert_eq!(block.label, "CERTIFICATE");
+        let (_, cert) = parse_x509_certificate(&block.contents).unwrap();
+        assert_eq!(
+            cert.subject()
+                .iter_common_name()
+                .next()
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "client.example"
+        );
+        assert_eq!(
+            cert.subject_alternative_name()
+                .unwrap()
+                .unwrap()
+                .value
+                .general_names
+                .len(),
+            2,
+            "both --dns names"
+        );
+        let window = cert.validity().not_after.timestamp() - cert.validity().not_before.timestamp();
+        assert_eq!(
+            window,
+            30 * 86_400 + 60,
+            "--days plus the one-minute back-dating"
+        );
+        assert!(cert.verify_signature(None).is_ok());
+        // The certificate certifies the key that is in the directory: its public point is
+        // the one the store publishes.
+        let jwks = key_action_output(KeyAction::Jwks { dir: d }, enc(1))
+            .await
+            .unwrap();
+        let jwk: serde_json::Value = serde_json::from_str(&jwks).unwrap();
+        // A TLS key has no `use` and is still published; take its x and y.
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut point = b64.decode(jwk["keys"][0]["x"].as_str().unwrap()).unwrap();
+        point.extend(b64.decode(jwk["keys"][0]["y"].as_str().unwrap()).unwrap());
+        assert!(
+            cert.tbs_certificate
+                .subject_pki
+                .raw
+                .windows(point.len())
+                .any(|w| w == point.as_slice()),
+            "the certificate carries the stored key's public point"
+        );
+    }
+
+    #[tokio::test]
+    async fn csr_prints_a_request_whose_proof_of_possession_verifies() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        mtls_key(&d, "m1").await;
+        let pem = key_action_output(
+            KeyAction::Csr {
+                dir: d,
+                kid: "m1".into(),
+                cn: "client.example".into(),
+                dns: vec!["a.example".into()],
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let req = crate::keys::certificate_request_from_csr(&pem, "p", "t").unwrap();
+        assert_eq!(req.subject.common_name, "client.example");
+        assert_eq!(req.subject_alt_names.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn certificates_are_refused_for_a_symmetric_revoked_or_missing_key_and_bad_days() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        mtls_key(&d, "m1").await;
+        key_action_output(
+            generate(&d, KeyKindArg::Hmac, KeyAlgArg::Es256, Some("h1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        for (kid, days, why) in [
+            ("h1", 30, "symmetric"),
+            ("nope", 30, "missing"),
+            ("m1", 0, "no validity"),
+        ] {
+            assert!(
+                key_action_output(self_signed(&d, kid, days), enc(1))
+                    .await
+                    .is_err(),
+                "{why}"
+            );
+        }
+        key_action_output(
+            KeyAction::Revoke {
+                dir: d.clone(),
+                kid: "m1".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let err = key_action_output(self_signed(&d, "m1", 30), enc(1))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("only an active key"), "{err}");
+        let csr = key_action_output(
+            KeyAction::Csr {
+                dir: d,
+                kid: "m1".into(),
+                cn: "x".into(),
+                dns: vec![],
+            },
+            enc(1),
+        )
+        .await;
+        assert!(csr.is_err(), "a revoked key gets no request either");
+        let missing = key_action_output(self_signed("no-such-dir-km8c", "m1", 30), enc(1))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("does not exist"), "{missing}");
+    }
+
+    #[test]
+    fn the_certificate_subcommands_parse() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Wrapper {
+            #[command(subcommand)]
+            command: CliCommand,
+        }
+        let parsed = Wrapper::try_parse_from([
+            "x",
+            "keys",
+            "self-signed",
+            "--dir",
+            "d",
+            "k1",
+            "--cn",
+            "c",
+            "--dns",
+            "a",
+            "--dns",
+            "b",
+            "--days",
+            "30",
+        ])
+        .unwrap();
+        match parsed.command {
+            CliCommand::Keys {
+                action: KeyAction::SelfSigned { dns, days, .. },
+            } => {
+                assert_eq!(dns, vec!["a", "b"]);
+                assert_eq!(days, 30);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            Wrapper::try_parse_from(["x", "keys", "csr", "--dir", "d", "k1"]).is_err(),
+            "--cn is required"
+        );
+        assert!(
+            Wrapper::try_parse_from(["x", "keys", "csr", "--dir", "d", "k1", "--cn", "c"]).is_ok()
         );
     }
 }

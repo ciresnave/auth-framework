@@ -168,6 +168,7 @@ client_name
 client_notification_endpoint
 client_principal
 client_uri
+cn
 code_challenge
 code_challenge_method
 code_challenge_methods_supported
@@ -250,6 +251,7 @@ directory_url
 display
 display_name
 display_name_attribute
+dns
 dns_name
 dns_names
 docs_url
