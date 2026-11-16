@@ -157,13 +157,15 @@ pub struct LockoutConfig {
 ///
 /// **Security note:** `api_key` is never serialized to prevent accidental
 /// secret leakage in logs or config dumps.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SmsConfig {
     pub provider: String,
     #[serde(skip_serializing, default)]
     pub api_key: Zeroizing<String>,
     pub from_number: String,
 }
+
+crate::utils::redact::redacting_debug!(SmsConfig, plain: [provider, from_number], secret: [api_key]);
 
 impl Default for SmsConfig {
     fn default() -> Self {

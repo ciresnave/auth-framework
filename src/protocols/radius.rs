@@ -73,7 +73,7 @@ const AUTHENTICATOR_LEN: usize = 16;
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 /// RADIUS client configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RadiusConfig {
     /// RADIUS server address (host:port, default port 1812).
     pub server_addr: String,
@@ -93,6 +93,8 @@ pub struct RadiusConfig {
     /// Accounting server address (host:port, default port 1813).
     pub accounting_addr: Option<String>,
 }
+
+crate::utils::redact::redacting_debug!(RadiusConfig, plain: [server_addr, timeout, retries, nas_identifier, accounting_addr], secret: [shared_secret]);
 
 impl Default for RadiusConfig {
     fn default() -> Self {
