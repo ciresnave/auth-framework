@@ -135,8 +135,10 @@ caa_identities
 cached_permissions
 canonicalization_method
 canvas_hash
+cert
 cert_file
 cert_id
+cert_s256
 cert_thumbprint
 certificate
 certificate_pem
