@@ -76,7 +76,18 @@ fn new_key(
     alg: crate::keys::SigningAlg,
     kid: Option<crate::keys::Kid>,
 ) -> Result<crate::keys::NewKey> {
-    if kind.is_asymmetric() {
+    if kind == crate::keys::KeyKind::JweEncryption {
+        // A key-agreement key does not sign, so `alg` does not apply.
+        #[cfg(feature = "key-agreement")]
+        return Ok(crate::keys::LocalKey::generate_x25519(kind, kid)?.into());
+        #[cfg(not(feature = "key-agreement"))]
+        {
+            let _ = (alg, kid);
+            Err(AuthError::Cli(
+                "key-agreement keys need a build with the `key-agreement` feature".to_string(),
+            ))
+        }
+    } else if kind.is_asymmetric() {
         Ok(crate::keys::LocalKey::generate(kind, alg, kid)?.into())
     } else {
         let kid = match kid {
@@ -105,9 +116,9 @@ async fn certificate_key(
             info.state
         )));
     }
-    if !info.kind.is_asymmetric() {
+    if !info.kind.is_asymmetric() || info.kind == crate::keys::KeyKind::JweEncryption {
         return Err(AuthError::Cli(format!(
-            "key {kid} is a {:?} key: only an asymmetric key has a certificate",
+            "key {kid} is a {:?} key: only a signing key pair has a certificate",
             info.kind
         )));
     }
@@ -204,11 +215,12 @@ pub(crate) async fn key_action_output(
             let store = open(dir, false).await?;
             let current = Kid::new(kid)?;
             let info = store.info(&current).await?;
-            let alg = if info.kind.is_asymmetric() {
-                alg_from_name(&info.alg)?
-            } else {
-                crate::keys::SigningAlg::Es256
-            };
+            let alg =
+                if info.kind.is_asymmetric() && info.kind != crate::keys::KeyKind::JweEncryption {
+                    alg_from_name(&info.alg)?
+                } else {
+                    crate::keys::SigningAlg::Es256
+                };
             let next = new_key(info.kind, alg, None)?;
             let new = rotate(&store, &current, next).await?;
             Ok(format!(
@@ -226,11 +238,12 @@ pub(crate) async fn key_action_output(
             let store = open(dir, false).await?;
             let current = Kid::new(kid)?;
             let info = store.info(&current).await?;
-            let alg = if info.kind.is_asymmetric() {
-                alg_from_name(&info.alg)?
-            } else {
-                crate::keys::SigningAlg::Es256
-            };
+            let alg =
+                if info.kind.is_asymmetric() && info.kind != crate::keys::KeyKind::JweEncryption {
+                    alg_from_name(&info.alg)?
+                } else {
+                    crate::keys::SigningAlg::Es256
+                };
             let new = compromise(&store, &current, new_key(info.kind, alg, None)?).await?;
             Ok(format!(
                 "revoked {current} as compromised and replaced it with {new} ({:?});                  a running service distrusts {current} at its next key ring refresh",
@@ -307,6 +320,7 @@ fn key_kind(arg: KeyKindArg) -> crate::keys::KeyKind {
         KeyKindArg::GnapClient => KeyKind::GnapClient,
         KeyKindArg::Hmac => KeyKind::Hmac,
         KeyKindArg::Aead => KeyKind::Aead,
+        KeyKindArg::JweEncryption => KeyKind::JweEncryption,
     }
 }
 
@@ -2773,6 +2787,126 @@ mod tests {
         );
         assert!(
             Wrapper::try_parse_from(["x", "keys", "csr", "--dir", "d", "k1", "--cn", "c"]).is_ok()
+        );
+    }
+
+    #[cfg(feature = "key-agreement")]
+    #[tokio::test]
+    async fn jwe_encryption_keys_generate_list_rotate_and_compromise() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        let out = key_action_output(
+            generate(&d, KeyKindArg::JweEncryption, KeyAlgArg::Es256, Some("a1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("a1") && out.contains("ECDH-ES"), "{out}");
+        let rows = list_json(&d).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["kind"], "jwe_encryption");
+        assert_eq!(rows[0]["alg"], "ECDH-ES");
+        assert_eq!(rows[0]["state"], "active");
+
+        let rotated = key_action_output(
+            KeyAction::Rotate {
+                dir: d.clone(),
+                kid: "a1".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(rotated.contains("a1 is retiring"), "{rotated}");
+        let rows = list_json(&d).await;
+        assert_eq!(rows.len(), 2);
+        let new_kid = rows
+            .iter()
+            .find(|r| r["state"] == "active")
+            .map(|r| r["kid"].as_str().unwrap().to_string())
+            .expect("an active successor");
+        assert!(rows.iter().all(|r| r["alg"] == "ECDH-ES"));
+
+        let compromised = key_action_output(
+            KeyAction::Compromise {
+                dir: d.clone(),
+                kid: new_kid.clone(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(compromised.contains("compromised"), "{compromised}");
+        let rows = list_json(&d).await;
+        let state_of = |kid: &str| {
+            rows.iter()
+                .find(|r| r["kid"] == kid)
+                .map(|r| r["state"].clone())
+                .unwrap()
+        };
+        assert_eq!(state_of(&new_kid), "revoked");
+        assert_eq!(rows.iter().filter(|r| r["state"] == "active").count(), 1);
+    }
+
+    #[cfg(feature = "key-agreement")]
+    #[tokio::test]
+    async fn an_agreement_key_gets_no_certificate_or_request() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        key_action_output(
+            generate(&d, KeyKindArg::JweEncryption, KeyAlgArg::Es256, Some("a1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let err = key_action_output(
+            KeyAction::SelfSigned {
+                dir: d.clone(),
+                kid: "a1".into(),
+                cn: "c".into(),
+                dns: vec![],
+                days: 1,
+            },
+            enc(1),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("only a signing key pair"), "{err}");
+        let err = key_action_output(
+            KeyAction::Csr {
+                dir: d,
+                kid: "a1".into(),
+                cn: "c".into(),
+                dns: vec![],
+            },
+            enc(1),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("only a signing key pair"), "{err}");
+    }
+
+    #[test]
+    fn the_kind_flag_accepts_jwe_encryption() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Wrapper {
+            #[command(subcommand)]
+            command: CliCommand,
+        }
+        assert!(
+            Wrapper::try_parse_from([
+                "x",
+                "keys",
+                "generate",
+                "--dir",
+                "d",
+                "--kind",
+                "jwe-encryption"
+            ])
+            .is_ok()
         );
     }
 }

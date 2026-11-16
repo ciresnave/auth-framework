@@ -514,7 +514,7 @@ pasetors = "0.8.1"
   # pulled in by this crate. An application that enables actix-web's `http2` feature itself
   # takes h2 0.3.x with it: actix-http requires `h2 ^0.3.27` and there is no patched 0.3 release.
   actix-integration = ["actix-web", "futures-util"]
-  admin-binary = ["cli", "tui", "web-gui"]
+  admin-binary = ["cli", "tui", "web-gui", "key-agreement"]
   api-server = ["axum", "tower", "tower-http"]
   axum-integration = ["axum", "serde_urlencoded", "tower", "tower-http"]
   cli = [

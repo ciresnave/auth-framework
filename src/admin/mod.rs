@@ -619,6 +619,8 @@ pub enum KeyKindArg {
     Hmac,
     /// Symmetric AEAD key
     Aead,
+    /// X25519 key-agreement key (JWE ECDH-ES)
+    JweEncryption,
 }
 
 /// A signature algorithm for the `keys generate` command.
