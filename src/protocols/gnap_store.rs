@@ -65,6 +65,10 @@ pub trait GnapTokenStore: Send + Sync {
     /// Remove every token issued under this transaction; returns how many were removed.
     async fn remove_for_transaction(&self, transaction_id: &str) -> Result<usize>;
 
+    /// Remove every token bound to the client key with this RFC 7638 `thumbprint`; returns how
+    /// many were removed. A token bound to no key is never matched.
+    async fn remove_for_key(&self, thumbprint: &str) -> Result<usize>;
+
     /// How many tokens are stored, expired ones included.
     async fn count(&self) -> Result<usize>;
 
@@ -111,6 +115,13 @@ impl GnapTokenStore for InMemoryTokenStore {
         let mut tokens = self.tokens.write().await;
         let before = tokens.len();
         tokens.retain(|_, t| t.transaction_id != transaction_id);
+        Ok(before - tokens.len())
+    }
+
+    async fn remove_for_key(&self, thumbprint: &str) -> Result<usize> {
+        let mut tokens = self.tokens.write().await;
+        let before = tokens.len();
+        tokens.retain(|_, t| t.key_thumbprint.as_deref() != Some(thumbprint));
         Ok(before - tokens.len())
     }
 

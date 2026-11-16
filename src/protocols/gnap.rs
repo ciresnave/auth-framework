@@ -460,6 +460,17 @@ impl std::fmt::Debug for GnapInteractionCompletion {
     }
 }
 
+/// What [`GnapService::revoke_client_key`] removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClientKeyRevocation {
+    /// Access tokens removed from the token store.
+    pub tokens: usize,
+    /// Consent records marked withdrawn.
+    pub consents: usize,
+    /// Pending or approved transactions dropped, so no continuation can still issue a token.
+    pub transactions: usize,
+}
+
 pub struct GnapService {
     config: GnapConfig,
     /// Decides what is granted; without one no access token is issued.
@@ -546,6 +557,68 @@ impl GnapService {
             .remove_for_transaction(&consent.transaction_id)
             .await?;
         Ok(())
+    }
+
+    /// Kill every grant bound to the client key with this RFC 7638 `thumbprint` (KM5): drop its
+    /// pending and approved transactions (so no continuation can still issue a token), withdraw
+    /// its consent records and remove its access tokens. Order matters: transactions go first so
+    /// nothing new can be issued while the rest is removed. A store error is returned and what
+    /// was not yet removed stays, so calling again finishes the job. Repeating a completed
+    /// revocation removes nothing and succeeds.
+    pub async fn revoke_client_key(&self, thumbprint: &str) -> Result<ClientKeyRevocation> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let transactions = {
+            let mut txns = self.transactions.write().await;
+            let before = txns.len();
+            txns.retain(|_, t| {
+                let bound = t
+                    .request
+                    .client
+                    .as_ref()
+                    .and_then(|c| c.key.as_ref())
+                    .and_then(|k| Self::jwk_thumbprint(&k.jwk).ok());
+                bound.as_deref() != Some(thumbprint)
+            });
+            before - txns.len()
+        };
+        // Count only records this call withdrew, so a repeat reports nothing.
+        let consents = self.consents.revoke_for_key(thumbprint, now).await?;
+        let newly_withdrawn = consents
+            .iter()
+            .filter(|c| c.revoked_at == Some(now))
+            .count();
+        let mut tokens = self.issued_tokens.remove_for_key(thumbprint).await?;
+        for consent in &consents {
+            tokens += self
+                .issued_tokens
+                .remove_for_transaction(&consent.transaction_id)
+                .await?;
+        }
+        Ok(ClientKeyRevocation {
+            tokens,
+            consents: newly_withdrawn,
+            transactions,
+        })
+    }
+
+    /// Revoke `kid` in the key `store` (it stops verifying and leaves the JWKS) and then kill
+    /// every grant bound to its thumbprint (KM5).
+    pub async fn revoke_client_key_by_kid(
+        &self,
+        store: &dyn crate::keys::KeyStore,
+        kid: &crate::keys::Kid,
+    ) -> Result<ClientKeyRevocation> {
+        let info = store.info(kid).await?;
+        let thumbprint = info
+            .public
+            .as_ref()
+            .ok_or_else(|| AuthError::validation("a key with no public half has no GNAP grants"))?
+            .thumbprint()?;
+        crate::keys::revoke(store, kid).await?;
+        self.revoke_client_key(&thumbprint).await
     }
 
     // ── Key Binding Helpers ──────────────────────────────────────────────
@@ -2891,6 +2964,9 @@ mod tests {
         async fn revoke(&self, id: &str, at: u64) -> Result<Option<GnapConsent>> {
             self.inner.revoke(id, at).await
         }
+        async fn revoke_for_key(&self, thumbprint: &str, at: u64) -> Result<Vec<GnapConsent>> {
+            self.inner.revoke_for_key(thumbprint, at).await
+        }
     }
 
     /// Grants only the first right asked for.
@@ -3109,6 +3185,9 @@ mod tests {
         async fn remove_for_transaction(&self, transaction_id: &str) -> Result<usize> {
             self.inner.remove_for_transaction(transaction_id).await
         }
+        async fn remove_for_key(&self, thumbprint: &str) -> Result<usize> {
+            self.inner.remove_for_key(thumbprint).await
+        }
         async fn count(&self) -> Result<usize> {
             self.inner.count().await
         }
@@ -3188,6 +3267,165 @@ mod tests {
         service.cleanup_expired_tokens().await;
         assert_eq!(store.count().await.unwrap(), 1);
         assert!(store.get(&token).await.unwrap().is_some());
+    }
+
+    // ── KM5: a revoked client key kills the grants bound to it ───────────
+
+    fn other_ec_jwk() -> GnapJwk {
+        let key = crate::keys::LocalKey::generate(
+            crate::keys::KeyKind::GnapClient,
+            crate::keys::SigningAlg::Es256,
+            None,
+        )
+        .unwrap();
+        serde_json::from_value(key.public().to_value()).unwrap()
+    }
+
+    async fn direct_token_for(service: &GnapService, jwk: GnapJwk) -> String {
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(jwk)),
+            interact: None,
+            access_token: Some(vec![right("read")].into()),
+            subject: None,
+        };
+        let resp = service.handle_transaction(req).await.unwrap();
+        resp["access_token"]["value"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn revoking_a_client_key_kills_its_tokens_and_only_its_tokens() {
+        let service = test_service();
+        let doomed_jwk = test_ec_jwk();
+        let doomed_tp = GnapService::jwk_thumbprint(&doomed_jwk).unwrap();
+        let doomed = direct_token_for(&service, doomed_jwk.clone()).await;
+        let doomed2 = direct_token_for(&service, doomed_jwk).await;
+        let bystander = direct_token_for(&service, other_ec_jwk()).await;
+        // Positive control: all three are live before the revocation.
+        for t in [&doomed, &doomed2, &bystander] {
+            assert!(service.introspect_token(t).await.unwrap().is_some());
+        }
+
+        let report = service.revoke_client_key(&doomed_tp).await.unwrap();
+        assert_eq!(report.tokens, 2);
+        assert!(service.introspect_token(&doomed).await.unwrap().is_none());
+        assert!(service.introspect_token(&doomed2).await.unwrap().is_none());
+        // Refutation: a token bound to another key is untouched.
+        assert!(
+            service
+                .introspect_token(&bystander)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        // Repeating is harmless and removes nothing more.
+        assert_eq!(
+            service.revoke_client_key(&doomed_tp).await.unwrap(),
+            ClientKeyRevocation::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn revoking_a_client_key_withdraws_its_consents_and_drops_its_transactions() {
+        let service = test_service();
+        let tp = GnapService::jwk_thumbprint(&test_ec_jwk()).unwrap();
+        // One approved interactive grant (leaves a consent and a token), one still pending.
+        let owner = "owner-1";
+        approved_by(&service, Some(owner), vec![right("read")])
+            .await
+            .unwrap();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+            }),
+            access_token: Some(vec![right("read")].into()),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        assert!(service.consents_for_owner(owner).await.unwrap()[0].is_active());
+        let before = service.transactions.read().await.len();
+        // The approved transaction was consumed when its token was issued; only the pending one stands.
+        assert_eq!(before, 1);
+
+        let report = service.revoke_client_key(&tp).await.unwrap();
+        assert_eq!(report.consents, 1);
+        assert_eq!(report.tokens, 1);
+        assert_eq!(report.transactions, 1);
+        assert!(!service.consents_for_owner(owner).await.unwrap()[0].is_active());
+        assert!(service.transactions.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_revoked_keys_pending_transaction_cannot_continue_to_a_token() {
+        let service = test_service();
+        let tp = GnapService::jwk_thumbprint(&test_ec_jwk()).unwrap();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+            }),
+            access_token: Some(vec![right("read")].into()),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        let (txn_id, cont) = {
+            let txns = service.transactions.read().await;
+            let t = txns.values().next().unwrap();
+            (t.id.clone(), t.continue_token.clone())
+        };
+        service.revoke_client_key(&tp).await.unwrap();
+        assert!(
+            service
+                .approve_transaction(&txn_id, Some("o"))
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .continue_transaction(&txn_id, &cont, None, None)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn revoking_by_kid_revokes_the_key_and_kills_its_grants() {
+        use crate::keys::{KeyState, KeyStore, MemoryKeyStore};
+        let store = MemoryKeyStore::new();
+        let key = crate::keys::LocalKey::generate(
+            crate::keys::KeyKind::GnapClient,
+            crate::keys::SigningAlg::Es256,
+            None,
+        )
+        .unwrap();
+        let kid = key.public().kid.clone().unwrap();
+        let jwk: GnapJwk = serde_json::from_value(key.public().to_value()).unwrap();
+        // The two thumbprint computations agree, so a kid can find its grants.
+        assert_eq!(
+            GnapService::jwk_thumbprint(&jwk).unwrap(),
+            key.public().thumbprint().unwrap()
+        );
+        store.insert(key, KeyState::Active).await.unwrap();
+        let service = test_service();
+        let token = direct_token_for(&service, jwk).await;
+        assert!(service.introspect_token(&token).await.unwrap().is_some());
+
+        let report = service
+            .revoke_client_key_by_kid(&store, &kid)
+            .await
+            .unwrap();
+        assert_eq!(report.tokens, 1);
+        assert_eq!(store.info(&kid).await.unwrap().state, KeyState::Revoked);
+        assert!(service.introspect_token(&token).await.unwrap().is_none());
+        // A key that is already revoked is an error, and nothing else is touched.
+        assert!(
+            service
+                .revoke_client_key_by_kid(&store, &kid)
+                .await
+                .is_err()
+        );
     }
 }
 
