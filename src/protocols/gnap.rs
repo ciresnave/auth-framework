@@ -17,6 +17,7 @@
 
 use crate::errors::{AuthError, Result};
 use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
+use crate::protocols::gnap_store::{GnapIssuedToken, GnapTokenStore, InMemoryTokenStore};
 use crate::protocols::gnap_wire::{
     GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests,
     validate_access_token_requests_with_flags,
@@ -351,37 +352,6 @@ impl std::fmt::Debug for GnapTransaction {
     }
 }
 
-/// A GNAP access token that has been issued and can be managed
-#[derive(Clone, Serialize, Deserialize)]
-struct GnapIssuedToken {
-    /// Opaque token value
-    pub value: String,
-    /// Access rights granted
-    pub access: Vec<GnapAccessRequest>,
-    /// Expiration timestamp (epoch seconds)
-    pub expires_at: u64,
-    /// Client key thumbprint that this token is bound to (if any)
-    pub key_thumbprint: Option<String>,
-    /// The proof method of that key (`dpop`, ...): how a request about this token is proved.
-    #[serde(default)]
-    pub key_proof: Option<String>,
-    /// The transaction that produced this token
-    pub transaction_id: String,
-}
-
-impl std::fmt::Debug for GnapIssuedToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut d = f.debug_struct("GnapIssuedToken");
-        d.field("value", &crate::utils::redact::redacted(&self.value));
-        d.field("access", &self.access);
-        d.field("expires_at", &self.expires_at);
-        d.field("key_thumbprint", &self.key_thumbprint);
-        d.field("key_proof", &self.key_proof);
-        d.field("transaction_id", &self.transaction_id);
-        d.finish()
-    }
-}
-
 /// The HTTP request a client key signs, handed to the `_with_proof` entry points.
 ///
 /// Only the `dpop` proof method can be verified here: the proof is the request's `DPoP` header
@@ -447,7 +417,7 @@ pub struct GnapService {
     /// Active transactions (keyed by transaction ID)
     transactions: Arc<RwLock<HashMap<String, GnapTransaction>>>,
     /// Issued access tokens (keyed by token value)
-    issued_tokens: Arc<RwLock<HashMap<String, GnapIssuedToken>>>,
+    issued_tokens: Arc<dyn GnapTokenStore>,
     /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
     consents: Arc<dyn GnapConsentStore>,
 }
@@ -475,7 +445,7 @@ impl GnapService {
             config,
             policy: None,
             transactions: Arc::new(RwLock::new(HashMap::new())),
-            issued_tokens: Arc::new(RwLock::new(HashMap::new())),
+            issued_tokens: Arc::new(InMemoryTokenStore::new()),
             consents: Arc::new(InMemoryConsentStore::new()),
         }
     }
@@ -492,6 +462,13 @@ impl GnapService {
     /// transaction; if the store cannot record it, no token is issued.
     pub fn with_consent_store(mut self, store: Arc<dyn GnapConsentStore>) -> Self {
         self.consents = store;
+        self
+    }
+
+    /// Keep issued access tokens in this store instead of the default in-memory one. A store
+    /// error refuses the request it happens in; it is never read as "no such token".
+    pub fn with_token_store(mut self, store: Arc<dyn GnapTokenStore>) -> Self {
+        self.issued_tokens = store;
         self
     }
 
@@ -513,9 +490,8 @@ impl GnapService {
             .await?
             .ok_or_else(|| AuthError::validation("Consent not found"))?;
         self.issued_tokens
-            .write()
-            .await
-            .retain(|_, t| t.transaction_id != consent.transaction_id);
+            .remove_for_transaction(&consent.transaction_id)
+            .await?;
         Ok(())
     }
 
@@ -897,9 +873,10 @@ impl GnapService {
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
     ) -> Result<()> {
         let (thumbprint, method) = {
-            let tokens = self.issued_tokens.read().await;
-            let token = tokens
+            let token = self
+                .issued_tokens
                 .get(token_value)
+                .await?
                 .ok_or_else(|| AuthError::validation(not_found))?;
             (token.key_thumbprint.clone(), token.key_proof.clone())
         };
@@ -998,10 +975,12 @@ impl GnapService {
         // exists: a token whose consent could not be recorded is never issued.
         // `consent_owner` is `Some` exactly for such a transaction; its inner value is the
         // resource owner the integrator named at approval, if any.
+        let mut consent_id = None;
         if let Some(resource_owner) = consent_owner {
+            let id = uuid::Uuid::new_v4().to_string();
             self.consents
                 .record(GnapConsent {
-                    id: uuid::Uuid::new_v4().to_string(),
+                    id: id.clone(),
                     transaction_id: transaction_id.to_string(),
                     resource_owner: resource_owner.map(str::to_string),
                     client_key_thumbprint: thumbprint.to_string(),
@@ -1010,13 +989,17 @@ impl GnapService {
                     revoked_at: None,
                 })
                 .await?;
+            consent_id = Some(id);
         }
 
         // Stored before the response is returned: a client that uses the token at once finds it.
-        self.issued_tokens
-            .write()
-            .await
-            .insert(access_token.clone(), issued);
+        if let Err(e) = self.issued_tokens.insert(issued).await {
+            // The consent written above has no token behind it: withdraw it.
+            if let Some(id) = consent_id {
+                let _ = self.consents.revoke(&id, now).await;
+            }
+            return Err(e);
+        }
 
         let mut token_obj = serde_json::Map::new();
         token_obj.insert("value".to_string(), serde_json::Value::String(access_token));
@@ -1512,8 +1495,7 @@ impl GnapService {
     ) -> Result<()> {
         self.require_token_key_proof(token_value, "Token not found", dpop)
             .await?;
-        let mut tokens = self.issued_tokens.write().await;
-        if tokens.remove(token_value).is_none() {
+        if self.issued_tokens.remove(token_value).await?.is_none() {
             return Err(AuthError::validation("Token not found"));
         }
         Ok(())
@@ -1544,9 +1526,10 @@ impl GnapService {
     ) -> Result<serde_json::Value> {
         self.require_token_key_proof(old_token_value, "Token not found or already revoked", dpop)
             .await?;
-        let mut tokens = self.issued_tokens.write().await;
-        let old = tokens
+        let old = self
+            .issued_tokens
             .remove(old_token_value)
+            .await?
             .ok_or_else(|| AuthError::validation("Token not found or already revoked"))?;
 
         let now = std::time::SystemTime::now()
@@ -1591,16 +1574,14 @@ impl GnapService {
             .collect();
         token_obj.insert("access".to_string(), serde_json::Value::Array(access_json));
 
-        tokens.insert(new_value, new_token);
-        drop(tokens);
+        self.issued_tokens.insert(new_token).await?;
 
         Ok(serde_json::Value::Object(token_obj))
     }
 
     /// Introspect a token — check if it is valid and return its access rights.
     pub async fn introspect_token(&self, token_value: &str) -> Result<Option<serde_json::Value>> {
-        let tokens = self.issued_tokens.read().await;
-        let token = match tokens.get(token_value) {
+        let token = match self.issued_tokens.get(token_value).await? {
             Some(t) => t,
             None => return Ok(None),
         };
@@ -1651,8 +1632,7 @@ impl GnapService {
         token_value: &str,
         presenting_jwk: &GnapJwk,
     ) -> Result<bool> {
-        let tokens = self.issued_tokens.read().await;
-        let token = match tokens.get(token_value) {
+        let token = match self.issued_tokens.get(token_value).await? {
             Some(t) => t,
             None => return Err(AuthError::validation("Token not found")),
         };
@@ -1750,10 +1730,9 @@ impl GnapService {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        self.issued_tokens
-            .write()
-            .await
-            .retain(|_, t| now < t.expires_at);
+        if let Err(e) = self.issued_tokens.purge_expired(now).await {
+            tracing::warn!("GNAP token store could not purge expired tokens: {e}");
+        }
     }
 }
 
@@ -2968,7 +2947,124 @@ mod tests {
         let service = test_service().with_consent_store(store);
         let result = approved_by(&service, Some("user-42"), vec![right("read")]).await;
         assert!(result.is_err());
-        assert!(service.issued_tokens.read().await.is_empty());
+        assert!((service.issued_tokens.count().await.unwrap() == 0));
+    }
+
+    // ── Token store (G6 slice 2) ─────────────────────────────────────────
+
+    use crate::protocols::gnap_store::{GnapIssuedToken, GnapTokenStore, InMemoryTokenStore};
+    use std::sync::atomic::AtomicBool;
+
+    /// A token store that can be told to fail reads or writes.
+    #[derive(Default)]
+    struct FlakyTokenStore {
+        inner: InMemoryTokenStore,
+        fail_insert: AtomicBool,
+        fail_read: AtomicBool,
+    }
+
+    #[async_trait]
+    impl GnapTokenStore for FlakyTokenStore {
+        async fn insert(&self, token: GnapIssuedToken) -> Result<()> {
+            if self.fail_insert.load(Ordering::SeqCst) {
+                return Err(AuthError::validation("store down"));
+            }
+            self.inner.insert(token).await
+        }
+        async fn get(&self, value: &str) -> Result<Option<GnapIssuedToken>> {
+            if self.fail_read.load(Ordering::SeqCst) {
+                return Err(AuthError::validation("store down"));
+            }
+            self.inner.get(value).await
+        }
+        async fn remove(&self, value: &str) -> Result<Option<GnapIssuedToken>> {
+            if self.fail_read.load(Ordering::SeqCst) {
+                return Err(AuthError::validation("store down"));
+            }
+            self.inner.remove(value).await
+        }
+        async fn remove_for_transaction(&self, transaction_id: &str) -> Result<usize> {
+            self.inner.remove_for_transaction(transaction_id).await
+        }
+        async fn count(&self) -> Result<usize> {
+            self.inner.count().await
+        }
+        async fn purge_expired(&self, now: u64) -> Result<usize> {
+            self.inner.purge_expired(now).await
+        }
+    }
+
+    async fn direct_token(service: &GnapService) -> String {
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token: Some(vec![right("read")].into()),
+            subject: None,
+        };
+        let resp = service.handle_transaction(req).await.unwrap();
+        resp["access_token"]["value"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn tokens_live_in_the_configured_store_and_outlive_the_service() {
+        let store = Arc::new(InMemoryTokenStore::new());
+        let first = test_service().with_token_store(store.clone());
+        let token = direct_token(&first).await;
+        assert_eq!(store.count().await.unwrap(), 1);
+        drop(first);
+
+        // A new service over the same store (a restart with a durable store) still knows it.
+        let second = test_service().with_token_store(store.clone());
+        let info = second.introspect_token(&token).await.unwrap().unwrap();
+        assert_eq!(info["active"], true);
+        second.revoke_token(&token).await.unwrap();
+        assert_eq!(store.count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_store_that_cannot_read_refuses_rather_than_reporting_no_token() {
+        let store = Arc::new(FlakyTokenStore::default());
+        let service = test_service().with_token_store(store.clone());
+        let token = direct_token(&service).await;
+
+        store.fail_read.store(true, Ordering::SeqCst);
+        assert!(service.introspect_token(&token).await.is_err());
+        assert!(service.revoke_token(&token).await.is_err());
+        assert!(service.rotate_token(&token).await.is_err());
+
+        // Nothing was changed by the refused calls.
+        store.fail_read.store(false, Ordering::SeqCst);
+        assert!(service.introspect_token(&token).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn no_token_is_returned_when_the_store_cannot_keep_it_and_its_consent_is_withdrawn() {
+        let store = Arc::new(FlakyTokenStore::default());
+        store.fail_insert.store(true, Ordering::SeqCst);
+        let service = test_service().with_token_store(store.clone());
+
+        let result = approved_by(&service, Some("user-42"), vec![right("read")]).await;
+        assert!(result.is_err());
+        assert_eq!(store.count().await.unwrap(), 0);
+        let consents = service.consents_for_owner("user-42").await.unwrap();
+        assert_eq!(consents.len(), 1);
+        assert!(!consents[0].is_active());
+    }
+
+    #[tokio::test]
+    async fn cleanup_removes_expired_tokens_from_the_store() {
+        let store = Arc::new(InMemoryTokenStore::new());
+        let service = test_service().with_token_store(store.clone());
+        let token = direct_token(&service).await;
+        let mut expired = store.get(&token).await.unwrap().unwrap();
+        expired.value = "old".to_string();
+        expired.expires_at = 1;
+        store.insert(expired).await.unwrap();
+        assert_eq!(store.count().await.unwrap(), 2);
+
+        service.cleanup_expired_tokens().await;
+        assert_eq!(store.count().await.unwrap(), 1);
+        assert!(store.get(&token).await.unwrap().is_some());
     }
 }
 
@@ -3702,7 +3798,7 @@ mod hardening_tests {
                 .await,
         );
         assert!(msg.contains("no access policy"), "{msg}");
-        assert!(none.issued_tokens.read().await.is_empty());
+        assert!((none.issued_tokens.count().await.unwrap() == 0));
 
         // Control: the same request is served once a policy grants it.
         let served = with(AllowAllPolicy)
@@ -3727,13 +3823,13 @@ mod hardening_tests {
         assert_eq!(introspected["access"].as_array().unwrap().len(), 1);
 
         // A request for nothing the policy grants is denied, and nothing is stored.
-        let before = svc.issued_tokens.read().await.len();
+        let before = svc.issued_tokens.count().await.unwrap();
         let msg = message(
             svc.handle_transaction(request(keyed(), &["admin"], false))
                 .await,
         );
         assert!(msg.contains("denied by policy"), "{msg}");
-        assert_eq!(svc.issued_tokens.read().await.len(), before);
+        assert_eq!(svc.issued_tokens.count().await.unwrap(), before);
     }
 
     #[tokio::test]
@@ -3802,7 +3898,7 @@ mod hardening_tests {
         };
         let msg = message(svc.handle_transaction(subject_only).await);
         assert!(msg.contains("client key required"), "{msg}");
-        assert!(svc.issued_tokens.read().await.is_empty());
+        assert!((svc.issued_tokens.count().await.unwrap() == 0));
 
         // Control: with a key the same request is served.
         assert!(
