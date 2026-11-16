@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Where a GNAP authorization server keeps the access tokens it has issued.
+//! Where a GNAP authorization server keeps the access tokens it has issued and the transactions
+//! that are still open.
 //!
-//! [`GnapService`](super::gnap::GnapService) never holds tokens itself: it goes through a
-//! [`GnapTokenStore`], so a deployer chooses where they live (a database, a cache shared by
-//! several server processes) and a token survives a restart when the store does.
-//! [`InMemoryTokenStore`] is the default and loses its tokens on restart.
+//! [`GnapService`](super::gnap::GnapService) never holds either itself: it goes through a
+//! [`GnapTokenStore`] and a [`GnapTransactionStore`], so a deployer chooses where they live (a
+//! database, a cache shared by several server processes) and they survive a restart when the
+//! store does. [`InMemoryTokenStore`] and [`InMemoryTransactionStore`] are the defaults and lose
+//! their contents on restart.
 //!
-//! A store failure is never read as "no such token" by the service in a way that grants anything:
-//! every error is returned to the caller and the request is refused.
+//! A store failure is never read as "no such token" or "no such transaction" by the service in a
+//! way that grants anything: every error is returned to the caller and the request is refused.
 
-use super::gnap::GnapAccessRequest;
-use crate::errors::Result;
+use super::gnap::{GnapAccessRequest, GnapTransaction};
+use crate::errors::{AuthError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -126,6 +128,115 @@ impl GnapTokenStore for InMemoryTokenStore {
     }
 }
 
+/// Where open transactions are kept, keyed by transaction id.
+///
+/// A transaction changes in place (its continuation token rotates on every poll, an approval
+/// adds an interaction reference), and several requests for one transaction can run at once, so
+/// the store gives two atomic operations the service builds its single-use guarantees on:
+///
+/// * [`replace_if_unchanged`](Self::replace_if_unchanged) is a compare-and-swap on the
+///   transaction's `revision`: of two writers that read the same revision exactly one wins.
+/// * [`remove`](Self::remove) hands the transaction to exactly one caller.
+///
+/// A store over a database implements the first as `UPDATE ... WHERE id = ? AND revision = ?`
+/// and the second as `DELETE ... RETURNING`.
+#[async_trait]
+pub trait GnapTransactionStore: Send + Sync {
+    /// Keep a new transaction. Fails when one with this id is already stored.
+    async fn insert(&self, txn: GnapTransaction) -> Result<()>;
+
+    /// The transaction with this id, if stored. Expiry is the caller's check.
+    async fn get(&self, id: &str) -> Result<Option<GnapTransaction>>;
+
+    /// Store `txn` in place of the stored transaction with its id, with `revision` one higher,
+    /// only if the stored one still has `txn.revision`. Returns `false` when it was removed or
+    /// changed since `txn` was read; nothing is written then.
+    async fn replace_if_unchanged(&self, txn: GnapTransaction) -> Result<bool>;
+
+    /// Take the transaction out of the store and return it, if it was there. When two callers
+    /// remove the same id, exactly one gets it.
+    async fn remove(&self, id: &str) -> Result<Option<GnapTransaction>>;
+
+    /// Remove every transaction created before `cutoff` (epoch seconds); returns how many.
+    async fn purge_created_before(&self, cutoff: u64) -> Result<usize>;
+
+    /// How many transactions are stored, expired ones included.
+    async fn count(&self) -> Result<usize>;
+
+    /// The ids of the stored transactions, for an operator listing what is outstanding.
+    async fn ids(&self) -> Result<Vec<String>>;
+}
+
+/// A [`GnapTransactionStore`] held in memory.
+#[derive(Default)]
+pub struct InMemoryTransactionStore {
+    transactions: RwLock<HashMap<String, GnapTransaction>>,
+}
+
+impl InMemoryTransactionStore {
+    /// An empty store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for InMemoryTransactionStore {
+    /// The transactions hold continuation tokens, so none is printed.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InMemoryTransactionStore")
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl GnapTransactionStore for InMemoryTransactionStore {
+    async fn insert(&self, txn: GnapTransaction) -> Result<()> {
+        use std::collections::hash_map::Entry;
+        match self.transactions.write().await.entry(txn.id.clone()) {
+            Entry::Occupied(_) => Err(AuthError::validation("Transaction id already in use")),
+            Entry::Vacant(slot) => {
+                slot.insert(txn);
+                Ok(())
+            }
+        }
+    }
+
+    async fn get(&self, id: &str) -> Result<Option<GnapTransaction>> {
+        Ok(self.transactions.read().await.get(id).cloned())
+    }
+
+    async fn replace_if_unchanged(&self, mut txn: GnapTransaction) -> Result<bool> {
+        let mut transactions = self.transactions.write().await;
+        match transactions.get_mut(&txn.id) {
+            Some(stored) if stored.revision == txn.revision => {
+                txn.revision += 1;
+                *stored = txn;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    async fn remove(&self, id: &str) -> Result<Option<GnapTransaction>> {
+        Ok(self.transactions.write().await.remove(id))
+    }
+
+    async fn purge_created_before(&self, cutoff: u64) -> Result<usize> {
+        let mut transactions = self.transactions.write().await;
+        let before = transactions.len();
+        transactions.retain(|_, t| t.created_at >= cutoff);
+        Ok(before - transactions.len())
+    }
+
+    async fn count(&self) -> Result<usize> {
+        Ok(self.transactions.read().await.len())
+    }
+
+    async fn ids(&self) -> Result<Vec<String>> {
+        Ok(self.transactions.read().await.keys().cloned().collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +285,78 @@ mod tests {
     fn debug_output_hides_the_token_value() {
         let shown = format!("{:?}", token("super-secret-value", "x", 1));
         assert!(!shown.contains("super-secret-value"));
+    }
+
+    fn txn(id: &str, created_at: u64) -> GnapTransaction {
+        use super::super::gnap::{GnapTransactionRequest, GnapTransactionState};
+        GnapTransaction {
+            id: id.to_string(),
+            state: GnapTransactionState::Pending,
+            request: GnapTransactionRequest {
+                client: None,
+                interact: None,
+                access_token: None,
+                subject: None,
+            },
+            continue_token: "ct".to_string(),
+            created_at,
+            interact_nonce: None,
+            subject_id: None,
+            interact_ref: None,
+            revision: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_transaction_id_cannot_be_inserted_twice() {
+        let store = InMemoryTransactionStore::new();
+        store.insert(txn("a", 1)).await.unwrap();
+        assert!(store.insert(txn("a", 2)).await.is_err());
+        assert_eq!(store.get("a").await.unwrap().unwrap().created_at, 1);
+    }
+
+    #[tokio::test]
+    async fn replace_if_unchanged_lets_exactly_one_of_two_writers_of_a_revision_win() {
+        let store = InMemoryTransactionStore::new();
+        store.insert(txn("a", 1)).await.unwrap();
+        let first = store.get("a").await.unwrap().unwrap();
+        let second = first.clone();
+        assert!(store.replace_if_unchanged(first).await.unwrap());
+        assert!(!store.replace_if_unchanged(second).await.unwrap());
+        assert_eq!(store.get("a").await.unwrap().unwrap().revision, 1);
+    }
+
+    #[tokio::test]
+    async fn replace_if_unchanged_does_not_resurrect_a_removed_transaction() {
+        let store = InMemoryTransactionStore::new();
+        store.insert(txn("a", 1)).await.unwrap();
+        let read = store.get("a").await.unwrap().unwrap();
+        store.remove("a").await.unwrap();
+        assert!(!store.replace_if_unchanged(read).await.unwrap());
+        assert_eq!(store.count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn remove_hands_a_transaction_to_exactly_one_caller() {
+        let store = InMemoryTransactionStore::new();
+        store.insert(txn("a", 1)).await.unwrap();
+        assert!(store.remove("a").await.unwrap().is_some());
+        assert!(store.remove("a").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn purge_created_before_keeps_a_transaction_created_exactly_at_the_cutoff() {
+        let store = InMemoryTransactionStore::new();
+        store.insert(txn("old", 49)).await.unwrap();
+        store.insert(txn("edge", 50)).await.unwrap();
+        assert_eq!(store.purge_created_before(50).await.unwrap(), 1);
+        assert_eq!(store.ids().await.unwrap(), vec!["edge".to_string()]);
+    }
+
+    #[test]
+    fn transaction_debug_output_hides_the_continuation_token() {
+        let mut t = txn("a", 1);
+        t.continue_token = "super-secret-continuation".to_string();
+        assert!(!format!("{t:?}").contains("super-secret-continuation"));
     }
 }
