@@ -1,0 +1,1 @@
+**CI: the CodeRipper portfolio check moves to coderipper 0.47.5.** The workflow pin goes from 0.43.49 to the 0.47.5 workflow (coderipper `c72a6e03`); the rule-id migration tool finds nothing to rename here (this repo's `.coderipper.toml` names only numbered ids; a sample file with `licence` and `conflict-marker` is rewritten by the same tool, so it ran). No code change.
