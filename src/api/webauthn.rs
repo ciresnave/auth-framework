@@ -191,6 +191,9 @@ pub struct WebAuthnRegistrationInitRequest {
     /// sign in to the account.
     #[serde(default)]
     pub current_password: Option<String>,
+    /// For an account with no local password: the current code of its authenticator app.
+    #[serde(default)]
+    pub current_mfa_code: Option<String>,
 }
 
 // Hand-written so the caller's password never reaches a log line through `{:?}`.
@@ -204,6 +207,10 @@ impl std::fmt::Debug for WebAuthnRegistrationInitRequest {
         d.field(
             "current_password",
             &crate::utils::redact::redacted(&self.current_password),
+        );
+        d.field(
+            "current_mfa_code",
+            &crate::utils::redact::redacted(&self.current_mfa_code),
         );
         d.finish()
     }
@@ -549,6 +556,7 @@ pub async fn webauthn_registration_init(
         &state,
         &caller.user_id,
         request.current_password.as_deref(),
+        request.current_mfa_code.as_deref(),
     )
     .await
     {
@@ -1344,13 +1352,16 @@ mod tests {
             authenticator_attachment: None,
             user_verification: None,
             current_password: Some("hunter2-correct-horse".into()),
+            current_mfa_code: Some("481516".into()),
         };
         let shown = format!("{req:?}");
         assert!(!shown.contains("hunter2-correct-horse"), "{shown}");
+        assert!(!shown.contains("481516"), "{shown}");
         assert!(shown.contains("alice"), "{shown}");
         // Positive control: the same request without a password prints the field as absent, not as the value.
         let none = WebAuthnRegistrationInitRequest {
             current_password: None,
+            current_mfa_code: None,
             ..req
         };
         assert_ne!(format!("{none:?}"), shown);
