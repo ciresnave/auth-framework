@@ -354,6 +354,7 @@ Read from the `portfolio` job on the `main` run for 9abbced8 (run 40040499570; C
 | unused-return-values | 4 | Low | A call whose return value is dropped at one of its many call sites (for example `write` at `src/server/security/x509_signing.rs:3630`) | auth-framework lane | Done (rc186): each dropped result is discarded with `let _ =` |
 | licence | 3 | Medium | `LICENSE-APACHE` and `LICENSE-MIT` name a person as copyright holder; 404 of 404 source files carry no SPDX identifier | auth-framework lane | Open; the copyright holder is CireSnave's decision |
 | version-consistency | 1 | High | `auth-storage-sqlite`, `sdks/python` (0.6.0rc64) and `sdks/javascript` (0.6.0-rc108) trailed the crate version | auth-framework lane | Fixed in this PR: all three at the root version (PEP 440 form for Python); `tests/member_versions_match_cargo.rs` keeps them there. PM ruling 2026-10-24: one version per project |
+| SEC-012 | 79 (#463) | High | `Debug` derived over a secret-named field | auth-framework lane | Scheduled (issue #463 labelled `decided:scheduled`). Done: #491 redacts 11 types. Open: rename `GnapTransactionRequest.access_token` and `ServiceProviderConfig.change_password` (they are flagged by name, not secret), and mark `AcmeChallenge.token` (public by design) with a `// sec012: public - <reason>` marker once coderipper#359/#360 release |
 
 
 ### Spec-to-roadmap audit (2026-10-24)

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # auth-framework ROADMAP (register of rows)
 
-**True at `origin/main` 525d4465 (2026-11-16).** The long-form plan, history and rationale are `docs/ROADMAP.md`
+**True at `origin/main` 525d4465 (2026-11-16), except that #489 and #491 have merged since (04112b33, d2346d06).** The long-form plan, history and rationale are `docs/ROADMAP.md`
 and `docs/GNAP_RFC9635_GAP.md`; this file is the short register a lane or the PM reads first. A **done** row names
 the command that exercises it (counts measured at 525d4465, run from the repo root with `RUSTC_WRAPPER=`); an **open**
 row says what blocks it. Version numbers are the PM's, so none appear here.
@@ -30,8 +30,7 @@ row says what blocks it. Version numbers are the PM's, so none appear here.
 | KM6 (rest) | ES384/RS256 in the ring, cache headers matching the overlap window | not started |
 | KM7 (rest) | renewal before expiry; CA key custody through the key store | KM3 |
 | KM8 | audit-logging every command, `--export-private`, `verify`, an `auth-framework keys` binary name | not started |
-| SEC-012 (#463) | 79 structs derive `Debug` over a secret-named field | decided `scheduled`: PR #491 redacts 11 types; then rename `GnapTransactionRequest.access_token` and `ServiceProviderConfig.change_password`; mark `AcmeChallenge.token` with a reasoned `// sec012: public - ...` marker once coderipper#359/#360 release |
-| CodeRipper pin | pin to 0.47.5 | PR #489 awaiting the PM gate |
+| SEC-012 (#463) | 79 structs derive `Debug` over a secret-named field | decided `scheduled`: #491 (merged) redacts 11 types; then rename `GnapTransactionRequest.access_token` and `ServiceProviderConfig.change_password`; mark `AcmeChallenge.token` with a reasoned `// sec012: public - ...` marker once coderipper#359/#360 release |
 | RUSTSEC-2026-0459 | the 0.5.x `libsqlite3-sys` ignore expires 2026-12-09 | sqlx carrying transact-rs/sqlx#4502 |
 | SPDX headers | `chore/spdx-headers` WIP (script and `tests/spdx_headers.rs`), no PR | decision to finish or hand to the PM |
 | ARC/MOD, PersistAnt default | queued programmes | none recorded yet |
