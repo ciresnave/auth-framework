@@ -494,6 +494,10 @@ pasetors = "0.8.1"
   distributed-rate-limiting = ["redis"]
   # Reserved for future enhanced cryptographic operations — currently a no-op
   enhanced-crypto           = ["chacha20poly1305", "ed25519-dalek", "x25519-dalek"]
+  # X25519 key-agreement keys (JWE `ECDH-ES`) in the key stores (docs/KEY_AGREEMENT_DESIGN.md).
+  # Pure Rust, on the `x25519-dalek` dependency that `enhanced-crypto` already declares; without
+  # it a key directory holding such a key fails to open instead of holding a key it cannot use.
+  key-agreement             = ["x25519-dalek"]
   # Explicit alias preserving the feature name a consumer would have gotten
   # implicitly before any feature in this manifest used `dep:aws-lc-rs`
   # syntax -- without this, `features = ["aws-lc-rs"]` in a downstream
