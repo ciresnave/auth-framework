@@ -131,10 +131,13 @@ pub struct GnapClientKey {
     /// The client's public key as a JWK. Exactly one of `jwk`, `cert` and `cert#S256` is given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jwk: Option<GnapJwk>,
-    /// The key as an X.509 certificate, base64 DER (RFC 9635 section 7.1). Proved by `mtls`.
+    /// The key as an X.509 certificate, base64 DER (RFC 9635 section 7.1). Proved by `mtls`, which
+    /// matches the presented certificate against this one; the chain is **not** validated here
+    /// (see [`GnapProof::client_certificate_der`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cert: Option<String>,
-    /// The key as the base64url SHA-256 of a certificate's DER (RFC 9635 section 7.1).
+    /// The key as the base64url SHA-256 of a certificate's DER (RFC 9635 section 7.1). Proved by
+    /// `mtls` like `cert`, and equally without any chain validation.
     #[serde(default, rename = "cert#S256", skip_serializing_if = "Option::is_none")]
     pub cert_s256: Option<String>,
 }
@@ -406,6 +409,12 @@ pub struct GnapProof<'a> {
     /// The DER of the client certificate the TLS layer authenticated on this request, for the
     /// `mtls` proof method. The caller's TLS terminator must have verified the handshake (proof
     /// of the private key); this crate then checks the certificate is the one the key names.
+    ///
+    /// **Chain validation stays with the integrator.** The `cert` and `cert#S256` key forms are
+    /// matched by value or thumbprint only: this crate does not build or validate a certificate
+    /// chain, check revocation or expiry, or decide which CAs to trust. RFC 9635 sections 11.3 and
+    /// 11.4 leave that trust to registration or first use, so an integrator who needs it must
+    /// enforce it in the TLS terminator or before calling the `_with_proof` entry points.
     pub client_certificate_der: Option<&'a [u8]>,
 }
 
