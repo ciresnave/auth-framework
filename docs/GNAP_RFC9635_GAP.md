@@ -95,7 +95,7 @@ Nothing claims a method it does not verify: an unlisted or unverifiable method i
 
 ### 9 Discovery
 
-**Missing.** No `OPTIONS` response on the grant endpoint (9.2) and no RS-first method (9.1). Depends on the HTTP layer (G7).
+**Partly done.** `OPTIONS` on the grant endpoint answers the 9.2 document (`GnapAsHttp`, `src/protocols/gnap_as_http.rs`), listing only what is verified today (`dpop` proofs, `redirect` start and finish, no key rotation). **Missing:** the RS-first method (9.1).
 
 ### 10 and 11
 
