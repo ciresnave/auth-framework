@@ -7,8 +7,11 @@
 //! Certificates issued by a CA stay in `server::security::x509_signing`; this module is
 //! what a client or server needs to present its own key to a peer or to a CA.
 
-use super::{KeyKind, LocalKey};
+use super::{KeyKind, LocalKey, spki_pem};
 use crate::errors::{AuthError, Result};
+use crate::server::security::x509_signing::{
+    CertificateRequest, CertificateSubject as CaSubject, SubjectAltName,
+};
 use base64::Engine;
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PublicKeyData};
 use serde_json::{Value, json};
@@ -119,6 +122,126 @@ pub fn jwk_with_x5c(key: &LocalKey, certificate_pem: &str) -> Result<Value> {
     jwk["x5t#S256"] =
         json!(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(&der)));
     Ok(jwk)
+}
+
+fn ca_request(
+    common_name: &str,
+    dns_names: Vec<String>,
+    public_key_pem: String,
+    profile: &str,
+    requester: &str,
+) -> Result<CertificateRequest> {
+    if common_name.trim().is_empty() {
+        return Err(AuthError::validation("a certificate needs a common name"));
+    }
+    Ok(CertificateRequest {
+        request_id: format!("req-{}", uuid::Uuid::new_v4().simple()),
+        subject: CaSubject {
+            common_name: common_name.to_string(),
+            organization: None,
+            organizational_unit: None,
+            country: None,
+            state: None,
+            locality: None,
+            email: None,
+        },
+        profile: profile.to_string(),
+        public_key_pem,
+        subject_alt_names: dns_names.into_iter().map(SubjectAltName::DnsName).collect(),
+        requested_at: chrono::Utc::now(),
+        requester: requester.to_string(),
+        attributes: std::collections::HashMap::new(),
+    })
+}
+
+/// A request for the certificate authority in `server::security::x509_signing` to certify
+/// `key`, ready for `X509CertificateManager::sign_certificate_request`. The caller holds
+/// `key`, so no proof of possession is needed; a request that arrives from someone else
+/// must go through [`certificate_request_from_csr`] instead. The authority still applies its
+/// own profile, name and key policy and the caller still decides who may ask.
+pub fn certificate_request_for_key(
+    key: &LocalKey,
+    subject: &CertSubject,
+    profile: &str,
+    requester: &str,
+) -> Result<CertificateRequest> {
+    let spki = key_pair(key)?.subject_public_key_info();
+    ca_request(
+        &subject.common_name,
+        subject.dns_names.clone(),
+        spki_pem(&spki),
+        profile,
+        requester,
+    )
+}
+
+/// Turn a PKCS#10 request received from a client into a CA request **after verifying its
+/// signature**, which proves the client holds the private key for the public key it asks
+/// to have certified (`sign_certificate_request` takes a bare public key and checks no
+/// such thing). Only the subject common name, the DNS subject alternative names and the
+/// public key are taken; a request that asks for any other kind of name (IP address, e-mail,
+/// URI) or has no single common name is refused rather than partly honoured. The caller must
+/// still authenticate and authorise the requester and the names.
+pub fn certificate_request_from_csr(
+    csr_pem: &str,
+    profile: &str,
+    requester: &str,
+) -> Result<CertificateRequest> {
+    use x509_parser::extensions::{GeneralName, ParsedExtension};
+    use x509_parser::prelude::FromDer;
+    let (_, block) = x509_parser::pem::parse_x509_pem(csr_pem.as_bytes())
+        .map_err(|_| AuthError::validation("not a PEM certificate request"))?;
+    if block.label != "CERTIFICATE REQUEST" && block.label != "NEW CERTIFICATE REQUEST" {
+        return Err(AuthError::validation(
+            "PEM block is not a CERTIFICATE REQUEST",
+        ));
+    }
+    let (rest, csr) =
+        x509_parser::certification_request::X509CertificationRequest::from_der(&block.contents)
+            .map_err(|_| AuthError::validation("not a valid PKCS#10 request"))?;
+    if !rest.is_empty() {
+        return Err(AuthError::validation("trailing data after the request"));
+    }
+    csr.verify_signature().map_err(|_| {
+        AuthError::validation("the request's signature does not verify: no proof of possession")
+    })?;
+    let info = &csr.certification_request_info;
+    let mut names = info.subject.iter_common_name();
+    let common_name = match (names.next(), names.next()) {
+        (Some(cn), None) => cn
+            .as_str()
+            .map_err(|_| AuthError::validation("the common name is not text"))?
+            .to_string(),
+        _ => {
+            return Err(AuthError::validation(
+                "the request must carry exactly one common name",
+            ));
+        }
+    };
+    let mut dns_names = Vec::new();
+    if let Some(extensions) = csr.requested_extensions() {
+        for ext in extensions {
+            if let ParsedExtension::SubjectAlternativeName(san) = ext {
+                for name in &san.general_names {
+                    match name {
+                        GeneralName::DNSName(dns) => dns_names.push((*dns).to_string()),
+                        _ => {
+                            return Err(AuthError::validation(
+                                "only DNS subject alternative names are supported",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ca_request(
+        &common_name,
+        dns_names,
+        spki_pem(info.subject_pki.raw),
+        profile,
+        requester,
+    )
 }
 
 #[cfg(test)]
@@ -254,5 +377,156 @@ mod tests {
     fn a_tls_key_can_be_generated_and_an_encryption_key_still_cannot() {
         assert!(LocalKey::generate(KeyKind::Mtls, SigningAlg::Es256, None).is_ok());
         assert!(LocalKey::generate(KeyKind::JweEncryption, SigningAlg::Es256, None).is_err());
+    }
+
+    use crate::server::security::x509_signing::{
+        CertificateProfile, CertificateType, EcdsaCurve, ExtendedKeyUsage, KeyType, KeyUsage,
+        SanPolicy, X509CertificateManager, X509Config,
+    };
+
+    /// A manager over a throwaway root CA, with one ECDSA P-256 client profile.
+    async fn ca(dir: &std::path::Path) -> X509CertificateManager {
+        use rcgen::{BasicConstraints, IsCa, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256};
+        let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut p = CertificateParams::new(Vec::<String>::new()).unwrap();
+        p.distinguished_name = DistinguishedName::new();
+        p.distinguished_name.push(DnType::CommonName, "Test Root");
+        p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        p.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let cert = p.self_signed(&ca_key).unwrap();
+        let (cert_path, key_path) = (dir.join("root.crt"), dir.join("root.key"));
+        std::fs::write(&cert_path, cert.pem()).unwrap();
+        std::fs::write(&key_path, ca_key.serialize_pem()).unwrap();
+        let mut config = X509Config {
+            root_ca_path: cert_path.to_string_lossy().to_string(),
+            root_ca_cert_path: cert_path.to_string_lossy().to_string(),
+            root_ca_key_path: key_path.to_string_lossy().to_string(),
+            ..X509Config::default()
+        };
+        config.certificate_profiles.insert(
+            "client_ec".to_string(),
+            CertificateProfile {
+                name: "client_ec".to_string(),
+                cert_type: CertificateType::TlsClient,
+                key_usage: vec![KeyUsage::DigitalSignature],
+                extended_key_usage: vec![ExtendedKeyUsage::ClientAuth],
+                subject_alt_names: vec![],
+                san_policy: SanPolicy::default(),
+                validity_days: 30,
+                preferred_key_type: KeyType::Ecdsa(EcdsaCurve::P256),
+                extensions: std::collections::HashMap::new(),
+            },
+        );
+        let manager = X509CertificateManager::new(config);
+        manager.initialize().await.unwrap();
+        manager
+    }
+
+    #[tokio::test]
+    async fn a_ca_certifies_a_local_key_through_a_request_built_from_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ca(dir.path()).await;
+        let k = key(SigningAlg::Es256);
+        let req = certificate_request_for_key(&k, &subject(), "client_ec", "tester").unwrap();
+        assert_eq!(req.subject.common_name, "client.example");
+        assert_eq!(req.subject_alt_names.len(), 2);
+        let issued = manager
+            .sign_certificate_request(&req, "root_ca")
+            .await
+            .unwrap();
+        let der = pem_der(&issued.certificate_pem).unwrap();
+        let (_, cert) = parse_x509_certificate(&der).unwrap();
+        assert_eq!(
+            cert.tbs_certificate.subject_pki.raw,
+            key_pair(&k).unwrap().subject_public_key_info().as_slice(),
+            "the issued certificate certifies this key"
+        );
+        assert!(
+            jwk_with_x5c(&k, &issued.certificate_pem).is_ok(),
+            "and publishes through x5c"
+        );
+        let mut bad = subject();
+        bad.common_name = " ".into();
+        assert!(certificate_request_for_key(&k, &bad, "client_ec", "t").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_verified_csr_becomes_a_request_the_ca_signs_for_the_requesters_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ca(dir.path()).await;
+        let k = key(SigningAlg::Es256);
+        let csr = certificate_signing_request(&k, &subject()).unwrap();
+        let req = certificate_request_from_csr(&csr, "client_ec", "tester").unwrap();
+        assert_eq!(req.subject.common_name, "client.example");
+        let mut dns: Vec<String> = req
+            .subject_alt_names
+            .iter()
+            .map(|n| match n {
+                SubjectAltName::DnsName(d) => d.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        dns.sort();
+        assert_eq!(dns, vec!["alt.example", "client.example"]);
+        let issued = manager
+            .sign_certificate_request(&req, "root_ca")
+            .await
+            .unwrap();
+        assert!(jwk_with_x5c(&k, &issued.certificate_pem).is_ok());
+    }
+
+    #[test]
+    fn a_csr_whose_signature_does_not_verify_is_refused() {
+        let k = key(SigningAlg::Es256);
+        let csr = certificate_signing_request(&k, &subject()).unwrap();
+        assert!(certificate_request_from_csr(&csr, "p", "t").is_ok());
+        let (_, block) = x509_parser::pem::parse_x509_pem(csr.as_bytes()).unwrap();
+        let mut der = block.contents.clone();
+        let at = der
+            .windows(14)
+            .position(|w| w == b"client.example")
+            .expect("the common name is in the request");
+        der[at] = b'd';
+        let tampered = format!(
+            "-----BEGIN CERTIFICATE REQUEST-----
+{}
+-----END CERTIFICATE REQUEST-----
+",
+            base64::engine::general_purpose::STANDARD.encode(&der)
+        );
+        let err = certificate_request_from_csr(&tampered, "p", "t")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("proof of possession"), "{err}");
+    }
+
+    #[test]
+    fn a_csr_with_other_name_types_or_no_single_common_name_is_refused() {
+        use rcgen::SanType;
+        let k = key(SigningAlg::Es256);
+        let pair = key_pair(&k).unwrap();
+        let mut ip = CertificateParams::new(Vec::<String>::new()).unwrap();
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, "client.example");
+        ip.distinguished_name = dn;
+        ip.subject_alt_names = vec![SanType::IpAddress("127.0.0.1".parse().unwrap())];
+        let csr = ip.serialize_request(&pair).unwrap().pem().unwrap();
+        assert!(
+            certificate_request_from_csr(&csr, "p", "t").is_err(),
+            "an IP name is not silently dropped"
+        );
+        let mut none = CertificateParams::new(Vec::<String>::new()).unwrap();
+        none.distinguished_name = DistinguishedName::new();
+        let csr = none.serialize_request(&pair).unwrap().pem().unwrap();
+        assert!(
+            certificate_request_from_csr(&csr, "p", "t").is_err(),
+            "no common name"
+        );
+        assert!(certificate_request_from_csr("not pem", "p", "t").is_err());
+        let cert = self_signed_certificate(&k, &subject()).unwrap();
+        assert!(
+            certificate_request_from_csr(&cert, "p", "t").is_err(),
+            "a certificate is not a request"
+        );
     }
 }
