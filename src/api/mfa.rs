@@ -115,10 +115,24 @@ fn hash_backup_code(code: &str) -> String {
     crate::auth_modular::mfa::backup_codes::hash_code(code)
 }
 
+/// The account's active TOTP secret (the one `/mfa/setup` + `/mfa/verify` enrolled), if it has
+/// one. `None`: no authenticator app is enrolled (or the stored secret is unreadable).
+pub(crate) async fn active_totp_secret(
+    storage: &dyn crate::storage::AuthStorage,
+    user_id: &str,
+) -> Option<Vec<u8>> {
+    let data = storage
+        .get_kv(&format!("mfa_secret:{user_id}"))
+        .await
+        .ok()??;
+    let secret_b32 = String::from_utf8_lossy(&data).to_string();
+    base32::decode(Alphabet::Rfc4648 { padding: false }, &secret_b32)
+}
+
 /// Verify a 6-digit TOTP code against a raw secret with ±1 window tolerance.
 /// Always checks all three time windows regardless of whether an earlier window
 /// matched, preventing timing side-channels that reveal which window matched.
-fn verify_totp_code(provided: &str, secret_bytes: &[u8], now: u64) -> bool {
+pub(crate) fn verify_totp_code(provided: &str, secret_bytes: &[u8], now: u64) -> bool {
     use subtle::ConstantTimeEq as _;
     use totp_lite::{Sha1, totp_custom};
     const STEP: u64 = 30;

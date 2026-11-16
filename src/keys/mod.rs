@@ -17,7 +17,8 @@ mod store;
 mod thumbprint;
 
 pub use cert::{
-    CertSubject, certificate_signing_request, jwk_with_x5c, self_signed_certificate, x5t_s256,
+    CertSubject, certificate_request_for_key, certificate_request_from_csr,
+    certificate_signing_request, jwk_with_x5c, self_signed_certificate, x5t_s256,
 };
 pub use export::{JwkSet, PublicJwk, spki_pem};
 pub use generate::{LocalKey, SigningAlg, SymmetricKey};
