@@ -62,6 +62,10 @@ pub trait GnapConsentStore: Send + Sync {
     /// Mark a record withdrawn at `at`. Returns the record as it now stands, or `None` when no
     /// such record exists. Withdrawing a record twice keeps the first withdrawal time.
     async fn revoke(&self, id: &str, at: u64) -> Result<Option<GnapConsent>>;
+
+    /// Mark every record granted to the client key with this RFC 7638 `thumbprint` withdrawn at
+    /// `at` (keeping any earlier withdrawal time) and return those records as they now stand.
+    async fn revoke_for_key(&self, thumbprint: &str, at: u64) -> Result<Vec<GnapConsent>>;
 }
 
 /// A [`GnapConsentStore`] held in memory.
@@ -121,5 +125,19 @@ impl GnapConsentStore for InMemoryConsentStore {
             c.revoked_at.get_or_insert(at);
             c.clone()
         }))
+    }
+
+    async fn revoke_for_key(&self, thumbprint: &str, at: u64) -> Result<Vec<GnapConsent>> {
+        let mut records = self.records.write().await;
+        let mut found: Vec<GnapConsent> = records
+            .values_mut()
+            .filter(|c| c.client_key_thumbprint == thumbprint)
+            .map(|c| {
+                c.revoked_at.get_or_insert(at);
+                c.clone()
+            })
+            .collect();
+        found.sort_by(|a, b| (a.granted_at, &a.id).cmp(&(b.granted_at, &b.id)));
+        Ok(found)
     }
 }
