@@ -101,6 +101,40 @@ pub async fn publish_jwks(store: &dyn KeyStore) -> Result<JwkSet> {
     })
 }
 
+/// The X25519 shared secret between the key-agreement key `kid` in `store` and `peer_public`
+/// (32 bytes): the call a JWE layer makes to decrypt. Only an `Active` or `Retiring` key agrees
+/// (a retiring key must still open what was encrypted to it before the rotation; a pending,
+/// revoked or destroyed one may not), only a [`KeyKind::JweEncryption`] key, and only in a store
+/// that can export its private keys, because the agreement runs here. A peer key of low order
+/// is refused (see [`LocalKey::agree`]).
+#[cfg(feature = "key-agreement")]
+pub async fn agree(
+    store: &dyn KeyStore,
+    kid: &Kid,
+    peer_public: &[u8],
+) -> Result<Zeroizing<[u8; 32]>> {
+    let info = store.info(kid).await?;
+    if info.kind != KeyKind::JweEncryption {
+        return Err(AuthError::validation(format!(
+            "key {kid} is a {:?} key: only a JweEncryption key agrees",
+            info.kind
+        )));
+    }
+    if !info.state.can_verify() {
+        return Err(AuthError::validation(format!(
+            "key {kid} is {:?}: only an active or retiring key agrees",
+            info.state
+        )));
+    }
+    if !store.capabilities().exportable {
+        return Err(AuthError::validation(
+            "this key store cannot export its private keys, so it cannot agree here",
+        ));
+    }
+    let der = store.export_private_pkcs8(kid).await?;
+    LocalKey::from_pkcs8_der(&der, info.kind, Some(kid.clone()))?.agree(peer_public)
+}
+
 struct Entry {
     kind: KeyKind,
     state: KeyState,
@@ -422,7 +456,7 @@ fn record_of(e: &Entry, state: KeyState, keep_private: bool, now: u64) -> Record
     Record {
         created_at: e.created_at,
         retiring_at,
-        v: 1,
+        v: record_version(e.kind),
         kind: e.kind,
         state,
         public: e.public.as_ref().map(PublicJwk::to_value),
@@ -443,9 +477,20 @@ fn record_of(e: &Entry, state: KeyState, keep_private: bool, now: u64) -> Record
     }
 }
 
+/// The record version a key of `kind` is written with: `2` for a key-agreement key, `1` for
+/// every other kind, so a store that never holds an agreement key is byte-for-byte what it was
+/// before agreement keys existed, and an older build, which only reads `1`, refuses a directory
+/// that holds one instead of misreading it (docs/KEY_AGREEMENT_DESIGN.md section 4).
+fn record_version(kind: KeyKind) -> u8 {
+    if kind == KeyKind::JweEncryption { 2 } else { 1 }
+}
+
 fn entry_from_record(kid: &Kid, rec: Record) -> Result<Entry> {
-    if rec.v != 1 {
-        return Err(AuthError::validation("unsupported key record version"));
+    if rec.v != record_version(rec.kind) {
+        return Err(AuthError::validation(format!(
+            "unsupported key record version {} for a {:?} key: this key directory was written by a              different version of auth-framework (to downgrade, destroy its key-agreement keys              with the newer version first)",
+            rec.v, rec.kind
+        )));
     }
     let bad = || AuthError::validation("key record is not valid");
     let mut key = None;
@@ -887,5 +932,294 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[cfg(feature = "key-agreement")]
+    mod agreement {
+        use super::*;
+        use crate::keys::{KeyKind, rotate};
+
+        fn key(id: &str) -> LocalKey {
+            LocalKey::generate_x25519(KeyKind::JweEncryption, Some(Kid::new(id).unwrap())).unwrap()
+        }
+
+        fn x_of(k: &LocalKey) -> Vec<u8> {
+            let jwk = k.public().to_value();
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(jwk["x"].as_str().unwrap())
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn an_agreement_key_lives_in_both_stores_publishes_as_enc_and_agrees_after_a_reopen()
+        {
+            let peer = key("peer");
+            let dir = tempfile::tempdir().unwrap();
+            let mem = MemoryKeyStore::new();
+            let file = FileKeyStore::open(dir.path(), enc(1)).await.unwrap();
+            let mine = key("mine");
+            let mine_x = x_of(&mine);
+            let want = peer.agree(&mine_x).unwrap();
+            for store in [&mem as &dyn KeyStore, &file as &dyn KeyStore] {
+                store
+                    .insert(
+                        LocalKey::from_pkcs8_der(
+                            mine.to_pkcs8_der(),
+                            KeyKind::JweEncryption,
+                            Some(Kid::new("mine").unwrap()),
+                        )
+                        .unwrap(),
+                        KeyState::Active,
+                    )
+                    .await
+                    .unwrap();
+                let info = store.info(&Kid::new("mine").unwrap()).await.unwrap();
+                assert_eq!(info.kind, KeyKind::JweEncryption);
+                assert_eq!(info.alg, "ECDH-ES");
+                let jwks = publish_jwks(store).await.unwrap().to_value();
+                assert_eq!(jwks["keys"][0]["use"], "enc");
+                assert!(jwks["keys"][0].get("d").is_none());
+                let got = crate::keys::agree(store, &Kid::new("mine").unwrap(), &x_of(&peer))
+                    .await
+                    .unwrap();
+                assert_eq!(&got[..], &want[..]);
+            }
+            drop(file);
+            let reopened = FileKeyStore::open(dir.path(), enc(1)).await.unwrap();
+            let got = crate::keys::agree(&reopened, &Kid::new("mine").unwrap(), &x_of(&peer))
+                .await
+                .unwrap();
+            assert_eq!(&got[..], &want[..], "the key survives a reopen");
+            assert!(FileKeyStore::open(dir.path(), enc(2)).await.is_err());
+        }
+
+        async fn record_json(dir: &std::path::Path, kid: &str) -> serde_json::Value {
+            let kid = Kid::new(kid).unwrap();
+            let path = dir.join(format!("{}{RECORD_SUFFIX}", hex::encode(kid.as_str())));
+            let sealed = tokio::fs::read(path).await.unwrap();
+            let plain = enc(1).decrypt_from_storage(&sealed, &aad(&kid)).unwrap();
+            serde_json::from_slice(&plain).unwrap()
+        }
+
+        async fn write_record(dir: &std::path::Path, kid: &str, rec: &serde_json::Value) {
+            let kid = Kid::new(kid).unwrap();
+            let path = dir.join(format!("{}{RECORD_SUFFIX}", hex::encode(kid.as_str())));
+            let sealed = enc(1)
+                .encrypt_for_storage(&serde_json::to_vec(rec).unwrap(), &aad(&kid))
+                .unwrap();
+            tokio::fs::write(path, sealed).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn agreement_records_are_version_2_and_every_other_kind_stays_version_1() {
+            let dir = tempfile::tempdir().unwrap();
+            let s = FileKeyStore::open(dir.path(), enc(1)).await.unwrap();
+            s.insert(key("agree"), KeyState::Active).await.unwrap();
+            s.insert(super::key(SigningAlg::Es256), KeyState::Active)
+                .await
+                .unwrap();
+            s.insert_symmetric(
+                SymmetricKey::generate(KeyKind::Hmac, Kid::new("hmac").unwrap()).unwrap(),
+                KeyState::Active,
+            )
+            .await
+            .unwrap();
+            assert_eq!(record_json(dir.path(), "agree").await["v"], 2);
+            assert_eq!(record_json(dir.path(), "hmac").await["v"], 1);
+            let signing = s
+                .list()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|i| i.kind == KeyKind::JwsSigning)
+                .unwrap();
+            assert_eq!(record_json(dir.path(), signing.kid.as_str()).await["v"], 1);
+        }
+
+        #[tokio::test]
+        async fn a_record_whose_version_does_not_fit_its_kind_fails_the_open_with_the_downgrade_text()
+         {
+            let dir = tempfile::tempdir().unwrap();
+            {
+                let s = FileKeyStore::open(dir.path(), enc(1)).await.unwrap();
+                s.insert(key("agree"), KeyState::Active).await.unwrap();
+            }
+            let good = record_json(dir.path(), "agree").await;
+            let mut v1 = good.clone();
+            v1["v"] = serde_json::json!(1);
+            write_record(dir.path(), "agree", &v1).await;
+            let err = FileKeyStore::open(dir.path(), enc(1))
+                .await
+                .err()
+                .expect("an agreement key written as v1 is refused")
+                .to_string();
+            assert!(err.contains("unsupported key record version 1"), "{err}");
+            assert!(err.contains("downgrade"), "{err}");
+            let mut v3 = good.clone();
+            v3["v"] = serde_json::json!(3);
+            write_record(dir.path(), "agree", &v3).await;
+            assert!(FileKeyStore::open(dir.path(), enc(1)).await.is_err());
+            write_record(dir.path(), "agree", &good).await;
+            assert!(FileKeyStore::open(dir.path(), enc(1)).await.is_ok());
+        }
+
+        #[tokio::test]
+        async fn only_an_active_or_retiring_agreement_key_agrees() {
+            let s = MemoryKeyStore::new();
+            let peer = key("peer");
+            let px = x_of(&peer);
+            for (id, state) in [("pending", KeyState::Pending), ("active", KeyState::Active)] {
+                s.insert(key(id), state).await.unwrap();
+            }
+            for id in ["retiring", "revoked", "destroyed"] {
+                s.insert(key(id), KeyState::Active).await.unwrap();
+            }
+            s.set_state(&Kid::new("retiring").unwrap(), KeyState::Retiring)
+                .await
+                .unwrap();
+            s.set_state(&Kid::new("revoked").unwrap(), KeyState::Revoked)
+                .await
+                .unwrap();
+            s.set_state(&Kid::new("destroyed").unwrap(), KeyState::Retiring)
+                .await
+                .unwrap();
+            s.set_state(&Kid::new("destroyed").unwrap(), KeyState::Destroyed)
+                .await
+                .unwrap();
+            for (id, ok) in [
+                ("active", true),
+                ("retiring", true),
+                ("pending", false),
+                ("revoked", false),
+                ("destroyed", false),
+            ] {
+                let r = crate::keys::agree(&s, &Kid::new(id).unwrap(), &px).await;
+                assert_eq!(r.is_ok(), ok, "{id}: {r:?}");
+            }
+            s.insert(super::key(SigningAlg::Es256), KeyState::Active)
+                .await
+                .unwrap();
+            let signing = s
+                .list()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|i| i.kind == KeyKind::JwsSigning)
+                .unwrap();
+            assert!(
+                crate::keys::agree(&s, &signing.kid, &px).await.is_err(),
+                "a signing key does not agree"
+            );
+            assert!(
+                crate::keys::agree(&s, &Kid::new("nope").unwrap(), &px)
+                    .await
+                    .is_err()
+            );
+        }
+
+        #[tokio::test]
+        async fn rotation_and_revocation_work_unchanged_for_agreement_keys() {
+            let s = MemoryKeyStore::new();
+            let peer = key("peer");
+            let px = x_of(&peer);
+            s.insert(key("old"), KeyState::Active).await.unwrap();
+            let new = rotate(&s, &Kid::new("old").unwrap(), key("new"))
+                .await
+                .unwrap();
+            assert_eq!(new.as_str(), "new");
+            let jwks = publish_jwks(&s).await.unwrap().to_value();
+            assert_eq!(
+                jwks["keys"].as_array().unwrap().len(),
+                2,
+                "both during the overlap"
+            );
+            assert!(
+                crate::keys::agree(&s, &Kid::new("old").unwrap(), &px)
+                    .await
+                    .is_ok(),
+                "a retiring key still decrypts"
+            );
+            crate::keys::revoke(&s, &Kid::new("old").unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                publish_jwks(&s).await.unwrap().to_value()["keys"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(
+                crate::keys::agree(&s, &Kid::new("old").unwrap(), &px)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    /// A hand-written RFC 7748 Alice record (v2): what a build WITH the `key-agreement`
+    /// feature reads, and a build WITHOUT it must refuse by naming the feature.
+    async fn write_alice_record(dir: &std::path::Path) {
+        let alice_private =
+            hex::decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
+                .unwrap();
+        let alice_public =
+            hex::decode("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
+                .unwrap();
+        let mut der = vec![
+            0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22,
+            0x04, 0x20,
+        ];
+        der.extend_from_slice(&alice_private);
+        let rec = serde_json::json!({
+            "v": 2,
+            "kind": "jwe_encryption",
+            "state": "active",
+            "public": {
+                "kty": "OKP", "crv": "X25519", "kid": "alice", "use": "enc", "alg": "ECDH-ES",
+                "x": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&alice_public),
+            },
+            "pkcs8": base64::engine::general_purpose::STANDARD.encode(&der),
+            "created_at": 1,
+            "retiring_at": null,
+        });
+        let kid = Kid::new("alice").unwrap();
+        let sealed = enc(1)
+            .encrypt_for_storage(&serde_json::to_vec(&rec).unwrap(), &aad(&kid))
+            .unwrap();
+        let path = dir.join(format!("{}{RECORD_SUFFIX}", hex::encode("alice")));
+        tokio::fs::write(path, sealed).await.unwrap();
+    }
+
+    #[cfg(feature = "key-agreement")]
+    #[tokio::test]
+    async fn a_hand_written_rfc_7748_record_opens_and_reproduces_the_published_shared_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        write_alice_record(dir.path()).await;
+        let s = FileKeyStore::open(dir.path(), enc(1)).await.unwrap();
+        let bob_public =
+            hex::decode("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
+                .unwrap();
+        let got = crate::keys::agree(&s, &Kid::new("alice").unwrap(), &bob_public)
+            .await
+            .unwrap();
+        assert_eq!(
+            hex::encode(&got[..]),
+            "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+        );
+    }
+
+    #[cfg(not(feature = "key-agreement"))]
+    #[tokio::test]
+    async fn a_build_without_the_feature_refuses_a_directory_holding_an_agreement_key_by_naming_it()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        write_alice_record(dir.path()).await;
+        let err = FileKeyStore::open(dir.path(), enc(1))
+            .await
+            .err()
+            .expect("the directory must not open without the feature")
+            .to_string();
+        assert!(err.contains("key-agreement"), "{err}");
     }
 }

@@ -48,14 +48,23 @@ enum Pair {
     Ec(EcdsaKeyPair),
     Ed(Ed25519KeyPair),
     Rsa(RsaKeyPair),
+    /// An X25519 key-agreement key: it never signs. The secret zeroizes when dropped.
+    #[cfg(feature = "key-agreement")]
+    X25519(x25519_dalek::StaticSecret),
 }
+
+/// The RFC 8410 PKCS#8 prefix of an X25519 private key; the 32 secret bytes follow.
+#[cfg(feature = "key-agreement")]
+const X25519_PKCS8_PREFIX: [u8; 16] = [
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
+];
 
 /// An asymmetric private key held in this process. Exportable by design;
 /// non-exportable stores (KM3) implement [`Signer`] without this type.
 pub struct LocalKey {
     kid: Kid,
     kind: KeyKind,
-    alg: SigningAlg,
+    alg: Option<SigningAlg>,
     pkcs8: Zeroizing<Vec<u8>>,
     pair: Pair,
     public: PublicJwk,
@@ -139,6 +148,9 @@ impl LocalKey {
     /// Import a PKCS#8 DER private key. The algorithm is detected from the key;
     /// an RSA key under 2048 bits, or anything ring cannot parse, is refused.
     pub fn from_pkcs8_der(der: &[u8], kind: KeyKind, kid: Option<Kid>) -> Result<Self> {
+        if kind == KeyKind::JweEncryption {
+            return Self::from_x25519_pkcs8(der, kind, kid);
+        }
         require_signing_kind(kind)?;
         let rng = SystemRandom::new();
         let (pair, alg, public) = if let Ok(kp) =
@@ -185,11 +197,94 @@ impl LocalKey {
         Ok(Self {
             kid,
             kind,
-            alg,
+            alg: Some(alg),
             pkcs8: Zeroizing::new(der.to_vec()),
             pair,
             public,
         })
+    }
+
+    /// Generate an X25519 key-agreement key (JWE `ECDH-ES`) of kind
+    /// [`KeyKind::JweEncryption`]. `kid` defaults to the key's RFC 7638 thumbprint.
+    #[cfg(feature = "key-agreement")]
+    pub fn generate_x25519(kind: KeyKind, kid: Option<Kid>) -> Result<Self> {
+        let mut secret = Zeroizing::new([0u8; 32]);
+        SystemRandom::new()
+            .fill(&mut secret[..])
+            .map_err(|_| rng_err())?;
+        let mut der = Zeroizing::new(X25519_PKCS8_PREFIX.to_vec());
+        der.extend_from_slice(&secret[..]);
+        Self::from_x25519_pkcs8(&der, kind, kid)
+    }
+
+    /// Import an RFC 8410 X25519 PKCS#8 private key (48 bytes) as a key-agreement key.
+    #[cfg(feature = "key-agreement")]
+    fn from_x25519_pkcs8(der: &[u8], kind: KeyKind, kid: Option<Kid>) -> Result<Self> {
+        if kind != KeyKind::JweEncryption {
+            return Err(AuthError::validation(
+                "only a JweEncryption key can be an X25519 agreement key",
+            ));
+        }
+        let secret: [u8; 32] = der
+            .strip_prefix(&X25519_PKCS8_PREFIX[..])
+            .and_then(|s| s.try_into().ok())
+            .ok_or_else(|| {
+                AuthError::validation("not an RFC 8410 PKCS#8 X25519 private key (48 bytes)")
+            })?;
+        let secret = x25519_dalek::StaticSecret::from(secret);
+        let point = x25519_dalek::PublicKey::from(&secret);
+        let mut public = PublicJwk::okp("X25519", &b64(point.as_bytes()))?;
+        public.use_ = kind.jwk_use().map(str::to_owned);
+        public.alg = Some("ECDH-ES".to_owned());
+        let public = match kid {
+            Some(k) => {
+                public.kid = Some(k);
+                public
+            }
+            None => public.with_thumbprint_kid()?,
+        };
+        let kid = public
+            .kid
+            .clone()
+            .ok_or_else(|| AuthError::crypto("key id missing after construction"))?;
+        Ok(Self {
+            kid,
+            kind,
+            alg: None,
+            pkcs8: Zeroizing::new(der.to_vec()),
+            pair: Pair::X25519(secret),
+            public,
+        })
+    }
+
+    /// Without the `key-agreement` feature no agreement key can be held.
+    #[cfg(not(feature = "key-agreement"))]
+    fn from_x25519_pkcs8(_der: &[u8], _kind: KeyKind, _kid: Option<Kid>) -> Result<Self> {
+        Err(AuthError::validation(
+            "a key-agreement (JweEncryption) key needs the `key-agreement` feature: rebuild with it              to open a key directory that holds one",
+        ))
+    }
+
+    /// The X25519 shared secret with `peer_public` (32 bytes). A peer key of low order (the
+    /// all-zero point and the other points of order 1, 2, 4 and 8, in any encoding) would make
+    /// the secret independent of this key, so it is refused, as is a key that is not 32 bytes.
+    /// This is a pure primitive: it knows nothing of the key's lifecycle state, which
+    /// [`crate::keys::agree`] checks where the key is fetched from a store.
+    #[cfg(feature = "key-agreement")]
+    pub fn agree(&self, peer_public: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
+        let Pair::X25519(secret) = &self.pair else {
+            return Err(AuthError::validation("only an X25519 key can agree"));
+        };
+        let peer: [u8; 32] = peer_public
+            .try_into()
+            .map_err(|_| AuthError::validation("an X25519 public key is exactly 32 bytes"))?;
+        let shared = secret.diffie_hellman(&x25519_dalek::PublicKey::from(peer));
+        if !shared.was_contributory() {
+            return Err(AuthError::crypto(
+                "the peer's X25519 public key is of low order: refused",
+            ));
+        }
+        Ok(Zeroizing::new(shared.to_bytes()))
     }
 
     /// Import a PKCS#8 private key in PEM (`PRIVATE KEY`).
@@ -225,7 +320,7 @@ impl LocalKey {
     /// The signing algorithm, or `None` for a key that does not sign (every key today signs;
     /// a key-agreement key will not, see `docs/KEY_AGREEMENT_DESIGN.md`).
     pub fn signing_alg(&self) -> Option<SigningAlg> {
-        Some(self.alg)
+        self.alg
     }
 
     /// The public half, with `kid`, `use`, `alg` and `key_ops` set.
@@ -247,7 +342,7 @@ impl Signer for LocalKey {
     }
 
     fn algorithm(&self) -> &str {
-        self.alg.name()
+        self.public.alg.as_deref().unwrap_or_default()
     }
 
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
@@ -257,6 +352,8 @@ impl Signer for LocalKey {
                 .map(|s| s.as_ref().to_vec())
                 .map_err(|_| AuthError::crypto("ECDSA signing failed")),
             Pair::Ed(kp) => Ok(kp.sign(message).as_ref().to_vec()),
+            #[cfg(feature = "key-agreement")]
+            Pair::X25519(_) => Err(AuthError::validation("a key-agreement key does not sign")),
             Pair::Rsa(kp) => {
                 let mut sig = vec![0u8; kp.public().modulus_len()];
                 kp.sign(
@@ -463,5 +560,173 @@ mod tests {
         assert!(
             SymmetricKey::from_bytes(KeyKind::JwsSigning, Kid::new("x").unwrap(), [1; 32]).is_err()
         );
+    }
+
+    #[cfg(feature = "key-agreement")]
+    mod agreement {
+        use super::*;
+
+        /// RFC 7748 section 6.1: Alice's and Bob's private keys, public keys and shared secret.
+        const ALICE_PRIVATE: &str =
+            "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a";
+        const ALICE_PUBLIC: &str =
+            "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a";
+        const BOB_PRIVATE: &str =
+            "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb";
+        const BOB_PUBLIC: &str = "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f";
+        const SHARED: &str = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
+
+        /// The points of order 1, 2, 4 and 8 on Curve25519 and their non-canonical encodings
+        /// (little-endian u coordinates): the small subgroup a peer must not be able to pick.
+        const LOW_ORDER: [&str; 11] = [
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0100000000000000000000000000000000000000000000000000000000000000",
+            "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+            "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            // The same points with bit 255 set, which X25519 ignores.
+            "0000000000000000000000000000000000000000000000000000000000000080",
+            "0100000000000000000000000000000000000000000000000000000000000080",
+            "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880",
+            "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
+        ];
+
+        fn unhex(h: &str) -> Vec<u8> {
+            hex::decode(h).unwrap()
+        }
+
+        fn imported(private_hex: &str) -> LocalKey {
+            let mut der = X25519_PKCS8_PREFIX.to_vec();
+            der.extend_from_slice(&unhex(private_hex));
+            LocalKey::from_pkcs8_der(&der, KeyKind::JweEncryption, None).unwrap()
+        }
+
+        #[test]
+        fn the_rfc_7748_vectors_give_the_published_public_keys_and_shared_secret() {
+            let alice = imported(ALICE_PRIVATE);
+            let bob = imported(BOB_PRIVATE);
+            let jwk = alice.public().to_value();
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(jwk["x"].as_str().unwrap())
+                    .unwrap(),
+                unhex(ALICE_PUBLIC)
+            );
+            assert_eq!(
+                &alice.agree(&unhex(BOB_PUBLIC)).unwrap()[..],
+                &unhex(SHARED)[..]
+            );
+            assert_eq!(
+                &bob.agree(&unhex(ALICE_PUBLIC)).unwrap()[..],
+                &unhex(SHARED)[..],
+                "both sides derive the same secret"
+            );
+        }
+
+        #[test]
+        fn a_generated_agreement_key_is_an_enc_okp_key_that_never_signs() {
+            let k = LocalKey::generate_x25519(KeyKind::JweEncryption, None).unwrap();
+            let jwk = k.public().to_value();
+            assert_eq!(jwk["kty"], "OKP");
+            assert_eq!(jwk["crv"], "X25519");
+            assert_eq!(jwk["use"], "enc");
+            assert_eq!(jwk["alg"], "ECDH-ES");
+            assert!(jwk.get("d").is_none(), "no private member");
+            assert_eq!(k.signing_alg(), None);
+            assert_eq!(Signer::algorithm(&k), "ECDH-ES");
+            assert!(
+                Signer::sign(&k, b"m").is_err(),
+                "an agreement key does not sign"
+            );
+            assert_eq!(k.kid().as_str(), k.public().thumbprint().unwrap());
+            let other = LocalKey::generate_x25519(KeyKind::JweEncryption, None).unwrap();
+            assert_ne!(k.kid(), other.kid());
+            let back =
+                LocalKey::from_pkcs8_der(k.to_pkcs8_der(), KeyKind::JweEncryption, None).unwrap();
+            assert_eq!(back.kid(), k.kid(), "PKCS#8 round trip keeps the identity");
+            assert_eq!(k.to_pkcs8_der().len(), 48);
+            let a = other.public().to_value();
+            let peer = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(a["x"].as_str().unwrap())
+                .unwrap();
+            let mine = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(jwk["x"].as_str().unwrap())
+                .unwrap();
+            assert_eq!(
+                &k.agree(&peer).unwrap()[..],
+                &other.agree(&mine).unwrap()[..]
+            );
+        }
+
+        #[test]
+        fn only_a_jwe_encryption_key_can_be_an_agreement_key_and_the_pkcs8_must_be_exact() {
+            for kind in [KeyKind::JwsSigning, KeyKind::Mtls, KeyKind::Dpop] {
+                assert!(LocalKey::generate_x25519(kind, None).is_err(), "{kind:?}");
+            }
+            let good = LocalKey::generate_x25519(KeyKind::JweEncryption, None).unwrap();
+            let der = good.to_pkcs8_der().to_vec();
+            assert!(
+                LocalKey::from_pkcs8_der(&der, KeyKind::JwsSigning, None).is_err(),
+                "an X25519 key is not a signing key"
+            );
+            for bad in [&der[..47], &[der.clone(), vec![0]].concat()[..]] {
+                assert!(LocalKey::from_pkcs8_der(bad, KeyKind::JweEncryption, None).is_err());
+            }
+            let mut wrong_oid = der.clone();
+            wrong_oid[11] = 0x70;
+            assert!(LocalKey::from_pkcs8_der(&wrong_oid, KeyKind::JweEncryption, None).is_err());
+            let ec = LocalKey::generate(KeyKind::JwsSigning, SigningAlg::Es256, None).unwrap();
+            assert!(
+                LocalKey::from_pkcs8_der(ec.to_pkcs8_der(), KeyKind::JweEncryption, None).is_err(),
+                "P-256 agreement keys are a later slice"
+            );
+        }
+
+        #[test]
+        fn a_peer_key_that_is_not_32_bytes_or_is_of_another_curve_is_refused() {
+            let k = LocalKey::generate_x25519(KeyKind::JweEncryption, None).unwrap();
+            for len in [0usize, 1, 31, 33, 64] {
+                assert!(k.agree(&vec![9u8; len]).is_err(), "{len} bytes");
+            }
+            let p256 = LocalKey::generate(KeyKind::JwsSigning, SigningAlg::Es256, None).unwrap();
+            let jwk = p256.public().to_value();
+            let mut sec1 = vec![4u8];
+            for c in ["x", "y"] {
+                sec1.extend(
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .decode(jwk[c].as_str().unwrap())
+                        .unwrap(),
+                );
+            }
+            assert_eq!(sec1.len(), 65);
+            assert!(
+                k.agree(&sec1).is_err(),
+                "a P-256 point is not an X25519 key"
+            );
+            let signer = LocalKey::generate(KeyKind::JwsSigning, SigningAlg::EdDsa, None).unwrap();
+            assert!(
+                signer.agree(&[9u8; 32]).is_err(),
+                "only an X25519 key agrees"
+            );
+        }
+
+        #[test]
+        fn a_peer_key_in_the_small_subgroup_is_refused_in_every_encoding() {
+            let k = LocalKey::generate_x25519(KeyKind::JweEncryption, None).unwrap();
+            for point in LOW_ORDER {
+                let err = k.agree(&unhex(point)).unwrap_err().to_string();
+                assert!(err.contains("low order"), "{point}: {err}");
+            }
+            // A genuine peer is still accepted and its secret is not all zero.
+            let peer = imported(BOB_PRIVATE);
+            let x = peer.public().to_value();
+            let x = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(x["x"].as_str().unwrap())
+                .unwrap();
+            let shared = k.agree(&x).unwrap();
+            assert_ne!(&shared[..], &[0u8; 32][..]);
+        }
     }
 }
