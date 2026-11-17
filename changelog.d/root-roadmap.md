@@ -1,1 +1,0 @@
-Docs only: a root `ROADMAP.md` registers the done rows (each with the command that exercises it) and the open rows (each with what blocks it), true at origin/main 525d4465; the long-form plan stays `docs/ROADMAP.md`.
