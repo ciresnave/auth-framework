@@ -497,7 +497,7 @@ pasetors = "0.8.1"
   # X25519 key-agreement keys (JWE `ECDH-ES`) in the key stores (docs/KEY_AGREEMENT_DESIGN.md).
   # Pure Rust, on the `x25519-dalek` dependency that `enhanced-crypto` already declares; without
   # it a key directory holding such a key fails to open instead of holding a key it cannot use.
-  key-agreement             = ["x25519-dalek"]
+  key-agreement             = ["x25519-dalek", "dep:p256"]
   # Explicit alias preserving the feature name a consumer would have gotten
   # implicitly before any feature in this manifest used `dep:aws-lc-rs`
   # syntax -- without this, `features = ["aws-lc-rs"]` in a downstream
@@ -613,6 +613,15 @@ pasetors = "0.8.1"
     optional = true
     version  = "2.0"
     features = ["static_secrets"]
+
+  # P-256 ECDH keys (JWE `ECDH-ES`, RFC 7518 section 4.6) for the `key-agreement` feature. RustCrypto, pure
+  # Rust; `ring` offers only ephemeral agreement, so a key a store holds needs this. Only the `ecdh` and
+  # `pkcs8` features: no ECDSA, no PEM, no default features.
+  [dependencies.p256]
+    default-features = false
+    features         = ["ecdh", "pkcs8", "std"]
+    optional         = true
+    version          = "0.14"
 
   [dependencies.ed25519-dalek]
     features = ["rand_core"]
