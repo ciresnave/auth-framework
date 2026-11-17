@@ -164,6 +164,9 @@ fn proof_for<'a>(req: &'a GnapHttpRequest, url: &'a str) -> GnapProof<'a> {
         http_uri: url,
         dpop_proof: req.header_value("dpop"),
         expected_nonce: None,
+        // The TLS peer certificate is the terminator's to give; this layer never sees it, so a
+        // client key proved by `mtls` is refused here, and discovery does not list `mtls`.
+        client_certificate_der: None,
     }
 }
 
