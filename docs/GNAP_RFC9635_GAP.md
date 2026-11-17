@@ -28,8 +28,8 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 | 2.3.1 `client` by reference (string) | **missing** | the field is an object only | |
 | 2.3.3 authenticating the client instance | **partial** | see 7.3 | only one method verifies |
 | 2.4 `user` (and by reference) | **missing** | no field | needed for user hints and for acting on behalf of an account holder |
-| 2.5 `interact.start` | **partial** | `start: Vec<String>` (142); only `"redirect"` produces a response (931) | `app`, `user_code`, `user_code_uri` are accepted and ignored; the object form of `start` is not supported |
-| 2.5.2 `interact.finish` | **partial** | `{method, uri, nonce}` (148-150); `method` is not validated | `redirect` and `push` are the RFC's values; `hash_method` is missing (sha-256 only, 775-782) |
+| 2.5 `interact.start` | **partial** | `start: Vec<String>`, read by `parse_start` at transaction open (G4 slice 1); `"redirect"` and `"user_code"` produce a response | `app`, `user_code_uri` are accepted and ignored; the object form of `start` is not supported |
+| 2.5.2 `interact.finish` | **partial** | `{method, uri, nonce}`, validated by `FinishRequest::parse` at transaction open; a `push` target that is not public https (loopback, private, link-local, metadata, credentials) is refused (11.34, G4 slice 1) | the service's `finish` has no `hash_method` field (a client's value is dropped; sha-256 only, 775-782); the target is not re-checked after name resolution and nothing is pushed yet (UNIMPLEMENTED) |
 | 2.5.3 `interact.hints` (`ui_locales`) | **missing** | none | |
 
 ### 3 Grant response
@@ -42,7 +42,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 | 3.2.1 `manage` | **wrong type** | a string `{endpoint}/token` (838-839, 1326-1327), the same for every token | RFC: an object `{uri, access_token}`, uri per token, with its own key-bound management token |
 | 3.2.1 `key` | **wrong type** | `"key": true` (844, 1330) | RFC: object or string (7.1), absent when the presented key applies; a boolean is not a defined value |
 | 3.2.2 multiple access tokens | **missing** | | |
-| 3.3 interaction responses | **partial** | `redirect` (931-935), `finish` = the AS nonce (941) | `app`, `user_code`, `user_code_uri`, `expires_in` missing |
+| 3.3 interaction responses | **partial** | `redirect` (931-935), `finish` = the AS nonce (941) | `user_code` is returned (G4 slice 1) and kept on the transaction; `app`, `user_code_uri`, `expires_in` missing |
 | 3.4 subject information | **partial** | `sub_ids` in `opaque`, `email`, `iss_sub` (1439-1471); `iss` is the literal `"self"` (1457) | `assertions` and `updated_at` missing; `iss` should be the AS identifier |
 | 3.5 `instance_id` | **missing** | | |
 | 3.6 error response | **missing** | failures are `AuthError` strings; the continuation refusals share one message (410) | no `error` object, none of the registered codes (`invalid_request`, `invalid_client`, `invalid_interaction`, `invalid_flag`, `invalid_rotation`, `key_rotation_not_supported`, `invalid_continuation`, `user_denied`, `request_denied`, `unknown_user`, `unknown_interaction`, `too_fast`, `too_many_attempts`) |
@@ -53,7 +53,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 |---|---|---|---|
 | 4 AS decides what to grant | **partial** | an integrator's `GnapAccessPolicy` (375-382, `with_access_policy` 437) returns the rights granted; empty denies; no policy denies (803-810) | the policy is a yes/narrow function of (client key thumbprint, requested rights). The engine behind it exists (`EngineGnapPolicy`, AC1-AC4, #432). Consent records exist (`gnap_consent.rs`, G6 slice 1): an approved interactive grant is recorded per resource owner through a `GnapConsentStore` and can be withdrawn, which revokes its tokens. Issued tokens are kept through a `GnapTokenStore` (`gnap_store.rs`, G6 slice 2; in-memory by default). Open transactions are kept through a `GnapTransactionStore` (G6 slice 3; in-memory by default), whose compare-and-swap on a revision and single-winner `remove` keep a continuation token rotating once and an approved transaction spendable once even with several server processes. Agent and room requirements (board 384) are audited and covered: a grant can be shared to a registered agent, and `delegate` refuses an unknown or inactive delegatee with `DelegateeUnknown` or `DelegateeInactive`. G6 is done |
 | 4.1 starting interaction | **n/a** | the AS's own UI is the integrator's | |
-| 4.2 completion: one-time `interact_ref`, hash | **partial** | `approve_transaction` returns `{interact_ref, hash}` (1228, struct at 391); continuation of a finish-method transaction needs the reference; hash per 4.2.3 | the AS does not deliver them (no redirect URI built, no `push` callback, SSRF rules of 11.34 not applicable yet); the hash uses `transaction_endpoint` as given, the RFC wants the absolute grant URL the client used (782) |
+| 4.2 completion: one-time `interact_ref`, hash | **partial** | `approve_transaction` returns `{interact_ref, hash}` (1228, struct at 391); continuation of a finish-method transaction needs the reference; hash per 4.2.3 | the AS does not deliver them (no redirect URI built, no `push` callback; the push target is refused at transaction open if it is not public https (G4 slice 1), delivery and the re-check after name resolution are UNIMPLEMENTED); the hash uses `transaction_endpoint` as given, the RFC wants the absolute grant URL the client used (782) |
 | grant states (1.5: pending, processing, approved, finalized) | **partial** | `Pending`, `Approved`, `Denied` (279-283) | no `processing`, no `finalized`; a finished transaction is deleted |
 
 ### 5 Continuing a grant request

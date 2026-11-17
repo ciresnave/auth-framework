@@ -17,6 +17,9 @@
 
 use crate::errors::{AuthError, Result};
 use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
+use crate::protocols::gnap_interaction::{
+    FinishMethod, FinishRequest, StartMode, generate_user_code, parse_start, validate_push_target,
+};
 use crate::protocols::gnap_store::{
     GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
     InMemoryTransactionStore,
@@ -177,6 +180,9 @@ pub struct GnapClientDisplay {
     pub name: Option<String>,
     pub uri: Option<String>,
 }
+
+/// How many characters the short code of a `user_code` start has (RFC 9635 section 3.3.3 recommends six to eight).
+const USER_CODE_LEN: usize = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GnapInteractionRequirements {
@@ -373,6 +379,10 @@ pub struct GnapTransaction {
     pub subject_id: Option<String>,
     /// One-time interaction reference issued when a finish-method transaction is approved
     pub interact_ref: Option<String>,
+    /// The short code a person types at the AS when the client asked for the `user_code` start
+    /// (RFC 9635 section 3.3.3), kept in its normalised form.
+    #[serde(default)]
+    pub user_code: Option<String>,
     /// How many times the store has replaced this transaction. The store's compare-and-swap
     /// ([`GnapTransactionStore::replace_if_unchanged`]) keys on it; nothing else writes it.
     #[serde(default)]
@@ -398,6 +408,10 @@ impl std::fmt::Debug for GnapTransaction {
         d.field(
             "interact_ref",
             &crate::utils::redact::redacted(&self.interact_ref),
+        );
+        d.field(
+            "user_code",
+            &crate::utils::redact::redacted(&self.user_code),
         );
         d.field("revision", &self.revision);
         d.finish()
@@ -1117,6 +1131,37 @@ impl GnapService {
 
     // ── Token Issuance Helper ────────────────────────────────────────────
 
+    /// The start modes the client offered (RFC 9635 section 2.5.1), read by
+    /// [`parse_start`]; an unknown mode is kept, not an error.
+    fn interaction_start_modes(interact: &GnapInteractionRequirements) -> Result<Vec<StartMode>> {
+        let start = serde_json::Value::Array(
+            interact
+                .start
+                .iter()
+                .map(|m| serde_json::Value::String(m.clone()))
+                .collect(),
+        );
+        parse_start(&start).map_err(|e| AuthError::validation(e.to_string()))
+    }
+
+    /// Check the `finish` object (section 2.5.2) and, for `push`, the target the server would call
+    /// (section 11.34): refused here, at transaction open.
+    fn validate_finish(interact: &GnapInteractionRequirements) -> Result<()> {
+        let Some(finish) = &interact.finish else {
+            return Ok(());
+        };
+        let parsed = FinishRequest::parse(&serde_json::json!({
+            "method": finish.method,
+            "uri": finish.uri,
+            "nonce": finish.nonce,
+        }))
+        .map_err(|e| AuthError::validation(e.to_string()))?;
+        if parsed.method == FinishMethod::Push {
+            validate_push_target(&parsed.uri).map_err(|e| AuthError::validation(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     /// The rights a request asks for, after the checks of RFC 9635 sections 2.1.1 and 2.1.2: an empty token
     /// request, an empty access type, or a flag this server does not support is refused (this server supports
     /// no flag, so any is `invalid_flag`), and so is more than one access token in a request, which this
@@ -1314,6 +1359,21 @@ impl GnapService {
 
         // If interaction is requested, generate interaction response
         if let Some(ref interact) = request.interact {
+            // Read the request with the interaction module before anything is stored: a malformed
+            // `start`/`finish`, or a `push` target the server must not call (section 11.34), is
+            // refused here. Delivering the push, and re-checking the target after name resolution,
+            // is a later slice.
+            let start_modes = Self::interaction_start_modes(interact)?;
+            Self::validate_finish(interact)?;
+            let user_code = if start_modes.contains(&StartMode::UserCode) {
+                Some(
+                    generate_user_code(USER_CODE_LEN)
+                        .map_err(|e| AuthError::validation(e.to_string()))?,
+                )
+            } else {
+                None
+            };
+
             let base_url = self.config.interaction_base_url.as_deref().ok_or_else(|| {
                 AuthError::config(
                     "GNAP interaction_base_url must be configured for interactive flows",
@@ -1328,6 +1388,13 @@ impl GnapService {
                 interact_res.insert(
                     "redirect".to_string(),
                     serde_json::Value::String(interact_url),
+                );
+            }
+
+            if let Some(ref code) = user_code {
+                interact_res.insert(
+                    "user_code".to_string(),
+                    serde_json::Value::String(code.clone()),
                 );
             }
 
@@ -1356,6 +1423,7 @@ impl GnapService {
                 interact_nonce: interact_nonce.clone(),
                 subject_id: None,
                 interact_ref: None,
+                user_code,
                 revision: 0,
             };
             self.transactions.insert(txn).await?;
@@ -4600,6 +4668,125 @@ mod proof_verification_tests {
         );
         // Padding is either refused or normalised to the same identifier, never a second one.
         assert!(other.is_err() || other.unwrap() == canonical.unwrap());
+    }
+
+    // ---- interaction wiring (G4 slice 1) ----
+
+    fn interact_request(key: &ClientKey, interact: serde_json::Value) -> GnapTransactionRequest {
+        serde_json::from_value(json!({
+            "client": {"key": {"proof": "dpop", "jwk": serde_json::to_value(&key.jwk).unwrap()}},
+            "access_token": {"access": ["read"]},
+            "interact": interact,
+        }))
+        .expect("the request deserializes")
+    }
+
+    #[tokio::test]
+    async fn a_push_to_a_target_the_server_must_not_call_is_refused_at_transaction_open() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        for (n, uri) in [
+            "https://127.0.0.1/cb",
+            "https://localhost/cb",
+            "https://10.0.0.5/cb",
+            "https://169.254.169.254/latest/meta-data",
+            "https://[::1]/cb",
+            "http://client.test/cb",
+            "https://user:pw@client.test/cb",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let interact = json!({
+                "start": ["redirect"],
+                "finish": {"method": "push", "uri": uri, "nonce": "client-nonce"},
+            });
+            let r = send(
+                &svc,
+                &dpop,
+                &key,
+                &format!("push-{n}"),
+                interact_request(&key, interact),
+            )
+            .await;
+            assert!(r.is_err(), "a push to {uri} must be refused");
+        }
+        assert!(
+            svc.test_txn_ids().await.is_empty(),
+            "a refused request opens no transaction"
+        );
+        // the same request with a public https target is accepted (the control for the loop above)
+        let ok = json!({
+            "start": ["redirect"],
+            "finish": {"method": "push", "uri": "https://client.test/cb", "nonce": "client-nonce"},
+        });
+        send(&svc, &dpop, &key, "push-ok", interact_request(&key, ok))
+            .await
+            .expect("a public https push target is accepted");
+        assert_eq!(svc.test_txn_ids().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_invalid_finish_is_refused_at_transaction_open() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        for (n, finish) in [
+            json!({"method": "carrier-pigeon", "uri": "https://client.test/cb", "nonce": "n"}),
+            json!({"method": "redirect", "uri": "not a uri", "nonce": "n"}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let interact = json!({"start": ["redirect"], "finish": finish});
+            let r = send(
+                &svc,
+                &dpop,
+                &key,
+                &format!("fin-{n}"),
+                interact_request(&key, interact),
+            )
+            .await;
+            assert!(r.is_err(), "finish {finish} must be refused");
+        }
+        assert!(svc.test_txn_ids().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_user_code_start_is_answered_with_a_code_the_server_keeps() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let interact = json!({"start": ["user_code"], "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "n"}});
+        let resp = send(&svc, &dpop, &key, "uc-1", interact_request(&key, interact))
+            .await
+            .unwrap();
+        let code = resp["interact"]["user_code"]
+            .as_str()
+            .expect("a user_code is offered");
+        assert!(
+            (6..=8).contains(&code.len())
+                && super::super::gnap_interaction::normalize_user_code(code).as_deref() == Ok(code),
+            "a typeable code of the recommended length: {code}"
+        );
+        assert!(
+            resp["interact"].get("redirect").is_none(),
+            "redirect was not asked for"
+        );
+        let txn = svc.test_first_txn().await;
+        assert!(
+            txn.user_code
+                .as_deref()
+                .is_some_and(|k| super::super::gnap_interaction::user_codes_equal(code, k)),
+            "the transaction keeps the code so a person can type it in later"
+        );
+        // two transactions never share a code, and a redirect-only start offers none
+        let again = json!({"start": ["user_code"]});
+        let r2 = send(&svc, &dpop, &key, "uc-2", interact_request(&key, again))
+            .await
+            .unwrap();
+        assert_ne!(r2["interact"]["user_code"], resp["interact"]["user_code"]);
+        let only = json!({"start": ["redirect"]});
+        let r3 = send(&svc, &dpop, &key, "uc-3", interact_request(&key, only))
+            .await
+            .unwrap();
+        assert!(r3["interact"].get("user_code").is_none());
+        assert!(r3["interact"].get("redirect").is_some());
     }
 }
 
