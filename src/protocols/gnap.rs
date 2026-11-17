@@ -195,6 +195,10 @@ pub struct GnapInteractionFinish {
     pub method: String,
     pub uri: String,
     pub nonce: String,
+    /// The hash method the client asked for (RFC 9635 section 2.5.2). The service computes
+    /// `sha-256` only, so any other value is refused at transaction open, never ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash_method: Option<String>,
 }
 
 impl GnapTransactionRequest {
@@ -288,6 +292,7 @@ impl GnapTransactionRequestBuilder {
                 method: "redirect".to_string(),
                 uri: callback_uri.into(),
                 nonce: nonce.into(),
+                hash_method: None,
             }),
         });
         self
@@ -1150,6 +1155,13 @@ impl GnapService {
         let Some(finish) = &interact.finish else {
             return Ok(());
         };
+        if let Some(name) = finish.hash_method.as_deref()
+            && name != "sha-256"
+        {
+            return Err(AuthError::validation(format!(
+                "interact.finish.hash_method {name} is not supported: this server computes sha-256 only"
+            )));
+        }
         let parsed = FinishRequest::parse(&serde_json::json!({
             "method": finish.method,
             "uri": finish.uri,
@@ -2375,6 +2387,7 @@ mod tests {
                     method: "redirect".to_string(),
                     uri: "https://client.test/callback".to_string(),
                     nonce: "client-nonce-123".to_string(),
+                    hash_method: None,
                 }),
             }),
             access_token: Some(
@@ -2819,6 +2832,7 @@ mod tests {
                     method: "redirect".to_string(),
                     uri: "https://client.test/cb".to_string(),
                     nonce: client_nonce.to_string(),
+                    hash_method: None,
                 }),
             }),
             access_token: Some(
@@ -2873,6 +2887,7 @@ mod tests {
                     method: "redirect".to_string(),
                     uri: "https://client.test/cb".to_string(),
                     nonce: client_nonce.to_string(),
+                    hash_method: None,
                 }),
             }),
             access_token: Some(
@@ -4750,6 +4765,49 @@ mod proof_verification_tests {
     }
 
     #[tokio::test]
+    async fn a_hash_method_the_server_does_not_honour_is_refused_not_ignored() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        for (n, name) in ["sha-384", "sha-512", "sha3-512", "md5"]
+            .into_iter()
+            .enumerate()
+        {
+            let interact = json!({
+                "start": ["redirect"],
+                "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "n", "hash_method": name},
+            });
+            let r = send(
+                &svc,
+                &dpop,
+                &key,
+                &format!("hm-{n}"),
+                interact_request(&key, interact),
+            )
+            .await;
+            let msg = r
+                .expect_err(&format!("hash_method {name} must be refused"))
+                .to_string();
+            assert!(
+                msg.contains("hash_method") && msg.contains(name),
+                "the refusal names the input: {msg}"
+            );
+        }
+        assert!(svc.test_txn_ids().await.is_empty(), "nothing was stored");
+        // the two values the server does honour: sha-256 named, and absent (the default)
+        for (n, finish) in [
+            json!({"method": "redirect", "uri": "https://client.test/cb", "nonce": "n", "hash_method": "sha-256"}),
+            json!({"method": "redirect", "uri": "https://client.test/cb", "nonce": "n"}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let interact = json!({"start": ["redirect"], "finish": finish});
+            send(&svc, &dpop, &key, &format!("hm-ok-{n}"), interact_request(&key, interact))
+                .await
+                .expect("sha-256 is honoured");
+        }
+    }
+
+    #[tokio::test]
     async fn a_user_code_start_is_answered_with_a_code_the_server_keeps() {
         let (svc, dpop, key) = (service(), manager(), client_key());
         let interact = json!({"start": ["user_code"], "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "n"}});
@@ -4855,6 +4913,7 @@ mod hardening_tests {
                     method: "redirect".to_string(),
                     uri: "https://client.test/cb".to_string(),
                     nonce: "client-nonce".to_string(),
+                    hash_method: None,
                 }),
             }),
             access_token: Some(rights(kinds).into()),

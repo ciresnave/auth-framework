@@ -29,7 +29,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 | 2.3.3 authenticating the client instance | **partial** | see 7.3 | only one method verifies |
 | 2.4 `user` (and by reference) | **missing** | no field | needed for user hints and for acting on behalf of an account holder |
 | 2.5 `interact.start` | **partial** | `start: Vec<String>`, read by `parse_start` at transaction open (G4 slice 1); `"redirect"` and `"user_code"` produce a response | `app`, `user_code_uri` are accepted and ignored; the object form of `start` is not supported |
-| 2.5.2 `interact.finish` | **partial** | `{method, uri, nonce}`, validated by `FinishRequest::parse` at transaction open; a `push` target that is not public https (loopback, private, link-local, metadata, credentials) is refused (11.34, G4 slice 1) | the service's `finish` has no `hash_method` field (a client's value is dropped; sha-256 only, 775-782); the target is not re-checked after name resolution and nothing is pushed yet (UNIMPLEMENTED) |
+| 2.5.2 `interact.finish` | **partial** | `{method, uri, nonce}`, validated by `FinishRequest::parse` at transaction open; a `push` target that is not public https (loopback, private, link-local, metadata, credentials) is refused (11.34, G4 slice 1) | `hash_method` is read and any value but `sha-256` is refused at open with an error naming it (not ignored); sha-384/512 are not honoured by the service yet (the hash is sha-256, 775-782); the target is not re-checked after name resolution and nothing is pushed yet (UNIMPLEMENTED) |
 | 2.5.3 `interact.hints` (`ui_locales`) | **missing** | none | |
 
 ### 3 Grant response

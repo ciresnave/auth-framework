@@ -339,6 +339,7 @@ group_base_dn
 group_by
 group_filter
 groups
+hash_method
 header_name
 health
 help
