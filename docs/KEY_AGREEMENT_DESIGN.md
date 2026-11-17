@@ -124,3 +124,33 @@ non-signing keys and adds `LocalKey::is_signing()`; the proposal is the second.
    next 0.n bump?
 4. **Downgrade note** (section 4): is "an older binary refuses the directory" acceptable, or do you want a one-time
    export/convert tool before the first agreement key can be written?
+
+## 8. P-256 (slice 4; PM ruling 2026-11-17: dependency `p256` approved)
+
+Question 2 above is answered: X25519 shipped first (#496), P-256 follows on the same design, as a second `Pair` variant.
+
+- **Mechanism.** ECDH-ES on NIST P-256 as JWE specifies it (RFC 7518 section 4.6; NIST SP 800-56A). Nothing here is a new
+  mechanism, so there is no patent question beyond the standard one: it is the RFC-standard algorithm, implemented by the
+  RustCrypto `p256` crate (MIT or Apache-2.0).
+- **Dependency.** `p256` 0.14 as a direct, **optional** dependency behind the existing `key-agreement` feature, with
+  `default-features = false` and only `ecdh`, `pkcs8` and `std` (no ECDSA, no PEM). `ring` offers only ephemeral
+  agreement, so a key a store holds needs it. The default build's dependency tree is unchanged; `Cargo.lock` gains no
+  package (`p256` 0.14.0 was already locked, through `passkey-crypto`). Without the feature nothing is compiled.
+- **Key.** `Pair::P256(p256::SecretKey)`, kind `JweEncryption`, public JWK `{"kty":"EC","crv":"P-256","x","y","use":"enc",
+  "alg":"ECDH-ES"}`, thumbprint `kid`. The record holds the key's RFC 5958 PKCS#8 and is `v: 2` like every agreement
+  record, so the rollback rule of section 4 is unchanged: an older build, or one without the feature, refuses the
+  directory. `LocalKey::from_pkcs8_der` with kind `JweEncryption` tells the two curves apart by the DER (the RFC 8410
+  X25519 prefix, else RFC 5958 P-256); a key of any other curve is refused.
+- **Peer encoding.** `LocalKey::agree` takes the peer's public point as an uncompressed SEC1 point, `04 || x || y`, 65
+  bytes: exactly what a JWE layer builds from an `epk`'s `x` and `y`. It refuses every other length or tag (compressed and
+  hybrid points too), the identity, a coordinate not below the field prime and a point not on the curve (the invalid-curve
+  attack). P-256 has cofactor 1, so a point on the curve is in the group and there is no low-order check as for X25519.
+  The secret is the x coordinate (`Z` of RFC 7518 section 4.6.2), 32 bytes, `Zeroizing`.
+- **Secrets in memory.** The private scalar is a `p256::SecretKey`, the DH output a `p256::ecdh::SharedSecret`, the
+  PKCS#8 a `SecretDocument` or `Zeroizing<Vec<u8>>`: all four wipe on drop, asserted at compile time by a test, and the
+  random bytes a generated key starts from are `Zeroizing`.
+- **Evidence.** The RFC 5903 section 8.1 vectors (public points and the shared x), re-derived independently with plain
+  big-integer arithmetic before use, through `LocalKey` and through both stores and a reopen; refusal cases for every
+  malformed peer; PKCS#8 exactness and interoperation with a `ring`-generated key.
+- **CLI.** `keys generate --kind jwe-encryption-p256`; `rotate` and `compromise` keep the key's curve (read from its
+  public JWK), so replacing a P-256 key never yields an X25519 one. `--kind jwe-encryption` stays X25519.

@@ -1050,6 +1050,18 @@ mod tests {
             }
         }
 
+        /// The private scalar, the DH output and the PKCS#8 document the key is built from all wipe
+        /// themselves on drop. A compile-time check: it stops building if a dependency update
+        /// drops that guarantee from one of the types this module holds secrets in.
+        #[test]
+        fn every_type_that_holds_p256_secret_bytes_zeroizes_on_drop() {
+            fn zeroizes_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+            zeroizes_on_drop::<p256::SecretKey>();
+            zeroizes_on_drop::<p256::ecdh::SharedSecret>();
+            zeroizes_on_drop::<p256::pkcs8::SecretDocument>();
+            zeroizes_on_drop::<Zeroizing<Vec<u8>>>();
+        }
+
         #[test]
         fn only_a_key_agreement_key_agrees() {
             let signer = LocalKey::generate(KeyKind::JwsSigning, SigningAlg::Es256, None).unwrap();
