@@ -8,6 +8,7 @@
 //! let app = axum::Router::new().merge(gnap_router(http));
 //! ```
 
+use crate::protocols::gnap_as_http::GnapAsHttp;
 use crate::protocols::gnap_http::{GnapHttpRequest, GnapHttpResponse, GnapRsHttp, MAX_BODY_BYTES};
 use axum::{
     Router,
@@ -49,23 +50,56 @@ pub fn gnap_router(http: Arc<GnapRsHttp>) -> Router {
 }
 
 async fn serve(http: Arc<GnapRsHttp>, req: Request) -> Response {
-    let (parts, body) = req.into_parts();
-    let bytes = match axum::body::to_bytes(body, MAX_BODY_BYTES + 1).await {
-        Ok(b) => b,
-        Err(_) => return to_response(GnapHttpResponse::invalid_request("request body too large")),
+    match read_request(req).await {
+        Ok(request) => to_response(http.handle(&request).await),
+        Err(refused) => to_response(refused),
+    }
+}
+
+/// A router with the authorization-server routes: the grant endpoint (`POST` a transaction,
+/// `OPTIONS` discovery) and the token management endpoint, at the paths `http` reports.
+pub fn gnap_as_router(http: Arc<GnapAsHttp>) -> Router {
+    let (grant, manage) = {
+        let (g, m) = http.paths();
+        (g.to_string(), m.to_string())
     };
+    let for_grant = http.clone();
+    let for_manage = http;
+    Router::new()
+        .route(
+            &grant,
+            any(move |req: Request| serve_as(for_grant.clone(), req)),
+        )
+        .route(
+            &manage,
+            any(move |req: Request| serve_as(for_manage.clone(), req)),
+        )
+}
+
+async fn serve_as(http: Arc<GnapAsHttp>, req: Request) -> Response {
+    match read_request(req).await {
+        Ok(request) => to_response(http.handle(&request).await),
+        Err(refused) => to_response(refused),
+    }
+}
+
+/// Read a request off the wire, refusing a body over [`MAX_BODY_BYTES`].
+async fn read_request(req: Request) -> Result<GnapHttpRequest, GnapHttpResponse> {
+    let (parts, body) = req.into_parts();
+    let bytes = axum::body::to_bytes(body, MAX_BODY_BYTES + 1)
+        .await
+        .map_err(|_| GnapHttpResponse::invalid_request("request body too large"))?;
     let headers = parts
         .headers
         .iter()
         .filter_map(|(k, v)| Some((k.as_str().to_string(), v.to_str().ok()?.to_string())))
         .collect();
-    let request = GnapHttpRequest {
+    Ok(GnapHttpRequest {
         method: parts.method.to_string(),
         uri: parts.uri.to_string(),
         headers,
         body: bytes.to_vec(),
-    };
-    to_response(http.handle(&request).await)
+    })
 }
 
 fn to_response(r: GnapHttpResponse) -> Response {
@@ -176,5 +210,74 @@ mod tests {
     async fn an_unregistered_path_is_not_ours() {
         let (status, _, _) = call("POST", "/elsewhere", true, GOOD).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn the_as_router_answers_discovery_and_refuses_wrong_methods() {
+        let app = gnap_as_router(Arc::new(crate::protocols::gnap_as_http::tests::handler()));
+        let opts = HttpRequest::builder()
+            .method("OPTIONS")
+            .uri("/api/gnap/tx")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(opts).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(doc["key_proofs_supported"], serde_json::json!(["dpop"]));
+
+        let get = HttpRequest::builder()
+            .method("GET")
+            .uri("/api/gnap/tx/token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(get).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST, DELETE");
+
+        let other = HttpRequest::builder()
+            .method("POST")
+            .uri("/elsewhere")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.oneshot(other).await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn a_grant_without_a_proof_through_the_as_router_is_401() {
+        let app = gnap_as_router(Arc::new(crate::protocols::gnap_as_http::tests::handler()));
+        let req = HttpRequest::builder()
+            .method("POST")
+            .uri("/api/gnap/tx")
+            .body(Body::from(
+                r#"{"access_token":{"access":[{"type":"read"}]}}"#,
+            ))
+            .unwrap();
+        // a request with no client key: refused, never answered with a token.
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("access_token"));
+    }
+
+    #[tokio::test]
+    async fn an_oversized_as_body_is_a_400_not_a_hang() {
+        let app = gnap_as_router(Arc::new(crate::protocols::gnap_as_http::tests::handler()));
+        let req = HttpRequest::builder()
+            .method("POST")
+            .uri("/api/gnap/tx")
+            .body(Body::from("x".repeat(MAX_BODY_BYTES + 10)))
+            .unwrap();
+        assert_eq!(
+            app.oneshot(req).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
     }
 }

@@ -31,6 +31,16 @@ pub struct GnapHttpRequest {
     pub body: Vec<u8>,
 }
 
+impl GnapHttpRequest {
+    /// The value of the first header called `name` (case-insensitive).
+    pub(crate) fn header_value(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
 /// `Debug` prints the body's length, never its bytes: an introspection request body carries the access token it asks
 /// about, and a response body describes a token (tests/debug_field_review.txt asks for a redacting `Debug`).
 impl std::fmt::Debug for GnapHttpRequest {
@@ -67,7 +77,7 @@ impl std::fmt::Debug for GnapHttpResponse {
 }
 
 impl GnapHttpResponse {
-    fn json(status: u16, body: &Value, no_store: bool) -> Self {
+    pub(crate) fn json(status: u16, body: &Value, no_store: bool) -> Self {
         let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
         if no_store {
             headers.push(("Cache-Control".to_string(), "no-store".to_string()));
@@ -90,7 +100,7 @@ impl GnapHttpResponse {
         Self::json(400, &body, true)
     }
 
-    fn empty(status: u16, headers: Vec<(String, String)>) -> Self {
+    pub(crate) fn empty(status: u16, headers: Vec<(String, String)>) -> Self {
         Self {
             status,
             headers,
@@ -108,7 +118,7 @@ impl GnapHttpResponse {
 }
 
 /// The path part of a URL or request target: no scheme, authority, query or fragment.
-fn path_of(target: &str) -> &str {
+pub(crate) fn path_of(target: &str) -> &str {
     let rest = match target.find("://") {
         Some(i) => {
             let after = &target[i + 3..];

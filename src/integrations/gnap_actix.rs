@@ -11,7 +11,8 @@
 //! App::new().configure(|cfg| gnap_configure(cfg, http.clone()));
 //! ```
 
-use crate::protocols::gnap_http::{GnapHttpRequest, GnapRsHttp, MAX_BODY_BYTES};
+use crate::protocols::gnap_as_http::GnapAsHttp;
+use crate::protocols::gnap_http::{GnapHttpRequest, GnapHttpResponse, GnapRsHttp, MAX_BODY_BYTES};
 use actix_web::{HttpRequest, HttpResponse, http::StatusCode, web};
 use std::sync::Arc;
 
@@ -33,18 +34,41 @@ pub fn gnap_configure(cfg: &mut web::ServiceConfig, http: Arc<GnapRsHttp>) {
 }
 
 async fn serve(req: HttpRequest, body: web::Bytes, http: web::Data<GnapRsHttp>) -> HttpResponse {
+    respond(http.handle(&read_request(&req, &body)).await)
+}
+
+/// Register the authorization-server routes: the grant endpoint (`POST` a transaction, `OPTIONS`
+/// discovery) and the token management endpoint, at the paths `http` reports.
+pub fn gnap_as_configure(cfg: &mut web::ServiceConfig, http: Arc<GnapAsHttp>) {
+    let (grant, manage) = {
+        let (g, m) = http.paths();
+        (g.to_string(), m.to_string())
+    };
+    cfg.app_data(web::Data::from(http))
+        .app_data(web::PayloadConfig::new(MAX_BODY_BYTES + 1))
+        .service(web::resource(grant).route(web::route().to(serve_as)))
+        .service(web::resource(manage).route(web::route().to(serve_as)));
+}
+
+async fn serve_as(req: HttpRequest, body: web::Bytes, http: web::Data<GnapAsHttp>) -> HttpResponse {
+    respond(http.handle(&read_request(&req, &body)).await)
+}
+
+fn read_request(req: &HttpRequest, body: &web::Bytes) -> GnapHttpRequest {
     let headers = req
         .headers()
         .iter()
         .filter_map(|(k, v)| Some((k.as_str().to_string(), v.to_str().ok()?.to_string())))
         .collect();
-    let request = GnapHttpRequest {
+    GnapHttpRequest {
         method: req.method().to_string(),
         uri: req.uri().to_string(),
         headers,
         body: body.to_vec(),
-    };
-    let r = http.handle(&request).await;
+    }
+}
+
+fn respond(r: GnapHttpResponse) -> HttpResponse {
     let mut builder = HttpResponse::build(
         StatusCode::from_u16(r.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
     );
@@ -156,5 +180,46 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[actix_web::test]
+    async fn the_as_app_answers_discovery_and_refuses_wrong_methods() {
+        let http = Arc::new(crate::protocols::gnap_as_http::tests::handler());
+        let app = test::init_service(
+            App::new().configure(move |cfg| gnap_as_configure(cfg, http.clone())),
+        )
+        .await;
+        let req = test::TestRequest::default()
+            .method(actix_web::http::Method::OPTIONS)
+            .uri("/api/gnap/tx")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let doc: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(doc["key_proofs_supported"], serde_json::json!(["dpop"]));
+
+        let req = test::TestRequest::get()
+            .uri("/api/gnap/tx/token")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST, DELETE");
+    }
+
+    #[actix_web::test]
+    async fn a_grant_without_a_client_key_through_the_as_app_is_401() {
+        let http = Arc::new(crate::protocols::gnap_as_http::tests::handler());
+        let app = test::init_service(
+            App::new().configure(move |cfg| gnap_as_configure(cfg, http.clone())),
+        )
+        .await;
+        let req = test::TestRequest::post()
+            .uri("/api/gnap/tx")
+            .set_payload(r#"{"access_token":{"access":[{"type":"read"}]}}"#)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = test::read_body(resp).await;
+        assert!(!String::from_utf8_lossy(&body).contains("access_token"));
     }
 }
