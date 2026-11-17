@@ -135,8 +135,10 @@ caa_identities
 cached_permissions
 canonicalization_method
 canvas_hash
+cert
 cert_file
 cert_id
+cert_s256
 cert_thumbprint
 certificate
 certificate_pem
@@ -1072,8 +1074,6 @@ src/protocols/fido1.rs:U2fRegistrationRequest:challenge | one-time U2F challenge
 src/protocols/fido1.rs:U2fSignRequest:challenge | one-time U2F challenge that is sent to the client in the clear
 src/protocols/gnap.rs:GnapClientKey:proof | name of the GNAP proof method (httpsig, mtls, dpop, ...)
 src/protocols/indieauth.rs:IndieAuthProfile:url | IndieAuth profile URL: public identifier
-src/protocols/oauth1.rs:OAuthConsumer:key | OAuth 1.0a consumer key: a public identifier (the secret is separate)
-src/protocols/oauth1.rs:OAuthToken:token | `token` is the public OAuth 1.0a token identifier; the secret half is a Zeroizing field
 src/protocols/saml_assertions.rs:SamlAction:value | SAML authorization action name
 src/protocols/saml_assertions.rs:SamlAttributeValue:value | SAML attribute value: asserted user data, not a credential
 src/protocols/saml_assertions.rs:SamlNameId:value | SAML NameID: a subject identifier, not a credential
@@ -1088,11 +1088,11 @@ src/protocols/ws_security.rs:BinarySecurityToken:value | base64 X.509 certificat
 src/protocols/ws_security.rs:KeyInfo:key_value | public key material
 src/sdks/mod.rs:SdkGenerationError:<tuple> | error message text: diagnostic, not a credential
 src/security/enhanced_crypto.rs:EnhancedEncryptedData:data | ciphertext
+src/security/secure_jwt.rs:SecureJwtValidator:config | SecureJwtConfig has a redacting Debug (redacting_debug!, tested in utils::redact), so printing the config prints no secret
 src/server/core/federated_authentication_orchestration.rs:AuthenticationProtocol:<tuple> | the name of a custom variant: a label, not a credential
 src/server/core/federated_authentication_orchestration.rs:IdpCapability:<tuple> | the name of a custom variant: a label, not a credential
 src/server/core/federated_authentication_orchestration.rs:SessionProtocol:<tuple> | the name of a custom variant: a label, not a credential
 src/server/core/stepped_up_auth.rs:StepUpTrigger:<tuple> | resource sensitivity / type label
-src/server/oauth/rich_authorization_requests.rs:RarResourceDiscoveryResponse:continuation_token | pagination cursor for a resource listing
 src/server/oidc/oidc_advanced_jarm.rs:AdvancedJarmConfig:supported_algorithms | JWS algorithm names (jsonwebtoken::Algorithm enum), not key material
 src/server/security/caep_continuous_access.rs:CaepEventType:<tuple> | the name of a custom variant: a label, not a credential
 src/server/security/fapi.rs:FapiConfig:request_signing_algorithm | a JWS algorithm name (jsonwebtoken::Algorithm enum), not key material

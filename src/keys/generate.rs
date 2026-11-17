@@ -222,9 +222,10 @@ impl LocalKey {
         self.kind
     }
 
-    /// The signing algorithm.
-    pub fn signing_alg(&self) -> SigningAlg {
-        self.alg
+    /// The signing algorithm, or `None` for a key that does not sign (every key today signs;
+    /// a key-agreement key will not, see `docs/KEY_AGREEMENT_DESIGN.md`).
+    pub fn signing_alg(&self) -> Option<SigningAlg> {
+        Some(self.alg)
     }
 
     /// The public half, with `kid`, `use`, `alg` and `key_ops` set.
@@ -401,13 +402,28 @@ mod tests {
     }
 
     #[test]
+    fn a_signing_key_reports_its_signing_algorithm_and_signs_with_it() {
+        for alg in [
+            SigningAlg::Es256,
+            SigningAlg::Es384,
+            SigningAlg::EdDsa,
+            SigningAlg::Rs256,
+        ] {
+            let k = LocalKey::generate(KeyKind::JwsSigning, alg, None).unwrap();
+            assert_eq!(k.signing_alg(), Some(alg), "{alg:?}");
+            assert_eq!(Signer::algorithm(&k), alg.name(), "{alg:?}");
+            assert!(Signer::sign(&k, b"m").is_ok(), "{alg:?}");
+        }
+    }
+
+    #[test]
     fn import_round_trips_der_and_pem_with_the_same_identity() {
         for alg in [SigningAlg::Es256, SigningAlg::Es384, SigningAlg::EdDsa] {
             let k = LocalKey::generate(KeyKind::GnapClient, alg, None).unwrap();
             let back =
                 LocalKey::from_pkcs8_der(k.to_pkcs8_der(), KeyKind::GnapClient, None).unwrap();
             assert_eq!(back.kid(), k.kid());
-            assert_eq!(back.signing_alg(), alg);
+            assert_eq!(back.signing_alg(), Some(alg));
             let label = "PRIVATE KEY";
             let pem = format!(
                 "-----BEGIN {label}-----\n{}\n-----END {label}-----\n",

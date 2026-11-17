@@ -99,7 +99,7 @@ use zeroize::Zeroizing;
 type EventHandlerMap = Arc<RwLock<HashMap<CaepEventType, Vec<Arc<dyn CaepEventHandler>>>>>;
 
 /// Configuration for Continuous Access Evaluation Protocol
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CaepConfig {
     /// URL for the event stream endpoint
     pub event_stream_url: String,
@@ -129,6 +129,8 @@ pub struct CaepConfig {
     /// **Must be set to a strong, randomly-generated secret in production.**
     pub signing_secret: Zeroizing<String>,
 }
+
+crate::utils::redact::redacting_debug!(CaepConfig, plain: [event_stream_url, evaluation_interval, auto_revoke, auto_revoke_threshold, max_concurrent_processors, event_retention_period, propagation_endpoints, evaluation_rules], secret: [signing_secret]);
 
 impl Default for CaepConfig {
     fn default() -> Self {

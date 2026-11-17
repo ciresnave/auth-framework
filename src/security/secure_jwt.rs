@@ -52,7 +52,7 @@ pub fn is_refresh_typ(typ: &str) -> bool {
     typ == TYP_REFRESH || typ == TYP_REFRESH_TOKEN
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SecureJwtConfig {
     pub allowed_algorithms: Vec<Algorithm>,
     pub required_issuers: HashSet<String>,
@@ -72,6 +72,8 @@ pub struct SecureJwtConfig {
     /// PEM-encoded Ed25519 public key for EdDSA
     pub ed_public_key_pem: Option<String>,
 }
+
+crate::utils::redact::redacting_debug!(SecureJwtConfig, plain: [allowed_algorithms, required_issuers, required_audiences, max_token_lifetime, clock_skew, require_jti, validate_nbf, allowed_token_types, require_secure_transport, rsa_public_key_pem, ec_public_key_pem, ed_public_key_pem], secret: [jwt_secret]);
 
 impl Default for SecureJwtConfig {
     fn default() -> Self {
