@@ -33,7 +33,7 @@ Each vector has:
 - `request`: the JSON body sent to the transaction endpoint (before the replayer adds `client`).
 - `expect.outcome`: `response` (the server answers) or `error` (it refuses).
 - `expect.assert`: checks on a response, each a JSON Pointer `path` and an `op`:
-  `exists`, `absent`, `is_string`, `is_number`, `is_array`, `equals` (with `value`), `min_length`
+  `exists`, `absent`, `is_string`, `is_number`, `is_array`, `equals` (with `value`), `starts_with` (with `value`, and something after it), `min_length`
   (a string of at least `value` characters) or `not_equals_saved`.
 
 Rules for adding a vector:

@@ -17,7 +17,10 @@
 
 use crate::errors::{AuthError, Result};
 use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
-use crate::protocols::gnap_store::{GnapIssuedToken, GnapTokenStore, InMemoryTokenStore};
+use crate::protocols::gnap_store::{
+    GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
+    InMemoryTransactionStore,
+};
 use crate::protocols::gnap_wire::{
     GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests,
     validate_access_token_requests_with_flags,
@@ -27,9 +30,7 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GnapConfig {
@@ -342,9 +343,9 @@ impl GnapTransactionRequestBuilder {
     }
 }
 
-/// Internal state of a GNAP transaction
+/// State of a GNAP transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum GnapTransactionState {
+pub enum GnapTransactionState {
     /// Waiting for user interaction
     Pending,
     /// User has approved; access token can be issued
@@ -353,19 +354,29 @@ enum GnapTransactionState {
     Denied,
 }
 
+/// An open GNAP transaction, as a [`GnapTransactionStore`] keeps it.
 #[derive(Clone, Serialize, Deserialize)]
-struct GnapTransaction {
-    id: String,
-    state: GnapTransactionState,
-    request: GnapTransactionRequest,
-    continue_token: String,
-    created_at: u64,
+pub struct GnapTransaction {
+    /// The transaction id, the store's key.
+    pub id: String,
+    /// Where the transaction stands.
+    pub state: GnapTransactionState,
+    /// What the client asked for.
+    pub request: GnapTransactionRequest,
+    /// The continuation token the client must present next; rotated on every poll.
+    pub continue_token: String,
+    /// When the transaction was created (epoch seconds).
+    pub created_at: u64,
     /// Server-generated nonce for interaction hash verification (draft §4.2.3)
-    interact_nonce: Option<String>,
+    pub interact_nonce: Option<String>,
     /// Subject identifier assigned after approval
-    subject_id: Option<String>,
+    pub subject_id: Option<String>,
     /// One-time interaction reference issued when a finish-method transaction is approved
-    interact_ref: Option<String>,
+    pub interact_ref: Option<String>,
+    /// How many times the store has replaced this transaction. The store's compare-and-swap
+    /// ([`GnapTransactionStore::replace_if_unchanged`]) keys on it; nothing else writes it.
+    #[serde(default)]
+    pub revision: u64,
 }
 
 impl std::fmt::Debug for GnapTransaction {
@@ -388,6 +399,7 @@ impl std::fmt::Debug for GnapTransaction {
             "interact_ref",
             &crate::utils::redact::redacted(&self.interact_ref),
         );
+        d.field("revision", &self.revision);
         d.finish()
     }
 }
@@ -476,7 +488,7 @@ pub struct GnapService {
     /// Decides what is granted; without one no access token is issued.
     policy: Option<Arc<dyn GnapAccessPolicy>>,
     /// Active transactions (keyed by transaction ID)
-    transactions: Arc<RwLock<HashMap<String, GnapTransaction>>>,
+    transactions: Arc<dyn GnapTransactionStore>,
     /// Issued access tokens (keyed by token value)
     issued_tokens: Arc<dyn GnapTokenStore>,
     /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
@@ -508,7 +520,7 @@ impl GnapService {
         Self {
             config,
             policy: None,
-            transactions: Arc::new(RwLock::new(HashMap::new())),
+            transactions: Arc::new(InMemoryTransactionStore::new()),
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
             consents: Arc::new(InMemoryConsentStore::new()),
         }
@@ -533,6 +545,13 @@ impl GnapService {
     /// error refuses the request it happens in; it is never read as "no such token".
     pub fn with_token_store(mut self, store: Arc<dyn GnapTokenStore>) -> Self {
         self.issued_tokens = store;
+        self
+    }
+
+    /// Keep open transactions in this store instead of the default in-memory one. A store error
+    /// refuses the request it happens in; it is never read as "no such transaction".
+    pub fn with_transaction_store(mut self, store: Arc<dyn GnapTransactionStore>) -> Self {
+        self.transactions = store;
         self
     }
 
@@ -570,20 +589,24 @@ impl GnapService {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let transactions = {
-            let mut txns = self.transactions.write().await;
-            let before = txns.len();
-            txns.retain(|_, t| {
-                let bound = t
-                    .request
-                    .client
-                    .as_ref()
-                    .and_then(|c| c.key.as_ref())
-                    .and_then(|k| Self::key_binding(k).ok());
-                bound.as_deref() != Some(thumbprint)
-            });
-            before - txns.len()
-        };
+        let mut transactions = 0;
+        for id in self.transactions.ids().await? {
+            let Some(txn) = self.transactions.get(&id).await? else {
+                continue;
+            };
+            let bound = txn
+                .request
+                .client
+                .as_ref()
+                .and_then(|c| c.key.as_ref())
+                .and_then(|k| Self::key_binding(k).ok());
+            // Only the caller whose remove lands counts it, so a repeat reports nothing.
+            if bound.as_deref() == Some(thumbprint)
+                && self.transactions.remove(&id).await?.is_some()
+            {
+                transactions += 1;
+            }
+        }
         // Count only records this call withdrew, so a repeat reports nothing.
         let consents = self.consents.revoke_for_key(thumbprint, now).await?;
         let newly_withdrawn = consents
@@ -1333,8 +1356,9 @@ impl GnapService {
                 interact_nonce: interact_nonce.clone(),
                 subject_id: None,
                 interact_ref: None,
+                revision: 0,
             };
-            self.transactions.write().await.insert(transaction_id, txn);
+            self.transactions.insert(txn).await?;
         } else {
             // No interaction required — issue token directly if access requested
             if let Some(ref access_requests) = requested {
@@ -1376,7 +1400,7 @@ impl GnapService {
         );
         continue_obj.insert(
             "uri".to_string(),
-            serde_json::Value::String(format!("{}/continue", self.config.transaction_endpoint)),
+            serde_json::Value::String(self.continue_uri(&transaction_id)),
         );
 
         response.insert(
@@ -1385,6 +1409,16 @@ impl GnapService {
         );
 
         Ok(serde_json::Value::Object(response))
+    }
+
+    /// The continuation URI of a transaction: `{transaction_endpoint}/continue/{id}`. RFC 9635
+    /// section 5 lets the AS choose it, and naming the transaction lets a request that carries only
+    /// the continuation token and a proof be routed to it.
+    fn continue_uri(&self, transaction_id: &str) -> String {
+        format!(
+            "{}/continue/{}",
+            self.config.transaction_endpoint, transaction_id
+        )
     }
 
     /// Continue a transaction without proof material. Tests only: in a build every continuation
@@ -1440,10 +1474,13 @@ impl GnapService {
         interact_hash: Option<&str>,
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
     ) -> Result<serde_json::Value> {
-        // Take a write lock so we can rotate the continuation token atomically
-        let mut transactions = self.transactions.write().await;
-        let txn = transactions
-            .get_mut(transaction_id)
+        // The checks below run on a copy. Every write back is atomic in the store (a
+        // compare-and-swap on the revision read here, or a remove only one caller wins), so two
+        // requests for one transaction cannot both rotate its token or both spend it.
+        let mut txn = self
+            .transactions
+            .get(transaction_id)
+            .await?
             .ok_or_else(|| AuthError::validation(INVALID_CONTINUATION))?;
 
         // Enforce transaction expiration
@@ -1452,7 +1489,7 @@ impl GnapService {
             .unwrap_or_default()
             .as_secs();
         if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
-            transactions.remove(transaction_id);
+            self.transactions.remove(transaction_id).await?;
             return Err(AuthError::validation(INVALID_CONTINUATION));
         }
 
@@ -1516,21 +1553,21 @@ impl GnapService {
         // before the token is rotated, so a refused request leaves the holder's token usable.
         let verified_thumbprint = Self::verify_client_proof(&txn.request.client, dpop).await?;
 
-        // Rotate the continuation token (draft §5.1)
-        let new_continue_token = uuid::Uuid::new_v4().to_string();
-        txn.continue_token = new_continue_token.clone();
-
-        let result = match txn.state {
+        match txn.state {
             GnapTransactionState::Pending => {
+                // Rotate the continuation token (draft §5.1). Of two requests that presented
+                // the same token only the one whose swap lands gets the new one.
+                let new_continue_token = uuid::Uuid::new_v4().to_string();
+                txn.continue_token = new_continue_token.clone();
+                if !self.transactions.replace_if_unchanged(txn).await? {
+                    return Err(AuthError::validation(INVALID_CONTINUATION));
+                }
                 // Still waiting for user interaction
                 let mut resp = serde_json::Map::new();
                 let mut cont = serde_json::Map::new();
                 cont.insert(
                     "uri".to_string(),
-                    serde_json::Value::String(format!(
-                        "{}/continue",
-                        self.config.transaction_endpoint
-                    )),
+                    serde_json::Value::String(self.continue_uri(transaction_id)),
                 );
                 cont.insert("wait".to_string(), serde_json::Value::Number(5.into()));
                 let mut ct = serde_json::Map::new();
@@ -1543,6 +1580,14 @@ impl GnapService {
                 Ok(serde_json::Value::Object(resp))
             }
             GnapTransactionState::Approved => {
+                // An approved transaction is spent by one continuation: whoever removes it
+                // issues the token. One that changed since it was read (a concurrent denial)
+                // is refused, and is gone either way.
+                let spent = self.transactions.remove(transaction_id).await?;
+                let txn = match spent {
+                    Some(spent) if spent.revision == txn.revision => spent,
+                    _ => return Err(AuthError::validation(INVALID_CONTINUATION)),
+                };
                 let key_thumbprint = verified_thumbprint;
 
                 let mut response = serde_json::Map::new();
@@ -1589,20 +1634,40 @@ impl GnapService {
                     None => Ok(serde_json::Value::Object(response)),
                 }
             }
-            GnapTransactionState::Denied => Err(AuthError::validation(
-                "Transaction was denied by the resource owner",
-            )),
-        };
-
-        // Remove completed/denied transactions
-        if matches!(
-            txn.state,
-            GnapTransactionState::Approved | GnapTransactionState::Denied
-        ) {
-            transactions.remove(transaction_id);
+            GnapTransactionState::Denied => {
+                self.transactions.remove(transaction_id).await?;
+                Err(AuthError::validation(
+                    "Transaction was denied by the resource owner",
+                ))
+            }
         }
+    }
 
-        result
+    /// How many times a read-modify-write of one transaction is retried when another request
+    /// changes it in between.
+    const UPDATE_ATTEMPTS: usize = 8;
+
+    /// Change a stored transaction: read it, let `change` edit a copy, and write it back only if
+    /// nobody changed it meanwhile (retrying a few times when somebody did).
+    async fn update_transaction<T>(
+        &self,
+        transaction_id: &str,
+        mut change: impl FnMut(&mut GnapTransaction) -> T,
+    ) -> Result<T> {
+        for _ in 0..Self::UPDATE_ATTEMPTS {
+            let mut txn = self
+                .transactions
+                .get(transaction_id)
+                .await?
+                .ok_or_else(|| AuthError::validation("Transaction not found"))?;
+            let out = change(&mut txn);
+            if self.transactions.replace_if_unchanged(txn).await? {
+                return Ok(out);
+            }
+        }
+        Err(AuthError::validation(
+            "Transaction is being changed by another request; try again",
+        ))
     }
 
     /// Approve a pending transaction (called after user interaction).
@@ -1615,50 +1680,48 @@ impl GnapService {
         transaction_id: &str,
         subject_id: Option<&str>,
     ) -> Result<GnapInteractionCompletion> {
-        let mut transactions = self.transactions.write().await;
-        let txn = transactions
-            .get_mut(transaction_id)
-            .ok_or_else(|| AuthError::validation("Transaction not found"))?;
-        txn.state = GnapTransactionState::Approved;
-        if let Some(sid) = subject_id {
-            txn.subject_id = Some(sid.to_string());
-        }
-        let client_nonce = txn
-            .request
-            .interact
-            .as_ref()
-            .and_then(|i| i.finish.as_ref())
-            .map(|f| f.nonce.clone());
-        let Some(client_nonce) = client_nonce else {
-            return Ok(GnapInteractionCompletion {
-                interact_ref: None,
-                hash: None,
-            });
-        };
-        let interact_ref = txn
-            .interact_ref
-            .get_or_insert_with(|| uuid::Uuid::new_v4().simple().to_string())
-            .clone();
-        let hash = Self::compute_interact_hash(
-            &client_nonce,
-            txn.interact_nonce.as_deref().unwrap_or(""),
-            &interact_ref,
-            &self.config.transaction_endpoint,
-        );
-        Ok(GnapInteractionCompletion {
-            interact_ref: Some(interact_ref),
-            hash: Some(hash),
+        let endpoint = &self.config.transaction_endpoint;
+        self.update_transaction(transaction_id, |txn| {
+            txn.state = GnapTransactionState::Approved;
+            if let Some(sid) = subject_id {
+                txn.subject_id = Some(sid.to_string());
+            }
+            let client_nonce = txn
+                .request
+                .interact
+                .as_ref()
+                .and_then(|i| i.finish.as_ref())
+                .map(|f| f.nonce.clone());
+            let Some(client_nonce) = client_nonce else {
+                return GnapInteractionCompletion {
+                    interact_ref: None,
+                    hash: None,
+                };
+            };
+            let interact_ref = txn
+                .interact_ref
+                .get_or_insert_with(|| uuid::Uuid::new_v4().simple().to_string())
+                .clone();
+            let hash = Self::compute_interact_hash(
+                &client_nonce,
+                txn.interact_nonce.as_deref().unwrap_or(""),
+                &interact_ref,
+                endpoint,
+            );
+            GnapInteractionCompletion {
+                interact_ref: Some(interact_ref),
+                hash: Some(hash),
+            }
         })
+        .await
     }
 
     /// Deny a pending transaction
     pub async fn deny_transaction(&self, transaction_id: &str) -> Result<()> {
-        let mut transactions = self.transactions.write().await;
-        let txn = transactions
-            .get_mut(transaction_id)
-            .ok_or_else(|| AuthError::validation("Transaction not found"))?;
-        txn.state = GnapTransactionState::Denied;
-        Ok(())
+        self.update_transaction(transaction_id, |txn| {
+            txn.state = GnapTransactionState::Denied;
+        })
+        .await
     }
 
     // ── Token Management (draft §6) ─────────────────────────────────────
@@ -1903,20 +1966,39 @@ impl GnapService {
 
     // ── Cleanup ──────────────────────────────────────────────────────────
 
-    /// Remove expired transactions from the in-memory store.
+    /// Unit tests only: ids of the stored transactions.
+    #[cfg(test)]
+    async fn test_txn_ids(&self) -> Vec<String> {
+        self.transactions.ids().await.unwrap()
+    }
+
+    /// Unit tests only: the one stored transaction with this id.
+    #[cfg(test)]
+    async fn test_txn(&self, id: &str) -> GnapTransaction {
+        self.transactions.get(id).await.unwrap().unwrap()
+    }
+
+    /// Unit tests only: the first stored transaction.
+    #[cfg(test)]
+    async fn test_first_txn(&self) -> GnapTransaction {
+        let id = self.test_txn_ids().await.remove(0);
+        self.test_txn(&id).await
+    }
+
+    /// Remove expired transactions from the transaction store.
     pub async fn cleanup_expired_transactions(&self) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let lifetime = self.config.transaction_lifetime_secs;
-        self.transactions
-            .write()
-            .await
-            .retain(|_, t| now.saturating_sub(t.created_at) <= lifetime);
+        // Expired is `now - created_at > lifetime`, that is `created_at < now - lifetime`.
+        let cutoff = now.saturating_sub(self.config.transaction_lifetime_secs);
+        if let Err(e) = self.transactions.purge_created_before(cutoff).await {
+            tracing::warn!("GNAP transaction store could not purge expired transactions: {e}");
+        }
     }
 
-    /// Remove expired access tokens from the in-memory store.
+    /// Remove expired access tokens from the token store.
     pub async fn cleanup_expired_tokens(&self) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2291,10 +2373,7 @@ mod tests {
         let cont = resp["continue"]["access_token"]["value"].as_str().unwrap();
 
         // Get transaction ID from the stored transactions
-        let txn_id = {
-            let txns = service.transactions.read().await;
-            txns.keys().next().unwrap().clone()
-        };
+        let txn_id = service.test_first_txn().await.id;
 
         // Continue before approval → pending
         let poll = service
@@ -2308,10 +2387,7 @@ mod tests {
         );
 
         // Get updated continuation token
-        let new_cont = {
-            let txns = service.transactions.read().await;
-            txns.get(&txn_id).unwrap().continue_token.clone()
-        };
+        let new_cont = service.test_txn(&txn_id).await.continue_token;
 
         // Approve
         service
@@ -2347,17 +2423,11 @@ mod tests {
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
-        let txn_id = {
-            let txns = service.transactions.read().await;
-            txns.keys().next().unwrap().clone()
-        };
+        let txn_id = service.test_first_txn().await.id;
 
         service.deny_transaction(&txn_id).await.unwrap();
 
-        let cont = {
-            let txns = service.transactions.read().await;
-            txns.get(&txn_id).unwrap().continue_token.clone()
-        };
+        let cont = service.test_txn(&txn_id).await.continue_token;
         let result = service
             .continue_transaction(&txn_id, &cont, None, None)
             .await;
@@ -2384,10 +2454,7 @@ mod tests {
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
-        let txn_id = {
-            let txns = service.transactions.read().await;
-            txns.keys().next().unwrap().clone()
-        };
+        let txn_id = service.test_first_txn().await.id;
         let result = service
             .continue_transaction(&txn_id, "bad-token", None, None)
             .await;
@@ -2612,20 +2679,14 @@ mod tests {
             .unwrap()
             .to_string();
 
-        let txn_id = {
-            let txns = service.transactions.read().await;
-            txns.keys().next().unwrap().clone()
-        };
+        let txn_id = service.test_first_txn().await.id;
 
         // First continue → token is rotated
         let _ = service
             .continue_transaction(&txn_id, &cont1, None, None)
             .await;
 
-        let cont2 = {
-            let txns = service.transactions.read().await;
-            txns.get(&txn_id).unwrap().continue_token.clone()
-        };
+        let cont2 = service.test_txn(&txn_id).await.continue_token;
         assert_ne!(cont1, cont2, "Continuation token must rotate on each use");
 
         // Old token should not work
@@ -2660,18 +2721,20 @@ mod tests {
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
-        assert_eq!(service.transactions.read().await.len(), 1);
+        assert_eq!(service.transactions.count().await.unwrap(), 1);
 
         // Manually backdate the transaction so it appears expired
-        {
-            let mut txns = service.transactions.write().await;
-            for txn in txns.values_mut() {
-                txn.created_at = txn.created_at.saturating_sub(10);
-            }
+        for id in service.test_txn_ids().await {
+            service
+                .update_transaction(&id, |txn| {
+                    txn.created_at = txn.created_at.saturating_sub(10)
+                })
+                .await
+                .unwrap();
         }
 
         service.cleanup_expired_transactions().await;
-        assert_eq!(service.transactions.read().await.len(), 0);
+        assert_eq!(service.transactions.count().await.unwrap(), 0);
     }
 
     // ── Interaction Hash Verification ────────────────────────────────────
@@ -2703,13 +2766,8 @@ mod tests {
         service.handle_transaction(req).await.unwrap();
 
         let (txn_id, cont, server_nonce) = {
-            let txns = service.transactions.read().await;
-            let (id, txn) = txns.iter().next().unwrap();
-            (
-                id.clone(),
-                txn.continue_token.clone(),
-                txn.interact_nonce.clone().unwrap(),
-            )
+            let txn = service.test_first_txn().await;
+            (txn.id, txn.continue_token, txn.interact_nonce.unwrap())
         };
 
         let done = service.approve_transaction(&txn_id, None).await.unwrap();
@@ -2761,15 +2819,13 @@ mod tests {
         };
         service.handle_transaction(req).await.unwrap();
         let (id, cont) = {
-            let txns = service.transactions.read().await;
-            let (id, txn) = txns.iter().next().unwrap();
-            (id.clone(), txn.continue_token.clone())
+            let txn = service.test_first_txn().await;
+            (txn.id, txn.continue_token)
         };
         let done = service.approve_transaction(&id, None).await.unwrap();
         let interact_ref = done.interact_ref.unwrap();
         let hash = done.hash.unwrap();
-        let txns = service.transactions.read().await;
-        let txn = txns.get(&id).unwrap();
+        let txn = service.test_txn(&id).await;
         assert_eq!(
             hash,
             GnapService::compute_interact_hash(
@@ -2801,14 +2857,7 @@ mod tests {
             assert!(bad.is_err());
         }
         // The token the client was given is the one stored
-        let stored = service
-            .transactions
-            .read()
-            .await
-            .get(&txn_id)
-            .unwrap()
-            .continue_token
-            .clone();
+        let stored = service.test_txn(&txn_id).await.continue_token;
         assert_eq!(stored, cont);
         assert!(
             service
@@ -2848,10 +2897,10 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        {
-            let mut txns = service.transactions.write().await;
-            txns.get_mut(&txn_id).unwrap().created_at = 0;
-        }
+        service
+            .update_transaction(&txn_id, |txn| txn.created_at = 0)
+            .await
+            .unwrap();
         let expired = service
             .continue_transaction(&txn_id, &cont, Some(&iref), Some(&hash))
             .await
@@ -3005,9 +3054,8 @@ mod tests {
         };
         service.handle_transaction(req).await.unwrap();
         let (txn_id, cont) = {
-            let txns = service.transactions.read().await;
-            let t = txns.values().next().unwrap();
-            (t.id.clone(), t.continue_token.clone())
+            let t = service.test_first_txn().await;
+            (t.id, t.continue_token)
         };
         service.approve_transaction(&txn_id, owner).await.unwrap();
         service
@@ -3151,7 +3199,10 @@ mod tests {
 
     // ── Token store (G6 slice 2) ─────────────────────────────────────────
 
-    use crate::protocols::gnap_store::{GnapIssuedToken, GnapTokenStore, InMemoryTokenStore};
+    use crate::protocols::gnap_store::{
+        GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
+        InMemoryTransactionStore,
+    };
     use std::sync::atomic::AtomicBool;
 
     /// A token store that can be told to fail reads or writes.
@@ -3344,7 +3395,7 @@ mod tests {
         };
         service.handle_transaction(req).await.unwrap();
         assert!(service.consents_for_owner(owner).await.unwrap()[0].is_active());
-        let before = service.transactions.read().await.len();
+        let before = service.transactions.count().await.unwrap();
         // The approved transaction was consumed when its token was issued; only the pending one stands.
         assert_eq!(before, 1);
 
@@ -3353,7 +3404,7 @@ mod tests {
         assert_eq!(report.tokens, 1);
         assert_eq!(report.transactions, 1);
         assert!(!service.consents_for_owner(owner).await.unwrap()[0].is_active());
-        assert!(service.transactions.read().await.is_empty());
+        assert_eq!(service.transactions.count().await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -3371,9 +3422,8 @@ mod tests {
         };
         service.handle_transaction(req).await.unwrap();
         let (txn_id, cont) = {
-            let txns = service.transactions.read().await;
-            let t = txns.values().next().unwrap();
-            (t.id.clone(), t.continue_token.clone())
+            let t = service.test_first_txn().await;
+            (t.id, t.continue_token)
         };
         service.revoke_client_key(&tp).await.unwrap();
         assert!(
@@ -3426,6 +3476,241 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    // ── Transaction store (G6 slice 3) ───────────────────────────────────
+
+    /// A transaction store that can be told to fail, and that yields after every read so that
+    /// concurrent requests all read the same snapshot before any of them writes.
+    #[derive(Default)]
+    struct RacyTransactionStore {
+        inner: InMemoryTransactionStore,
+        fail_insert: AtomicBool,
+        fail_read: AtomicBool,
+    }
+
+    #[async_trait]
+    impl GnapTransactionStore for RacyTransactionStore {
+        async fn insert(&self, txn: GnapTransaction) -> Result<()> {
+            if self.fail_insert.load(Ordering::SeqCst) {
+                return Err(AuthError::validation("store down"));
+            }
+            self.inner.insert(txn).await
+        }
+        async fn get(&self, id: &str) -> Result<Option<GnapTransaction>> {
+            if self.fail_read.load(Ordering::SeqCst) {
+                return Err(AuthError::validation("store down"));
+            }
+            let found = self.inner.get(id).await;
+            tokio::task::yield_now().await;
+            found
+        }
+        async fn replace_if_unchanged(&self, txn: GnapTransaction) -> Result<bool> {
+            self.inner.replace_if_unchanged(txn).await
+        }
+        async fn remove(&self, id: &str) -> Result<Option<GnapTransaction>> {
+            self.inner.remove(id).await
+        }
+        async fn purge_created_before(&self, cutoff: u64) -> Result<usize> {
+            self.inner.purge_created_before(cutoff).await
+        }
+        async fn count(&self) -> Result<usize> {
+            self.inner.count().await
+        }
+        async fn ids(&self) -> Result<Vec<String>> {
+            self.inner.ids().await
+        }
+    }
+
+    /// Run these futures as concurrent tasks and collect their outputs in order.
+    async fn run_all<T, F>(futures: impl IntoIterator<Item = F>) -> Vec<T>
+    where
+        T: Send + 'static,
+        F: std::future::Future<Output = T> + Send + 'static,
+    {
+        let handles: Vec<_> = futures.into_iter().map(tokio::spawn).collect();
+        let mut out = Vec::new();
+        for handle in handles {
+            out.push(handle.await.unwrap());
+        }
+        out
+    }
+
+    /// A pending polling transaction: its id and continuation token.
+    async fn pending(service: &GnapService, _finish: bool) -> (String, String) {
+        let before = service.test_txn_ids().await;
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+            }),
+            access_token: Some(vec![right("read")].into()),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        let id = service
+            .test_txn_ids()
+            .await
+            .into_iter()
+            .find(|k| !before.contains(k))
+            .unwrap();
+        let cont = service.test_txn(&id).await.continue_token;
+        (id, cont)
+    }
+
+    #[tokio::test]
+    async fn transactions_live_in_the_configured_store_and_outlive_the_service() {
+        let store = Arc::new(InMemoryTransactionStore::new());
+        let first = test_service().with_transaction_store(store.clone());
+        let (id, cont) = pending(&first, false).await;
+        assert_eq!(store.count().await.unwrap(), 1);
+        drop(first);
+
+        // A new service over the same store (a restart with a durable store) continues it.
+        let second = test_service().with_transaction_store(store.clone());
+        let resp = second
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap();
+        assert!(resp["continue"]["access_token"]["value"].is_string());
+    }
+
+    #[tokio::test]
+    async fn a_store_that_cannot_read_refuses_instead_of_reporting_no_transaction() {
+        let store = Arc::new(RacyTransactionStore::default());
+        let service = test_service().with_transaction_store(store.clone());
+        let (id, cont) = pending(&service, false).await;
+
+        store.fail_read.store(true, Ordering::SeqCst);
+        let msg = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("store down"), "{msg}");
+        assert!(service.approve_transaction(&id, None).await.is_err());
+        assert!(service.deny_transaction(&id).await.is_err());
+
+        // The refused calls changed nothing: the same token still works.
+        store.fail_read.store(false, Ordering::SeqCst);
+        assert!(
+            service
+                .continue_transaction(&id, &cont, None, None)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn no_continuation_token_is_handed_out_when_the_store_cannot_keep_the_transaction() {
+        let store = Arc::new(RacyTransactionStore::default());
+        store.fail_insert.store(true, Ordering::SeqCst);
+        let service = test_service().with_transaction_store(store.clone());
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+            }),
+            access_token: Some(vec![right("read")].into()),
+            subject: None,
+        };
+        assert!(service.handle_transaction(req).await.is_err());
+        assert_eq!(store.count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn of_many_polls_with_one_token_exactly_one_rotates_it() {
+        let store = Arc::new(RacyTransactionStore::default());
+        let service = Arc::new(test_service().with_transaction_store(store));
+        let (id, cont) = pending(&service, false).await;
+
+        let polls = (0..8).map(|_| {
+            let service = service.clone();
+            let (id, cont) = (id.clone(), cont.clone());
+            async move { service.continue_transaction(&id, &cont, None, None).await }
+        });
+        let results = run_all(polls).await;
+        let won = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(won, 1, "exactly one poll may rotate the token");
+        // And the stored token is the one that winner was given.
+        let given = results
+            .iter()
+            .find_map(|r| r.as_ref().ok())
+            .unwrap()["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(service.test_txn(&id).await.continue_token, given);
+    }
+
+    #[tokio::test]
+    async fn of_many_continuations_of_an_approved_transaction_exactly_one_gets_the_token() {
+        let store = Arc::new(RacyTransactionStore::default());
+        let tokens = Arc::new(InMemoryTokenStore::new());
+        let service = Arc::new(
+            test_service()
+                .with_transaction_store(store.clone())
+                .with_token_store(tokens.clone()),
+        );
+        let (id, cont) = pending(&service, false).await;
+        service
+            .approve_transaction(&id, Some("user-1"))
+            .await
+            .unwrap();
+
+        let polls = (0..8).map(|_| {
+            let service = service.clone();
+            let (id, cont) = (id.clone(), cont.clone());
+            async move { service.continue_transaction(&id, &cont, None, None).await }
+        });
+        let results = run_all(polls).await;
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+        assert_eq!(tokens.count().await.unwrap(), 1, "one token, issued once");
+        assert_eq!(store.count().await.unwrap(), 0, "the transaction is spent");
+    }
+
+    #[tokio::test]
+    async fn a_denial_that_lands_between_the_read_and_the_spend_wins() {
+        let store = Arc::new(RacyTransactionStore::default());
+        let tokens = Arc::new(InMemoryTokenStore::new());
+        let service = Arc::new(
+            test_service()
+                .with_transaction_store(store)
+                .with_token_store(tokens.clone()),
+        );
+        let (id, cont) = pending(&service, false).await;
+        service
+            .approve_transaction(&id, Some("user-1"))
+            .await
+            .unwrap();
+
+        // The continuation reads the approved transaction and yields; the denial lands then.
+        let racing = {
+            let (service, id, cont) = (service.clone(), id.clone(), cont.clone());
+            tokio::spawn(async move { service.continue_transaction(&id, &cont, None, None).await })
+        };
+        service.deny_transaction(&id).await.unwrap();
+        let outcome = racing.await.unwrap();
+        assert!(outcome.is_err(), "a denied transaction issues nothing");
+        assert_eq!(tokens.count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn two_approvals_at_once_agree_on_one_interaction_reference() {
+        let store = Arc::new(RacyTransactionStore::default());
+        let service = Arc::new(test_service().with_transaction_store(store));
+        let (id, _cont, _hash, first_ref) = interact_transaction(&service).await;
+
+        let approvals = (0..4).map(|_| {
+            let (service, id) = (service.clone(), id.clone());
+            async move { service.approve_transaction(&id, Some("user-1")).await }
+        });
+        for done in run_all(approvals).await {
+            assert_eq!(done.unwrap().interact_ref.unwrap(), first_ref);
+        }
+        assert_eq!(service.test_txn(&id).await.interact_ref.unwrap(), first_ref);
     }
 }
 
@@ -4000,7 +4285,7 @@ mod proof_verification_tests {
             .as_str()
             .unwrap()
             .to_string();
-        let txn_id = svc.transactions.read().await.keys().next().unwrap().clone();
+        let txn_id = svc.test_first_txn().await.id;
         let iref = svc
             .approve_transaction(&txn_id, Some("user-1"))
             .await
@@ -4044,6 +4329,70 @@ mod proof_verification_tests {
             .unwrap();
         assert!(done["access_token"]["value"].is_string());
     }
+
+    /// The continuation URI the server issues names its transaction, so a POST that carries only
+    /// `Authorization: GNAP <continue token>` and a DPoP proof can be routed to it (RFC 9635
+    /// section 5: the AS chooses the URI). The token and the id come from the issued response
+    /// alone, as a client's HTTP request would supply them.
+    #[tokio::test]
+    async fn continue_uri_names_the_transaction() {
+        let svc = service();
+        let dpop = manager();
+        let key = client_key();
+        let first = dpop_header(&key, &key, "POST", URI, "jti-uri-0");
+        let resp = svc
+            .handle_transaction_with_proof(
+                &dpop,
+                &proof(Some(&first), URI),
+                request(&key, "dpop", true),
+            )
+            .await
+            .unwrap();
+        let uri = resp["continue"]["uri"].as_str().unwrap().to_string();
+        let token = resp["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let stored_id = svc.test_first_txn().await.id;
+        assert_eq!(uri, format!("/api/gnap/tx/continue/{stored_id}"));
+
+        // The route's path parameter is the last segment of the issued URI.
+        let routed_id = uri.rsplit('/').next().unwrap();
+        let abs = format!("https://as.example.test{uri}");
+        let h1 = dpop_header(&key, &key, "POST", &abs, "jti-uri-1");
+        let polled = svc
+            .continue_transaction_with_proof(
+                &dpop,
+                &proof(Some(&h1), &abs),
+                routed_id,
+                &token,
+                None,
+                None,
+            )
+            .await
+            .expect("a continuation at the issued URI finds its transaction");
+        // The next URI names the transaction too, and the rotated token works there.
+        let next_uri = polled["continue"]["uri"].as_str().unwrap().to_string();
+        assert_eq!(next_uri, uri);
+        let next_token = polled["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(next_token, token);
+        let abs2 = format!("https://as.example.test{next_uri}");
+        let h2 = dpop_header(&key, &key, "POST", &abs2, "jti-uri-2");
+        svc.continue_transaction_with_proof(
+            &dpop,
+            &proof(Some(&h2), &abs2),
+            next_uri.rsplit('/').next().unwrap(),
+            &next_token,
+            None,
+            None,
+        )
+        .await
+        .expect("the rotated token works at the URI the poll returned");
+    }
+
     // ── KM7: certificate key forms (RFC 9635 section 7.1) proved by mtls ──
 
     /// A self-signed certificate as DER, its standard-base64 form (`cert`) and its base64url
@@ -4427,9 +4776,8 @@ mod hardening_tests {
             .await
             .unwrap();
         let (id, cont) = {
-            let txns = svc.transactions.read().await;
-            let (id, t) = txns.iter().next().unwrap();
-            (id.clone(), t.continue_token.clone())
+            let t = svc.test_first_txn().await;
+            (t.id, t.continue_token)
         };
         let iref = svc
             .approve_transaction(&id, None)
@@ -4442,7 +4790,7 @@ mod hardening_tests {
                 .await,
         );
         assert!(msg.contains("denied by policy"), "{msg}");
-        assert!(svc.transactions.read().await.is_empty());
+        assert_eq!(svc.transactions.count().await.unwrap(), 0);
     }
 
     // ── Client key ───────────────────────────────────────────────────────
@@ -4488,7 +4836,7 @@ mod hardening_tests {
     // ── Interaction reference ────────────────────────────────────────────
 
     async fn pending(svc: &GnapService, finish: bool) -> (String, String) {
-        let before: Vec<String> = svc.transactions.read().await.keys().cloned().collect();
+        let before = svc.test_txn_ids().await;
         let mut req = request(keyed(), &["read"], finish);
         if !finish {
             // Polling: interaction starts at the AS but the client names no finish method.
@@ -4498,9 +4846,14 @@ mod hardening_tests {
             });
         }
         svc.handle_transaction(req).await.unwrap();
-        let txns = svc.transactions.read().await;
-        let (id, t) = txns.iter().find(|(k, _)| !before.contains(*k)).unwrap();
-        (id.clone(), t.continue_token.clone())
+        let id = svc
+            .test_txn_ids()
+            .await
+            .into_iter()
+            .find(|k| !before.contains(k))
+            .unwrap();
+        let t = svc.test_txn(&id).await;
+        (id, t.continue_token)
     }
 
     #[tokio::test]

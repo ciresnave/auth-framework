@@ -54,7 +54,7 @@ fn is_storable_token_id(id: &str) -> bool {
 }
 
 /// STS Configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StsConfig {
     /// STS issuer identifier
     pub issuer: String,
@@ -86,6 +86,8 @@ pub struct StsConfig {
     /// validator).
     pub jwt_signing_secret: Zeroizing<String>,
 }
+
+crate::utils::redact::redacting_debug!(StsConfig, plain: [issuer, default_token_lifetime, max_token_lifetime, supported_token_types, endpoint_url, include_proof_tokens, trust_relationships], secret: [jwt_signing_secret]);
 
 /// Trust relationship with relying parties
 #[derive(Debug, Clone)]

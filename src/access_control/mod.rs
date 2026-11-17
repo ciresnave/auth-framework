@@ -223,6 +223,12 @@ pub enum DelegationError {
     /// The delegator is not an active principal (suspended, retired, unknown,
     /// or owned by one that is).
     DelegatorInactive,
+    /// The delegatee is not in the principal registry, so a grant to it could
+    /// never be used.
+    DelegateeUnknown,
+    /// The delegatee is in the registry but not active (suspended, retired, or
+    /// owned by one that is).
+    DelegateeInactive,
     /// The action is not within the source grant's action.
     ActionWidens,
     /// The creator does not itself hold one of the requested actions on the
@@ -518,6 +524,14 @@ impl InMemoryEngine {
             && !reg.is_active(&req.delegator)
         {
             return Err(DelegationError::DelegatorInactive);
+        }
+        if let Some(reg) = &self.principals {
+            if reg.get(&req.delegatee).is_none() {
+                return Err(DelegationError::DelegateeUnknown);
+            }
+            if !reg.is_active(&req.delegatee) {
+                return Err(DelegationError::DelegateeInactive);
+            }
         }
         if !self.chain_alive(&src, now) {
             return Err(DelegationError::SourceInactive);

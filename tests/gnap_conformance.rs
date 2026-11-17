@@ -135,6 +135,14 @@ fn check(id: &str, vars: &HashMap<String, String>, response: &Value, a: &Value) 
             "{id}: {path} not an array in {response}"
         ),
         "equals" => assert_eq!(got, Some(&a["value"]), "{id}: {path} in {response}"),
+        "starts_with" => {
+            let prefix = a["value"].as_str().expect("starts_with value");
+            assert!(
+                got.and_then(Value::as_str)
+                    .is_some_and(|s| s.starts_with(prefix) && s.len() > prefix.len()),
+                "{id}: {path} should be a string that starts with {prefix} and continues in {response}"
+            );
+        }
         "min_length" => {
             let n = a["value"].as_u64().expect("min_length value") as usize;
             assert!(

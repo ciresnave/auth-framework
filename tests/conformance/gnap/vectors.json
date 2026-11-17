@@ -77,8 +77,8 @@
         "assert": [
           {
             "path": "/continue/uri",
-            "op": "equals",
-            "value": "/api/gnap/tx/continue"
+            "op": "starts_with",
+            "value": "/api/gnap/tx/continue/"
           },
           {
             "path": "/continue/access_token/value",
