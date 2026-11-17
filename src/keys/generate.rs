@@ -789,10 +789,15 @@ mod tests {
             let mut wrong_oid = der.clone();
             wrong_oid[11] = 0x70;
             assert!(LocalKey::from_pkcs8_der(&wrong_oid, KeyKind::JweEncryption, None).is_err());
+            // A P-256 key is an agreement key too (see `p256_agreement`); another curve is not.
             let ec = LocalKey::generate(KeyKind::JwsSigning, SigningAlg::Es256, None).unwrap();
+            let p256 =
+                LocalKey::from_pkcs8_der(ec.to_pkcs8_der(), KeyKind::JweEncryption, None).unwrap();
+            assert_eq!(p256.signing_alg(), None);
+            let p384 = LocalKey::generate(KeyKind::JwsSigning, SigningAlg::Es384, None).unwrap();
             assert!(
-                LocalKey::from_pkcs8_der(ec.to_pkcs8_der(), KeyKind::JweEncryption, None).is_err(),
-                "P-256 agreement keys are a later slice"
+                LocalKey::from_pkcs8_der(p384.to_pkcs8_der(), KeyKind::JweEncryption, None).is_err(),
+                "a P-384 key is not an agreement key"
             );
         }
 
