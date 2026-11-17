@@ -621,6 +621,8 @@ pub enum KeyKindArg {
     Aead,
     /// X25519 key-agreement key (JWE ECDH-ES)
     JweEncryption,
+    /// P-256 key-agreement key (JWE ECDH-ES, RFC 7518 section 4.6)
+    JweEncryptionP256,
 }
 
 /// A signature algorithm for the `keys generate` command.

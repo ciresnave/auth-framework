@@ -268,9 +268,7 @@ impl LocalKey {
             ));
         }
         let secret = p256::SecretKey::from_pkcs8_der(der).map_err(|_| {
-            AuthError::validation(
-                "not a PKCS#8 X25519 (RFC 8410) or P-256 (RFC 5958) private key",
-            )
+            AuthError::validation("not a PKCS#8 X25519 (RFC 8410) or P-256 (RFC 5958) private key")
         })?;
         let point = secret.public_key().to_sec1_bytes();
         let mut public = ec_jwk("P-256", 32, &point)?;
@@ -391,9 +389,7 @@ impl LocalKey {
                 out.copy_from_slice(shared.raw_secret_bytes().as_slice());
                 Ok(out)
             }
-            _ => Err(AuthError::validation(
-                "only a key-agreement key can agree",
-            )),
+            _ => Err(AuthError::validation("only a key-agreement key can agree")),
         }
     }
 
@@ -796,7 +792,8 @@ mod tests {
             assert_eq!(p256.signing_alg(), None);
             let p384 = LocalKey::generate(KeyKind::JwsSigning, SigningAlg::Es384, None).unwrap();
             assert!(
-                LocalKey::from_pkcs8_der(p384.to_pkcs8_der(), KeyKind::JweEncryption, None).is_err(),
+                LocalKey::from_pkcs8_der(p384.to_pkcs8_der(), KeyKind::JweEncryption, None)
+                    .is_err(),
                 "a P-384 key is not an agreement key"
             );
         }
@@ -855,20 +852,13 @@ mod tests {
         /// RFC 5903 section 8.1 (256-bit random ECP group): the initiator's private key `i` and
         /// public point `gi`, the responder's `r` and `gr`, and the shared x coordinate. Re-derived
         /// independently of the `p256` crate (plain big-integer curve arithmetic) before use here.
-        const I: &str =
-            "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433";
-        const GIX: &str =
-            "dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c3772581180";
-        const GIY: &str =
-            "5271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3";
-        const R: &str =
-            "c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53";
-        const GRX: &str =
-            "d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf63";
-        const GRY: &str =
-            "56fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab";
-        const SHARED: &str =
-            "d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de";
+        const I: &str = "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433";
+        const GIX: &str = "dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c3772581180";
+        const GIY: &str = "5271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3";
+        const R: &str = "c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53";
+        const GRX: &str = "d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf63";
+        const GRY: &str = "56fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab";
+        const SHARED: &str = "d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de";
 
         /// RFC 5958 PKCS#8 header of a P-256 private key whose ECPrivateKey carries no public key
         /// and no parameters (version 0, id-ecPublicKey, prime256v1); the 32 scalar bytes follow.
@@ -930,7 +920,10 @@ mod tests {
             assert!(jwk.get("d").is_none(), "no private member");
             assert_eq!(k.signing_alg(), None);
             assert_eq!(Signer::algorithm(&k), "ECDH-ES");
-            assert!(Signer::sign(&k, b"m").is_err(), "an agreement key does not sign");
+            assert!(
+                Signer::sign(&k, b"m").is_err(),
+                "an agreement key does not sign"
+            );
             for kind in [
                 KeyKind::JwsSigning,
                 KeyKind::Mtls,
@@ -961,7 +954,10 @@ mod tests {
         fn a_peer_that_is_not_a_valid_uncompressed_p256_point_is_refused() {
             let k = imported(I);
             let good = point(GRX, GRY);
-            assert!(k.agree(&good).is_ok(), "control: the genuine peer is accepted");
+            assert!(
+                k.agree(&good).is_ok(),
+                "control: the genuine peer is accepted"
+            );
             let mut off_curve = good.clone();
             *off_curve.last_mut().unwrap() ^= 1;
             let mut x_at_p = vec![4u8];
@@ -976,12 +972,18 @@ mod tests {
                 ("x and y without the 04 tag", good[1..].to_vec()),
                 ("a compressed point", compressed),
                 ("a hybrid tag", [&[6u8][..], &good[1..]].concat()),
-                ("an 04 tag then all zeros", [&[4u8][..], &[0u8; 64][..]].concat()),
+                (
+                    "an 04 tag then all zeros",
+                    [&[4u8][..], &[0u8; 64][..]].concat(),
+                ),
                 ("a point off the curve", off_curve.clone()),
                 ("x equal to the field prime", x_at_p),
                 ("an X25519-sized key", vec![9u8; 32]),
                 ("a truncated point", good[..64].to_vec()),
-                ("a point with trailing bytes", [&good[..], &[0u8][..]].concat()),
+                (
+                    "a point with trailing bytes",
+                    [&good[..], &[0u8][..]].concat(),
+                ),
             ];
             for (what, bytes) in cases {
                 assert!(k.agree(&bytes).is_err(), "{what} must be refused");
@@ -999,7 +1001,11 @@ mod tests {
                 Some(k.kid().clone()),
             )
             .unwrap();
-            assert_eq!(again.to_pkcs8_der(), k.to_pkcs8_der(), "the DER is kept byte for byte");
+            assert_eq!(
+                again.to_pkcs8_der(),
+                k.to_pkcs8_der(),
+                "the DER is kept byte for byte"
+            );
             assert_eq!(again.public().to_value(), k.public().to_value());
 
             // A ring-generated P-256 PKCS#8 (it carries the public key too) is a valid agreement key.
@@ -1015,7 +1021,8 @@ mod tests {
             assert_eq!(as_agreement.signing_alg(), None);
             assert_eq!(as_signing.signing_alg(), Some(SigningAlg::Es256));
 
-            let p384 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P384_SHA384_FIXED_SIGNING, &rng).unwrap();
+            let p384 =
+                EcdsaKeyPair::generate_pkcs8(&ECDSA_P384_SHA384_FIXED_SIGNING, &rng).unwrap();
             let ed = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
             for (what, der) in [
                 ("a P-384 key", p384.as_ref().to_vec()),

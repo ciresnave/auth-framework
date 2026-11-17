@@ -75,14 +75,20 @@ fn new_key(
     kind: crate::keys::KeyKind,
     alg: crate::keys::SigningAlg,
     kid: Option<crate::keys::Kid>,
+    p256: bool,
 ) -> Result<crate::keys::NewKey> {
     if kind == crate::keys::KeyKind::JweEncryption {
-        // A key-agreement key does not sign, so `alg` does not apply.
+        // A key-agreement key does not sign, so `alg` does not apply; `p256` picks the curve.
         #[cfg(feature = "key-agreement")]
-        return Ok(crate::keys::LocalKey::generate_x25519(kind, kid)?.into());
+        return Ok(if p256 {
+            crate::keys::LocalKey::generate_p256(kind, kid)?
+        } else {
+            crate::keys::LocalKey::generate_x25519(kind, kid)?
+        }
+        .into());
         #[cfg(not(feature = "key-agreement"))]
         {
-            let _ = (alg, kid);
+            let _ = (alg, kid, p256);
             Err(AuthError::Cli(
                 "key-agreement keys need a build with the `key-agreement` feature".to_string(),
             ))
@@ -98,6 +104,17 @@ fn new_key(
         };
         Ok(crate::keys::SymmetricKey::generate(kind, kid)?.into())
     }
+}
+
+/// True for a P-256 key-agreement key: a replacement for it keeps the curve, so a rotation or a
+/// compromise never silently turns a P-256 key into an X25519 one.
+#[cfg(feature = "cli")]
+fn is_p256(info: &crate::keys::KeyInfo) -> bool {
+    info.kind == crate::keys::KeyKind::JweEncryption
+        && info
+            .public
+            .as_ref()
+            .is_some_and(|jwk| jwk.to_value()["crv"] == "P-256")
 }
 
 /// The signing key behind `kid`, rebuilt from the store for a certificate or request. Only an
@@ -191,9 +208,10 @@ pub(crate) async fn key_action_output(
             kid,
         } => {
             let store = open(dir, true).await?;
+            let p256 = matches!(kind, KeyKindArg::JweEncryptionP256);
             let kind = key_kind(kind);
             let kid = kid.map(Kid::new).transpose()?;
-            match new_key(kind, signing_alg(alg), kid)? {
+            match new_key(kind, signing_alg(alg), kid, p256)? {
                 NewKey::Local(k) => {
                     let id = k.kid().clone();
                     store.insert(*k, crate::keys::KeyState::Active).await?;
@@ -221,7 +239,7 @@ pub(crate) async fn key_action_output(
                 } else {
                     crate::keys::SigningAlg::Es256
                 };
-            let next = new_key(info.kind, alg, None)?;
+            let next = new_key(info.kind, alg, None, is_p256(&info))?;
             let new = rotate(&store, &current, next).await?;
             Ok(format!(
                 "rotated {current} -> {new} ({:?}); {current} is retiring",
@@ -244,7 +262,12 @@ pub(crate) async fn key_action_output(
                 } else {
                     crate::keys::SigningAlg::Es256
                 };
-            let new = compromise(&store, &current, new_key(info.kind, alg, None)?).await?;
+            let new = compromise(
+                &store,
+                &current,
+                new_key(info.kind, alg, None, is_p256(&info))?,
+            )
+            .await?;
             Ok(format!(
                 "revoked {current} as compromised and replaced it with {new} ({:?});                  a running service distrusts {current} at its next key ring refresh",
                 info.kind
@@ -320,7 +343,7 @@ fn key_kind(arg: KeyKindArg) -> crate::keys::KeyKind {
         KeyKindArg::GnapClient => KeyKind::GnapClient,
         KeyKindArg::Hmac => KeyKind::Hmac,
         KeyKindArg::Aead => KeyKind::Aead,
-        KeyKindArg::JweEncryption => KeyKind::JweEncryption,
+        KeyKindArg::JweEncryption | KeyKindArg::JweEncryptionP256 => KeyKind::JweEncryption,
     }
 }
 
@@ -2905,6 +2928,128 @@ mod tests {
                 "d",
                 "--kind",
                 "jwe-encryption"
+            ])
+            .is_ok()
+        );
+    }
+
+    /// The `crv` of every key `keys jwks` publishes, sorted.
+    #[cfg(feature = "key-agreement")]
+    async fn published_curves(dir: &str) -> Vec<String> {
+        let out = key_action_output(
+            KeyAction::Jwks {
+                dir: dir.to_string(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        let jwks: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let mut crvs: Vec<String> = jwks["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k["crv"].as_str().unwrap().to_string())
+            .collect();
+        crvs.sort();
+        crvs
+    }
+
+    #[cfg(feature = "key-agreement")]
+    #[tokio::test]
+    async fn a_p256_agreement_key_keeps_its_curve_through_rotate_and_compromise() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        let out = key_action_output(
+            generate(
+                &d,
+                KeyKindArg::JweEncryptionP256,
+                KeyAlgArg::Es256,
+                Some("p1"),
+            ),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("p1") && out.contains("ECDH-ES"), "{out}");
+        assert_eq!(published_curves(&d).await, ["P-256"]);
+
+        key_action_output(
+            KeyAction::Rotate {
+                dir: d.clone(),
+                kid: "p1".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            published_curves(&d).await,
+            ["P-256", "P-256"],
+            "the retiring key and its successor are both P-256"
+        );
+        let successor = list_json(&d)
+            .await
+            .into_iter()
+            .find(|r| r["state"] == "active")
+            .map(|r| r["kid"].as_str().unwrap().to_string())
+            .unwrap();
+        key_action_output(
+            KeyAction::Compromise {
+                dir: d.clone(),
+                kid: successor,
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            published_curves(&d).await,
+            ["P-256", "P-256"],
+            "the replacement of a compromised P-256 key is P-256, the compromised key is gone"
+        );
+    }
+
+    #[cfg(feature = "key-agreement")]
+    #[tokio::test]
+    async fn an_x25519_agreement_key_still_rotates_to_x25519() {
+        let dir = tempdir().unwrap();
+        let d = dir.path().join("keys").to_string_lossy().to_string();
+        key_action_output(
+            generate(&d, KeyKindArg::JweEncryption, KeyAlgArg::Es256, Some("x1")),
+            enc(1),
+        )
+        .await
+        .unwrap();
+        key_action_output(
+            KeyAction::Rotate {
+                dir: d.clone(),
+                kid: "x1".into(),
+            },
+            enc(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(published_curves(&d).await, ["X25519", "X25519"]);
+    }
+
+    #[test]
+    fn the_kind_flag_accepts_jwe_encryption_p256() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Wrapper {
+            #[command(subcommand)]
+            command: CliCommand,
+        }
+        assert!(
+            Wrapper::try_parse_from([
+                "x",
+                "keys",
+                "generate",
+                "--dir",
+                "d",
+                "--kind",
+                "jwe-encryption-p256"
             ])
             .is_ok()
         );

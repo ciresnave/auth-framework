@@ -1155,6 +1155,114 @@ mod tests {
                     .is_err()
             );
         }
+
+        /// RFC 5903 section 8.1 through a store: the initiator's private key held by the key
+        /// store, the responder's public point from the RFC, the published shared x coordinate.
+        const RFC5903_I: &str = "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433";
+        const RFC5903_GRX: &str =
+            "d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf63";
+        const RFC5903_GRY: &str =
+            "56fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab";
+        const RFC5903_SHARED: &str =
+            "d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de";
+
+        fn rfc5903_initiator_der() -> Vec<u8> {
+            // PKCS#8 header (RFC 5958; id-ecPublicKey, prime256v1), then the 32 scalar bytes.
+            let mut der = hex::decode(
+                "3041020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420",
+            )
+            .unwrap();
+            der.extend_from_slice(&hex::decode(RFC5903_I).unwrap());
+            der
+        }
+
+        fn rfc5903_responder_point() -> Vec<u8> {
+            let mut p = vec![4u8];
+            p.extend_from_slice(&hex::decode(RFC5903_GRX).unwrap());
+            p.extend_from_slice(&hex::decode(RFC5903_GRY).unwrap());
+            p
+        }
+
+        #[tokio::test]
+        async fn a_p256_agreement_key_reproduces_the_rfc_5903_secret_through_both_stores_and_a_reopen()
+         {
+            let kid = Kid::new("p256").unwrap();
+            let want = hex::decode(RFC5903_SHARED).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let mem = MemoryKeyStore::new();
+            let file = FileKeyStore::open(dir.path(), enc(1)).await.unwrap();
+            for store in [&mem as &dyn KeyStore, &file as &dyn KeyStore] {
+                let k = LocalKey::from_pkcs8_der(
+                    &rfc5903_initiator_der(),
+                    KeyKind::JweEncryption,
+                    Some(kid.clone()),
+                )
+                .unwrap();
+                store.insert(k, KeyState::Active).await.unwrap();
+                let info = store.info(&kid).await.unwrap();
+                assert_eq!(
+                    (info.kind, info.alg.as_str()),
+                    (KeyKind::JweEncryption, "ECDH-ES")
+                );
+                let jwks = publish_jwks(store).await.unwrap().to_value();
+                assert_eq!(jwks["keys"][0]["kty"], "EC");
+                assert_eq!(jwks["keys"][0]["crv"], "P-256");
+                assert_eq!(jwks["keys"][0]["use"], "enc");
+                assert!(jwks["keys"][0].get("d").is_none());
+                let got = crate::keys::agree(store, &kid, &rfc5903_responder_point())
+                    .await
+                    .unwrap();
+                assert_eq!(&got[..], &want[..]);
+            }
+            let rec = record_json(dir.path(), "p256").await;
+            assert_eq!(rec["v"], 2, "an agreement key is a v2 record, P-256 too");
+            drop(file);
+            let reopened = FileKeyStore::open(dir.path(), enc(1)).await.unwrap();
+            let got = crate::keys::agree(&reopened, &kid, &rfc5903_responder_point())
+                .await
+                .unwrap();
+            assert_eq!(&got[..], &want[..], "the key survives a reopen");
+        }
+
+        #[tokio::test]
+        async fn x25519_and_p256_agreement_keys_coexist_and_follow_the_same_state_rules() {
+            let s = MemoryKeyStore::new();
+            let x = key("x");
+            let p = LocalKey::generate_p256(KeyKind::JweEncryption, Some(Kid::new("p").unwrap()))
+                .unwrap();
+            s.insert(x, KeyState::Active).await.unwrap();
+            s.insert(p, KeyState::Active).await.unwrap();
+            let jwks = publish_jwks(&s).await.unwrap().to_value();
+            let mut crvs: Vec<String> = jwks["keys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| k["crv"].as_str().unwrap().to_owned())
+                .collect();
+            crvs.sort();
+            assert_eq!(crvs, ["P-256", "X25519"]);
+            // The curve decides the peer encoding: each key refuses the other's.
+            let pid = Kid::new("p").unwrap();
+            assert!(crate::keys::agree(&s, &pid, &[9u8; 32]).await.is_err());
+            assert!(
+                crate::keys::agree(&s, &Kid::new("x").unwrap(), &rfc5903_responder_point())
+                    .await
+                    .is_err()
+            );
+            // A retiring P-256 key still agrees; a revoked one no longer does.
+            s.set_state(&pid, KeyState::Retiring).await.unwrap();
+            assert!(
+                crate::keys::agree(&s, &pid, &rfc5903_responder_point())
+                    .await
+                    .is_ok()
+            );
+            s.set_state(&pid, KeyState::Revoked).await.unwrap();
+            assert!(
+                crate::keys::agree(&s, &pid, &rfc5903_responder_point())
+                    .await
+                    .is_err()
+            );
+        }
     }
 
     /// A hand-written RFC 7748 Alice record (v2): what a build WITH the `key-agreement`
