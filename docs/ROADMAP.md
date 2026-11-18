@@ -178,6 +178,7 @@ This is now a first-class workstream, not a secondary polish task.
 - [x] Add stronger framework-specific examples backed by real storage where possible
 - [x] Verify feature-gated integrations compile and test cleanly in CI on every release path
 - [x] Decide which framework integrations are part of the default batteries-included experience versus optimization-only opt-ins
+- [ ] **CI runs no actix adapter tests (found 2026-11-18 on #498; surface lane, due 2026-11-21).** The hosted `Test Suite` job runs `cargo test --workspace` with `axum-integration` but not `actix-integration`, and the Feature Matrix entry that enables `actix-integration` only compiles (`cargo check --tests`); the one test it runs is the SAML-filtered lib run. So `integrations::gnap_actix::tests::*` (9 tests) run on no pull request. Add `actix-integration` to a hosted test job (`cargo test --workspace --features actix-integration` with the Postgres service), then audit the other feature-gated integrations the same way (`warp-integration` and every feature in the Feature Matrix groups) and list here each one whose tests CI does not run. The `[x]` "test cleanly in CI" item above holds for compiling only.
 
 ## Phase 2: Platform Hardening and Ecosystem Expansion
 
