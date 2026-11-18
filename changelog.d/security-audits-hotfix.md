@@ -1,1 +1,0 @@
-Security hotfix: `actix-http` 3.20.3 -> 3.22.0 (RUSTSEC-2026-0552, -0553, -0554, fixed in 3.21.3), and `deny.toml` ignores RUSTSEC-2026-0543 (chrono) and RUSTSEC-2026-0555 (chrono-tz), both unmaintained with no safe upgrade, with a reason and an expiry of 2026-12-17; a ROADMAP row tracks leaving chrono.
