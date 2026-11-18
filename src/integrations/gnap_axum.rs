@@ -63,7 +63,9 @@ pub fn gnap_as_router(http: Arc<GnapAsHttp>) -> Router {
         let (g, m) = http.paths();
         (g.to_string(), m.to_string())
     };
+    let continue_route = http.continue_route();
     let for_grant = http.clone();
+    let for_continue = http.clone();
     let for_manage = http;
     Router::new()
         .route(
@@ -73,6 +75,10 @@ pub fn gnap_as_router(http: Arc<GnapAsHttp>) -> Router {
         .route(
             &manage,
             any(move |req: Request| serve_as(for_manage.clone(), req)),
+        )
+        .route(
+            &continue_route,
+            any(move |req: Request| serve_as(for_continue.clone(), req)),
         )
 }
 
@@ -279,5 +285,32 @@ mod tests {
             app.oneshot(req).await.unwrap().status(),
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[tokio::test]
+    async fn the_as_router_routes_continuation() {
+        let app = gnap_as_router(Arc::new(crate::protocols::gnap_as_http::tests::handler()));
+        let get = HttpRequest::builder()
+            .method("GET")
+            .uri("/api/gnap/tx/continue/abc")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(get).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST");
+        let post = HttpRequest::builder()
+            .method("POST")
+            .uri("/api/gnap/tx/continue/abc")
+            .header("authorization", "GNAP nope")
+            .body(Body::empty())
+            .unwrap();
+        // An unknown transaction is refused, with the continuation code.
+        let resp = app.oneshot(post).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(doc["error"]["code"], "invalid_continuation");
     }
 }
