@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc321`
+- Current crate version: `0.6.0-rc323`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -355,6 +355,7 @@ Read from the `portfolio` job on the `main` run for 9abbced8 (run 40040499570; C
 | licence | 3 | Medium | `LICENSE-APACHE` and `LICENSE-MIT` name a person as copyright holder; 404 of 404 source files carry no SPDX identifier | auth-framework lane | Open; the copyright holder is CireSnave's decision |
 | version-consistency | 1 | High | `auth-storage-sqlite`, `sdks/python` (0.6.0rc64) and `sdks/javascript` (0.6.0-rc108) trailed the crate version | auth-framework lane | Fixed in this PR: all three at the root version (PEP 440 form for Python); `tests/member_versions_match_cargo.rs` keeps them there. PM ruling 2026-10-24: one version per project |
 | SEC-012 | 79 (#463) | High | `Debug` derived over a secret-named field | auth-framework lane | Scheduled (issue #463 labelled `decided:scheduled`). Done: #491 redacts 11 types. Open: rename `GnapTransactionRequest.access_token` and `ServiceProviderConfig.change_password` (they are flagged by name, not secret), and mark `AcmeChallenge.token` (public by design) with a `// sec012: public - <reason>` marker once coderipper#359/#360 release |
+| chrono | RUSTSEC-2026-0543, RUSTSEC-2026-0555 | Medium | `chrono` 0.4.45 and `chrono-tz` 0.10.4 are unmaintained with no safe upgrade | auth-framework lane | Open: leave chrono (move to `jiff` or `time`). `deny.toml` carries a reasoned ignore that EXPIRES 2026-12-17 (PM ruling 2026-11-17); remove it when both crates are out of `Cargo.lock` |
 
 
 ### Spec-to-roadmap audit (2026-10-24)
