@@ -31,6 +31,7 @@ row says what blocks it. Version numbers are the PM's, so none appear here.
 | KM7 (rest) | renewal before expiry; CA key custody through the key store | KM3 |
 | KM8 | audit-logging every command, `--export-private`, `verify`, an `auth-framework keys` binary name | not started |
 | SEC-012 (#463) | 79 structs derive `Debug` over a secret-named field | decided `scheduled`: #491 (merged) redacts 11 types; then rename `GnapTransactionRequest.access_token` and `ServiceProviderConfig.change_password`; mark `AcmeChallenge.token` with a reasoned `// sec012: public - ...` marker once coderipper#359/#360 release |
+| Leave chrono | `chrono` 0.4.45 and `chrono-tz` 0.10.4 unmaintained (RUSTSEC-2026-0543, -0555) | move to `jiff` or `time`; the `deny.toml` ignore EXPIRES 2026-12-17 |
 | RUSTSEC-2026-0459 | the 0.5.x `libsqlite3-sys` ignore expires 2026-12-09 | sqlx carrying transact-rs/sqlx#4502 |
 | SPDX headers | `chore/spdx-headers` WIP (script and `tests/spdx_headers.rs`), no PR | decision to finish or hand to the PM |
 | ARC/MOD, PersistAnt default | queued programmes | none recorded yet |
