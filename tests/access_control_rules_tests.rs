@@ -530,3 +530,66 @@ fn a_rule_removal_by_an_editor_is_recorded_once() {
     let ops: Vec<AuditOp> = e.audit_log().iter().map(|a| a.op).collect();
     assert_eq!(ops, vec![AuditOp::Added, AuditOp::Removed]);
 }
+
+fn share(id: &str, to: &str) -> DelegationRequest {
+    DelegationRequest {
+        id: id.into(),
+        from: "src".into(),
+        delegator: "bot".into(),
+        delegatee: to.into(),
+        action: "synapse:see".into(),
+        object: SUB.into(),
+        expires: None,
+        sensitive: false,
+    }
+}
+
+fn with_source() -> InMemoryEngine {
+    let mut e = engine();
+    e.add_grant(rule("src", "bot", "synapse:see", SUB, Effect::Allow))
+        .unwrap();
+    e
+}
+
+#[test]
+fn a_grant_can_be_shared_to_a_registered_agent() {
+    let mut e = with_source();
+    assert!(!sees(&e, "svc", SUB));
+    e.delegate(share("d1", "svc")).unwrap();
+    assert!(sees(&e, "svc", SUB));
+}
+
+#[test]
+fn a_grant_cannot_be_shared_to_an_unknown_principal() {
+    let mut e = with_source();
+    assert_eq!(
+        e.delegate(share("d1", "ghost")),
+        Err(DelegationError::DelegateeUnknown)
+    );
+    assert!(e.grant("d1").is_none(), "nothing was stored");
+}
+
+#[test]
+fn a_grant_cannot_be_shared_to_an_inactive_principal() {
+    let mut e = with_source();
+    e.principals_mut().unwrap().suspend("svc").unwrap();
+    assert_eq!(
+        e.delegate(share("d1", "svc")),
+        Err(DelegationError::DelegateeInactive)
+    );
+    assert!(e.grant("d1").is_none(), "nothing was stored");
+    e.principals_mut().unwrap().resume("svc").unwrap();
+    e.delegate(share("d1", "svc")).unwrap();
+    assert!(sees(&e, "svc", SUB));
+}
+
+#[test]
+fn a_refusal_for_the_delegatee_is_recorded() {
+    let mut e = with_source();
+    let _ = e.delegate(share("d1", "ghost"));
+    assert!(
+        e.audit_log()
+            .iter()
+            .any(|r| r.op == AuditOp::Refused && r.rule_id == "d1")
+    );
+}
