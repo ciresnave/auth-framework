@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc325`
+- Current crate version: `0.6.0-rc326`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -399,7 +399,7 @@ claims a method it does not verify. Rows are Open until their PR lands.
 | G1 | Full RFC types and errors: Appendix E polymorphism, `access_token` object or array, access objects, labels, flags, references (8.1), `manage` object, `key` object or string, `client` by reference, `user`, `class_id`, the 3.6 error object and codes | Open |
 | G2 | `httpsig` proofing (RFC 9421 + RFC 9530, tag `gnap`). Check crates.io for a maintained crate before writing one; any new dependency is an ASK | Open |
 | G3 | `jwsd`, `jws`, `mtls`, key formats `cert` and `cert#S256`; decide the fate of the non-RFC `dpop` method | Open |
-| G4 | Interaction: start `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push` (SSRF rules of 11.34), `hash_method`, hints, interaction expiry | Open |
+| G4 | Interaction: start `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push` (SSRF rules of 11.34), `hash_method`, hints, interaction expiry | Partly done: the pure library exists (`gnap_interaction.rs`, #428); slice 1 (this PR) wires it into `GnapService`: `interact.start` and `finish` are read at transaction open, a `push` target the server must not call is refused, a `user_code` start is answered with a kept code. **UNIMPLEMENTED**: delivering the push, and re-checking its target after name resolution (resolve-then-check, no DNS-rebinding window); the redirect callback; `app`, `user_code_uri`; hints; interaction expiry and wrong-code limits; honouring `hash_method` other than `sha-256` in the service (until then a request asking for one is refused at open with an error naming it); object-form `start` items; a lookup of a transaction by its user code |
 | G5 | Continuation: polling with `wait` and `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, token rotate and revoke with proof, key rotation, `Authorization: GNAP` | Slice 1 done: the request `access_token` in the RFC shape (`requested_rights`). Next: polling, PATCH, DELETE grant, state machine, key rotation, `Authorization: GNAP` |
 | G6 | Policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style choice, not one hard-wired store); requirements for agents and rooms from board 384 | Done (slice 1 #475, slice 2 #480, slice 3 #492 rc317, slice 4 #497 rc320) |
 | G7 | HTTP routes (axum, actix) and discovery (9.1 RS-first, 9.2 `OPTIONS`) | Partly done: RS routes (RFC 9767 section 3: #425, #472) and the AS routes in `gnap_as_http.rs` with axum and actix adapters: grant (`POST`), `OPTIONS` discovery (9.2), token management (`POST` rotate, `DELETE` revoke) and continuation (`POST <grant>/continue/<id>`: poll and `interact_ref`). Open: PATCH and DELETE on a grant, polling back-off (G5), RS-first (9.1) |
@@ -450,6 +450,8 @@ Each row is a design constraint from `docs/PATENT-SWEEP-CHARTS.md`: an element o
 | P3 | A device identifier or fingerprint placed inside the token or cookie given to the client and recomputed and compared on each request | US8959650B1 | Session ids are random and the fingerprint is server-side state (`src/security/secure_session.rs`) |
 | P4 | Cross-tenant single sign-on: letting an authentication at one tenant satisfy authentication at another tenant of the same user | US9369456B2 | Tenants are isolated frameworks with per-tenant sessions (`src/tenant/registry.rs`) |
 | P5 | A macaroon issuer-introspection mode (the issuer authenticates a macaroon the resource server hands back) | US11595215B1 | Verification is local |
+| P7 | A first device on one user account that requests a restricted activity, and a second device on a second account that displays an authentication input and an authorization input and sends the authorizing signal, where content common to both accounts is not restricted (watch: not read beyond claim 1 of each) | Apple US10142835B2; US10516997B2 (active, ~2033) | The AS has no restricted-account-authority model: an interaction is approved by the resource owner, not by a second account's authority over a first account's restricted content (`src/protocols/gnap_interaction.rs`, `gnap.rs`) |
+| P8 | A transferable access or refresh token bound to a service identifier, created for a long-running operation | IBM US11122035B2 (active, ~2039) (watch) | No transferable refresh token; the continuation token rotates and is not given to another service |
 | P6 | A weighted reputation formula over threat feeds; a device-tier-dependent key-rotation window or alert on old-key use; usage-monitoring key deactivation; a policy dry-run diff report | US10681071B1; US10462152B2; US9424419B1; US12443741B2 | See the design-around notes in `docs/PATENT-SWEEP.md` |
 
 ### Community and Project Hygiene

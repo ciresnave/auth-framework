@@ -314,6 +314,7 @@ mod tests {
             interact_nonce: None,
             subject_id: None,
             interact_ref: None,
+            user_code: None,
             revision: 0,
         }
     }
