@@ -14,7 +14,15 @@ fn a_named_config_file_that_is_missing_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.toml");
     let out = admin()
-        .args(["--config", missing.to_str().unwrap(), "cli", "config", "show", "--format", "json"])
+        .args([
+            "--config",
+            missing.to_str().unwrap(),
+            "cli",
+            "config",
+            "show",
+            "--format",
+            "json",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -30,7 +38,15 @@ fn the_named_config_file_is_what_the_command_shows() {
     let path = dir.path().join("a.toml");
     std::fs::write(&path, "issuer = \"https://issuer.m12.example.test\"\n").unwrap();
     let out = admin()
-        .args(["--config", path.to_str().unwrap(), "cli", "config", "show", "--format", "json"])
+        .args([
+            "--config",
+            path.to_str().unwrap(),
+            "cli",
+            "config",
+            "show",
+            "--format",
+            "json",
+        ])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
