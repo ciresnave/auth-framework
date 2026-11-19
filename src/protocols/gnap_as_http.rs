@@ -381,6 +381,7 @@ pub(crate) mod tests {
                 token_lifetime_secs: 3600,
                 transaction_lifetime_secs: 600,
             })
+            .with_poll_wait_secs(0)
             .with_access_policy(policy),
         );
         let manager =

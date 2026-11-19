@@ -392,6 +392,10 @@ pub struct GnapTransaction {
     /// ([`GnapTransactionStore::replace_if_unchanged`]) keys on it; nothing else writes it.
     #[serde(default)]
     pub revision: u64,
+    /// When the client last polled this pending transaction (epoch seconds), 0 if it never has;
+    /// the next poll must come `wait` seconds after this, or after `created_at` for the first.
+    #[serde(default)]
+    pub last_poll_at: u64,
 }
 
 impl std::fmt::Debug for GnapTransaction {
@@ -512,7 +516,18 @@ pub struct GnapService {
     issued_tokens: Arc<dyn GnapTokenStore>,
     /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
     consents: Arc<dyn GnapConsentStore>,
+    /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
+    /// 3.1 `wait`); 0 turns the check off.
+    poll_wait_secs: u64,
 }
+
+/// What a poll that came before the `wait` the server announced is refused with (RFC 9635 section
+/// 3.6 `too_fast`). The refusal keeps the continuation token usable.
+pub const TOO_FAST: &str =
+    "Client polled too fast (too_fast): wait before the next continuation request";
+
+/// The default `wait` between polls, in seconds.
+const DEFAULT_POLL_WAIT_SECS: u64 = 5;
 
 /// The one message every refused `continue_transaction` call returns, so a caller cannot tell an
 /// unknown transaction from an expired one, a wrong token or a wrong interaction hash.
@@ -542,7 +557,17 @@ impl GnapService {
             transactions: Arc::new(InMemoryTransactionStore::new()),
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
             consents: Arc::new(InMemoryConsentStore::new()),
+            poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
         }
+    }
+
+    /// Set the seconds a client must wait between polls of a pending transaction (default 5). A
+    /// poll that comes sooner is refused with [`TOO_FAST`] and does not rotate the continuation
+    /// token; the refused poll restarts the clock, so a client that hammers stays refused. `0`
+    /// turns the check off.
+    pub fn with_poll_wait_secs(mut self, secs: u64) -> Self {
+        self.poll_wait_secs = secs;
+        self
     }
 
     /// Set the policy that decides what access tokens carry. Without one, every request for an
@@ -1437,6 +1462,7 @@ impl GnapService {
                 interact_ref: None,
                 user_code,
                 revision: 0,
+                last_poll_at: 0,
             };
             self.transactions.insert(txn).await?;
         } else {
@@ -1635,29 +1661,30 @@ impl GnapService {
 
         match txn.state {
             GnapTransactionState::Pending => {
+                // Polling too soon (RFC 9635 section 5.2) is refused, the token is kept, and the
+                // refused poll restarts the clock.
+                let since = if txn.last_poll_at == 0 {
+                    txn.created_at
+                } else {
+                    txn.last_poll_at
+                };
+                if self.poll_wait_secs > 0 && now.saturating_sub(since) < self.poll_wait_secs {
+                    txn.last_poll_at = now;
+                    if !self.transactions.replace_if_unchanged(txn).await? {
+                        return Err(AuthError::validation(INVALID_CONTINUATION));
+                    }
+                    return Err(AuthError::validation(TOO_FAST));
+                }
                 // Rotate the continuation token (draft §5.1). Of two requests that presented
                 // the same token only the one whose swap lands gets the new one.
                 let new_continue_token = uuid::Uuid::new_v4().to_string();
                 txn.continue_token = new_continue_token.clone();
+                txn.last_poll_at = now;
                 if !self.transactions.replace_if_unchanged(txn).await? {
                     return Err(AuthError::validation(INVALID_CONTINUATION));
                 }
                 // Still waiting for user interaction
-                let mut resp = serde_json::Map::new();
-                let mut cont = serde_json::Map::new();
-                cont.insert(
-                    "uri".to_string(),
-                    serde_json::Value::String(self.continue_uri(transaction_id)),
-                );
-                cont.insert("wait".to_string(), serde_json::Value::Number(5.into()));
-                let mut ct = serde_json::Map::new();
-                ct.insert(
-                    "value".to_string(),
-                    serde_json::Value::String(new_continue_token),
-                );
-                cont.insert("access_token".to_string(), serde_json::Value::Object(ct));
-                resp.insert("continue".to_string(), serde_json::Value::Object(cont));
-                Ok(serde_json::Value::Object(resp))
+                Ok(self.pending_response(transaction_id, &new_continue_token))
             }
             GnapTransactionState::Approved => {
                 // An approved transaction is spent by one continuation: whoever removes it
@@ -1720,6 +1747,121 @@ impl GnapService {
                     "Transaction was denied by the resource owner",
                 ))
             }
+        }
+    }
+
+    /// The grant response of a transaction that is still waiting: where to continue, how long to
+    /// wait, and the continuation token to present next.
+    fn pending_response(&self, transaction_id: &str, continue_token: &str) -> serde_json::Value {
+        serde_json::json!({
+            "continue": {
+                "uri": self.continue_uri(transaction_id),
+                "wait": self.poll_wait_secs.max(1),
+                "access_token": { "value": continue_token },
+            }
+        })
+    }
+
+    /// Read a transaction for a continuation-level request (modify, cancel): it must exist and be
+    /// unexpired, the continuation token must match, and the client's key proof must verify. Every
+    /// refusal before the proof reads the same ([`INVALID_CONTINUATION`]).
+    async fn load_for_continuation(
+        &self,
+        transaction_id: &str,
+        continue_token: &str,
+        dpop: &DpopManager,
+        proof: &GnapProof<'_>,
+    ) -> Result<GnapTransaction> {
+        let txn = self
+            .transactions
+            .get(transaction_id)
+            .await?
+            .ok_or_else(|| AuthError::validation(INVALID_CONTINUATION))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
+            self.transactions.remove(transaction_id).await?;
+            return Err(AuthError::validation(INVALID_CONTINUATION));
+        }
+        if !bool::from(subtle::ConstantTimeEq::ct_eq(
+            txn.continue_token.as_bytes(),
+            continue_token.as_bytes(),
+        )) {
+            return Err(AuthError::validation(INVALID_CONTINUATION));
+        }
+        Self::verify_client_proof(&txn.request.client, Some((dpop, proof))).await?;
+        Ok(txn)
+    }
+
+    /// Modify a pending grant request (RFC 9635 section 5.3, `PATCH` on the continue URI).
+    ///
+    /// `modification` replaces the transaction's requested `access_token` and `subject` where it
+    /// carries them; the requested rights are checked as at the first request. It must not carry a
+    /// `client` (key rotation is not supported) or an `interact` (interaction is fixed when the
+    /// transaction opens). Only a transaction still waiting can be modified: an approved one was
+    /// approved for what was asked then. The continuation token rotates, and the answer is the
+    /// waiting grant response with the new token.
+    pub async fn modify_transaction_with_proof(
+        &self,
+        dpop: &DpopManager,
+        proof: &GnapProof<'_>,
+        transaction_id: &str,
+        continue_token: &str,
+        modification: &GnapTransactionRequest,
+    ) -> Result<serde_json::Value> {
+        let mut txn = self
+            .load_for_continuation(transaction_id, continue_token, dpop, proof)
+            .await?;
+        if modification.client.is_some() {
+            return Err(AuthError::validation(
+                "GNAP modification must not carry a client (key rotation is not supported)",
+            ));
+        }
+        if modification.interact.is_some() {
+            return Err(AuthError::validation(
+                "GNAP modification must not change the interaction",
+            ));
+        }
+        if !matches!(txn.state, GnapTransactionState::Pending) {
+            return Err(AuthError::validation(
+                "GNAP transaction cannot be modified: it is not pending",
+            ));
+        }
+        if let Some(requests) = &modification.access_token {
+            Self::requested_rights(requests)?;
+            txn.request.access_token = Some(requests.clone());
+        }
+        if let Some(subject) = &modification.subject {
+            txn.request.subject = Some(subject.clone());
+        }
+        let new_continue_token = uuid::Uuid::new_v4().to_string();
+        txn.continue_token = new_continue_token.clone();
+        if !self.transactions.replace_if_unchanged(txn).await? {
+            return Err(AuthError::validation(INVALID_CONTINUATION));
+        }
+        Ok(self.pending_response(transaction_id, &new_continue_token))
+    }
+
+    /// Cancel a grant request (RFC 9635 section 5.4, `DELETE` on the continue URI): the client
+    /// presents its continuation token and key proof, and the transaction is removed, pending or
+    /// approved. Of two cancels (or a cancel and a continuation) only one wins. A grant that
+    /// already issued its token is gone from the transaction store; revoke that token through
+    /// its management URI.
+    pub async fn delete_transaction_with_proof(
+        &self,
+        dpop: &DpopManager,
+        proof: &GnapProof<'_>,
+        transaction_id: &str,
+        continue_token: &str,
+    ) -> Result<()> {
+        let txn = self
+            .load_for_continuation(transaction_id, continue_token, dpop, proof)
+            .await?;
+        match self.transactions.remove(transaction_id).await? {
+            Some(gone) if gone.revision == txn.revision => Ok(()),
+            _ => Err(AuthError::validation(INVALID_CONTINUATION)),
         }
     }
 
@@ -2111,7 +2253,9 @@ mod tests {
     use super::*;
 
     fn test_service() -> GnapService {
-        GnapService::new(test_config()).with_access_policy(Arc::new(AllowAllPolicy))
+        GnapService::new(test_config())
+            .with_poll_wait_secs(0)
+            .with_access_policy(Arc::new(AllowAllPolicy))
     }
 
     fn test_config() -> GnapConfig {
@@ -3870,6 +4014,7 @@ mod proof_verification_tests {
             token_lifetime_secs: 3600,
             transaction_lifetime_secs: 600,
         })
+        .with_poll_wait_secs(0)
         .with_access_policy(Arc::new(AllowAllPolicy))
     }
 
@@ -4522,6 +4667,265 @@ mod proof_verification_tests {
             _ => builder.client_key_cert_s256(s256),
         }
         .build()
+    }
+
+    // ── G5: polling back-off, modify (PATCH) and cancel (DELETE) ────────────────────────────
+
+    fn waiting_service() -> GnapService {
+        // The default `wait` (5 s) is in force, unlike `service()`.
+        GnapService::new(GnapConfig {
+            enabled: true,
+            transaction_endpoint: "/api/gnap/tx".to_string(),
+            interaction_base_url: Some("https://as.example.test".to_string()),
+            token_lifetime_secs: 3600,
+            transaction_lifetime_secs: 600,
+        })
+        .with_access_policy(Arc::new(AllowAllPolicy))
+    }
+
+    /// Open an interactive transaction; returns its id and first continuation token.
+    async fn open_pending(
+        svc: &GnapService,
+        dpop: &DpopManager,
+        key: &ClientKey,
+        jti: &str,
+    ) -> (String, String) {
+        let h = dpop_header(key, key, "POST", URI, jti);
+        let resp = svc
+            .handle_transaction_with_proof(dpop, &proof(Some(&h), URI), request(key, "dpop", true))
+            .await
+            .unwrap();
+        let token = resp["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        (svc.test_first_txn().await.id, token)
+    }
+
+    /// Make the stored transaction look `secs` older (the clock cannot be moved).
+    async fn age(svc: &GnapService, id: &str, secs: u64) {
+        let mut txn = svc.test_txn(id).await;
+        txn.created_at -= secs;
+        if txn.last_poll_at > 0 {
+            txn.last_poll_at -= secs;
+        }
+        assert!(svc.transactions.replace_if_unchanged(txn).await.unwrap());
+    }
+
+    fn continue_url(id: &str) -> String {
+        format!("https://as.example.test/api/gnap/tx/continue/{id}")
+    }
+
+    fn proof_for_method<'a>(method: &'static str, header: &'a str, uri: &'a str) -> GnapProof<'a> {
+        GnapProof {
+            http_method: method,
+            http_uri: uri,
+            dpop_proof: Some(header),
+            expected_nonce: None,
+            client_certificate_der: None,
+        }
+    }
+
+    async fn poll(
+        svc: &GnapService,
+        dpop: &DpopManager,
+        key: &ClientKey,
+        id: &str,
+        token: &str,
+        jti: &str,
+    ) -> Result<serde_json::Value> {
+        let url = continue_url(id);
+        let h = dpop_header(key, key, "POST", &url, jti);
+        svc.continue_transaction_with_proof(
+            dpop,
+            &proof_for_method("POST", &h, &url),
+            id,
+            token,
+            None,
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_poll_before_the_wait_is_too_fast_and_keeps_the_token() {
+        let svc = waiting_service();
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "tf-0").await;
+
+        // Immediately after the grant response (which said `wait`): too fast, token untouched.
+        let early = refusal(poll(&svc, &dpop, &key, &id, &token, "tf-1").await);
+        assert!(early.contains("too_fast"), "{early}");
+        assert_eq!(svc.test_txn(&id).await.continue_token, token);
+
+        // After the wait the same token works, and rotates.
+        age(&svc, &id, 10).await;
+        let ok = poll(&svc, &dpop, &key, &id, &token, "tf-2")
+            .await
+            .expect("a poll after the wait is answered");
+        let next = ok["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(next, token);
+        assert_eq!(ok["continue"]["wait"], 5);
+
+        // Polling again at once is too fast again, and the new token survives it.
+        let again = refusal(poll(&svc, &dpop, &key, &id, &next, "tf-3").await);
+        assert!(again.contains("too_fast"), "{again}");
+        age(&svc, &id, 10).await;
+        poll(&svc, &dpop, &key, &id, &next, "tf-4")
+            .await
+            .expect("the token kept through a too_fast refusal still works");
+    }
+
+    #[tokio::test]
+    async fn a_zero_wait_turns_the_check_off() {
+        let svc = waiting_service().with_poll_wait_secs(0);
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "z-0").await;
+        poll(&svc, &dpop, &key, &id, &token, "z-1")
+            .await
+            .expect("no wait is enforced at 0");
+    }
+
+    fn write_request() -> GnapTransactionRequest {
+        GnapTransactionRequest {
+            client: None,
+            interact: None,
+            access_token: Some(
+                vec![GnapAccessRequest {
+                    access_type: "write-things".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        }
+    }
+
+    async fn patch(
+        svc: &GnapService,
+        dpop: &DpopManager,
+        key: &ClientKey,
+        id: &str,
+        token: &str,
+        jti: &str,
+        body: &GnapTransactionRequest,
+    ) -> Result<serde_json::Value> {
+        let url = continue_url(id);
+        let h = dpop_header(key, key, "PATCH", &url, jti);
+        svc.modify_transaction_with_proof(
+            dpop,
+            &proof_for_method("PATCH", &h, &url),
+            id,
+            token,
+            body,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn patch_replaces_the_request_and_rotates_the_token() {
+        let svc = service();
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "p-0").await;
+
+        let answer = patch(&svc, &dpop, &key, &id, &token, "p-1", &write_request())
+            .await
+            .expect("a pending grant can be modified");
+        let next = answer["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap();
+        assert_ne!(next, token);
+        let stored = format!("{:?}", svc.test_txn(&id).await.request);
+        assert!(stored.contains("write-things"), "{stored}");
+
+        // The old token is spent by the modification.
+        let old = refusal(poll(&svc, &dpop, &key, &id, &token, "p-2").await);
+        assert!(old.contains(INVALID_CONTINUATION), "{old}");
+        poll(&svc, &dpop, &key, &id, next, "p-3")
+            .await
+            .expect("the new token continues the modified grant");
+    }
+
+    #[tokio::test]
+    async fn patch_refuses_a_client_an_interaction_and_an_approved_grant() {
+        let svc = service();
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "pr-0").await;
+
+        let mut with_client = write_request();
+        with_client.client = request(&key, "dpop", false).client;
+        let e = refusal(patch(&svc, &dpop, &key, &id, &token, "pr-1", &with_client).await);
+        assert!(e.contains("client"), "{e}");
+        let mut with_interact = write_request();
+        with_interact.interact = request(&key, "dpop", true).interact;
+        let e = refusal(patch(&svc, &dpop, &key, &id, &token, "pr-2", &with_interact).await);
+        assert!(e.contains("interaction"), "{e}");
+        assert_eq!(
+            svc.test_txn(&id).await.continue_token,
+            token,
+            "a refused modification keeps the token"
+        );
+
+        svc.approve_transaction(&id, Some("alice")).await.unwrap();
+        let e = refusal(patch(&svc, &dpop, &key, &id, &token, "pr-3", &write_request()).await);
+        assert!(e.contains("not pending"), "{e}");
+
+        // A wrong token is the one uniform refusal.
+        let e = refusal(patch(&svc, &dpop, &key, &id, "nope", "pr-4", &write_request()).await);
+        assert!(e.contains(INVALID_CONTINUATION), "{e}");
+    }
+
+    async fn cancel(
+        svc: &GnapService,
+        dpop: &DpopManager,
+        key: &ClientKey,
+        id: &str,
+        token: &str,
+        jti: &str,
+    ) -> Result<()> {
+        let url = continue_url(id);
+        let h = dpop_header(key, key, "DELETE", &url, jti);
+        svc.delete_transaction_with_proof(dpop, &proof_for_method("DELETE", &h, &url), id, token)
+            .await
+    }
+
+    #[tokio::test]
+    async fn delete_cancels_a_pending_or_approved_grant_once() {
+        let svc = service();
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "d-0").await;
+
+        // A wrong token cancels nothing.
+        let e = cancel(&svc, &dpop, &key, &id, "nope", "d-1")
+            .await
+            .expect_err("a wrong token cannot cancel")
+            .to_string();
+        assert!(e.contains(INVALID_CONTINUATION), "{e}");
+        assert_eq!(svc.test_txn_ids().await.len(), 1);
+
+        cancel(&svc, &dpop, &key, &id, &token, "d-2")
+            .await
+            .expect("the holder cancels its grant request");
+        assert!(svc.test_txn_ids().await.is_empty());
+        let again = cancel(&svc, &dpop, &key, &id, &token, "d-3").await;
+        assert!(
+            again.is_err(),
+            "a cancelled grant cannot be cancelled again"
+        );
+        let cont = refusal(poll(&svc, &dpop, &key, &id, &token, "d-4").await);
+        assert!(cont.contains(INVALID_CONTINUATION), "{cont}");
+
+        // An approved grant can be cancelled before its token is collected.
+        let (id2, token2) = open_pending(&svc, &dpop, &key, "d-5").await;
+        svc.approve_transaction(&id2, Some("alice")).await.unwrap();
+        cancel(&svc, &dpop, &key, &id2, &token2, "d-6")
+            .await
+            .expect("an approved grant can still be cancelled");
+        assert!(svc.test_txn_ids().await.is_empty());
     }
 
     #[tokio::test]

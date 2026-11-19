@@ -316,6 +316,7 @@ mod tests {
             interact_ref: None,
             user_code: None,
             revision: 0,
+            last_poll_at: 0,
         }
     }
 
