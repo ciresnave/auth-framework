@@ -1053,9 +1053,8 @@ This project is licensed under the MIT OR Apache-2.0 license.
 
 The framework provides comprehensive testing utilities to make testing your authentication logic easy:
 
-```toml
-[dev-dependencies]
-auth-framework = "0.6.0-rc85"
+```bash
+cargo add --dev auth-framework
 ```
 
 ```rust
@@ -1312,11 +1311,9 @@ let custom_cred = Credential::Custom {
 
 Helper utilities for integrating with CLI frameworks:
 
-```toml
-[dependencies]
-auth-framework = "0.6.0-rc85"
-clap = "4.0"
-tokio = { version = "1.0", features = ["full"] }
+```bash
+cargo add auth-framework
+cargo add clap tokio --features tokio/full
 ```
 
 ```rust

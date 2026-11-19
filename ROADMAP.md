@@ -8,10 +8,10 @@ row says what blocks it. Version numbers are the PM's, so none appear here.
 
 ## Done (command)
 
-| Row | What | Command (passed at 525d4465) |
+| Row | What | Command (passed at 525d4465; counts re-run at a49a0b9f 2026-11-19: keys:: 68, protocols::gnap 249, tokens:: 51, access_control 5, gnap_conformance and gnap_rs_conformance 1 test each, all ok) |
 |---|---|---|
-| KM1, KM4 | key model, rotation with overlap, `KeyRing` verifying by `kid` | `cargo test --lib keys::` (66) |
-| KM5 | revoke and compromise; a revoked client key kills the grants and tokens bound to it (#474, #483, #487) | `cargo test --lib protocols::gnap` (197) |
+| KM1, KM4 | key model, rotation with overlap, `KeyRing` verifying by `kid` | `cargo test --lib keys::` (68) |
+| KM5 | revoke and compromise; a revoked client key kills the grants and tokens bound to it (#474, #483, #487) | `cargo test --lib protocols::gnap` (249) |
 | KM6 | `export_jwks` publishes ES256/EdDSA/RSA keys, never a revoked one (#477) | `cargo test --lib tokens::` (51) |
 | KM7 | self-signed, CSR, `x5t#S256`, and the GNAP `cert` / `cert#S256` key forms proved by `mtls` (#478, #481, #488) | `cargo test --lib keys::` and `protocols::gnap` |
 | G5 slice 1 | the request `access_token` in the RFC 9635 shape (#433) | `cargo test --test gnap_conformance` |

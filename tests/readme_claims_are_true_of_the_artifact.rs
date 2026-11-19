@@ -111,10 +111,17 @@ fn unfalsifiable_hits(text: &str) -> Vec<&'static str> {
 fn readme_install_pins_are_on_the_current_line() {
     let line = line_of(&manifest_version());
     let pins = install_pins(README);
+    // A `cargo add auth-framework` with no version string cannot go stale, and is the form the
+    // README uses (hand-written `rcNN` pins sort as text and can resolve to nothing), so it
+    // counts as an install instruction for the parser control below.
+    let bare = README
+        .lines()
+        .filter(|l| l.contains("cargo add") && l.contains("auth-framework") && !l.contains('@'))
+        .count();
     assert!(
-        pins.len() >= 3,
-        "only {} install pins parsed from README.md ({pins:?}) -- the parser is broken, \
-         not the README",
+        pins.len() + bare >= 3,
+        "only {} install pins and {bare} bare `cargo add` lines parsed from README.md ({pins:?}) \
+         -- the parser is broken, not the README",
         pins.len()
     );
     let stale: Vec<_> = pins.iter().filter(|p| line_of(p) != line).collect();
