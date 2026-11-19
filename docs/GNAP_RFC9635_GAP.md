@@ -42,7 +42,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 | 3.2.1 `manage` | **wrong type** | a string `{endpoint}/token` (838-839, 1326-1327), the same for every token | RFC: an object `{uri, access_token}`, uri per token, with its own key-bound management token |
 | 3.2.1 `key` | **wrong type** | `"key": true` (844, 1330) | RFC: object or string (7.1), absent when the presented key applies; a boolean is not a defined value |
 | 3.2.2 multiple access tokens | **missing** | | |
-| 3.3 interaction responses | **partial** | `redirect` (931-935), `finish` = the AS nonce (941) | `user_code` is returned (G4 slice 1) and kept on the transaction; `app`, `user_code_uri`, `expires_in` missing |
+| 3.3 interaction responses | **partial** | `redirect` (931-935), `finish` = the AS nonce (941) | `user_code` is returned (G4 slice 1) and kept on the transaction; `app`, `user_code_uri`, `expires_in` missing; a typed code is looked up by `transaction_for_user_code` (G4 slice 3) |
 | 3.4 subject information | **partial** | `sub_ids` in `opaque`, `email`, `iss_sub` (1439-1471); `iss` is the literal `"self"` (1457) | `assertions` and `updated_at` missing; `iss` should be the AS identifier |
 | 3.5 `instance_id` | **missing** | | |
 | 3.6 error response | **missing** | failures are `AuthError` strings; the continuation refusals share one message (410) | no `error` object, none of the registered codes (`invalid_request`, `invalid_client`, `invalid_interaction`, `invalid_flag`, `invalid_rotation`, `key_rotation_not_supported`, `invalid_continuation`, `user_denied`, `request_denied`, `unknown_user`, `unknown_interaction`, `too_fast`, `too_many_attempts`) |

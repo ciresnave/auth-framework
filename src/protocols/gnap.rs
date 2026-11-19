@@ -18,7 +18,8 @@
 use crate::errors::{AuthError, Result};
 use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
 use crate::protocols::gnap_interaction::{
-    FinishMethod, FinishRequest, StartMode, generate_user_code, parse_start, validate_push_target,
+    FinishMethod, FinishRequest, StartMode, generate_user_code, normalize_user_code, parse_start,
+    validate_push_target,
 };
 use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
@@ -513,7 +514,21 @@ pub struct GnapService {
     issued_tokens: Arc<dyn GnapTokenStore>,
     /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
     consents: Arc<dyn GnapConsentStore>,
+    /// Wrong user codes typed per caller: (count, when the window began). See
+    /// [`GnapService::transaction_for_user_code`].
+    code_failures: std::sync::Mutex<std::collections::HashMap<String, (u32, u64)>>,
 }
+
+/// Wrong user codes one caller may type within [`USER_CODE_LOCKOUT_SECS`] before every further
+/// attempt is refused unread (RFC 9635 section 3.3.3: the AS limits guesses).
+const USER_CODE_MAX_FAILURES: u32 = 5;
+/// How long a caller that typed [`USER_CODE_MAX_FAILURES`] wrong codes is refused.
+const USER_CODE_LOCKOUT_SECS: u64 = 300;
+/// The one message for a user code that matches no open transaction, so a caller cannot tell
+/// a wrong code from an expired or already-decided one.
+const USER_CODE_REFUSED: &str = "Invalid user code";
+/// Refusal of a caller that has typed too many wrong codes.
+const USER_CODE_LOCKED: &str = "Too many wrong user codes; try again later";
 
 /// The one message every refused `continue_transaction` call returns, so a caller cannot tell an
 /// unknown transaction from an expired one, a wrong token or a wrong interaction hash.
@@ -543,6 +558,7 @@ impl GnapService {
             transactions: Arc::new(InMemoryTransactionStore::new()),
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
             consents: Arc::new(InMemoryConsentStore::new()),
+            code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -1840,6 +1856,77 @@ impl GnapService {
         deliver_push(&uri, &hash, interact_ref, resolver, sender)
             .await
             .map_err(|e| AuthError::validation(e.to_string()))
+    }
+
+    /// Find the pending transaction a person's typed `user_code` belongs to (RFC 9635 sections
+    /// 3.3.3 and 4.1) and return its id, for the page that then shows the consent and calls
+    /// [`Self::approve_transaction`] or [`Self::deny_transaction`].
+    ///
+    /// `caller` names who is typing (an address, a session): after five wrong codes within five
+    /// minutes every attempt by that caller is refused unread, a right code included, until the
+    /// window passes. A wrong, malformed, expired or already-decided code all give the same
+    /// refusal. A right code clears the caller's count. The counts are kept in this process
+    /// only; a caller key an attacker can vary at will (a spoofable header) defeats the limit.
+    pub async fn transaction_for_user_code(&self, typed: &str, caller: &str) -> Result<String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.transaction_for_user_code_at(typed, caller, now).await
+    }
+
+    async fn transaction_for_user_code_at(
+        &self,
+        typed: &str,
+        caller: &str,
+        now: u64,
+    ) -> Result<String> {
+        if self.user_code_locked(caller, now) {
+            return Err(AuthError::validation(USER_CODE_LOCKED));
+        }
+        let found = match normalize_user_code(typed) {
+            Ok(code) => self.transactions.find_by_user_code(&code).await?,
+            Err(_) => None,
+        };
+        let usable = found.filter(|t| {
+            matches!(t.state, GnapTransactionState::Pending)
+                && now.saturating_sub(t.created_at) <= self.config.transaction_lifetime_secs
+        });
+        match usable {
+            Some(txn) => {
+                self.code_failures_lock().remove(caller);
+                Ok(txn.id)
+            }
+            None => {
+                self.note_user_code_failure(caller, now);
+                Err(AuthError::validation(USER_CODE_REFUSED))
+            }
+        }
+    }
+
+    fn code_failures_lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, (u32, u64)>> {
+        self.code_failures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn user_code_locked(&self, caller: &str, now: u64) -> bool {
+        self.code_failures_lock()
+            .get(caller)
+            .is_some_and(|&(count, since)| {
+                count >= USER_CODE_MAX_FAILURES
+                    && now.saturating_sub(since) < USER_CODE_LOCKOUT_SECS
+            })
+    }
+
+    fn note_user_code_failure(&self, caller: &str, now: u64) {
+        let mut failures = self.code_failures_lock();
+        // Windows that have passed are dropped here, so the map holds only recent callers.
+        failures.retain(|_, &mut (_, since)| now.saturating_sub(since) < USER_CODE_LOCKOUT_SECS);
+        let entry = failures.entry(caller.to_string()).or_insert((0, now));
+        entry.0 = entry.0.saturating_add(1);
     }
 
     /// Deny a pending transaction
@@ -5001,6 +5088,158 @@ mod proof_verification_tests {
             .unwrap();
         assert!(r3["interact"].get("user_code").is_none());
         assert!(r3["interact"].get("redirect").is_some());
+    }
+
+    /// A service holding one pending user-code transaction: (service, its code, its id).
+    async fn with_code() -> (GnapService, String, String) {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let interact = json!({"start": ["user_code"], "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "n"}});
+        let resp = send(
+            &svc,
+            &dpop,
+            &key,
+            "uc-find",
+            interact_request(&key, interact),
+        )
+        .await
+        .unwrap();
+        let code = resp["interact"]["user_code"].as_str().unwrap().to_string();
+        let id = svc.test_first_txn().await.id;
+        (svc, code, id)
+    }
+
+    fn wrong(code: &str) -> String {
+        // a well-formed code that is not this one
+        let first = if code.starts_with('A') { 'B' } else { 'A' };
+        format!("{first}{}", &code[1..])
+    }
+
+    #[tokio::test]
+    async fn a_typed_code_finds_its_transaction_however_it_is_written() {
+        let (svc, code, id) = with_code().await;
+        let lower = code.to_lowercase();
+        let hyphen = format!("{}-{}", &code[..4], &code[4..]);
+        for typed in [code.clone(), lower, hyphen] {
+            let got = svc.transaction_for_user_code_at(&typed, "c", 1_000).await;
+            assert_eq!(got.unwrap(), id, "typed as {typed}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wrong_malformed_expired_or_decided_code_gets_one_refusal() {
+        let (svc, code, id) = with_code().await;
+        let now = svc.test_first_txn().await.created_at;
+        let refused = |r: Result<String>| r.expect_err("refused").to_string();
+        let baseline = refused(
+            svc.transaction_for_user_code_at(&wrong(&code), "a", now)
+                .await,
+        );
+        assert!(baseline.contains(USER_CODE_REFUSED), "{baseline}");
+        assert_eq!(
+            baseline,
+            refused(svc.transaction_for_user_code_at("!!", "b", now).await),
+            "malformed"
+        );
+        // past the transaction lifetime the right code is refused, with the same words
+        let late = now + svc.config.transaction_lifetime_secs + 1;
+        assert_eq!(
+            baseline,
+            refused(svc.transaction_for_user_code_at(&code, "c", late).await),
+            "expired"
+        );
+        // at the last second it still works
+        let edge = now + svc.config.transaction_lifetime_secs;
+        assert_eq!(
+            svc.transaction_for_user_code_at(&code, "d", edge)
+                .await
+                .unwrap(),
+            id
+        );
+        svc.approve_transaction(&id, Some("alice")).await.unwrap();
+        assert_eq!(
+            baseline,
+            refused(svc.transaction_for_user_code_at(&code, "e", now).await),
+            "approved"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_denied_transactions_code_is_refused() {
+        let (svc, code, id) = with_code().await;
+        svc.deny_transaction(&id).await.unwrap();
+        assert!(
+            svc.transaction_for_user_code_at(&code, "a", 1_000)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn five_wrong_codes_lock_the_caller_out_even_for_the_right_one() {
+        let (svc, code, id) = with_code().await;
+        let t = svc.test_first_txn().await.created_at;
+        for _ in 0..USER_CODE_MAX_FAILURES {
+            assert!(
+                svc.transaction_for_user_code_at(&wrong(&code), "mallory", t)
+                    .await
+                    .is_err()
+            );
+        }
+        let locked = svc
+            .transaction_for_user_code_at(&code, "mallory", t + 1)
+            .await
+            .expect_err("locked")
+            .to_string();
+        assert!(locked.contains(USER_CODE_LOCKED), "{locked}");
+        // someone else is not affected
+        assert_eq!(
+            svc.transaction_for_user_code_at(&code, "alice", t + 1)
+                .await
+                .unwrap(),
+            id
+        );
+        // the lockout ends when the window has passed
+        let after = t + USER_CODE_LOCKOUT_SECS;
+        assert_eq!(
+            svc.transaction_for_user_code_at(&code, "mallory", after)
+                .await
+                .unwrap(),
+            id
+        );
+    }
+
+    #[tokio::test]
+    async fn a_right_code_clears_the_count_and_four_wrong_ones_do_not_lock() {
+        let (svc, code, id) = with_code().await;
+        let t = svc.test_first_txn().await.created_at;
+        for round in 0..3 {
+            for _ in 0..USER_CODE_MAX_FAILURES - 1 {
+                let _ = svc
+                    .transaction_for_user_code_at(&wrong(&code), "bob", t)
+                    .await;
+            }
+            assert_eq!(
+                svc.transaction_for_user_code_at(&code, "bob", t)
+                    .await
+                    .unwrap(),
+                id,
+                "round {round}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn counts_of_callers_whose_window_has_passed_are_dropped() {
+        let (svc, code, _) = with_code().await;
+        let t = svc.test_first_txn().await.created_at;
+        let _ = svc
+            .transaction_for_user_code_at(&wrong(&code), "old", t)
+            .await;
+        let _ = svc
+            .transaction_for_user_code_at(&wrong(&code), "new", t + USER_CODE_LOCKOUT_SECS)
+            .await;
+        let kept: Vec<String> = svc.code_failures_lock().keys().cloned().collect();
+        assert_eq!(kept, vec!["new".to_string()]);
     }
 }
 
