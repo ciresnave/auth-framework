@@ -20,6 +20,7 @@ use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryCons
 use crate::protocols::gnap_interaction::{
     FinishMethod, FinishRequest, StartMode, generate_user_code, parse_start, validate_push_target,
 };
+use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
     GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
     InMemoryTransactionStore,
@@ -1794,6 +1795,51 @@ impl GnapService {
             }
         })
         .await
+    }
+
+    /// Deliver the `push` callback of an approved transaction (RFC 9635 section 4.2.2): the one-time
+    /// `interact_ref` and its hash, to the client's `finish.uri`.
+    ///
+    /// The target is checked again here, after the host name is resolved, and the connection goes to the
+    /// address that was checked ([`deliver_push`], section 11.34): a name that resolves to a loopback,
+    /// private or metadata address is refused and nothing is sent. A transaction that is not approved, has
+    /// no `push` finish, or has no reference yet is refused.
+    pub async fn push_interaction(
+        &self,
+        transaction_id: &str,
+        resolver: &dyn PushResolver,
+        sender: &dyn PushSender,
+    ) -> Result<()> {
+        let txn = self
+            .transactions
+            .get(transaction_id)
+            .await?
+            .ok_or_else(|| AuthError::validation("Transaction not found"))?;
+        if !matches!(txn.state, GnapTransactionState::Approved) {
+            return Err(AuthError::validation("the transaction is not approved"));
+        }
+        let finish = txn
+            .request
+            .interact
+            .as_ref()
+            .and_then(|i| i.finish.as_ref())
+            .filter(|f| f.method == "push")
+            .ok_or_else(|| AuthError::validation("the transaction has no push finish method"))?;
+        let interact_ref = txn
+            .interact_ref
+            .as_deref()
+            .ok_or_else(|| AuthError::validation("the transaction has no interaction reference"))?;
+        let uri = url::Url::parse(&finish.uri)
+            .map_err(|_| AuthError::validation("the push finish uri is not a valid URI"))?;
+        let hash = Self::compute_interact_hash(
+            &finish.nonce,
+            txn.interact_nonce.as_deref().unwrap_or(""),
+            interact_ref,
+            &self.config.transaction_endpoint,
+        );
+        deliver_push(&uri, &hash, interact_ref, resolver, sender)
+            .await
+            .map_err(|e| AuthError::validation(e.to_string()))
     }
 
     /// Deny a pending transaction
@@ -4762,6 +4808,116 @@ mod proof_verification_tests {
             assert!(r.is_err(), "finish {finish} must be refused");
         }
         assert!(svc.test_txn_ids().await.is_empty());
+    }
+
+    // ---- push delivery (G4 slice 2) ----
+
+    use crate::protocols::gnap_push::tests::{FakeResolver, FakeSender};
+
+    async fn approved_push_txn(
+        svc: &GnapService,
+        dpop: &DpopManager,
+        key: &ClientKey,
+        method: &str,
+    ) -> (String, GnapInteractionCompletion) {
+        let interact = json!({
+            "start": ["redirect"],
+            "finish": {"method": method, "uri": "https://client.test/cb", "nonce": "client-nonce"},
+        });
+        send(svc, dpop, key, "push-txn", interact_request(key, interact))
+            .await
+            .expect("opened");
+        let id = svc.test_first_txn().await.id;
+        let done = svc.approve_transaction(&id, Some("sub-1")).await.unwrap();
+        (id, done)
+    }
+
+    #[tokio::test]
+    async fn an_approved_push_transaction_delivers_its_reference_and_hash() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, done) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        let (r, s) = (
+            FakeResolver::answering(&["93.184.216.34"]),
+            FakeSender::default(),
+        );
+        svc.push_interaction(&id, &r, &s).await.unwrap();
+        let calls = s.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "https://client.test/cb");
+        assert_eq!(
+            calls[0].2["interact_ref"],
+            done.interact_ref.clone().unwrap()
+        );
+        assert_eq!(calls[0].2["hash"], done.hash.clone().unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_push_whose_name_now_resolves_to_a_private_address_is_refused_at_delivery() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, _) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        // the name passed the open-time check; at delivery it resolves to an internal address
+        for answers in [vec!["10.0.0.5"], vec!["93.184.216.34", "169.254.169.254"]] {
+            let (r, s) = (FakeResolver::answering(&answers), FakeSender::default());
+            let e = svc
+                .push_interaction(&id, &r, &s)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("AddressNotAllowed"), "{e}");
+            assert!(
+                s.calls.lock().unwrap().is_empty(),
+                "nothing was sent to {answers:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn only_an_approved_transaction_with_a_push_finish_is_pushed() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (r, s) = (
+            FakeResolver::answering(&["93.184.216.34"]),
+            FakeSender::default(),
+        );
+        // a redirect-finish transaction
+        let (id, _) = approved_push_txn(&svc, &dpop, &key, "redirect").await;
+        assert!(svc.push_interaction(&id, &r, &s).await.is_err());
+        // a push-finish transaction that was never approved
+        let svc2 = service();
+        let interact = json!({
+            "start": ["redirect"],
+            "finish": {"method": "push", "uri": "https://client.test/cb", "nonce": "n"},
+        });
+        send(
+            &svc2,
+            &dpop,
+            &key,
+            "pending",
+            interact_request(&key, interact),
+        )
+        .await
+        .unwrap();
+        let id2 = svc2.test_first_txn().await.id;
+        assert!(svc2.push_interaction(&id2, &r, &s).await.is_err());
+        assert!(svc2.push_interaction("no-such-id", &r, &s).await.is_err());
+        assert!(s.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_transaction_denied_after_approval_is_not_pushed() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, _) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        svc.deny_transaction(&id).await.unwrap();
+        let (r, s) = (
+            FakeResolver::answering(&["93.184.216.34"]),
+            FakeSender::default(),
+        );
+        let e = svc
+            .push_interaction(&id, &r, &s)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("not approved"), "{e}");
+        assert!(s.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
