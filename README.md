@@ -17,10 +17,10 @@ Security-first • Feature-rich • Batteries-included • Release candidate
 
 **No Rust installation required!** Use our precompiled binaries:
 
-> **Checked 2026-11-19 against release v0.6.0-rc217: the two one-line installers below do NOT work yet.**
+> **Checked 2026-11-19 against release v0.6.0-rc217: the two one-line installers below do NOT work on `main` yet; the day PR that merges this change fixes the asset names (not yet run end to end).**
 > `scripts/install.sh` requests `authframework-<tag>-<target>.tar.gz` (HTTP 404: no such asset), while the
 > release publishes `auth-framework-<os>-<arch>.tar.gz` (for example `auth-framework-linux-x86_64.tar.gz`,
-> HTTP 200) and `auth-framework-windows-x86_64.zip`. Until the scripts are fixed, download the archive for
+> HTTP 200) and `auth-framework-windows-x86_64.zip`. Until that PR is merged, download the archive for
 > your platform from the [Releases page](https://github.com/ciresnave/auth-framework/releases), or use
 > `cargo add auth-framework` (see Quick Start below). The Docker line has not been run (it needs a tag).
 
