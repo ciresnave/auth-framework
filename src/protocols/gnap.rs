@@ -67,7 +67,8 @@ pub struct GnapTransactionRequest {
     /// The access tokens requested (RFC 9635 section 2.1): one token request, or an array of them, in the
     /// RFC's own shape. Build one from grant-level rights with `vec_of_rights.into()`; read the rights with
     /// [`GnapService::requested_rights`].
-    pub access_token: Option<GnapAccessTokenRequests>,
+    #[serde(rename = "access_token")]
+    pub access_token_request: Option<GnapAccessTokenRequests>,
     /// Subject information request
     pub subject: Option<GnapSubjectRequest>,
 }
@@ -344,7 +345,7 @@ impl GnapTransactionRequestBuilder {
         GnapTransactionRequest {
             client: self.client,
             interact: self.interact,
-            access_token: if self.access_token.is_empty() {
+            access_token_request: if self.access_token.is_empty() {
                 None
             } else {
                 Some(self.access_token.into())
@@ -1361,14 +1362,14 @@ impl GnapService {
         }
 
         // Validate that the request asks for something
-        if request.access_token.is_none() && request.subject.is_none() {
+        if request.access_token_request.is_none() && request.subject.is_none() {
             return Err(AuthError::validation(
                 "GNAP request must include at least one of access_token or subject",
             ));
         }
 
         // The access token request is checked before anything is stored or issued (RFC 9635 section 2.1)
-        let requested = match &request.access_token {
+        let requested = match &request.access_token_request {
             Some(requests) => Some(Self::requested_rights(requests)?),
             None => None,
         };
@@ -1701,7 +1702,7 @@ impl GnapService {
 
                 // Issue access token (the policy decides what it carries)
                 let mut refused = None;
-                let requested = match &txn.request.access_token {
+                let requested = match &txn.request.access_token_request {
                     Some(requests) => Some(Self::requested_rights(requests)?),
                     None => None,
                 };
@@ -1829,9 +1830,9 @@ impl GnapService {
                 "GNAP transaction cannot be modified: it is not pending",
             ));
         }
-        if let Some(requests) = &modification.access_token {
+        if let Some(requests) = &modification.access_token_request {
             Self::requested_rights(requests)?;
-            txn.request.access_token = Some(requests.clone());
+            txn.request.access_token_request = Some(requests.clone());
         }
         if let Some(subject) = &modification.subject {
             txn.request.subject = Some(subject.clone());
@@ -2467,7 +2468,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -2486,7 +2487,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: None,
+            access_token_request: None,
             subject: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
@@ -2498,7 +2499,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec!["list".to_string()],
@@ -2534,7 +2535,7 @@ mod tests {
                     hash_method: None,
                 }),
             }),
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "write".to_string(),
                     actions: vec![],
@@ -2560,7 +2561,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: None,
+            access_token_request: None,
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
@@ -2584,7 +2585,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -2637,7 +2638,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -2668,7 +2669,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -2694,7 +2695,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -2730,7 +2731,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "write".to_string(),
                     actions: vec!["create".to_string()],
@@ -2784,7 +2785,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(ec_jwk.clone())),
             interact: None,
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -2888,7 +2889,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -2935,7 +2936,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -2979,7 +2980,7 @@ mod tests {
                     hash_method: None,
                 }),
             }),
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -3034,7 +3035,7 @@ mod tests {
                     hash_method: None,
                 }),
             }),
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "read".to_string(),
                     actions: vec![],
@@ -3177,7 +3178,7 @@ mod tests {
 
         assert!(req.client.is_none());
         assert!(req.interact.is_none());
-        let rights = GnapService::requested_rights(&req.access_token.unwrap()).unwrap();
+        let rights = GnapService::requested_rights(&req.access_token_request.unwrap()).unwrap();
         assert_eq!(rights.len(), 1);
         assert_eq!(rights[0].access_type, "read");
         assert_eq!(rights[0].actions, vec!["list", "get"]);
@@ -3195,7 +3196,7 @@ mod tests {
 
         assert!(req.client.is_some());
         assert!(req.interact.is_some());
-        assert!(req.access_token.is_some());
+        assert!(req.access_token_request.is_some());
         assert!(req.subject.is_some());
         assert_eq!(req.subject.unwrap().sub_id_formats, vec!["opaque"]);
     }
@@ -3205,7 +3206,7 @@ mod tests {
         let req = GnapTransactionRequest::builder().build();
         assert!(req.client.is_none());
         assert!(req.interact.is_none());
-        assert!(req.access_token.is_none());
+        assert!(req.access_token_request.is_none());
         assert!(req.subject.is_none());
     }
 
@@ -3276,7 +3277,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(rights.into()),
+            access_token_request: Some(rights.into()),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -3333,7 +3334,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(vec![right("read")].into()),
+            access_token_request: Some(vec![right("read")].into()),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -3478,7 +3479,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(test_ec_jwk())),
             interact: None,
-            access_token: Some(vec![right("read")].into()),
+            access_token_request: Some(vec![right("read")].into()),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -3563,7 +3564,7 @@ mod tests {
         let req = GnapTransactionRequest {
             client: Some(test_client_info(jwk)),
             interact: None,
-            access_token: Some(vec![right("read")].into()),
+            access_token_request: Some(vec![right("read")].into()),
             subject: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -3617,7 +3618,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![right("read")].into()),
+            access_token_request: Some(vec![right("read")].into()),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -3644,7 +3645,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![right("read")].into()),
+            access_token_request: Some(vec![right("read")].into()),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -3772,7 +3773,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![right("read")].into()),
+            access_token_request: Some(vec![right("read")].into()),
             subject: None,
         };
         service.handle_transaction(req).await.unwrap();
@@ -3840,7 +3841,7 @@ mod tests {
                 start: vec!["redirect".to_string()],
                 finish: None,
             }),
-            access_token: Some(vec![right("read")].into()),
+            access_token_request: Some(vec![right("read")].into()),
             subject: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
@@ -4793,7 +4794,7 @@ mod proof_verification_tests {
         GnapTransactionRequest {
             client: None,
             interact: None,
-            access_token: Some(
+            access_token_request: Some(
                 vec![GnapAccessRequest {
                     access_type: "write-things".to_string(),
                     actions: vec![],
@@ -5320,7 +5321,7 @@ mod hardening_tests {
                     hash_method: None,
                 }),
             }),
-            access_token: Some(rights(kinds).into()),
+            access_token_request: Some(rights(kinds).into()),
             subject: None,
         }
     }
@@ -5465,7 +5466,7 @@ mod hardening_tests {
         let subject_only = GnapTransactionRequest {
             client: None,
             interact: None,
-            access_token: None,
+            access_token_request: None,
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
@@ -5608,5 +5609,17 @@ mod hardening_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_token_is_known_the_moment_it_is_returned_on_many_threads() {
         assert_eq!(use_at_once(&with(AllowAllPolicy), 300).await, 0);
+    }
+
+    /// The Rust field was renamed (SEC-012, #463); the RFC 9635 wire name must not move.
+    #[test]
+    fn request_keeps_the_access_token_wire_name() {
+        let req: GnapTransactionRequest =
+            serde_json::from_value(serde_json::json!({"access_token": {"access": ["read"]}}))
+                .unwrap();
+        assert!(req.access_token_request.is_some());
+        let out = serde_json::to_value(&req).unwrap();
+        assert!(out.get("access_token").is_some());
+        assert!(out.get("access_token_request").is_none());
     }
 }

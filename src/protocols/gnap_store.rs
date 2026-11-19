@@ -306,7 +306,7 @@ mod tests {
             request: GnapTransactionRequest {
                 client: None,
                 interact: None,
-                access_token: None,
+                access_token_request: None,
                 subject: None,
             },
             continue_token: "ct".to_string(),
