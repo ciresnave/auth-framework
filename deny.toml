@@ -37,13 +37,14 @@
         # Owner: auth-framework lane. Remove this entry when testcontainers releases a version that no
         # longer depends on astral-tokio-tar, or when `docker-tests` is dropped.
         "RUSTSEC-2026-0440",
-        # RUSTSEC-2026-0459 (libsqlite3-sys: bundled SQLite CVE-2026-119375; fixed in >=0.39.0).
-        # EXPIRES 2026-12-09 (dated by the PM 2026-11-09): re-check then; do not extend without a new decision.
-        # Exposed only if we open a SQLite file plus a sibling -wal written by a less trusted party; our
-        # storage files are our own. Only via sqlx-sqlite 0.9.0 (newest release), which caps libsqlite3-sys
-        # below 0.38. Upstream merged the cap bump (transact-rs/sqlx#4502, 2026-11-08), not yet released;
-        # remove this entry when a sqlx release carrying it is in Cargo.lock.
-        "RUSTSEC-2026-0459",
+        # RUSTSEC-2026-0543 (chrono 0.4.44 unmaintained) and RUSTSEC-2026-0555 (chrono-tz 0.10.4 unmaintained), both
+        # "No safe upgrade is available": maintenance advisories, not vulnerabilities (same decision as `main`, #499,
+        # pm-platform 2026-11-19). EXPIRES 2026-12-17. chrono is pulled in by sqlx-core/sqlx-postgres, role-system,
+        # tokio-cron-scheduler and expect-json, chrono-tz by role-system and tokio-cron-scheduler, so leaving it in
+        # our own code would not remove it. At the expiry take any release of those that drops chrono, else renew
+        # with a new date and the blocking dependency named.
+        "RUSTSEC-2026-0543",
+        "RUSTSEC-2026-0555",
     ]
 
 [licenses]
