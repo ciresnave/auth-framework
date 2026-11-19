@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 /// What one live key signs and verifies with. HMAC keys sign HS256; a `JwsSigning` key signs
-/// ES256 or EdDSA (the `alg` the store reports). A key verifies only its own algorithm, so a
+/// ES256, ES384, EdDSA or RS256 (the `alg` the store reports). A key verifies only its own algorithm, so a
 /// token cannot pick a weaker one for a key id.
 #[derive(Clone)]
 pub(super) enum RingKey {
@@ -60,6 +60,56 @@ impl RingKey {
     }
 }
 
+/// One DER element at the start of `b`: `(tag, content, rest)`. Definite lengths only, at most
+/// four length octets; `None` for anything truncated or malformed.
+fn der_element(b: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+    let (&tag, b) = b.split_first()?;
+    let (&first, b) = b.split_first()?;
+    let (len, b) = if first < 0x80 {
+        (usize::from(first), b)
+    } else {
+        let n = usize::from(first & 0x7f);
+        if n == 0 || n > 4 || b.len() < n {
+            return None;
+        }
+        let len = b[..n]
+            .iter()
+            .fold(0usize, |acc, &x| (acc << 8) | usize::from(x));
+        (len, &b[n..])
+    };
+    (b.len() >= len).then(|| (tag, &b[..len], &b[len..]))
+}
+
+/// The RSAPrivateKey (PKCS#1) inside an RFC 5958 PKCS#8 `rsaEncryption` private key.
+/// `jsonwebtoken`'s RSA signer takes PKCS#1 DER, the key stores hold PKCS#8. Nothing but a
+/// PKCS#8 whose algorithm is rsaEncryption (1.2.840.113549.1.1.1) is accepted, with nothing
+/// after the outer SEQUENCE. The copy is `Zeroizing`.
+fn pkcs8_rsa_to_pkcs1(der: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+    const RSA_ENCRYPTION_OID: [u8; 9] = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+    let (0x30, body, rest) = der_element(der)? else {
+        return None;
+    };
+    if !rest.is_empty() {
+        return None;
+    }
+    let (0x02, _version, body) = der_element(body)? else {
+        return None;
+    };
+    let (0x30, algorithm, body) = der_element(body)? else {
+        return None;
+    };
+    let (0x06, oid, _parameters) = der_element(algorithm)? else {
+        return None;
+    };
+    if oid != RSA_ENCRYPTION_OID {
+        return None;
+    }
+    let (0x04, key, _attributes) = der_element(body)? else {
+        return None;
+    };
+    Some(Zeroizing::new(key.to_vec()))
+}
+
 /// Build the ring entry for an asymmetric key: verify from the public JWK, sign from the
 /// exported PKCS8. `None` for an algorithm the token manager does not use.
 async fn asymmetric_entry(
@@ -69,7 +119,9 @@ async fn asymmetric_entry(
 ) -> Result<Option<RingKey>> {
     let alg = match info.alg.as_str() {
         "ES256" => jsonwebtoken::Algorithm::ES256,
+        "ES384" => jsonwebtoken::Algorithm::ES384,
         "EdDSA" => jsonwebtoken::Algorithm::EdDSA,
+        "RS256" => jsonwebtoken::Algorithm::RS256,
         _ => return Ok(None),
     };
     let Some(public) = &info.public else {
@@ -78,8 +130,14 @@ async fn asymmetric_entry(
     let jwk = public.to_value();
     let member = |n: &str| jwk.get(n).and_then(|v| v.as_str()).map(str::to_string);
     let decoding = match alg {
-        jsonwebtoken::Algorithm::ES256 => match (member("x"), member("y")) {
-            (Some(x), Some(y)) => jsonwebtoken::DecodingKey::from_ec_components(&x, &y),
+        jsonwebtoken::Algorithm::ES256 | jsonwebtoken::Algorithm::ES384 => {
+            match (member("x"), member("y")) {
+                (Some(x), Some(y)) => jsonwebtoken::DecodingKey::from_ec_components(&x, &y),
+                _ => return Ok(None),
+            }
+        }
+        jsonwebtoken::Algorithm::RS256 => match (member("n"), member("e")) {
+            (Some(n), Some(e)) => jsonwebtoken::DecodingKey::from_rsa_components(&n, &e),
             _ => return Ok(None),
         },
         _ => match member("x") {
@@ -92,7 +150,17 @@ async fn asymmetric_entry(
     let encoding = if need_private {
         let der = store.export_private_pkcs8(&info.kid).await?;
         Some(Arc::new(match alg {
-            jsonwebtoken::Algorithm::ES256 => jsonwebtoken::EncodingKey::from_ec_der(&der),
+            jsonwebtoken::Algorithm::ES256 | jsonwebtoken::Algorithm::ES384 => {
+                jsonwebtoken::EncodingKey::from_ec_der(&der)
+            }
+            jsonwebtoken::Algorithm::RS256 => {
+                let pkcs1 = pkcs8_rsa_to_pkcs1(&der).ok_or_else(|| {
+                    AuthError::crypto(
+                        "the key store's RSA private key is not a PKCS#8 rsaEncryption key",
+                    )
+                })?;
+                jsonwebtoken::EncodingKey::from_rsa_der(&pkcs1)
+            }
             _ => jsonwebtoken::EncodingKey::from_ed_der(&der),
         }))
     } else {
@@ -260,7 +328,7 @@ impl KeyRing {
     }
 
     /// The JWKS of the live asymmetric keys in this snapshot: `Active` and `Retiring`
-    /// ES256/EdDSA keys, sorted by key id, never an HMAC key and never a private member.
+    /// ES256/ES384/EdDSA/RS256 keys, sorted by key id, never an HMAC key and never a private member.
     /// A revoked or destroyed key is gone after the next refresh, and a snapshot older than
     /// its staleness bound refuses to publish (it could still advertise a revoked key).
     pub fn public_jwks(&self) -> Result<crate::keys::JwkSet> {
@@ -805,5 +873,154 @@ mod tests {
         assert!(m.export_jwks().is_err());
         let plain = TokenManager::new_hmac(b"x-configured-secret-0000000000000", "iss", "aud");
         assert!(kids(&plain.export_jwks().unwrap()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn es384_and_rs256_keys_sign_and_verify_through_the_ring() {
+        for (alg, name) in [
+            (crate::keys::SigningAlg::Es384, "ES384"),
+            (crate::keys::SigningAlg::Rs256, "RS256"),
+        ] {
+            let s = MemoryKeyStore::new();
+            s.insert(asym("a1", alg), KeyState::Active).await.unwrap();
+            let (m, _) = asym_manager(&s).await;
+            let t = token(&m);
+            let h = jsonwebtoken::decode_header(&t).unwrap();
+            assert_eq!(format!("{:?}", h.alg).to_uppercase(), name);
+            assert_eq!(h.kid.as_deref(), Some("a1"));
+            assert_eq!(m.validate_jwt_token(&t).unwrap().sub, "user-1", "{name}");
+        }
+    }
+
+    /// Independent of the ring: a token the ring signed verifies with only the published JWK,
+    /// through `jsonwebtoken`'s own public-key constructors, for each new algorithm.
+    #[tokio::test]
+    async fn es384_and_rs256_tokens_verify_against_the_published_jwk_alone() {
+        for (alg, jw_alg) in [
+            (
+                crate::keys::SigningAlg::Es384,
+                jsonwebtoken::Algorithm::ES384,
+            ),
+            (
+                crate::keys::SigningAlg::Rs256,
+                jsonwebtoken::Algorithm::RS256,
+            ),
+        ] {
+            let s = MemoryKeyStore::new();
+            s.insert(asym("only", alg), KeyState::Active).await.unwrap();
+            let (m, _) = manager(&s).await;
+            let t = token(&m);
+            let jwks = m.export_jwks().unwrap();
+            let jwk = &jwks["keys"][0];
+            assert!(jwk.get("d").is_none(), "never a private member: {jwk}");
+            let m_ = |n: &str| jwk[n].as_str().unwrap().to_string();
+            let key = if jw_alg == jsonwebtoken::Algorithm::RS256 {
+                assert_eq!(jwk["kty"], "RSA");
+                jsonwebtoken::DecodingKey::from_rsa_components(&m_("n"), &m_("e")).unwrap()
+            } else {
+                assert_eq!(
+                    (jwk["kty"].as_str(), jwk["crv"].as_str()),
+                    (Some("EC"), Some("P-384"))
+                );
+                jsonwebtoken::DecodingKey::from_ec_components(&m_("x"), &m_("y")).unwrap()
+            };
+            assert_eq!(jwk["alg"], format!("{jw_alg:?}"));
+            let mut v = jsonwebtoken::Validation::new(jw_alg);
+            v.set_issuer(&["iss"]);
+            v.set_audience(&["aud"]);
+            assert!(
+                jsonwebtoken::decode::<serde_json::Value>(&t, &key, &v).is_ok(),
+                "{jw_alg:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_token_cannot_use_another_algorithm_for_an_es384_or_rs256_key_id() {
+        for alg in [
+            crate::keys::SigningAlg::Es384,
+            crate::keys::SigningAlg::Rs256,
+        ] {
+            let s = MemoryKeyStore::new();
+            s.insert(asym("a1", alg), KeyState::Active).await.unwrap();
+            let (m, _) = asym_manager(&s).await;
+            let claims = m.validate_jwt_token(&token(&m)).unwrap();
+            // HS256 keyed with the published public material (the classic confusion attack).
+            let jwks = m.export_jwks().unwrap();
+            let public = jwks["keys"][0].to_string();
+            let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+            header.kid = Some("a1".into());
+            let forged = jsonwebtoken::encode(
+                &header,
+                &claims,
+                &jsonwebtoken::EncodingKey::from_secret(public.as_bytes()),
+            )
+            .unwrap();
+            assert!(
+                m.validate_jwt_token(&forged).is_err(),
+                "{alg:?}: HS256 confusion"
+            );
+            // A genuine signature of ANOTHER asymmetric algorithm under this key id.
+            let other = if alg == crate::keys::SigningAlg::Es384 {
+                (
+                    crate::keys::SigningAlg::Es256,
+                    jsonwebtoken::Algorithm::ES256,
+                )
+            } else {
+                (
+                    crate::keys::SigningAlg::Es384,
+                    jsonwebtoken::Algorithm::ES384,
+                )
+            };
+            let foreign = asym("x", other.0);
+            let mut header = jsonwebtoken::Header::new(other.1);
+            header.kid = Some("a1".into());
+            let forged = jsonwebtoken::encode(
+                &header,
+                &claims,
+                &jsonwebtoken::EncodingKey::from_ec_der(foreign.to_pkcs8_der()),
+            )
+            .unwrap();
+            assert!(
+                m.validate_jwt_token(&forged).is_err(),
+                "{alg:?}: another algorithm"
+            );
+        }
+    }
+
+    #[test]
+    fn the_pkcs8_to_pkcs1_unwrap_yields_the_same_rsa_key_and_refuses_anything_else() {
+        let k = asym("r", crate::keys::SigningAlg::Rs256);
+        let pkcs1 = pkcs8_rsa_to_pkcs1(k.to_pkcs8_der()).expect("a PKCS#8 RSA key unwraps");
+        // Independent of the parser: ring reads the PKCS#1 and finds the published modulus.
+        let pair = ring::signature::RsaKeyPair::from_der(&pkcs1).unwrap();
+        let jwk = k.public().to_value();
+        let n = base64::Engine::decode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            jwk["n"].as_str().unwrap(),
+        )
+        .unwrap();
+        let comps: ring::rsa::PublicKeyComponents<Vec<u8>> = pair.public().into();
+        assert_eq!(comps.n, n);
+        let der = k.to_pkcs8_der();
+        assert!(pkcs8_rsa_to_pkcs1(&[]).is_none());
+        assert!(
+            pkcs8_rsa_to_pkcs1(&der[..der.len() - 1]).is_none(),
+            "truncated"
+        );
+        assert!(
+            pkcs8_rsa_to_pkcs1(&[der, &[0u8][..]].concat()).is_none(),
+            "trailing byte"
+        );
+        let ec = asym("e", crate::keys::SigningAlg::Es256);
+        assert!(
+            pkcs8_rsa_to_pkcs1(ec.to_pkcs8_der()).is_none(),
+            "not rsaEncryption"
+        );
+        assert!(pkcs8_rsa_to_pkcs1(&[0x30, 0x84, 0xff, 0xff, 0xff, 0xff]).is_none());
+        assert!(
+            pkcs8_rsa_to_pkcs1(&[0x30, 0x80]).is_none(),
+            "indefinite length"
+        );
     }
 }
