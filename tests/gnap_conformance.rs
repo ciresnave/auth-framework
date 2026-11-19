@@ -238,7 +238,9 @@ async fn gnap_vectors() {
         }
 
         let service =
-            GnapService::new(config_from(&v["config"])).with_access_policy(Arc::new(GrantAll));
+            GnapService::new(config_from(&v["config"]))
+                .with_poll_wait_secs(0)
+                .with_access_policy(Arc::new(GrantAll));
         let (key, other) = (client_key(), client_key());
         let mut vars: HashMap<String, String> = HashMap::new();
 
