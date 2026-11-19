@@ -33,7 +33,7 @@ This means the roadmap should optimize for:
 
 ### Product Status
 
-- Current crate version: `0.6.0-rc320`
+- Current crate version: `0.6.0-rc325`
 - The crate already includes substantial functionality across authentication, authorization, API server, admin UI, monitoring, deployment, storage, and web integrations.
 - The project direction is now explicitly shifting toward a batteries-included default build with opt-out feature reduction for optimization-focused users.
 - `cargo check --all-features` currently passes.
@@ -178,6 +178,7 @@ This is now a first-class workstream, not a secondary polish task.
 - [x] Add stronger framework-specific examples backed by real storage where possible
 - [x] Verify feature-gated integrations compile and test cleanly in CI on every release path
 - [x] Decide which framework integrations are part of the default batteries-included experience versus optimization-only opt-ins
+- [ ] **CI runs no actix adapter tests (found 2026-11-18 on #498; surface lane, due 2026-11-21).** The hosted `Test Suite` job runs `cargo test --workspace` with `axum-integration` but not `actix-integration`, and the Feature Matrix entry that enables `actix-integration` only compiles (`cargo check --tests`); the one test it runs is the SAML-filtered lib run. So `integrations::gnap_actix::tests::*` (9 tests) run on no pull request. Add `actix-integration` to a hosted test job (`cargo test --workspace --features actix-integration` with the Postgres service), then audit the other feature-gated integrations the same way (`warp-integration` and every feature in the Feature Matrix groups) and list here each one whose tests CI does not run. The `[x]` "test cleanly in CI" item above holds for compiling only.
 
 ## Phase 2: Platform Hardening and Ecosystem Expansion
 
@@ -355,6 +356,7 @@ Read from the `portfolio` job on the `main` run for 9abbced8 (run 40040499570; C
 | licence | 3 | Medium | `LICENSE-APACHE` and `LICENSE-MIT` name a person as copyright holder; 404 of 404 source files carry no SPDX identifier | auth-framework lane | Open; the copyright holder is CireSnave's decision |
 | version-consistency | 1 | High | `auth-storage-sqlite`, `sdks/python` (0.6.0rc64) and `sdks/javascript` (0.6.0-rc108) trailed the crate version | auth-framework lane | Fixed in this PR: all three at the root version (PEP 440 form for Python); `tests/member_versions_match_cargo.rs` keeps them there. PM ruling 2026-10-24: one version per project |
 | SEC-012 | 79 (#463) | High | `Debug` derived over a secret-named field | auth-framework lane | Scheduled (issue #463 labelled `decided:scheduled`). Done: #491 redacts 11 types. Open: rename `GnapTransactionRequest.access_token` and `ServiceProviderConfig.change_password` (they are flagged by name, not secret), and mark `AcmeChallenge.token` (public by design) with a `// sec012: public - <reason>` marker once coderipper#359/#360 release |
+| chrono | RUSTSEC-2026-0543, RUSTSEC-2026-0555 | Medium | `chrono` 0.4.45 and `chrono-tz` 0.10.4 are unmaintained with no safe upgrade | auth-framework lane | Open: leave chrono (move to `jiff` or `time`). `deny.toml` carries a reasoned ignore that EXPIRES 2026-12-17 (PM ruling 2026-11-17); remove it when both crates are out of `Cargo.lock` |
 
 
 ### Spec-to-roadmap audit (2026-10-24)
@@ -400,7 +402,7 @@ claims a method it does not verify. Rows are Open until their PR lands.
 | G4 | Interaction: start `redirect`/`app`/`user_code`/`user_code_uri`, finish `redirect`/`push` (SSRF rules of 11.34), `hash_method`, hints, interaction expiry | Partly done: the pure library exists (`gnap_interaction.rs`, #428); slice 1 (this PR) wires it into `GnapService`: `interact.start` and `finish` are read at transaction open, a `push` target the server must not call is refused, a `user_code` start is answered with a kept code. **UNIMPLEMENTED**: delivering the push, and re-checking its target after name resolution (resolve-then-check, no DNS-rebinding window); the redirect callback; `app`, `user_code_uri`; hints; interaction expiry and wrong-code limits; honouring `hash_method` other than `sha-256` in the service (until then a request asking for one is refused at open with an error naming it); object-form `start` items; a lookup of a transaction by its user code |
 | G5 | Continuation: polling with `wait` and `too_fast`, PATCH modify, DELETE revoke grant, grant state machine, token rotate and revoke with proof, key rotation, `Authorization: GNAP` | Slice 1 done: the request `access_token` in the RFC shape (`requested_rights`). Next: polling, PATCH, DELETE grant, state machine, key rotation, `Authorization: GNAP` |
 | G6 | Policy backed by the access-control engine (AC4), consent records, storage through a trait (PersistAnt-style choice, not one hard-wired store); requirements for agents and rooms from board 384 | Done (slice 1 #475, slice 2 #480, slice 3 #492 rc317, slice 4 #497 rc320) |
-| G7 | HTTP routes (axum, actix) and discovery (9.1 RS-first, 9.2 `OPTIONS`) | Partly done: RS routes (RFC 9767 section 3: #425, #472) and the AS routes for the grant endpoint (`POST`), `OPTIONS` discovery (9.2) and token management (`POST` rotate, `DELETE` revoke), in `gnap_as_http.rs` with axum and actix adapters. Open: the continuation route (waits for the continue URI to carry the transaction id, auth-framework#493), RS-first (9.1) |
+| G7 | HTTP routes (axum, actix) and discovery (9.1 RS-first, 9.2 `OPTIONS`) | Partly done: RS routes (RFC 9767 section 3: #425, #472) and the AS routes in `gnap_as_http.rs` with axum and actix adapters: grant (`POST`), `OPTIONS` discovery (9.2), token management (`POST` rotate, `DELETE` revoke) and continuation (`POST <grant>/continue/<id>`: poll and `interact_ref`). Open: PATCH and DELETE on a grant, polling back-off (G5), RS-first (9.1) |
 | G8 | RFC 9767 resource-server connections: RS discovery, introspection, resource set registration, downstream tokens | Partly done: discovery, RS authentication, introspection and registration (#424, #425, #472; guide `docs/GNAP_RS_API.md`). Open: downstream tokens (RFC 9767 section 4) and token formats (2.2) |
 | G9 | Agent principals and delegation by an account holder (see AC2, AC5, AC6); the creator of a principal holds a strict-subset grant over it, ancestors may revoke it, the account holder always overrides. Reading of "strict subset": a subset, never wider than the creator holds; equal is allowed (the same rule as delegation). If strictly narrower is wanted, that is a new row | Done (#417, #420, #435, #439, #441, #464) |
 | G10 | Conformance: the RFC example vectors (including the 4.2.3 hash example) and one test per section 11 item | Open |

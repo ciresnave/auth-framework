@@ -10,8 +10,11 @@
 //! - the token management endpoint (`<grant endpoint>/token`, section 6): `POST` rotates the
 //!   token named in the `Authorization: GNAP <token>` header and `DELETE` revokes it.
 //!
-//! The continuation route (section 5) is not here: the continuation URI the service issues does
-//! not name the transaction, so a request to it cannot be matched to one yet.
+//! - the continuation endpoint (`<grant endpoint>/continue/<transaction id>`, section 5): `POST`
+//!   polls or, after the resource owner approved, presents the `interact_ref` in the body. The
+//!   continuation token is in `Authorization: GNAP <token>` and rotates on every success.
+//!
+//! PATCH and DELETE on a grant, polling back-off and the `wait` handling are not here yet.
 //!
 //! A proof is bound to the authorization server's own URL, the one this handler is given, and
 //! never to the `Host` the request arrived with. Only the `dpop` proof method verifies today (see
@@ -38,6 +41,7 @@ pub struct GnapAsHttp {
     grant_path: String,
     manage_url: String,
     manage_path: String,
+    continue_prefix: String,
 }
 
 impl GnapAsHttp {
@@ -57,9 +61,16 @@ impl GnapAsHttp {
             dpop,
             grant_path: path_of(&grant_url).to_string(),
             manage_path: path_of(&manage_url).to_string(),
+            continue_prefix: format!("{}/continue/", path_of(&grant_url)),
             grant_url,
             manage_url,
         }
+    }
+
+    /// The continuation route pattern, `<grant endpoint>/continue/{id}`, in the `{id}` syntax axum
+    /// and actix both use.
+    pub fn continue_route(&self) -> String {
+        format!("{}{{id}}", self.continue_prefix)
     }
 
     /// The grant endpoint path and the token management path, so an adapter can register them.
@@ -85,7 +96,20 @@ impl GnapAsHttp {
                 _ => GnapHttpResponse::empty(405, vec![("Allow".into(), "POST, DELETE".into())]),
             };
         }
+        if let Some(id) = self.continue_id(path) {
+            return match method.as_str() {
+                "POST" => self.continue_grant(req, id).await,
+                _ => GnapHttpResponse::empty(405, vec![("Allow".into(), "POST".into())]),
+            };
+        }
         GnapHttpResponse::empty(404, Vec::new())
+    }
+
+    /// The transaction id of a continuation path: exactly one non-empty segment after
+    /// `<grant endpoint>/continue/`, of a sane length.
+    fn continue_id<'a>(&self, path: &'a str) -> Option<&'a str> {
+        let id = path.strip_prefix(self.continue_prefix.as_str())?;
+        (!id.is_empty() && id.len() <= 128 && !id.contains('/')).then_some(id)
     }
 
     /// The document `OPTIONS` on the grant endpoint answers (RFC 9635 section 9.2). It lists only
@@ -110,6 +134,45 @@ impl GnapAsHttp {
         match self
             .service
             .handle_transaction_with_proof(&self.dpop, &proof, request)
+            .await
+        {
+            Ok(answer) => GnapHttpResponse::json(200, &answer, true),
+            Err(e) => refuse(&e),
+        }
+    }
+
+    async fn continue_grant(&self, req: &GnapHttpRequest, id: &str) -> GnapHttpResponse {
+        let Some(token) = gnap_token(req) else {
+            return unauthorized();
+        };
+        // The body is optional (a poll has none); when present it is a JSON object.
+        let interact_ref =
+            if req.body.len() <= MAX_BODY_BYTES && req.body.iter().all(u8::is_ascii_whitespace) {
+                None
+            } else {
+                match read_json::<Value>(req) {
+                    Ok(body) => match body.get("interact_ref") {
+                        None => None,
+                        Some(Value::String(r)) => Some(r.clone()),
+                        Some(_) => {
+                            return error(400, "invalid_request", "interact_ref must be a string");
+                        }
+                    },
+                    Err(refused) => return refused,
+                }
+            };
+        let url = format!("{}/continue/{id}", self.grant_url);
+        let proof = proof_for(req, &url);
+        match self
+            .service
+            .continue_transaction_with_proof(
+                &self.dpop,
+                &proof,
+                id,
+                token,
+                interact_ref.as_deref(),
+                None,
+            )
             .await
         {
             Ok(answer) => GnapHttpResponse::json(200, &answer, true),
@@ -210,7 +273,17 @@ fn refuse(e: &AuthError) -> GnapHttpResponse {
         return GnapHttpResponse::empty(500, vec![("Cache-Control".into(), "no-store".into())]);
     };
     let m = message.to_ascii_lowercase();
-    if m.contains("proof") || m.contains("client key required") {
+    if m.contains("denied by the resource owner") {
+        error(403, "user_denied", "the resource owner denied the request")
+    } else if m.contains("invalid continuation") {
+        // Every refused continuation reads the same: a client cannot tell an unknown transaction
+        // from a wrong token, a spent token or a wrong interaction reference.
+        error(
+            401,
+            "invalid_continuation",
+            "the continuation request was refused",
+        )
+    } else if m.contains("proof") || m.contains("client key required") {
         unauthorized()
     } else if m.contains("access denied") {
         error(403, "request_denied", "the request was denied")
@@ -299,18 +372,27 @@ pub(crate) mod tests {
         format!("{si}.{sig}")
     }
 
-    fn handler_with(policy: Arc<dyn GnapAccessPolicy>) -> GnapAsHttp {
-        let service = GnapService::new(GnapConfig {
-            enabled: true,
-            transaction_endpoint: "/api/gnap/tx".into(),
-            interaction_base_url: Some("https://as.example.test".into()),
-            token_lifetime_secs: 3600,
-            transaction_lifetime_secs: 600,
-        })
-        .with_access_policy(policy);
+    fn parts_with(policy: Arc<dyn GnapAccessPolicy>) -> (GnapAsHttp, Arc<GnapService>) {
+        let service = Arc::new(
+            GnapService::new(GnapConfig {
+                enabled: true,
+                transaction_endpoint: "/api/gnap/tx".into(),
+                interaction_base_url: Some("https://as.example.test".into()),
+                token_lifetime_secs: 3600,
+                transaction_lifetime_secs: 600,
+            })
+            .with_access_policy(policy),
+        );
         let manager =
             DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap());
-        GnapAsHttp::new(Arc::new(service), Arc::new(manager), GRANT)
+        (
+            GnapAsHttp::new(service.clone(), Arc::new(manager), GRANT),
+            service,
+        )
+    }
+
+    fn handler_with(policy: Arc<dyn GnapAccessPolicy>) -> GnapAsHttp {
+        parts_with(policy).0
     }
 
     pub(crate) fn handler() -> GnapAsHttp {
@@ -672,6 +754,238 @@ pub(crate) mod tests {
             h.handle(&manage("DELETE", &k, &t, "m-w-end")).await.status,
             204
         );
+    }
+
+    // ── continuation (section 5) ────────────────────────────────────────
+
+    /// A grant that needs interaction: the transaction id and continue token from the response.
+    async fn interactive(h: &GnapAsHttp, k: &Key, jti: &str) -> (String, String) {
+        let body = json!({
+            "client": {"key": {"proof": "dpop", "jwk": serde_json::to_value(&k.jwk).unwrap()}},
+            "access_token": {"access": [{"type": "read"}]},
+            "interact": {"start": ["redirect"],
+                "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "client-nonce"}},
+        });
+        let proof = dpop(k, k, "POST", GRANT, jti);
+        let r = h
+            .handle(&req(
+                "POST",
+                "/api/gnap/tx",
+                vec![("DPoP", proof)],
+                body.to_string().into_bytes(),
+            ))
+            .await;
+        assert_eq!(r.status, 200, "setup grant must succeed");
+        let out = json_of(&r);
+        let uri = out["continue"]["uri"].as_str().unwrap();
+        let id = uri.rsplit('/').next().unwrap().to_string();
+        (
+            id,
+            out["continue"]["access_token"]["value"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        )
+    }
+
+    fn cont(k: &Key, id: &str, token: &str, jti: &str, body: &str) -> GnapHttpRequest {
+        let url = format!("{GRANT}/continue/{id}");
+        let proof = dpop(k, k, "POST", &url, jti);
+        req(
+            "POST",
+            &format!("/api/gnap/tx/continue/{id}"),
+            vec![("Authorization", format!("GNAP {token}")), ("DPoP", proof)],
+            body.as_bytes().to_vec(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_proved_poll_keeps_waiting_and_rotates_the_continue_token() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-p0").await;
+        let r = h.handle(&cont(&k, &id, &t0, "c-p1", "")).await;
+        assert_eq!(r.status, 200);
+        assert_eq!(r.header("Cache-Control"), Some("no-store"));
+        let out = json_of(&r);
+        let t1 = out["continue"]["access_token"]["value"].as_str().unwrap();
+        assert_ne!(t1, t0);
+        assert!(
+            out.get("access_token").is_none(),
+            "no token before approval"
+        );
+        // The old continue token is spent.
+        let again = h.handle(&cont(&k, &id, &t0, "c-p2", "")).await;
+        assert_eq!(again.status, 401);
+        assert_eq!(code_of(&again), "invalid_continuation");
+        // The new one works.
+        assert_eq!(h.handle(&cont(&k, &id, t1, "c-p3", "")).await.status, 200);
+    }
+
+    #[tokio::test]
+    async fn an_approved_transaction_continues_with_its_interact_ref_to_a_token() {
+        let (h, service) = parts_with(Arc::new(AllowAll));
+        let k = key();
+        let (id, t0) = interactive(&h, &k, "c-a0").await;
+        let done = service
+            .approve_transaction(&id, Some("alice"))
+            .await
+            .unwrap();
+        let iref = done.interact_ref.clone().unwrap();
+        // Without the reference the continuation is refused, and the token survives.
+        assert_eq!(h.handle(&cont(&k, &id, &t0, "c-a1", "")).await.status, 401);
+        let body = json!({"interact_ref": iref}).to_string();
+        let r = h.handle(&cont(&k, &id, &t0, "c-a2", &body)).await;
+        assert_eq!(r.status, 200);
+        assert!(json_of(&r)["access_token"]["value"].is_string());
+    }
+
+    #[tokio::test]
+    async fn a_denied_transaction_is_403_user_denied() {
+        let (h, service) = parts_with(Arc::new(AllowAll));
+        let k = key();
+        let (id, t0) = interactive(&h, &k, "c-d0").await;
+        service.deny_transaction(&id).await.unwrap();
+        let body = "{}";
+        let r = h.handle(&cont(&k, &id, &t0, "c-d1", body)).await;
+        assert_eq!(r.status, 403);
+        assert_eq!(code_of(&r), "user_denied");
+    }
+
+    #[tokio::test]
+    async fn a_replayed_continue_request_is_refused() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-r0").await;
+        let first = cont(&k, &id, &t0, "c-r-once", "");
+        assert_eq!(h.handle(&first).await.status, 200);
+        // The very same request again: the proof was spent and the token rotated.
+        let again = h.handle(&first).await;
+        assert_eq!(again.status, 401);
+        assert!(!String::from_utf8_lossy(&again.body).contains("access_token"));
+    }
+
+    #[tokio::test]
+    async fn a_continue_without_a_proof_is_401_and_the_token_survives() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-n0").await;
+        let bare = req(
+            "POST",
+            &format!("/api/gnap/tx/continue/{id}"),
+            vec![("Authorization", format!("GNAP {t0}"))],
+            Vec::new(),
+        );
+        let r = h.handle(&bare).await;
+        assert_eq!(r.status, 401);
+        assert_eq!(code_of(&r), "invalid_client");
+        assert_eq!(h.handle(&cont(&k, &id, &t0, "c-n1", "")).await.status, 200);
+    }
+
+    #[tokio::test]
+    async fn a_continue_proof_signed_by_another_key_is_refused_and_the_token_survives() {
+        let (h, k, other) = (handler(), key(), key());
+        let (id, t0) = interactive(&h, &k, "c-o0").await;
+        assert_eq!(
+            h.handle(&cont(&other, &id, &t0, "c-o1", "")).await.status,
+            401
+        );
+        assert_eq!(h.handle(&cont(&k, &id, &t0, "c-o2", "")).await.status, 200);
+    }
+
+    #[tokio::test]
+    async fn a_continue_proof_for_another_transaction_url_is_refused() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-u0").await;
+        let proof = dpop(&k, &k, "POST", &format!("{GRANT}/continue/other"), "c-u1");
+        let r = h
+            .handle(&req(
+                "POST",
+                &format!("/api/gnap/tx/continue/{id}"),
+                vec![("Authorization", format!("GNAP {t0}")), ("DPoP", proof)],
+                Vec::new(),
+            ))
+            .await;
+        assert_eq!(r.status, 401);
+    }
+
+    #[tokio::test]
+    async fn a_continue_without_an_authorization_header_is_401() {
+        let (h, k) = (handler(), key());
+        let (id, _t0) = interactive(&h, &k, "c-h0").await;
+        let proof = dpop(&k, &k, "POST", &format!("{GRANT}/continue/{id}"), "c-h1");
+        let r = h
+            .handle(&req(
+                "POST",
+                &format!("/api/gnap/tx/continue/{id}"),
+                vec![("DPoP", proof)],
+                Vec::new(),
+            ))
+            .await;
+        assert_eq!(r.status, 401);
+        assert_eq!(r.header("WWW-Authenticate"), Some("GNAP"));
+    }
+
+    #[tokio::test]
+    async fn an_unknown_transaction_is_401_invalid_continuation() {
+        let (h, k) = (handler(), key());
+        let r = h
+            .handle(&cont(&k, "no-such-id", "whatever", "c-x0", ""))
+            .await;
+        assert_eq!(r.status, 401);
+        assert_eq!(code_of(&r), "invalid_continuation");
+    }
+
+    #[tokio::test]
+    async fn the_continue_route_refuses_other_methods_with_allow() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-m0").await;
+        for m in ["GET", "PUT", "DELETE", "PATCH", "OPTIONS"] {
+            let r = h
+                .handle(&req(
+                    m,
+                    &format!("/api/gnap/tx/continue/{id}"),
+                    vec![],
+                    Vec::new(),
+                ))
+                .await;
+            assert_eq!(r.status, 405, "{m}");
+            assert_eq!(r.header("Allow"), Some("POST"));
+        }
+        // None of those touched the transaction.
+        assert_eq!(
+            h.handle(&cont(&k, &id, &t0, "c-m-end", "")).await.status,
+            200
+        );
+    }
+
+    #[tokio::test]
+    async fn a_continue_path_that_does_not_name_one_transaction_is_not_ours() {
+        let h = handler();
+        for p in [
+            "/api/gnap/tx/continue",
+            "/api/gnap/tx/continue/",
+            "/api/gnap/tx/continue/a/b",
+        ] {
+            assert_eq!(
+                h.handle(&req("POST", p, vec![], Vec::new())).await.status,
+                404,
+                "{p}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_continue_body_that_is_not_json_or_is_oversized_is_400() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-b0").await;
+        let r = h.handle(&cont(&k, &id, &t0, "c-b1", "not json")).await;
+        assert_eq!(r.status, 400);
+        assert_eq!(code_of(&r), "invalid_request");
+        let big = " ".repeat(MAX_BODY_BYTES + 1);
+        assert_eq!(
+            h.handle(&cont(&k, &id, &t0, "c-b2", &big)).await.status,
+            400
+        );
+        // Neither attempt spent the token.
+        assert_eq!(h.handle(&cont(&k, &id, &t0, "c-b3", "")).await.status, 200);
     }
 
     // ── routing and hygiene ─────────────────────────────────────────────

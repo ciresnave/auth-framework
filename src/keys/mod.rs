@@ -25,6 +25,8 @@ pub use generate::{LocalKey, SigningAlg, SymmetricKey};
 pub use kind::{KeyKind, Kid, Signer};
 pub use rotation::{NewKey, compromise, due_for_rotation, retire_expired, revoke, rotate};
 pub use state::KeyState;
+#[cfg(feature = "key-agreement")]
+pub use store::agree;
 pub use store::{
     FileKeyStore, KeyInfo, KeyStore, MemoryKeyStore, StoreCapabilities, publish_jwks, unix_now,
 };
