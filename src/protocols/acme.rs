@@ -216,6 +216,8 @@ pub struct AcmeChallenge {
     pub challenge_type: ChallengeType,
     pub url: String,
     pub status: ChallengeStatus,
+    // sec012: public - the ACME challenge token (RFC 8555 section 8.1) is served to anyone who requests the
+    // challenge URL and published at /.well-known/acme-challenge/<token>; the secret is the account key.
     pub token: String,
     #[serde(default)]
     pub validated: Option<String>,

@@ -59,7 +59,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.95"
-  version       = "0.6.0-rc326"
+  version       = "0.6.0-rc327"
 
 [workspace]
   # auth-storage-sqlite shares this crate's Cargo.lock/resolution so it
@@ -440,7 +440,11 @@
   # sqlx 0.9 replaced the `runtime-tokio-rustls` feature with `runtime-tokio` +
   # `tls-rustls` (the same combination: tokio runtime, rustls with ring and the
   # webpki roots).
-  sqlx = { version = "0.9", features = [
+  # RUSTSEC-2026-0459 floor: sqlx 0.9.1 is the first release that allows a fixed libsqlite3-sys (>=0.39), but a
+  # consumer with an older lockfile keeps whatever libsqlite3-sys it has, so the fixed one is required here too.
+  # It adds no code: sqlx-sqlite already depends on it and picks its features.
+  libsqlite3-sys = { version = ">=0.39, <0.41", optional = true }
+  sqlx = { version = "0.9.1", features = [
     "chrono",
     "runtime-tokio",
     "tls-rustls",
@@ -479,14 +483,14 @@ pasetors = "0.8.1"
   ] # PostgreSQL recommended
   enhanced-device-flow = ["oauth-device-flows"]
   # Each storage feature enables only its own sqlx sub-feature.
-  sqlite-storage = ["dep:sqlx", "sqlx/sqlite"]
+  sqlite-storage = ["dep:sqlx", "sqlx/sqlite", "dep:libsqlite3-sys"]
   # DEPRECATED no-op alias, kept so `features = ["openid-connect"]` keeps
   # resolving on the 0.6 rc line; remove before 1.0. It used to enable the
   # `openidconnect` crate, which no code in this crate used (#113).
   openid-connect = []
   postgres-storage = ["dep:sqlx", "sqlx/postgres", "tokio-postgres"]
   redis-storage = ["redis"]
-  persistant-storage = ["dep:persistant-kv", "dep:persistant-sqlx"]
+  persistant-storage = ["dep:persistant-kv", "dep:persistant-sqlx", "dep:libsqlite3-sys"]
   # SMTP delivery (alert emails, MFA email over SMTP). Off by default so a consumer that only needs
   # tokens or TOTP does not compile lettre and its TLS stack.
   smtp = ["dep:lettre"]

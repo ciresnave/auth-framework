@@ -17,11 +17,18 @@ Security-first • Feature-rich • Batteries-included • Release candidate
 
 **No Rust installation required!** Use our precompiled binaries:
 
+> **Checked 2026-11-19 against release v0.6.0-rc217: the two one-line installers below do NOT work on `main` yet; the day PR that merges this change fixes the asset names (not yet run end to end).**
+> `scripts/install.sh` requests `authframework-<tag>-<target>.tar.gz` (HTTP 404: no such asset), while the
+> release publishes `auth-framework-<os>-<arch>.tar.gz` (for example `auth-framework-linux-x86_64.tar.gz`,
+> HTTP 200) and `auth-framework-windows-x86_64.zip`. Until that PR is merged, download the archive for
+> your platform from the [Releases page](https://github.com/ciresnave/auth-framework/releases), or use
+> `cargo add auth-framework` (see Quick Start below). The Docker line has not been run (it needs a tag).
+
 ```bash
-# Linux/macOS - One-line installation
+# Linux/macOS - One-line installation (broken, see above)
 curl -sSL https://raw.githubusercontent.com/ciresnave/auth-framework/main/scripts/install.sh | bash
 
-# Windows PowerShell - One command
+# Windows PowerShell - One command (also broken, see above)
 iwr -useb https://raw.githubusercontent.com/ciresnave/auth-framework/main/scripts/install.ps1 | iex
 
 # Docker - Instant deployment
@@ -327,12 +334,13 @@ let credential = Credential::enhanced_device_flow_complete(
 
 ## Quick Start
 
-Add this to your `Cargo.toml`:
+Add the crate and tokio with `cargo add` (no version string: the releases so far are all
+pre-releases named `rcNNN`, which Cargo orders as text, so a hand-written `rcNN` pin can resolve to
+nothing, and old ones are yanked):
 
-```toml
-[dependencies]
-auth-framework = "0.6.0-rc85"
-tokio = { version = "1.0", features = ["full"] }
+```bash
+cargo add auth-framework
+cargo add tokio --features full
 ```
 
 ### Basic Usage
@@ -367,10 +375,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the framework
     auth.initialize().await?;
 
-    // Create a JWT token for testing
+    // Grant the user the permission the check below asks for
+    auth.grant_permission("user123", "read", "documents").await?;
+
+    // Create a JWT token for testing. A token passes a permission check only if it
+    // carries the scope "<action>:<resource>" AND the user holds the permission.
     let token = auth.create_auth_token(
         "user123",
-        vec!["read".to_string(), "write".to_string()],
+        vec!["read:documents".to_string()],
         "jwt",
         None,
     ).await?;
@@ -387,6 +399,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+```
+
+Running it prints:
+
+```text
+Token is valid!
+User has permission to read documents
 ```
 
 ## 🏢 OAuth 2.0 Authorization Server
@@ -1034,9 +1053,8 @@ This project is licensed under the MIT OR Apache-2.0 license.
 
 The framework provides comprehensive testing utilities to make testing your authentication logic easy:
 
-```toml
-[dev-dependencies]
-auth-framework = "0.6.0-rc85"
+```bash
+cargo add --dev auth-framework
 ```
 
 ```rust
@@ -1293,11 +1311,9 @@ let custom_cred = Credential::Custom {
 
 Helper utilities for integrating with CLI frameworks:
 
-```toml
-[dependencies]
-auth-framework = "0.6.0-rc85"
-clap = "4.0"
-tokio = { version = "1.0", features = ["full"] }
+```bash
+cargo add auth-framework
+cargo add clap tokio --features tokio/full
 ```
 
 ```rust
