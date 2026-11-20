@@ -58,7 +58,7 @@
   readme        = "README.md"
   repository    = "https://github.com/ciresnave/auth-framework"
   rust-version  = "1.94"
-  version       = "0.5.0-rc92"
+  version       = "0.5.0-rc93"
 
 [[bin]]
   name              = "auth-framework"
@@ -365,7 +365,11 @@
   # entirely -- sqlx-mysql's own `rsa` dependency (RUSTSEC-2023-0071) for
   # its caching_sha2_password auth-plugin was the last remaining path to
   # that crate in this codebase; see CHANGELOG.md for the migration note.
-  sqlx = { version = "0.9", features = [
+  # RUSTSEC-2026-0459 floor: sqlx 0.9.1 is the first release that allows a fixed libsqlite3-sys (>=0.39), but a
+  # consumer with an older lockfile keeps whatever libsqlite3-sys it has, so the fixed one is required here too.
+  # It adds no code: sqlx-sqlite already depends on it and picks its features.
+  libsqlite3-sys = { version = ">=0.39, <0.41", optional = true }
+  sqlx = { version = "0.9.1", features = [
     "chrono",
     "runtime-tokio",
     "tls-rustls",
@@ -405,7 +409,7 @@ pasetors = "0.7.7"
   ] # PostgreSQL recommended
   enhanced-device-flow = ["oauth-device-flows"]
   # Each storage feature enables only its own sqlx sub-feature.
-  sqlite-storage = ["dep:sqlx", "sqlx/sqlite"]
+  sqlite-storage = ["dep:sqlx", "sqlx/sqlite", "dep:libsqlite3-sys"]
   # No-op: the optional `openidconnect` dependency was removed because it carries a hard
   # dependency on the `rsa` crate and nothing in this crate calls it. The feature name stays
   # so `features = ["openid-connect"]` keeps resolving.
