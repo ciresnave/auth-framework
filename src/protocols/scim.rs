@@ -338,6 +338,7 @@ pub struct ServiceProviderConfig {
     pub bulk: BulkSupported,
     pub filter: FilterSupported,
     #[serde(rename = "changePassword")]
+    // sec012: public - the RFC 7643 section 5 capability flag `{"supported": bool}`: whether this server offers password change.
     pub change_password_flag: Supported,
     pub sort: Supported,
     pub etag: Supported,

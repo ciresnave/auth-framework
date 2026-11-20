@@ -225,6 +225,7 @@ impl EnhancedClientCredentials {
 pub struct EnhancedTokenStorage {
     refresh_tokens: HashMap<String, RefreshToken>,
     authorization_codes: HashMap<String, EnhancedAuthorizationCode>,
+    // sec012: public - EnhancedTokenStorage has a hand-written Debug that prints only the number of entries, never a credential.
     client_credentials: HashMap<String, EnhancedClientCredentials>,
     users: HashMap<String, UserCredentials>,
 }

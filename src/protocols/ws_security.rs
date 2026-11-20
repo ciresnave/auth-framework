@@ -30,12 +30,14 @@ fn xml_escape(s: &str) -> String {
 #[derive(Debug, Clone, Default)]
 pub struct WsSecurityHeader {
     /// Username token (if used)
+    // sec012: public - the password inside is a UsernamePassword, whose Debug redacts its value; username and nonce are not secrets.
     pub username_token: Option<UsernameToken>,
 
     /// Timestamp (if used)
     pub timestamp: Option<Timestamp>,
 
     /// Binary security token (X.509 certificate)
+    // sec012: public - the X.509 certificate presented in the header (public by design).
     pub binary_security_token: Option<BinarySecurityToken>,
 
     /// SAML assertions

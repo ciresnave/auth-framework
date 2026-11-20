@@ -68,6 +68,8 @@ pub struct GnapTransactionRequest {
     /// RFC's own shape. Build one from grant-level rights with `vec_of_rights.into()`; read the rights with
     /// [`GnapService::requested_rights`].
     #[serde(rename = "access_token")]
+    // sec012: public - this is the request for access rights (RFC 9635 section 2.1: type, actions, locations), not a token value;
+    // the token itself is issued later and is not held here.
     pub access_token_request: Option<GnapAccessTokenRequests>,
     /// Subject information request
     pub subject: Option<GnapSubjectRequest>,
