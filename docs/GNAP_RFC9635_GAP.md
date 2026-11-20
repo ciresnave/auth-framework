@@ -21,13 +21,13 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
 | 2.1 `access_token` object / array of objects | **done (G5 slice 1)** | `GnapTransactionRequest.access_token` is `gnap_wire::GnapAccessTokenRequests`: `{"access_token":{"access":[...]}}` and the array form both parse; access rights as objects or reference strings. `GnapService::requested_rights` applies the section 2.1.1/2.1.2 checks (empty token, empty type, labels in arrays, `invalid_flag` for any flag, since this server supports none) and refuses more than one token per request | Not carried yet: `datatypes`, `identifier`, `privileges` of an access object (the grant-level right has only type, actions, locations; G6) and several tokens per request |
-| 2.1.1 `label`, `flags` (`bearer`, `split`) | **missing** | none | Label must be echoed back; flags change token behaviour |
+| 2.1.1 `label`, `flags` (`bearer`, `split`) | **partial (wire only)** | `GnapAccessTokenRequest.label`/`flags` parse and validate in `gnap_wire.rs` (87-90); the service refuses any flag with `invalid_flag` since it supports none | Label is not echoed back in the issued token; no flag changes token behaviour |
 | 2.1.2 multiple access tokens | **missing** | one token per grant | |
 | 2.2 `subject` (`sub_id_formats`, `assertion_formats`, `sub_ids`) | **partial** | formats are parsed (82, 85); `sub_ids` is not a field | `sub_ids` (a specific subject) and assertions are missing |
-| 2.3 `client` by value | **partial** | `GnapClientInfo { key, display }` (89-93); a key is required since rc217 | `class_id` missing; `display.logo_uri` missing (display has `name`, `uri` only, 135-137) |
-| 2.3.1 `client` by reference (string) | **missing** | the field is an object only | |
+| 2.3 `client` by value | **partial** | `GnapClientInfo { key, display }` in the service (a key is required since rc217); `gnap_wire.rs` carries `class_id` (307) and `display.logo_uri` (341) | the service type does not carry `class_id` or `logo_uri` |
+| 2.3.1 `client` by reference (string) | **partial (wire only)** | `GnapClientRef` (`gnap_wire.rs` 282) accepts both forms | the service field is an object only |
 | 2.3.3 authenticating the client instance | **partial** | see 7.3 | only one method verifies |
-| 2.4 `user` (and by reference) | **missing** | no field | needed for user hints and for acting on behalf of an account holder |
+| 2.4 `user` (and by reference) | **partial (wire only)** | a `user` type with validation exists in `gnap_wire.rs`; `GnapTransactionRequest` has no `user` field | the service does not read it (user hints, acting for an account holder) |
 | 2.5 `interact.start` | **partial** | `start: Vec<String>`, read by `parse_start` at transaction open (G4 slice 1); `"redirect"` and `"user_code"` produce a response | `app`, `user_code_uri` are accepted and ignored; the object form of `start` is not supported |
 | 2.5.2 `interact.finish` | **partial** | `{method, uri, nonce}`, validated by `FinishRequest::parse` at transaction open; a `push` target that is not public https (loopback, private, link-local, metadata, credentials) is refused (11.34, G4 slice 1) | `hash_method` is read and any value but `sha-256` is refused at open with an error naming it (not ignored); sha-384/512 are not honoured by the service yet (the hash is sha-256, 775-782); the target is not re-checked after name resolution and nothing is pushed yet (UNIMPLEMENTED) |
 | 2.5.3 `interact.hints` (`ui_locales`) | **missing** | none | |
@@ -44,8 +44,8 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 | 3.2.2 multiple access tokens | **missing** | | |
 | 3.3 interaction responses | **partial** | `redirect` (931-935), `finish` = the AS nonce (941) | `user_code` is returned (G4 slice 1) and kept on the transaction; `app`, `user_code_uri`, `expires_in` missing |
 | 3.4 subject information | **partial** | `sub_ids` in `opaque`, `email`, `iss_sub` (1439-1471); `iss` is the literal `"self"` (1457) | `assertions` and `updated_at` missing; `iss` should be the AS identifier |
-| 3.5 `instance_id` | **missing** | | |
-| 3.6 error response | **missing** | failures are `AuthError` strings; the continuation refusals share one message (410) | no `error` object, none of the registered codes (`invalid_request`, `invalid_client`, `invalid_interaction`, `invalid_flag`, `invalid_rotation`, `key_rotation_not_supported`, `invalid_continuation`, `user_denied`, `request_denied`, `unknown_user`, `unknown_interaction`, `too_fast`, `too_many_attempts`) |
+| 3.5 `instance_id` | **partial** | returned by the RS-facing API (`gnap_http.rs` 354, RFC 9767 registration) | the grant response (`GnapService`) has none |
+| 3.6 error response | **partial** | `GnapError`/`GnapErrorCode` (all registered codes, `gnap_wire.rs` 540-625); the AS HTTP layer answers `{"error":{"code","description"}}` (`gnap_as_http.rs` 252); the service itself still returns `AuthError` strings and the continuation refusals share one message | the service API does not return `GnapError`, so each caller maps strings to codes; no `too_many_attempts` is ever raised |
 
 ### 4 Determining authorization and consent
 
@@ -69,19 +69,19 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 6.1 rotate | **partial** | `rotate_token(value)` (1292): a new value, same rights and binding | no proof from the client key on the call, no management token, no `invalid_rotation`; 6.1.1 key rotation missing |
-| 6.2 revoke | **partial** | `revoke_token(value)` (1282) | no proof from the client key |
+| 6.1 rotate | **partial** | `rotate_token_with_proof` (client-key proof, `POST <grant endpoint>/token` in `gnap_as_http.rs`); `rotate_token(value)` is the unproved internal call | no separate management token (the token is its own manage credential), no `invalid_rotation`; 6.1.1 key rotation missing (discovery says `key_rotation_supported: false`) |
+| 6.2 revoke | **done (service + HTTP)** | `revoke_token_with_proof`; `DELETE` on the token endpoint (`gnap_as_http.rs`) | `revoke_token(value)` stays as the unproved internal call |
 
 ### 7 Securing requests
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
 | 7.1 key formats | **partial** | `jwk` (107); thumbprint per RFC 7638 for EC, RSA, OKP (446) | `cert` and `cert#S256` missing; key references (7.1.1) missing |
-| 7.2 `Authorization: GNAP <token>` | **missing** | there is no HTTP layer | parsing and the key-bound presentation rules |
-| 7.3.1 `httpsig` (RFC 9421, tag `gnap`, Content-Digest RFC 9530) | **missing, refused** | refused as not supported (761) | verified support needs a signature-base builder and verifier; look for a maintained crate before writing one |
-| 7.3.2 `mtls` | **missing, refused** | refused (761); the crate has certificate validation elsewhere (`src/server/security/mtls.rs`) | to connect |
-| 7.3.3 `jwsd` (detached JWS) | **missing** | the name is not in the accepted list at all (632, 705) | |
-| 7.3.4 `jws` (attached JWS) | **missing, refused** | refused (761) | |
+| 7.2 `Authorization: GNAP <token>` | **done (AS API)** | parsed in `gnap_as_http.rs` (236) for continue, rotate and revoke, with the key proof required | RS-side presentation is the RS API's (`gnap_rs.rs`); no key-less `bearer` flag path |
+| 7.3.1 `httpsig` (RFC 9421, tag `gnap`, Content-Digest RFC 9530) | **verifier built (G2), not wired** | `gnap_httpsig.rs` verifies signature base, tag, `created`, `keyid`, covered components, `Content-Digest` (sha-256/512) and nonce replay; `GnapService` still refuses `httpsig` as unverified | wire the verifier into `GnapService`'s proof dispatch (E1b) |
+| 7.3.2 `mtls` | **done (certificate match)** | `check_mtls_proof` calls `gnap_jws::verify_mtls` for `cert` and `cert#S256` keys (gnap.rs 1052-1073; form checks tested at 5048) | the TLS terminator must vouch for the certificate it presents; the crate does not terminate TLS |
+| 7.3.3 `jwsd` (detached JWS) | **verifier built (G3), not wired** | `gnap_jws::verify_detached` | the name is not in the service's accepted-proof list (E1b) |
+| 7.3.4 `jws` (attached JWS) | **verifier built (G3), not wired** | `gnap_jws::verify_attached`; the service refuses `jws` as unverified | wire it (E1b) |
 | `dpop` | **extension, not in the RFC** | verified through `DpopManager::validate_dpop_proof_for_key` (736-759) | `dpop` is not a registered GNAP key proofing method (RFC 9635 10.16 lists `httpsig`, `mtls`, `jwsd`, `jws`). It is the one method that verifies today; keep it as a named extension or register it, a decision for slice G3 |
 
 Nothing claims a method it does not verify: an unlisted or unverifiable method is refused (761), and the unit-test-only `"test"` method is compiled out of a build (760).

@@ -46,8 +46,8 @@ a row is **in** when leaving it open would leave a known defect, an unfinished R
 
 | # | Row | In the exit? | Why / what is left | PRs (unmeasured) |
 |---|---|---|---|---|
-| E1 | G5 rest | in | key rotation (RFC 9635 6.1), `Authorization: GNAP` parsing (7.2); the 11-20 PR lands polling `wait`/`too_fast`, PATCH, DELETE as service methods; the HTTP routes are the surface lane's | 1 project + 1 surface |
-| E2 | G1 rest | in | error object (3.6), `label`/`flags`, `client` and `user` by reference, `instance_id`; first re-read the status column of `docs/GNAP_RFC9635_GAP.md` against the code, since some rows predate G2/G3 | 1-2 project |
+| E1 | G5 rest | in | key rotation (RFC 9635 6.1.1) only: `Authorization: GNAP` parsing (7.2) and proved rotate/revoke already exist in `gnap_as_http.rs` (re-read 11-20); polling, PATCH, DELETE landed 11-20. **E1b (new, found by the E2 re-read):** the `httpsig` (G2) and `jwsd`/`jws` (G3) verifiers are built but `GnapService` still refuses those methods, so only `dpop` and `mtls` verify end to end; wire them into the proof dispatch | 1-2 project |
+| E2 | G1 rest | in | error object (3.6), `label`/`flags`, `client` and `user` by reference, `instance_id`; the re-read of `docs/GNAP_RFC9635_GAP.md` against the code is DONE (11-20, 13 rows corrected): what is left is making the service use the `gnap_wire.rs` types it still bypasses (`user`, `client` by reference, `class_id`, label echo) and return `GnapError` instead of `AuthError` strings | 1-2 project |
 | E3 | G4 rest | in | slices 2-3 (push delivery, user-code lookup and lockout) are built on `ac-g4-push`, PR day 11-22; still to build: redirect callback, `app`/`user_code_uri`, hints, `hash_method` beyond sha-256 | 1 + 1-2 access-control |
 | E4 | G7 routes | in | PATCH/DELETE/polling routes (after E1), RS-first (9.1); axum and actix | 1-2 surface |
 | E5 | G10 conformance | in | one test per RFC 9635 section 11 item, over E1-E4 | 1 project |
