@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- `sqlx` 0.9.0 -> 0.9.1 and `libsqlite3-sys` 0.30.1 -> 0.40.0 (RUSTSEC-2026-0459, bundled SQLite CVE-2026-119375, fixed in `libsqlite3-sys` 0.39.0). sqlx 0.9.1 widens the cap to `<0.41` (transact-rs/sqlx#4502), so the lockfile carries the fixed SQLite; the `deny.toml` and `.cargo/audit.toml` ignores are removed. No API change.
+- `sqlx` 0.9.0 -> 0.9.1 and `libsqlite3-sys` 0.30.1 -> 0.40.0 (RUSTSEC-2026-0459, bundled SQLite CVE-2026-119375, fixed in `libsqlite3-sys` 0.39.0). sqlx 0.9.1 widens the cap to `<0.41` (transact-rs/sqlx#4502), so the lockfile carries the fixed SQLite; the `deny.toml` and `.cargo/audit.toml` ignores are removed. The manifest now requires `sqlx` 0.9.1 and, under `sqlite-storage`, `libsqlite3-sys` `>=0.39, <0.41`, so a consumer with an older lockfile cannot keep the vulnerable SQLite when it updates this crate. No API change.
 - `actix-http` 3.20.3 -> 3.22.0 (RUSTSEC-2026-0552, -0553, -0554) and `lettre` 0.11.23 -> 0.11.24 (RUSTSEC-2026-0560 to -0565), lock-only, so `cargo audit` is green on this line again; `deny.toml` ignores the chrono and chrono-tz maintenance advisories (RUSTSEC-2026-0543, -0555) until 2026-12-17, as `main` does.
 
 ## [0.5.0-rc92] - 2026-11-15
