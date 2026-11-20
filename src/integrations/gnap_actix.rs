@@ -237,7 +237,7 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert_eq!(resp.headers().get("allow").unwrap(), "POST");
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST, PATCH, DELETE");
         let req = test::TestRequest::post()
             .uri("/api/gnap/tx/continue/abc")
             .insert_header(("Authorization", "GNAP nope"))
