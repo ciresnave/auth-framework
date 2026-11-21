@@ -1,6 +1,6 @@
 {
   "suite": "gnap-transaction-endpoint",
-  "suite_version": 6,
+  "suite_version": 7,
   "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
   "vectors": [
     {
@@ -1753,6 +1753,246 @@
           "token": "not-a-token",
           "expect": {
             "outcome": "error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-rotate-proof-missing",
+      "rfc": "RFC 9635",
+      "section": "6.1",
+      "kind": "negative",
+      "description": "A token cannot be rotated by a request that carries no proof of the key it is bound to; the token stays valid.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "$at",
+          "proof": "absent",
+          "expect": {
+            "outcome": "error"
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-rotate-wrong-key-proof",
+      "rfc": "RFC 9635",
+      "section": "6.1",
+      "kind": "negative",
+      "description": "A token cannot be rotated by a request proved with a different key than the one it is bound to; the token stays valid.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "rotate",
+          "token": "$at",
+          "proof": "wrong_key",
+          "expect": {
+            "outcome": "error"
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-revoke-proof-missing",
+      "rfc": "RFC 9635",
+      "section": "6.2",
+      "kind": "negative",
+      "description": "A token cannot be revoked by a request that carries no proof of the key it is bound to; the token stays valid.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "revoke",
+          "token": "$at",
+          "proof": "absent",
+          "expect": {
+            "outcome": "error"
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tok-revoke-wrong-key-proof",
+      "rfc": "RFC 9635",
+      "section": "6.2",
+      "kind": "negative",
+      "description": "A token cannot be revoked by a request proved with a different key than the one it is bound to; the token stays valid.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": {
+              "access": [
+                {
+                  "type": "read",
+                  "actions": [
+                    "list"
+                  ]
+                }
+              ]
+            }
+          },
+          "expect": {
+            "outcome": "response"
+          },
+          "save": {
+            "at": {
+              "pointer": "/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "revoke",
+          "token": "$at",
+          "proof": "wrong_key",
+          "expect": {
+            "outcome": "error"
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/active",
+                "op": "equals",
+                "value": true
+              }
+            ]
           }
         }
       ]

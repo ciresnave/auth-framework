@@ -43,5 +43,5 @@ Rules for adding a vector:
 3. A vector that describes behaviour not yet fixed in a published release is held back until
    that release is out.
 
-Scope of suite version 6: the transaction endpoint, continuation, token rotation and revocation, the interaction hash and the RFC 9635 section 11 checks the endpoint can answer, with DPoP client-key proofs. The server under test grants whatever is requested (a permissive access policy). RFC 9767 and the remaining section 11 checks are added
+Scope of suite version 7: the transaction endpoint, continuation, token rotation and revocation (including a request with no proof or the wrong key's proof), the interaction hash and the RFC 9635 section 11 checks the endpoint can answer, with DPoP client-key proofs. The server under test grants whatever is requested (a permissive access policy). RFC 9767 and the remaining section 11 checks are added
 in later versions of the suite.
