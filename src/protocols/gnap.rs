@@ -529,6 +529,16 @@ pub struct GnapService {
     poll_wait_secs: u64,
     /// Nonces of `httpsig` signatures already accepted, so a captured request cannot be replayed.
     httpsig_nonces: Arc<std::sync::Mutex<super::gnap_httpsig::NonceCache>>,
+    /// Seconds since the epoch; the system clock unless [`GnapService::with_clock`] replaced it.
+    clock: Arc<dyn Fn() -> u64 + Send + Sync>,
+}
+
+/// The system clock, in seconds since the epoch.
+fn system_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// What a poll that came before the `wait` the server announced is refused with (RFC 9635 section
@@ -569,9 +579,22 @@ impl GnapService {
             consents: Arc::new(InMemoryConsentStore::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
             httpsig_nonces: Arc::new(std::sync::Mutex::new(super::gnap_httpsig::NonceCache::new(
-                Self::now_secs(),
+                system_now(),
             ))),
+            clock: Arc::new(system_now),
         }
+    }
+
+    /// Replace the clock every expiry, poll-interval and signature-freshness decision reads, so a test can
+    /// move time instead of sleeping. `clock` returns seconds since the epoch. The `httpsig` nonce cache is
+    /// restarted at the new clock's current time. Production services keep the system clock.
+    #[must_use]
+    pub fn with_clock(mut self, clock: impl Fn() -> u64 + Send + Sync + 'static) -> Self {
+        self.httpsig_nonces = Arc::new(std::sync::Mutex::new(
+            super::gnap_httpsig::NonceCache::new(clock()),
+        ));
+        self.clock = Arc::new(clock);
+        self
     }
 
     /// Set the seconds a client must wait between polls of a pending transaction (default 5). A
@@ -620,10 +643,7 @@ impl GnapService {
     /// Withdraw a consent: mark the record withdrawn and revoke every access token issued under
     /// the approval it records. Withdrawing twice is harmless.
     pub async fn revoke_consent(&self, consent_id: &str) -> Result<()> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
         let consent = self
             .consents
             .revoke(consent_id, now)
@@ -642,10 +662,7 @@ impl GnapService {
     /// was not yet removed stays, so calling again finishes the job. Repeating a completed
     /// revocation removes nothing and succeeds.
     pub async fn revoke_client_key(&self, thumbprint: &str) -> Result<ClientKeyRevocation> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
         let mut transactions = 0;
         for id in self.transactions.ids().await? {
             let Some(txn) = self.transactions.get(&id).await? else {
@@ -1113,7 +1130,7 @@ impl GnapService {
             proof_alg: None,
             content_digest_alg: None,
             bound_to_token,
-            now: Self::now_secs(),
+            now: self.now(),
             nonce_scope: thumbprint,
         };
         let mut nonces = self
@@ -1168,7 +1185,7 @@ impl GnapService {
         } else {
             None
         };
-        let now = Self::now_secs();
+        let now = self.now();
         let context = super::gnap_jws::JwsProofContext {
             jwk,
             method: proof.http_method,
@@ -1196,11 +1213,9 @@ impl GnapService {
             .map_err(|_| AuthError::validation(PROOF_INVALID))
     }
 
-    fn now_secs() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
+    /// The current time in seconds since the epoch, from the service's clock (see [`Self::with_clock`]).
+    fn now(&self) -> u64 {
+        (self.clock)()
     }
 
     /// Check that the certificate the TLS layer authenticated on this request is the one the key
@@ -1422,10 +1437,7 @@ impl GnapService {
         let access_requests = granted.as_slice();
 
         let access_token = uuid::Uuid::new_v4().to_string();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
 
         let issued = GnapIssuedToken {
             value: access_token.clone(),
@@ -1550,10 +1562,7 @@ impl GnapService {
         let transaction_id = uuid::Uuid::new_v4().to_string();
         let continue_token = uuid::Uuid::new_v4().to_string();
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
 
         let mut response = serde_json::Map::new();
 
@@ -1762,10 +1771,7 @@ impl GnapService {
             .ok_or_else(|| AuthError::validation(INVALID_CONTINUATION))?;
 
         // Enforce transaction expiration
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
         if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
             self.transactions.remove(transaction_id).await?;
             return Err(AuthError::validation(INVALID_CONTINUATION));
@@ -1952,10 +1958,7 @@ impl GnapService {
             .get(transaction_id)
             .await?
             .ok_or_else(|| AuthError::validation(INVALID_CONTINUATION))?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
         if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
             self.transactions.remove(transaction_id).await?;
             return Err(AuthError::validation(INVALID_CONTINUATION));
@@ -2185,10 +2188,7 @@ impl GnapService {
             .await?
             .ok_or_else(|| AuthError::validation("Token not found or already revoked"))?;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
 
         if now >= old.expires_at {
             return Err(AuthError::validation("Token has expired"));
@@ -2240,10 +2240,7 @@ impl GnapService {
             None => return Ok(None),
         };
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
 
         if now >= token.expires_at {
             return Ok(None);
@@ -2291,10 +2288,7 @@ impl GnapService {
             None => return Err(AuthError::validation("Token not found")),
         };
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
         if now >= token.expires_at {
             return Err(AuthError::validation("Token has expired"));
         }
@@ -2386,10 +2380,7 @@ impl GnapService {
 
     /// Remove expired transactions from the transaction store.
     pub async fn cleanup_expired_transactions(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
         // Expired is `now - created_at > lifetime`, that is `created_at < now - lifetime`.
         let cutoff = now.saturating_sub(self.config.transaction_lifetime_secs);
         if let Err(e) = self.transactions.purge_created_before(cutoff).await {
@@ -2399,10 +2390,7 @@ impl GnapService {
 
     /// Remove expired access tokens from the token store.
     pub async fn cleanup_expired_tokens(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.now();
         if let Err(e) = self.issued_tokens.purge_expired(now).await {
             tracing::warn!("GNAP token store could not purge expired tokens: {e}");
         }
@@ -6013,6 +6001,25 @@ mod httpsig_proof_tests {
             .sign(&SystemRandom::new(), format!("{h}.{p}").as_bytes())
             .unwrap();
         format!("{h}.{p}.{}", b64(sig.as_ref()))
+    }
+
+    #[tokio::test]
+    async fn a_token_expires_when_the_injected_clock_passes_its_lifetime() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let time = Arc::new(AtomicU64::new(1_800_000_000));
+        let clock = Arc::clone(&time);
+        let svc = service().with_clock(move || clock.load(Ordering::SeqCst));
+        let key = signer();
+        let issued = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        // Control: the token is live one second before its 3600 s lifetime ends, and gone at the end.
+        time.fetch_add(3599, Ordering::SeqCst);
+        assert!(svc.introspect_token(&token).await.unwrap().is_some());
+        time.fetch_add(1, Ordering::SeqCst);
+        assert!(svc.introspect_token(&token).await.unwrap().is_none());
     }
 
     #[tokio::test]
