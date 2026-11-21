@@ -2207,6 +2207,120 @@
           }
         }
       ]
+    },
+    {
+      "id": "tx-push-loopback-refused",
+      "rfc": "RFC 9635",
+      "section": "11.34",
+      "kind": "negative",
+      "description": "A request whose push finish target is a loopback address is refused at transaction open, so the AS never calls it.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "request": {
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        },
+        "interact": {
+          "start": [
+            "redirect"
+          ],
+          "finish": {
+            "method": "push",
+            "uri": "https://127.0.0.1/done",
+            "nonce": "client-nonce-1"
+          }
+        }
+      },
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-push-http-refused",
+      "rfc": "RFC 9635",
+      "section": "11.34",
+      "kind": "negative",
+      "description": "A request whose push finish target is not https is refused at transaction open.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "request": {
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        },
+        "interact": {
+          "start": [
+            "redirect"
+          ],
+          "finish": {
+            "method": "push",
+            "uri": "http://client.example.test/done",
+            "nonce": "client-nonce-1"
+          }
+        }
+      },
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "tx-push-public-accepted",
+      "rfc": "RFC 9635",
+      "section": "11.34",
+      "kind": "positive",
+      "description": "Control: a push finish target on a public https host is accepted, so the refusals above are about the target and not about push.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "request": {
+        "access_token": {
+          "access": [
+            {
+              "type": "read"
+            }
+          ]
+        },
+        "interact": {
+          "start": [
+            "redirect"
+          ],
+          "finish": {
+            "method": "push",
+            "uri": "https://client.example.test/done",
+            "nonce": "client-nonce-1"
+          }
+        }
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          {
+            "path": "/interact/finish",
+            "op": "is_string"
+          }
+        ]
+      },
+      "client_key": "dpop",
+      "proof": "valid"
     }
   ]
 }
