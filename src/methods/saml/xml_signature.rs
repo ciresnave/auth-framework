@@ -236,7 +236,7 @@ impl SamlSignatureValidator {
     }
 
     /// Extract SignedInfo element from SAML assertion
-    fn extract_signed_info(&self, xml: &str) -> Result<String> {
+    pub fn extract_signed_info(&self, xml: &str) -> Result<String> {
         let mut reader = Reader::from_str(xml);
         let mut signed_info = String::new();
         let mut inside_signed_info = false;
