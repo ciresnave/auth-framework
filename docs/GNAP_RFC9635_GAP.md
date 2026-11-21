@@ -78,10 +78,10 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 |---|---|---|---|
 | 7.1 key formats | **partial** | `jwk` (107); thumbprint per RFC 7638 for EC, RSA, OKP (446) | `cert` and `cert#S256` missing; key references (7.1.1) missing |
 | 7.2 `Authorization: GNAP <token>` | **done (AS API)** | parsed in `gnap_as_http.rs` (236) for continue, rotate and revoke, with the key proof required | RS-side presentation is the RS API's (`gnap_rs.rs`); no key-less `bearer` flag path |
-| 7.3.1 `httpsig` (RFC 9421, tag `gnap`, Content-Digest RFC 9530) | **verifier built (G2), not wired** | `gnap_httpsig.rs` verifies signature base, tag, `created`, `keyid`, covered components, `Content-Digest` (sha-256/512) and nonce replay; `GnapService` still refuses `httpsig` as unverified | wire the verifier into `GnapService`'s proof dispatch (E1b) |
+| 7.3.1 `httpsig` (RFC 9421, tag `gnap`, Content-Digest RFC 9530) | **done** | `gnap_httpsig.rs` verifies signature base, tag, `created`, `keyid`, covered components, `Content-Digest` (sha-256/512) and nonce replay; `GnapService` verifies it at issuance, continuation, modification, deletion, rotation and revocation against the key's JWK (kept on the issued token as `key_jwk`) with one shared nonce cache; the AS HTTP layer passes the request's headers and body and lists `httpsig` in `key_proofs_supported` | the object form of `proof` (`alg`, `content-digest-alg`) is not parsed: the string form is the only one the key type carries; the nonce cache is per `GnapService` instance (share one service, or route a client to one instance) |
 | 7.3.2 `mtls` | **done (certificate match)** | `check_mtls_proof` calls `gnap_jws::verify_mtls` for `cert` and `cert#S256` keys (gnap.rs 1052-1073; form checks tested at 5048) | the TLS terminator must vouch for the certificate it presents; the crate does not terminate TLS |
-| 7.3.3 `jwsd` (detached JWS) | **verifier built (G3), not wired** | `gnap_jws::verify_detached` | the name is not in the service's accepted-proof list (E1b) |
-| 7.3.4 `jws` (attached JWS) | **verifier built (G3), not wired** | `gnap_jws::verify_attached`; the service refuses `jws` as unverified | wire it (E1b) |
+| 7.3.3 `jwsd` (detached JWS) | **done** | `gnap_jws::verify_detached`, driven from the `Detached-JWS` header at the same six entry points as `httpsig`; the JWS carries no nonce, so its signature is remembered in the shared cache and a replay inside the 300 s skew window is refused; listed in `key_proofs_supported` | none known |
+| 7.3.4 `jws` (attached JWS) | **verifier built (G3), not wired** | `gnap_jws::verify_attached`; the service refuses `jws` as unverified | the request body is the JWS and the client key sits inside its payload, so the AS HTTP layer must unwrap the body before it can verify (E1b) |
 | `dpop` | **extension, not in the RFC** | verified through `DpopManager::validate_dpop_proof_for_key` (736-759) | `dpop` is not a registered GNAP key proofing method (RFC 9635 10.16 lists `httpsig`, `mtls`, `jwsd`, `jws`). It is the one method that verifies today; keep it as a named extension or register it, a decision for slice G3 |
 
 Nothing claims a method it does not verify: an unlisted or unverifiable method is refused (761), and the unit-test-only `"test"` method is compiled out of a build (760).
@@ -95,7 +95,7 @@ Nothing claims a method it does not verify: an unlisted or unverifiable method i
 
 ### 9 Discovery
 
-**Partly done.** `OPTIONS` on the grant endpoint answers the 9.2 document (`GnapAsHttp`, `src/protocols/gnap_as_http.rs`), listing only what is verified today (`dpop` proofs, `redirect` start and finish, no key rotation). **Missing:** the RS-first method (9.1).
+**Partly done.** `OPTIONS` on the grant endpoint answers the 9.2 document (`GnapAsHttp`, `src/protocols/gnap_as_http.rs`), listing only what is verified today (`dpop`, `httpsig` and `jwsd` proofs, `redirect` start and finish, no key rotation). **Missing:** the RS-first method (9.1).
 
 ### 10 and 11
 
