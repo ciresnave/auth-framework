@@ -554,6 +554,9 @@ const DEFAULT_POLL_WAIT_SECS: u64 = 5;
 /// unknown transaction from an expired one, a wrong token or a wrong interaction hash.
 const INVALID_CONTINUATION: &str = "Invalid continuation request";
 
+/// How far a JWS proof's `created` may differ from now, in seconds; its signature is remembered for twice that.
+const JWS_MAX_SKEW_SECS: u64 = 300;
+
 /// Refusal of a client key whose proof method this crate cannot verify.
 const PROOF_NOT_SUPPORTED: &str = "GNAP proof method not supported";
 /// Refusal of a client key that came without the proof material to check it.
@@ -1090,6 +1093,12 @@ impl GnapService {
                 dpop.map(|(_, proof)| proof),
                 bound_to_token,
             ),
+            "jws" => self.check_jws_proof(
+                thumbprint,
+                jwk,
+                dpop.map(|(_, proof)| proof),
+                bound_to_token,
+            ),
             "jwsd" => self.check_jwsd_proof(
                 thumbprint,
                 jwk,
@@ -1159,7 +1168,6 @@ impl GnapService {
         proof: Option<&GnapProof<'_>>,
         bound_to_token: bool,
     ) -> Result<()> {
-        const MAX_SKEW_SECS: u64 = 300;
         let (Some(jwk), Some(proof)) = (jwk, proof) else {
             return Err(AuthError::validation(PROOF_REQUIRED));
         };
@@ -1175,11 +1183,7 @@ impl GnapService {
         };
         // A token request presents its token as `Authorization: GNAP <token>`, and `ath` binds the JWS to it.
         let access_token = if bound_to_token {
-            let token = header("authorization")
-                .and_then(|v| v.split_once(' '))
-                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("GNAP"))
-                .map(|(_, t)| t.trim());
-            match token {
+            match Self::bearer_gnap_token(proof) {
                 Some(t) => Some(t),
                 None => return Err(AuthError::validation(PROOF_REQUIRED)),
             }
@@ -1194,12 +1198,70 @@ impl GnapService {
             body: proof.http_body,
             access_token,
             now,
-            max_skew_secs: MAX_SKEW_SECS,
+            max_skew_secs: JWS_MAX_SKEW_SECS,
         };
         super::gnap_jws::verify_detached(detached, &context)
             .map_err(|_| AuthError::validation(PROOF_INVALID))?;
-        // Recorded only after the signature checked out, so a forged request cannot burn a real one's slot.
-        let signature = detached.trim().rsplit('.').next().unwrap_or_default();
+        self.remember_jws(thumbprint, detached, now)
+    }
+
+    /// Check a request whose content is a compact JWS (`jws`, RFC 9635 section 7.3.4): `proof.http_body` is the
+    /// whole JWS, whose payload is the request. A request with no content cannot carry one, so it is proved
+    /// with a `Detached-JWS` header exactly as `jwsd` is. The caller must hand the payload of `http_body` to
+    /// the entry point as the request; the AS HTTP layer does.
+    fn check_jws_proof(
+        &self,
+        thumbprint: &str,
+        jwk: Option<&serde_json::Value>,
+        proof: Option<&GnapProof<'_>>,
+        bound_to_token: bool,
+    ) -> Result<()> {
+        let (Some(jwk), Some(proof)) = (jwk, proof) else {
+            return Err(AuthError::validation(PROOF_REQUIRED));
+        };
+        if proof.http_body.is_empty() {
+            return self.check_jwsd_proof(thumbprint, Some(jwk), Some(proof), bound_to_token);
+        }
+        let access_token = if bound_to_token {
+            match Self::bearer_gnap_token(proof) {
+                Some(t) => Some(t),
+                None => return Err(AuthError::validation(PROOF_REQUIRED)),
+            }
+        } else {
+            None
+        };
+        let compact = std::str::from_utf8(proof.http_body)
+            .map_err(|_| AuthError::validation(PROOF_INVALID))?;
+        let now = self.now();
+        let context = super::gnap_jws::JwsProofContext {
+            jwk,
+            method: proof.http_method,
+            uri: proof.http_uri,
+            body: &[],
+            access_token,
+            now,
+            max_skew_secs: JWS_MAX_SKEW_SECS,
+        };
+        super::gnap_jws::verify_attached(compact, &context)
+            .map_err(|_| AuthError::validation(PROOF_INVALID))?;
+        self.remember_jws(thumbprint, compact, now)
+    }
+
+    /// The token of the request's `Authorization: GNAP <token>` header, if it has one.
+    fn bearer_gnap_token<'p>(proof: &GnapProof<'p>) -> Option<&'p str> {
+        proof
+            .http_headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("authorization"))
+            .and_then(|(_, v)| v.split_once(' '))
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("GNAP"))
+            .map(|(_, t)| t.trim())
+    }
+
+    /// Remember the signature of a verified JWS so the same request is refused a second time inside the skew
+    /// window. Recorded only after the signature checked out, so a forged request cannot burn a real one's slot.
+    fn remember_jws(&self, thumbprint: &str, jws: &str, now: u64) -> Result<()> {
+        let signature = jws.trim().rsplit('.').next().unwrap_or_default();
         let mut nonces = self
             .httpsig_nonces
             .lock()
@@ -1207,9 +1269,9 @@ impl GnapService {
         nonces
             .check_and_insert(
                 thumbprint,
-                &format!("jwsd:{signature}"),
+                &format!("jws:{signature}"),
                 now,
-                2 * MAX_SKEW_SECS,
+                2 * JWS_MAX_SKEW_SECS,
             )
             .map_err(|_| AuthError::validation(PROOF_INVALID))
     }
@@ -4561,12 +4623,12 @@ mod proof_verification_tests {
     }
 
     #[tokio::test]
-    async fn jws_and_unknown_methods_are_refused_not_accepted_unverified() {
+    async fn unknown_methods_are_refused_not_accepted_unverified() {
         let (svc, dpop, key) = (service(), manager(), client_key());
         // A valid DPoP header does not rescue a method that is not DPoP.
         let header = dpop_header(&key, &key, "POST", URI, "jti-other-method");
         // `mtls` is exercised with a certificate key in the KM7 tests below: with a JWK it is a malformed key.
-        for method in ["jws", "no-such-method"] {
+        for method in ["no-such-method"] {
             let msg = refusal(svc.handle_transaction(request(&key, method, false)).await);
             assert!(
                 msg.contains("proof method not supported"),
@@ -4637,7 +4699,7 @@ mod proof_verification_tests {
             }
         }
         // the methods this build verifies, pinned: a new one has to be added on purpose
-        assert_eq!(admitted, ["dpop", "test", "httpsig", "jwsd"]);
+        assert_eq!(admitted, ["dpop", "test", "httpsig", "jwsd", "jws"]);
         // a token with no recorded method is refused at management, never waved through
         let none = svc
             .verify_token_key_proof(Some(&thumbprint), None, None, None)
@@ -6021,6 +6083,62 @@ mod httpsig_proof_tests {
         assert!(svc.introspect_token(&token).await.unwrap().is_some());
         time.fetch_add(1, Ordering::SeqCst);
         assert!(svc.introspect_token(&token).await.unwrap().is_none());
+    }
+
+    /// A compact (attached) JWS (RFC 9635 section 7.3.4) over `payload`, signed by `signer`.
+    fn attached_jws(signer: &Signer, payload: &[u8], created: i64) -> String {
+        let header = serde_json::json!({
+            "alg": "ES256", "typ": "gnap-binding-jws", "htm": "POST", "uri": URI, "created": created
+        });
+        let (h, p) = (b64(header.to_string().as_bytes()), b64(payload));
+        let sig = signer
+            .pair
+            .sign(&SystemRandom::new(), format!("{h}.{p}").as_bytes())
+            .unwrap();
+        format!("{h}.{p}.{}", b64(sig.as_ref()))
+    }
+
+    async fn issue_attached(
+        svc: &GnapService,
+        key: &Signer,
+        body: &[u8],
+    ) -> Result<serde_json::Value> {
+        let proof = GnapProof {
+            http_method: "POST",
+            http_uri: URI,
+            dpop_proof: None,
+            expected_nonce: None,
+            client_certificate_der: None,
+            http_headers: &[],
+            http_body: body,
+        };
+        let dpop = DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap());
+        svc.handle_transaction_with_proof(&dpop, &proof, request(key, "jws"))
+            .await
+    }
+
+    #[tokio::test]
+    async fn a_jws_key_is_proved_by_an_attached_jws_and_a_replay_is_refused() {
+        let svc = service();
+        let key = signer();
+        let other = signer();
+        let now = chrono::Utc::now().timestamp();
+        let good = attached_jws(&key, b"{}", now);
+
+        // Refutations: no body, and a JWS by another key, are refused.
+        assert!(issue_attached(&svc, &key, b"").await.is_err());
+        let forged = attached_jws(&other, b"{}", now);
+        assert!(issue_attached(&svc, &key, forged.as_bytes()).await.is_err());
+
+        // Positive control, built the same way: the named key's JWS is accepted, once.
+        let ok = issue_attached(&svc, &key, good.as_bytes())
+            .await
+            .unwrap_or_else(|e| panic!("an attached JWS by the named key must be accepted: {e}"));
+        assert!(ok["access_token"]["value"].is_string());
+        assert!(
+            issue_attached(&svc, &key, good.as_bytes()).await.is_err(),
+            "the same attached JWS must not be accepted twice"
+        );
     }
 
     #[tokio::test]
