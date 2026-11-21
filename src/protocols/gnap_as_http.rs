@@ -120,14 +120,14 @@ impl GnapAsHttp {
     }
 
     /// The document `OPTIONS` on the grant endpoint answers (RFC 9635 section 9.2). It lists only
-    /// what this crate does: the `dpop` and `httpsig` proof methods, the `redirect` start mode and finish
+    /// what this crate does: the `dpop`, `httpsig` and `jwsd` proof methods, the `redirect` start mode and finish
     /// method, and no key rotation.
     fn discovery_document(&self) -> Value {
         json!({
             "grant_request_endpoint": self.grant_url,
             "interaction_start_modes_supported": ["redirect"],
             "interaction_finish_methods_supported": ["redirect"],
-            "key_proofs_supported": ["dpop", "httpsig"],
+            "key_proofs_supported": ["dpop", "httpsig", "jwsd"],
             "key_rotation_supported": false,
         })
     }
@@ -666,7 +666,10 @@ pub(crate) mod tests {
         assert_eq!(r.status, 200);
         let doc = json_of(&r);
         assert_eq!(doc["grant_request_endpoint"], GRANT);
-        assert_eq!(doc["key_proofs_supported"], json!(["dpop", "httpsig"]));
+        assert_eq!(
+            doc["key_proofs_supported"],
+            json!(["dpop", "httpsig", "jwsd"])
+        );
         assert_eq!(
             doc["interaction_start_modes_supported"],
             json!(["redirect"])

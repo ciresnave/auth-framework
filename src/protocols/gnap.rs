@@ -133,7 +133,7 @@ pub struct GnapClientInfo {
 /// Client key with proof method (draft §7.1)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GnapClientKey {
-    /// Proof method: "httpsig", "mtls", "dpop", "jws", or "test"
+    /// Proof method: "httpsig", "mtls", "dpop", "jws", "jwsd", or "test"
     pub proof: String,
     /// The client's public key as a JWK. Exactly one of `jwk`, `cert` and `cert#S256` is given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -944,7 +944,7 @@ impl GnapService {
 
         // Validate proof method is recognized
         match key.proof.as_str() {
-            "httpsig" | "mtls" | "dpop" | "jws" | "test" => {}
+            "httpsig" | "mtls" | "dpop" | "jws" | "jwsd" | "test" => {}
             other => {
                 return Err(AuthError::validation(format!(
                     "GNAP proof method not supported: {other}"
@@ -1015,7 +1015,7 @@ impl GnapService {
 
         // Validate proof method is recognized
         match key.proof.as_str() {
-            "httpsig" | "mtls" | "dpop" | "jws" | "test" => {}
+            "httpsig" | "mtls" | "dpop" | "jws" | "jwsd" | "test" => {}
             other => {
                 return Err(AuthError::validation(format!(
                     "GNAP proof method not supported: {other}"
@@ -1072,6 +1072,12 @@ impl GnapService {
                 dpop.map(|(_, proof)| proof),
                 bound_to_token,
             ),
+            "jwsd" => self.check_jwsd_proof(
+                thumbprint,
+                jwk,
+                dpop.map(|(_, proof)| proof),
+                bound_to_token,
+            ),
             "mtls" => Self::check_mtls_proof(thumbprint, dpop.map(|(_, proof)| proof)),
             #[cfg(test)]
             "test" => Ok(()),
@@ -1122,6 +1128,72 @@ impl GnapService {
         )
         .map(|_| ())
         .map_err(|_| AuthError::validation(PROOF_INVALID))
+    }
+
+    /// Check that the request's `Detached-JWS` header is a JWS by the key over this request's content
+    /// (RFC 9635 section 7.3.3), fresh and not seen before. The JWS carries no nonce, so its signature, unique
+    /// to the signed header and content, is what is remembered: a captured request replayed inside the skew
+    /// window is refused. No header, or no key to check it against, is a refusal, never a pass.
+    fn check_jwsd_proof(
+        &self,
+        thumbprint: &str,
+        jwk: Option<&serde_json::Value>,
+        proof: Option<&GnapProof<'_>>,
+        bound_to_token: bool,
+    ) -> Result<()> {
+        const MAX_SKEW_SECS: u64 = 300;
+        let (Some(jwk), Some(proof)) = (jwk, proof) else {
+            return Err(AuthError::validation(PROOF_REQUIRED));
+        };
+        let header = |name: &str| {
+            proof
+                .http_headers
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                .map(|(_, v)| *v)
+        };
+        let Some(detached) = header("detached-jws") else {
+            return Err(AuthError::validation(PROOF_REQUIRED));
+        };
+        // A token request presents its token as `Authorization: GNAP <token>`, and `ath` binds the JWS to it.
+        let access_token = if bound_to_token {
+            let token = header("authorization")
+                .and_then(|v| v.split_once(' '))
+                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("GNAP"))
+                .map(|(_, t)| t.trim());
+            match token {
+                Some(t) => Some(t),
+                None => return Err(AuthError::validation(PROOF_REQUIRED)),
+            }
+        } else {
+            None
+        };
+        let now = Self::now_secs();
+        let context = super::gnap_jws::JwsProofContext {
+            jwk,
+            method: proof.http_method,
+            uri: proof.http_uri,
+            body: proof.http_body,
+            access_token,
+            now,
+            max_skew_secs: MAX_SKEW_SECS,
+        };
+        super::gnap_jws::verify_detached(detached, &context)
+            .map_err(|_| AuthError::validation(PROOF_INVALID))?;
+        // Recorded only after the signature checked out, so a forged request cannot burn a real one's slot.
+        let signature = detached.trim().rsplit('.').next().unwrap_or_default();
+        let mut nonces = self
+            .httpsig_nonces
+            .lock()
+            .map_err(|_| AuthError::validation(PROOF_INVALID))?;
+        nonces
+            .check_and_insert(
+                thumbprint,
+                &format!("jwsd:{signature}"),
+                now,
+                2 * MAX_SKEW_SECS,
+            )
+            .map_err(|_| AuthError::validation(PROOF_INVALID))
     }
 
     fn now_secs() -> u64 {
@@ -4542,7 +4614,7 @@ mod proof_verification_tests {
         let not_supported = |e: AuthError| e.to_string().contains(PROOF_NOT_SUPPORTED);
         let mut admitted = Vec::new();
         for method in [
-            "dpop", "test", "httpsig", "jws", "", "DPOP", "none", "bogus",
+            "dpop", "test", "httpsig", "jwsd", "jws", "", "DPOP", "none", "bogus",
         ] {
             let client = Some(GnapClientInfo {
                 key: Some(GnapClientKey {
@@ -4576,7 +4648,7 @@ mod proof_verification_tests {
             }
         }
         // the methods this build verifies, pinned: a new one has to be added on purpose
-        assert_eq!(admitted, ["dpop", "test", "httpsig"]);
+        assert_eq!(admitted, ["dpop", "test", "httpsig", "jwsd"]);
         // a token with no recorded method is refused at management, never waved through
         let none = svc
             .verify_token_key_proof(Some(&thumbprint), None, None, None)
@@ -5832,9 +5904,9 @@ mod httpsig_proof_tests {
         .with_access_policy(Arc::new(AllowAllPolicy))
     }
 
-    fn request(key: &Signer) -> GnapTransactionRequest {
+    fn request(key: &Signer, method: &str) -> GnapTransactionRequest {
         GnapTransactionRequest::builder()
-            .client_key(key.jwk.clone(), "httpsig")
+            .client_key(key.jwk.clone(), method)
             .access_type("read")
             .build()
     }
@@ -5843,6 +5915,7 @@ mod httpsig_proof_tests {
         svc: &GnapService,
         key: &Signer,
         headers: &[(String, String)],
+        method: &str,
     ) -> Result<serde_json::Value> {
         let borrowed: Vec<(&str, &str)> = headers
             .iter()
@@ -5858,7 +5931,7 @@ mod httpsig_proof_tests {
             http_body: BODY,
         };
         let dpop = DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap());
-        svc.handle_transaction_with_proof(&dpop, &proof, request(key))
+        svc.handle_transaction_with_proof(&dpop, &proof, request(key, method))
             .await
     }
 
@@ -5880,7 +5953,7 @@ mod httpsig_proof_tests {
         let key = signer();
         let other = signer();
         let dpop = DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap());
-        let issued = issue(&svc, &key, &signed_headers(&key, "i-1", None))
+        let issued = issue(&svc, &key, &signed_headers(&key, "i-1", None), "httpsig")
             .await
             .unwrap();
         let token = issued["access_token"]["value"]
@@ -5918,6 +5991,54 @@ mod httpsig_proof_tests {
         assert!(svc.introspect_token(&token).await.unwrap().is_none());
     }
 
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    /// A `Detached-JWS` header value (RFC 9635 section 7.3.3) over `BODY`, signed by `signer`.
+    fn detached_jws(signer: &Signer, created: i64, token: Option<&str>) -> String {
+        use sha2::{Digest, Sha256};
+        let mut header = serde_json::json!({
+            "alg": "ES256", "typ": "gnap-binding-jwsd", "htm": "POST", "uri": URI, "created": created
+        });
+        if let Some(t) = token {
+            header["ath"] = serde_json::json!(b64(&Sha256::digest(t.as_bytes())));
+        }
+        let (h, p) = (
+            b64(header.to_string().as_bytes()),
+            b64(&Sha256::digest(BODY)),
+        );
+        let sig = signer
+            .pair
+            .sign(&SystemRandom::new(), format!("{h}.{p}").as_bytes())
+            .unwrap();
+        format!("{h}.{p}.{}", b64(sig.as_ref()))
+    }
+
+    #[tokio::test]
+    async fn a_jwsd_key_is_proved_by_a_detached_jws_and_a_replay_is_refused() {
+        let svc = service();
+        let key = signer();
+        let other = signer();
+        let now = chrono::Utc::now().timestamp();
+        let header = |s: &Signer| vec![("Detached-JWS".to_string(), detached_jws(s, now, None))];
+
+        // Refutations: no header, and a signature by another key, are refused.
+        assert!(issue(&svc, &key, &[], "jwsd").await.is_err());
+        assert!(issue(&svc, &key, &header(&other), "jwsd").await.is_err());
+
+        // Positive control, built the same way: the named key's JWS is accepted, once.
+        let good = header(&key);
+        let ok = issue(&svc, &key, &good, "jwsd")
+            .await
+            .unwrap_or_else(|e| panic!("a detached JWS by the named key must be accepted: {e}"));
+        assert!(ok["access_token"]["value"].is_string());
+        assert!(
+            issue(&svc, &key, &good, "jwsd").await.is_err(),
+            "the same detached JWS must not be accepted twice"
+        );
+    }
+
     #[tokio::test]
     async fn an_httpsig_key_is_proved_by_a_signed_request_and_a_replay_is_refused() {
         let svc = service();
@@ -5927,22 +6048,22 @@ mod httpsig_proof_tests {
 
         // Refutations: no headers, and a signature by another key, are refused.
         assert!(
-            issue(&svc, &key, &[]).await.is_err(),
+            issue(&svc, &key, &[], "httpsig").await.is_err(),
             "no signature must fail"
         );
         let forged = signed_headers(&other, "n-2", None);
         assert!(
-            issue(&svc, &key, &forged).await.is_err(),
+            issue(&svc, &key, &forged, "httpsig").await.is_err(),
             "another key must fail"
         );
 
         // Positive control, built the same way: the named key's signature is accepted, once.
-        let ok = issue(&svc, &key, &headers)
+        let ok = issue(&svc, &key, &headers, "httpsig")
             .await
             .unwrap_or_else(|e| panic!("a signature by the named key must be accepted: {e}"));
         assert!(ok["access_token"]["value"].is_string());
         assert!(
-            issue(&svc, &key, &headers).await.is_err(),
+            issue(&svc, &key, &headers, "httpsig").await.is_err(),
             "the same signed request must not be accepted twice"
         );
     }
