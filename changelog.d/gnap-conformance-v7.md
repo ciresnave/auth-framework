@@ -1,0 +1,1 @@
+GNAP conformance suite v7: four negative vectors (`tok-*`) show that rotating or revoking an access token without the key's proof, or with a different key's proof, is refused and the token stays active. Test vectors only; no library behaviour changes. Evidence: `tests/conformance/gnap/vectors.json`, positive control run against the same harness.
