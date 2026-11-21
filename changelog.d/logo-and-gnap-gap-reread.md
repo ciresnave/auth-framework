@@ -1,0 +1,1 @@
+Replace `auth-framework.png` (a Microsoft Designer image under personal-use-only terms) with a FLUX.1 [schnell] (Apache-2.0) generated logo, provenance recorded in `PROVENANCE.md`; the old image stays only in git history. Also re-reads the GNAP GAP status column against the code (E2) and adds the E1b row (httpsig/jwsd/jws key-proof methods); documentation only.
