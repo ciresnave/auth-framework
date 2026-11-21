@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # Common Token Exchange Components
 //!
 //! This module provides shared interfaces, utilities, and types used by both

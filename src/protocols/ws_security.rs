@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WS-Security 1.1 Client Implementation
 //!
 //! This module provides client-side WS-Security 1.1 support for legacy enterprise systems.

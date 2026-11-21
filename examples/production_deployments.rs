@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Production Deployment Configuration Examples
 //!
 //! This example demonstrates production-ready OAuth 2.0 server configurations

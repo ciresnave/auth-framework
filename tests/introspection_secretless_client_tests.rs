@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A client registered without a secret has nothing to authenticate with, so it cannot call
 //! `/oauth/introspect` (RFC 7662 section 2.1): neither Basic `client_id:` nor a POST body with
 //! an empty `client_secret` gets in, while a client with a secret still does.

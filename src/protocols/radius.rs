@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RADIUS (RFC 2865 / RFC 2866) — Remote Authentication Dial-In User Service
 //!
 //! Provides a RADIUS client for authenticating users against a RADIUS server

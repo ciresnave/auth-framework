@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Source-pattern audit of the OAuth2 server and the other security-critical files.
 //!
 //! Every file this audit names must exist: a path that has moved fails the

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use auth_framework::auth::AuthFramework;
 use auth_framework::authentication::credentials::Credential;
 use auth_framework::config::AuthConfig;

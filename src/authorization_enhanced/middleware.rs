@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced authorization middleware using role-system v1.0
 //!
 //! This module provides comprehensive authorization middleware for Axum,

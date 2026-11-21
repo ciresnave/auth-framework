@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Axum integration for auth-framework with enhanced ergonomics.
 //!
 //! This module provides middleware, extractors, and helper functions for easy integration

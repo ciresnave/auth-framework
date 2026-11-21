@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive integration tests for AuthFramework multi-tenant architecture
 //!
 //! This test suite validates:

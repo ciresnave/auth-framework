@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Next-generation SMS MFA manager powered by SMSKit
 
 use crate::errors::{AuthError, Result};

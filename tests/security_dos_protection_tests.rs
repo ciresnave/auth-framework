@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! DoS Protection Security Tests
 //!
 //! Comprehensive tests for Denial of Service protection mechanisms beyond rate limiting.

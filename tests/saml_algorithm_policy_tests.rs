@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `SamlAlgorithmPolicy`: an opt-in refusal of SHA-1 signatures and digests, applied to the
 //! signature that verified, not to any signature in the document.
 //!

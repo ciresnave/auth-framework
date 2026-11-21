@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WS-Trust 1.3 Security Token Service (STS) Support
 //!
 //! This module provides WS-Trust 1.3 Security Token Service functionality for token exchange,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WS-Federation sign-in: a token is accepted only when its signature verifies under a key the
 //! relying party configured (a pinned certificate for the issuer, or a pinned thumbprint of a
 //! certificate the token carries), and only the signed assertion is read.

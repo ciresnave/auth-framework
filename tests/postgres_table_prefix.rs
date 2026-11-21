@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `StorageConfig::Postgres { table_prefix }` must either be honoured or refused: a prefix that is
 //! accepted and silently ignored lets two deployments that chose different prefixes share tables.
 

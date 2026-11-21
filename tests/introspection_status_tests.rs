@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `/oauth/introspect` reports a token as active only if it could actually be used: its
 //! account is live, and a refresh token is neither spent nor in a revoked chain.
 

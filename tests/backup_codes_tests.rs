@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Backup codes are kept only as digests, in the one store the login flow reads.
 
 use auth_framework::auth_modular::mfa::backup_codes::BackupCodesManager;

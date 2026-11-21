@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Benchmarks for AuthFramework authentication hot paths.
 //!
 //! These benchmarks measure the latency of the most frequently executed operations

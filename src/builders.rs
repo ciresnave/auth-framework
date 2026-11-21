@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Builder patterns and ergonomic helpers for the Auth Framework
 //!
 //! This module provides fluent builder APIs and helper functions to make

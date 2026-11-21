@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! API Middleware
 //!
 //! Authentication, authorization, rate limiting, and other middleware

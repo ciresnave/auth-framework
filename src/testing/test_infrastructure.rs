@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // test_infrastructure.rs - Bulletproof test isolation and container infrastructure
 
 use std::collections::HashMap;

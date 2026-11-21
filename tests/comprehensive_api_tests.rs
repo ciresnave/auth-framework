@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive API and Integration Tests for AuthFramewo        let mut framework = AuthFramework::new(config);
 // Framework not yet initialized
 //!

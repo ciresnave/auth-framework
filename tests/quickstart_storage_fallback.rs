@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! QuickStart must not hand back an in-memory framework when a persistent backend was asked for.
 #![cfg(not(feature = "redis-storage"))]
 

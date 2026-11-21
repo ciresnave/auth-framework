@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Session Management Implementation
 //!
 //! This module provides comprehensive session management capabilities for OpenID Connect,

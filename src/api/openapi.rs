@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenAPI documentation generator.
 //!
 //! Generates a lightweight OpenAPI 3.0 overview for the core REST API routes

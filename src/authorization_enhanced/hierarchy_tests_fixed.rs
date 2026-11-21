@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Test the new role-system v1.1.1 hierarchy features
 //!
 //! This demonstrates the new hierarchy access methods that were implemented

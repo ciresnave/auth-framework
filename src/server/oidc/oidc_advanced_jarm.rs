@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Advanced JARM (JWT Secured Authorization Response Mode)
 //!
 //! This module implements the Advanced JARM specification, extending the standard JARM

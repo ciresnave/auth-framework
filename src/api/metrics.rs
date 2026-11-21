@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! API Metrics and Observability
 //!
 //! Provides comprehensive metrics collection for API endpoints

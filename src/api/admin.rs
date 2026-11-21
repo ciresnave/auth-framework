@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Administrative API Endpoints
 //!
 //! Handles user management, system configuration, and admin operations.

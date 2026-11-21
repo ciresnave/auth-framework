@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Critical Authentication Security Tests
 //!
 //! Tests to verify that the authentication bypass vulnerability has been fixed

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Health check system for authentication framework components
 
 use super::{HealthCheckResult, HealthStatus};

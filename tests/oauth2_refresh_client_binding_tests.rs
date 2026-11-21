@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A refresh token that carries a `client_id` is redeemable ONLY by that client
 //! (RFC 6749 §6 / §10.4): a confidential client must authenticate and the
 //! authenticated client must be the one the token was issued to; a public

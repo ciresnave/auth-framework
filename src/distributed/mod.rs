@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Distributed session store abstraction.
 //!
 //! Provides a trait for querying the total number of active sessions across all

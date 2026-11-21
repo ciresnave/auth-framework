@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # Advanced Token Exchange - Enhanced RFC 8693
 //!
 //! This module implements an advanced version of the OAuth 2.0 Token Exchange specification

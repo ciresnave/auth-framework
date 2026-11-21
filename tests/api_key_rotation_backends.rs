@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Key rotation against each storage backend's own `store_kv_if_absent`: of several simultaneous
 //! rotations of one key exactly one wins, whatever the backend.
 //!

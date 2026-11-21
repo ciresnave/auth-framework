@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive audit logging and security event tracking.
 //!
 //! This module provides detailed audit logging for all authentication,

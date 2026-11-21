@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Multi-Factor Authentication management module.
 
 pub mod backup_codes;

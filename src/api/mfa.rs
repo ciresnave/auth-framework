@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Multi-Factor Authentication API Endpoints
 //!
 //! Handles TOTP setup, verification, backup codes, and MFA management.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Distributed Rate Limiting System
 //!
 //! This module provides comprehensive rate limiting capabilities with support for:

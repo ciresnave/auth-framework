@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests proving storage-at-rest encryption is actually wired
 //! into `AuthFramework::initialize()`, not just exercised in isolation
 //! against `EncryptedStorage` directly (see `src/storage/encryption.rs`'s

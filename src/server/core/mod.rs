@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Core Server Implementation Module
 //!
 //! This module contains core server functionality including:

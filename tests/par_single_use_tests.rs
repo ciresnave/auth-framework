@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A pushed authorization request's `request_uri` is single use (RFC 9126): of any number of
 //! simultaneous redemptions exactly one succeeds. It used to be a read followed by a delete, so
 //! several callers could redeem the same request_uri at once.

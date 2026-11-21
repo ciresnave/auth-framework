@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Modular authentication framework with component-based architecture.
 //!
 //! This module provides a modular approach to authentication and authorization,

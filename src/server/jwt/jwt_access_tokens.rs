@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! JWT Profile for OAuth 2.0 Access Tokens (RFC 9068)
 //!
 //! This module implements RFC 9068, which defines how to use JWTs as OAuth 2.0

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `/oauth/revoke` acts only on tokens this server issued, and a token issued to an OAuth
 //! client is revoked only by that client (RFC 7009 sections 2.1 and 2.2).
 

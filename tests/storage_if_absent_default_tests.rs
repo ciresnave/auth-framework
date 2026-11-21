@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `AuthStorage::store_kv_if_absent` is a compare-and-set that single-use markers (refresh-token
 //! redemption, TOTP steps, WebAuthn sessions, PKCE codes) rely on. A backend that does not
 //! implement it must make those paths fail, not silently lose the guarantee: the default used to be

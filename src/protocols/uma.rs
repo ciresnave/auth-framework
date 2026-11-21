@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! UMA 2.0 (User-Managed Access) implementation.
 //!
 //! Provides federated authorization where Resource Owners (RO) delegate access

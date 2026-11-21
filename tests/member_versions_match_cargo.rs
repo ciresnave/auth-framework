@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **One version number per project:** the member crate and the SDKs carry the root crate's version.
 //!
 //! They sat at 0.6.0-rc64 and 0.6.0-rc108 while the crate moved on, because no release bump touched them.

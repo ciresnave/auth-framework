@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Analytics and monitoring for RBAC systems.
 //!
 //! This module provides comprehensive analytics capabilities for monitoring

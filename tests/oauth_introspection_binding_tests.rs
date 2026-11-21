@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `/oauth/introspect` reports a token that was issued to an OAuth client only to that client
 //! (RFC 7662 section 4: the server decides which callers may learn about which tokens). Another
 //! authenticated client gets `active: false` and nothing else. A token that carries no client

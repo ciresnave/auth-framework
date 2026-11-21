@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive error types for the AuthFramework.
 //!
 //! This module defines all error types used throughout the authentication framework,

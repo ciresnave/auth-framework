@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! One-way key names for credentials.
 //!
 //! Storage encryption protects values only; a key *name* is stored and

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Email Verification API Endpoints
 //!
 //! Handles email address verification through token-based confirmation.

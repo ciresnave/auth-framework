@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SMSKit Integration Example
 //!
 //! This example demonstrates how to use the new SMSKit integration for SMS-based MFA

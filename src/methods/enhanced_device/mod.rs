@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced Device Flow Implementation
 //!
 //! This module provides advanced device flow authentication using the oauth-device-flows crate

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth 2.0 Server Module
 //!
 //! This module provides a clean interface to the OAuth 2.0 server implementation,

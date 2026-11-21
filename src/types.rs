@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Common domain types used throughout the AuthFramework.
 //!
 //! This module provides type-safe wrappers around raw collections and primitives

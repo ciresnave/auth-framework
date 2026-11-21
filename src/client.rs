@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth 2.0 client types — canonical definitions (RFC 6749 §2.1).
 //!
 //! [`ClientType`] and [`ClientConfig`] are the single source of truth for client

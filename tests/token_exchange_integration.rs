@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests for Token Exchange refactoring
 //!
 //! These tests verify that both managers work correctly with the common trait

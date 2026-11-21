@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::api::{ApiResponse, ApiState, extract_bearer_token, validate_api_token};
 use axum::{extract::State, http::HeaderMap, response::Json};
 use base64::Engine;

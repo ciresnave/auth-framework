@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Authorization manager: wraps `PermissionChecker` and exposes all role/permission operations.
 
 use crate::errors::{AuthError, Result};

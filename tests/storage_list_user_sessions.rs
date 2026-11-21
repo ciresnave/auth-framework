@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `AuthStorage::list_user_sessions` returns each of a user's sessions whole (issue #147): the same
 //! fields `store_session` was given, none of another user's. PostgreSQL needs a server
 //! (`DATABASE_URL`; CI's test job provides it) and fails without it rather than skips.

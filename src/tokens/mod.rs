@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Token management and validation for the authentication framework.
 use crate::errors::{AuthError, Result, TokenError};
 use crate::providers::{OAuthProvider, ProfileExtractor, ProviderProfile};

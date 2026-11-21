@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `OAuth2Server` redeems an authorization code, and rotates a refresh token, exactly once even
 //! when many requests present the same value at the same time (RFC 6749 sections 4.1.2 and 10.4).
 

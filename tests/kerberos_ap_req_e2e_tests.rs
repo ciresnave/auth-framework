@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Kerberos AP-REQ end to end (ROADMAP A13, slice 2; design: docs/KERBEROS_E2E_TEST_DESIGN.md).
 //!
 //! `KerberosManager::authenticate` is an acceptor: it holds a service key and never contacts a

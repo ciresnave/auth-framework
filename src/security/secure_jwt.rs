@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::errors::{AuthError, Result};
 use jsonwebtoken::{Algorithm, DecodingKey};
 use serde::{Deserialize, Serialize};

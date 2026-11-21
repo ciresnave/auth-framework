@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simple Comprehensive Tests for AuthFramework Current API
 //!
 //! This test suite validates the current working API without using deprecated methods.

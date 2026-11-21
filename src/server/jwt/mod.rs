@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! JWT (JSON Web Token) Implementation Module
 //!
 //! This module contains JWT-related functionality including:

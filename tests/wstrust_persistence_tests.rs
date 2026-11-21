@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WS-Trust tokens kept in the `AuthStorage` KV layer (ROADMAP A3): a restarted or second STS
 //! instance sees the tokens another one issued, cancelled or renewed.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced X.509 Certificate Signing Module
 //!
 //! This module provides comprehensive X.509 certificate signing capabilities

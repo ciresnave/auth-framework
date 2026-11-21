@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Client certificate authentication (application-layer mTLS identity extraction).
 //!
 //! # Where this fits in the stack

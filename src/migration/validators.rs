@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Migration plan validators
 //!
 //! This module provides validation functionality for migration plans

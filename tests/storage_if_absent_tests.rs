@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `AuthStorage::store_kv_if_absent` is a compare-and-set: of simultaneous callers exactly one wins,
 //! and an expired entry no longer blocks.
 

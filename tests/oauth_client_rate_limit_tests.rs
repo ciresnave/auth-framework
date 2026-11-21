@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! An authenticated OAuth2 client is rate limited by its own identity, not only by the address
 //! it comes from (issue #92). The router-wide limiter is keyed on the caller's address; the
 //! handlers called directly here never see an address, so what limits these calls is the

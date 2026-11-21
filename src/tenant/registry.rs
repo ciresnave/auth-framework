@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Tenant registry for managing multiple tenant instances
 
 use super::context::{TenantContext, TenantId};

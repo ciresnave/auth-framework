@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Command Line Interface for Auth Framework Administration
 
 use crate::admin::{

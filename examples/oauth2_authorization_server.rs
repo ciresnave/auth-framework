@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simple OAuth 2.0 Server Configuration Example
 //!
 //! This example demonstrates basic OAuth 2.0 server configuration

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `PasskeyAuthMethod` verifies the credentials the `passkey` crates really produce.
 //!
 //! The method's verification code read the assertion as base64url text and found the public key at a JSON

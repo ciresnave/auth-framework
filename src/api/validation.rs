@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Request Validation Middleware
 //!
 //! Provides comprehensive request validation and sanitization

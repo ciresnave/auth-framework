@@ -1,4 +1,5 @@
 #![cfg(feature = "saml")]
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `SamlAuthMethod::default()` must not sign tokens with a key that is the same in every deployment.
 

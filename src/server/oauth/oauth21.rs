@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth 2.1 Framework Module
 //!
 //! This module implements OAuth 2.1 security enhancements and best practices

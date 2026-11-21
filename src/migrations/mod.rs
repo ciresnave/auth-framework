@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Database migration system for auth-framework.
 //! This module provides tools for managing database schema changes
 //! and ensuring proper setup of authentication-related tables.

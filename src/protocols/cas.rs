@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! CAS (Central Authentication Service) Protocol Client
 //!
 //! Implements the CAS 3.0 protocol for single sign-on (SSO) authentication.

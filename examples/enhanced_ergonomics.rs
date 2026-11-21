@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced Ergonomics Example - Demonstrating New Developer Experience Features
 //!
 //! This example showcases the new ergonomic improvements to the Auth Framework:

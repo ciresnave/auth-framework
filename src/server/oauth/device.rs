@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Device Authorization Grant Implementation - RFC 8628
 //!
 //! This module implements RFC 8628 - OAuth 2.0 Device Authorization Grant

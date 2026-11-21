@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A process that dies part-way through `rotate_api_key` never leaves a second live key.
 //!
 //! A rotation writes six times: (1) the claim, (2) the new key's row, (3) the old key's legacy row

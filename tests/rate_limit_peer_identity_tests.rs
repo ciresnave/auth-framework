@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The request rate limiter identifies a client by the connection's peer address, and
 //! trusts `X-Forwarded-For` only when the peer is a configured trusted proxy.
 

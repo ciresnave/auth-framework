@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Storage adapters for role-system integration
 //!
 //! This module provides storage adapters that integrate role-system with

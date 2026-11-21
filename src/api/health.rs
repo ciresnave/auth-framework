@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Health Check and Monitoring API Endpoints
 //!
 //! Provides system health, metrics, and monitoring endpoints

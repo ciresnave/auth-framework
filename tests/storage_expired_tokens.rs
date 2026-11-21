@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `AuthStorage::get_token`, `get_token_by_access_token` and `get_session` do not return what has
 //! expired (issue #144). The memory, DashMap, SQLite and PersistAnt backends run in process;
 //! PostgreSQL needs a server (`DATABASE_URL`; CI's test job provides it) and fails without it

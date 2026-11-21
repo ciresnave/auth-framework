@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! REST API Server Implementation
 //!
 //! Main server that hosts all API endpoints

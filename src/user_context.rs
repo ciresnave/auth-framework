@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! User context and authentication state management
 
 use serde::{Deserialize, Serialize};

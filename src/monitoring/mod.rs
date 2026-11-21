@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Monitoring and Metrics Collection Module
 //!
 //! This module provides comprehensive monitoring capabilities for the authentication framework,

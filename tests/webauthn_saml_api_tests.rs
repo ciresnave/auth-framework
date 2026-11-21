@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests for WebAuthn and SAML API endpoints
 
 use auth_framework::api::ApiServer;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! GNAP (Grant Negotiation and Authorization Protocol) implementation.
 //!
 //! This module implements the GNAP specification (draft-ietf-gnap-core-protocol),

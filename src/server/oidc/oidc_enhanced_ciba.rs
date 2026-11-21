@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Enhanced CIBA (Client-Initiated Backchannel Authentication)
 //!
 //! This module implements the Enhanced CIBA specification, building upon the foundation

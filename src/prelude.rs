@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Auth Framework Prelude
 //!
 //! This module provides a convenient way to import the most commonly used types

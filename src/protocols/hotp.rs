@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! HOTP (RFC 4226) — HMAC-Based One-Time Password Algorithm
 //!
 //! Implements the HOTP algorithm as specified in RFC 4226 for counter-based

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! String utility functions for the AuthFramework.
 
 use rand::{RngExt, rng};

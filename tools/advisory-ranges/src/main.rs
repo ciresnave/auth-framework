@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! See README.md. Usage: advisory-ranges <versions.txt> <intended.json> [version,version,...]
 
 use semver::{Version, VersionReq};

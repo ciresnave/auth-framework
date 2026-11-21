@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive code quality audit tests
 //!
 //! These tests ensure we don't ship incomplete or potentially vulnerable code.

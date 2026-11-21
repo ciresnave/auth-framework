@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SD-JWT (Selective Disclosure JWT) implementation.
 //!
 //! Implements the IETF SD-JWT specification (draft-ietf-oauth-selective-disclosure-jwt)

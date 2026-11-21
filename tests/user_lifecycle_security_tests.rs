@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! User Lifecycle Security Tests
 //!
 //! Verifies that critical user lifecycle events—deactivation, password change,

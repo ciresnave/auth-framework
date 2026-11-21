@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! API Versioning Support
 //!
 //! Provides version negotiation and backwards compatibility

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Test OAuth2 Authorization Server Implementation
 //!
 //! This binary tests the complete OAuth2 authorization server flow

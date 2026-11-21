@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! #145: every shipped `AuthStorage` must list the KV keys it stores.
 //!
 //! The trait default used to return `Ok(vec![])` with a warning, so a backend

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The JARM manager must not sign with a key that is the same in every deployment, and must not
 //! quietly replace keys the operator configured with one.
 

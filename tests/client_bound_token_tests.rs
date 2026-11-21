@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A token issued to an OAuth client on a user's behalf is a delegated-access token: it
 //! works at the OAuth resource endpoints and at routes that opt in to delegated access, but
 //! not as a user session (profile, admin, ...) and not at the default extractors.

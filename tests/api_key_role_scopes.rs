@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A key's role becomes the authenticated token's roles and scopes: the mapping is explicit and pinned.
 //!
 //! Authenticating with an API key copies the key's roles into the token's roles AND scopes, so a key

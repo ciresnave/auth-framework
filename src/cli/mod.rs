@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 /// Minimal CLI progress bar using terminal output.
 /// For richer progress bars, consider the `indicatif` crate.
 ///

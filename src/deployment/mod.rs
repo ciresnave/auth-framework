@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Production deployment module for role-system v1.0
 // Comprehensive deployment automation, health checks, monitoring integration, and performance optimization
 

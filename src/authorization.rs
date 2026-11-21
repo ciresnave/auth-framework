@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Role-Based Access Control (RBAC) and Authorization framework.
 //!
 //! This module provides a comprehensive authorization system with support for

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simplified comprehensive tests for auth_framework
 //!
 //! This test suite covers core functionality of the auth framework:

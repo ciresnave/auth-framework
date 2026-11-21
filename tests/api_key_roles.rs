@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! API keys carry a role, chosen at creation from a configurable set, and validation returns it.
 
 use auth_framework::auth_modular::{UserInfo, UserManager};

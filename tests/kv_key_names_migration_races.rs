@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Interleavings of API-key migration (legacy `api_key:{raw}` -> `api_key_h:{digest}`) with
 //! validation and revoke. Each test pins one interleaving deterministically: a storage wrapper
 //! runs a second operation at an exact point inside the first, so a failure is reproducible, not a

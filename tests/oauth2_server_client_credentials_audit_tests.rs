@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The `client_credentials` grant of `OAuth2Server` leaves an audit-trail record (issue #91): which
 //! client asked, for which scopes, and whether a token was issued; never a secret or a token.
 

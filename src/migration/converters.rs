@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Migration converters for transforming legacy data structures
 //!
 //! This module provides converters to transform legacy authorization

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Security Validation Comprehensive Tests
 //!
 //! Comprehensive test suite covering all security validation paths

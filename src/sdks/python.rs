@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Python SDK generator for enhanced RBAC functionality
 //!
 //! This module provides Python SDK generation with comprehensive

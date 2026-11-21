@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Response Modes Extension
 //!
 //! This module implements additional OAuth 2.0 and OpenID Connect response modes

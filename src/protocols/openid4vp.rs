@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID for Verifiable Presentations (OpenID4VP) and Credential Issuance.
 //!
 //! Provides the infrastructure for issuing, storing, and presenting

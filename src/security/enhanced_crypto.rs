@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced cryptography module providing modern algorithm alternatives.
 //!
 //! When the `enhanced-crypto` feature is enabled, this module exposes:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The OIDC provider's `OAuth2Server` records `client_credentials` grants in the framework's own
 //! audit trail when it is given `AuthFramework::audit_storage()` (issue #91): queryable through
 //! `AuthFramework::audit()`, and never carrying the client secret.
