@@ -454,6 +454,11 @@ pub struct GnapProof<'a> {
     /// 11.4 leave that trust to registration or first use, so an integrator who needs it must
     /// enforce it in the TLS terminator or before calling the `_with_proof` entry points.
     pub client_certificate_der: Option<&'a [u8]>,
+    /// The request's header fields as `(name, value)` pairs, for the `httpsig` proof method (RFC 9421
+    /// covers headers such as `content-digest` and `authorization`). Empty when the caller has none.
+    pub http_headers: &'a [(&'a str, &'a str)],
+    /// The request content the `httpsig` proof method's `content-digest` covers (empty when none).
+    pub http_body: &'a [u8],
 }
 
 /// Decides which access rights a client key is granted.
@@ -522,6 +527,8 @@ pub struct GnapService {
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
+    /// Nonces of `httpsig` signatures already accepted, so a captured request cannot be replayed.
+    httpsig_nonces: Arc<std::sync::Mutex<super::gnap_httpsig::NonceCache>>,
 }
 
 /// What a poll that came before the `wait` the server announced is refused with (RFC 9635 section
@@ -561,6 +568,9 @@ impl GnapService {
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
             consents: Arc::new(InMemoryConsentStore::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
+            httpsig_nonces: Arc::new(std::sync::Mutex::new(super::gnap_httpsig::NonceCache::new(
+                Self::now_secs(),
+            ))),
         }
     }
 
@@ -1024,8 +1034,10 @@ impl GnapService {
     /// anything unknown) is refused, as is a `dpop` key with no proof material, so no proof
     /// that was never checked can authorize a request.
     async fn verify_client_proof(
+        &self,
         client: &Option<GnapClientInfo>,
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+        bound_to_token: bool,
     ) -> Result<Option<String>> {
         let Some(thumbprint) = Self::validate_client_key(client)? else {
             return Err(AuthError::validation(KEY_REQUIRED));
@@ -1033,7 +1045,9 @@ impl GnapService {
         let Some(key) = client.as_ref().and_then(|c| c.key.as_ref()) else {
             return Err(AuthError::validation(KEY_REQUIRED));
         };
-        Self::check_key_proof(&key.proof, &thumbprint, dpop).await?;
+        let jwk = key.jwk.as_ref().and_then(|j| serde_json::to_value(j).ok());
+        self.check_key_proof(&key.proof, &thumbprint, jwk.as_ref(), dpop, bound_to_token)
+            .await?;
         Ok(Some(thumbprint))
     }
 
@@ -1043,12 +1057,21 @@ impl GnapService {
     /// added to both, and a method refused here is refused at both. Only `dpop` is verified; `test`, which
     /// checks nothing, exists in unit-test builds only.
     async fn check_key_proof(
+        &self,
         method: &str,
         thumbprint: &str,
+        jwk: Option<&serde_json::Value>,
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+        bound_to_token: bool,
     ) -> Result<()> {
         match method {
             "dpop" => Self::check_dpop_proof(thumbprint, dpop).await,
+            "httpsig" => self.check_httpsig_proof(
+                thumbprint,
+                jwk,
+                dpop.map(|(_, proof)| proof),
+                bound_to_token,
+            ),
             "mtls" => Self::check_mtls_proof(thumbprint, dpop.map(|(_, proof)| proof)),
             #[cfg(test)]
             "test" => Ok(()),
@@ -1056,6 +1079,56 @@ impl GnapService {
                 "{PROOF_NOT_SUPPORTED}: {other}"
             ))),
         }
+    }
+
+    /// Check that the request carries an RFC 9421 signature by the key (RFC 9635 section 7.3.1), fresh and
+    /// not seen before. No signature material, or no key to check it against, is a refusal, never a pass.
+    fn check_httpsig_proof(
+        &self,
+        thumbprint: &str,
+        jwk: Option<&serde_json::Value>,
+        proof: Option<&GnapProof<'_>>,
+        bound_to_token: bool,
+    ) -> Result<()> {
+        let (Some(jwk), Some(proof)) = (jwk, proof) else {
+            return Err(AuthError::validation(PROOF_REQUIRED));
+        };
+        if proof.http_headers.is_empty() {
+            return Err(AuthError::validation(PROOF_REQUIRED));
+        }
+        let request = super::gnap_httpsig::HttpRequest {
+            method: proof.http_method,
+            target_uri: proof.http_uri,
+            headers: proof.http_headers,
+            body: proof.http_body,
+        };
+        let context = super::gnap_httpsig::GnapHttpsigContext {
+            jwk,
+            proof_alg: None,
+            content_digest_alg: None,
+            bound_to_token,
+            now: Self::now_secs(),
+            nonce_scope: thumbprint,
+        };
+        let mut nonces = self
+            .httpsig_nonces
+            .lock()
+            .map_err(|_| AuthError::validation(PROOF_INVALID))?;
+        super::gnap_httpsig::verify_gnap_request(
+            &request,
+            &context,
+            &super::gnap_httpsig::HttpsigPolicy::default(),
+            &mut nonces,
+        )
+        .map(|_| ())
+        .map_err(|_| AuthError::validation(PROOF_INVALID))
+    }
+
+    fn now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     /// Check that the certificate the TLS layer authenticated on this request is the one the key
@@ -1102,6 +1175,15 @@ impl GnapService {
         }
     }
 
+    /// The public JWK of the key a request names, if it names one as a JWK.
+    fn key_jwk_value(client: &Option<GnapClientInfo>) -> Option<serde_json::Value> {
+        client
+            .as_ref()
+            .and_then(|c| c.key.as_ref())
+            .and_then(|key| key.jwk.as_ref())
+            .and_then(|jwk| serde_json::to_value(jwk).ok())
+    }
+
     /// The proof method of the key a request names, if it names one.
     fn key_proof_method(client: &Option<GnapClientInfo>) -> Option<&str> {
         client
@@ -1114,15 +1196,20 @@ impl GnapService {
     /// the management request is signed with the key the token is bound to). A bearer token has no key and
     /// needs none. A token bound under a method this build cannot verify is refused, not waved through.
     async fn verify_token_key_proof(
+        &self,
         key_thumbprint: Option<&str>,
         key_proof: Option<&str>,
+        key_jwk: Option<&serde_json::Value>,
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
     ) -> Result<()> {
         let Some(thumbprint) = key_thumbprint else {
             return Ok(());
         };
         match key_proof {
-            Some(method) => Self::check_key_proof(method, thumbprint, dpop).await,
+            Some(method) => {
+                self.check_key_proof(method, thumbprint, key_jwk, dpop, true)
+                    .await
+            }
             None => Err(AuthError::validation(PROOF_NOT_SUPPORTED)),
         }
     }
@@ -1134,15 +1221,20 @@ impl GnapService {
         not_found: &'static str,
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
     ) -> Result<()> {
-        let (thumbprint, method) = {
+        let (thumbprint, method, jwk) = {
             let token = self
                 .issued_tokens
                 .get(token_value)
                 .await?
                 .ok_or_else(|| AuthError::validation(not_found))?;
-            (token.key_thumbprint.clone(), token.key_proof.clone())
+            (
+                token.key_thumbprint.clone(),
+                token.key_proof.clone(),
+                token.key_jwk.clone(),
+            )
         };
-        Self::verify_token_key_proof(thumbprint.as_deref(), method.as_deref(), dpop).await
+        self.verify_token_key_proof(thumbprint.as_deref(), method.as_deref(), jwk.as_ref(), dpop)
+            .await
     }
 
     // ── Interaction Hash ─────────────────────────────────────────────────
@@ -1239,6 +1331,7 @@ impl GnapService {
         access_requests: &[GnapAccessRequest],
         key_thumbprint: &Option<String>,
         key_proof: Option<&str>,
+        key_jwk: Option<serde_json::Value>,
         transaction_id: &str,
         consent_owner: Option<Option<&str>>,
     ) -> Result<serde_json::Map<String, serde_json::Value>> {
@@ -1268,6 +1361,7 @@ impl GnapService {
             expires_at: now + self.config.token_lifetime_secs,
             key_thumbprint: key_thumbprint.clone(),
             key_proof: key_proof.map(str::to_string),
+            key_jwk,
             transaction_id: transaction_id.to_string(),
         };
 
@@ -1377,7 +1471,9 @@ impl GnapService {
         };
 
         // Validate client key if provided (draft §7.1)
-        let key_thumbprint = Self::verify_client_proof(&request.client, dpop).await?;
+        let key_thumbprint = self
+            .verify_client_proof(&request.client, dpop, false)
+            .await?;
 
         let transaction_id = uuid::Uuid::new_v4().to_string();
         let continue_token = uuid::Uuid::new_v4().to_string();
@@ -1476,6 +1572,7 @@ impl GnapService {
                         access_requests,
                         &key_thumbprint,
                         Self::key_proof_method(&request.client),
+                        Self::key_jwk_value(&request.client),
                         "direct",
                         None,
                     )
@@ -1660,7 +1757,9 @@ impl GnapService {
 
         // A transaction whose client named a key continues only for that key: verify the proof
         // before the token is rotated, so a refused request leaves the holder's token usable.
-        let verified_thumbprint = Self::verify_client_proof(&txn.request.client, dpop).await?;
+        let verified_thumbprint = self
+            .verify_client_proof(&txn.request.client, dpop, true)
+            .await?;
 
         match txn.state {
             GnapTransactionState::Pending => {
@@ -1714,6 +1813,7 @@ impl GnapService {
                             access_requests,
                             &key_thumbprint,
                             Self::key_proof_method(&txn.request.client),
+                            Self::key_jwk_value(&txn.request.client),
                             transaction_id,
                             Some(txn.subject_id.as_deref()),
                         )
@@ -1794,7 +1894,8 @@ impl GnapService {
         )) {
             return Err(AuthError::validation(INVALID_CONTINUATION));
         }
-        Self::verify_client_proof(&txn.request.client, Some((dpop, proof))).await?;
+        self.verify_client_proof(&txn.request.client, Some((dpop, proof)), true)
+            .await?;
         Ok(txn)
     }
 
@@ -2028,6 +2129,7 @@ impl GnapService {
             expires_at: now + self.config.token_lifetime_secs,
             key_thumbprint: old.key_thumbprint.clone(),
             key_proof: old.key_proof.clone(),
+            key_jwk: old.key_jwk.clone(),
             transaction_id: old.transaction_id,
         };
 
@@ -4038,6 +4140,8 @@ mod proof_verification_tests {
             dpop_proof: header,
             expected_nonce: None,
             client_certificate_der: None,
+            http_headers: &[],
+            http_body: &[],
         }
     }
 
@@ -4396,12 +4500,12 @@ mod proof_verification_tests {
     }
 
     #[tokio::test]
-    async fn httpsig_mtls_and_jws_are_refused_not_accepted_unverified() {
+    async fn jws_and_unknown_methods_are_refused_not_accepted_unverified() {
         let (svc, dpop, key) = (service(), manager(), client_key());
         // A valid DPoP header does not rescue a method that is not DPoP.
         let header = dpop_header(&key, &key, "POST", URI, "jti-other-method");
         // `mtls` is exercised with a certificate key in the KM7 tests below: with a JWK it is a malformed key.
-        for method in ["httpsig", "jws", "no-such-method"] {
+        for method in ["jws", "no-such-method"] {
             let msg = refusal(svc.handle_transaction(request(&key, method, false)).await);
             assert!(
                 msg.contains("proof method not supported"),
@@ -4432,6 +4536,7 @@ mod proof_verification_tests {
     async fn issuance_and_management_admit_exactly_the_same_proof_methods() {
         // A method admitted at issuance but not at management would leave a token that cannot be revoked
         // (Pip review). Both gates call `check_key_proof`; this fails if they ever diverge.
+        let svc = service();
         let key = client_key();
         let thumbprint = GnapService::jwk_thumbprint(&key.jwk).unwrap();
         let not_supported = |e: AuthError| e.to_string().contains(PROOF_NOT_SUPPORTED);
@@ -4450,9 +4555,10 @@ mod proof_verification_tests {
             });
             // with no proof material, a verifiable method fails for want of a proof, an unsupported one for
             // want of support: the two outcomes tell them apart without needing a valid proof
-            let issuance = GnapService::verify_client_proof(&client, None).await;
-            let management =
-                GnapService::verify_token_key_proof(Some(&thumbprint), Some(method), None).await;
+            let issuance = svc.verify_client_proof(&client, None, false).await;
+            let management = svc
+                .verify_token_key_proof(Some(&thumbprint), Some(method), None, None)
+                .await;
             let issued = match &issuance {
                 Ok(_) => true,
                 Err(e) => !not_supported(AuthError::validation(e.to_string())),
@@ -4470,9 +4576,11 @@ mod proof_verification_tests {
             }
         }
         // the methods this build verifies, pinned: a new one has to be added on purpose
-        assert_eq!(admitted, ["dpop", "test"]);
+        assert_eq!(admitted, ["dpop", "test", "httpsig"]);
         // a token with no recorded method is refused at management, never waved through
-        let none = GnapService::verify_token_key_proof(Some(&thumbprint), None, None).await;
+        let none = svc
+            .verify_token_key_proof(Some(&thumbprint), None, None, None)
+            .await;
         assert!(none.is_err());
     }
 
@@ -4660,6 +4768,8 @@ mod proof_verification_tests {
             dpop_proof: None,
             expected_nonce: None,
             client_certificate_der: der,
+            http_headers: &[],
+            http_body: &[],
         }
     }
 
@@ -4726,6 +4836,8 @@ mod proof_verification_tests {
             dpop_proof: Some(header),
             expected_nonce: None,
             client_certificate_der: None,
+            http_headers: &[],
+            http_body: &[],
         }
     }
 
@@ -5623,5 +5735,215 @@ mod hardening_tests {
         let out = serde_json::to_value(&req).unwrap();
         assert!(out.get("access_token").is_some());
         assert!(out.get("access_token_request").is_none());
+    }
+}
+
+/// The `httpsig` proof method (RFC 9635 section 7.3.1): the request must carry an RFC 9421 signature
+/// by the key it names, and a captured request cannot be replayed.
+#[cfg(test)]
+mod httpsig_proof_tests {
+    use super::*;
+    use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
+    use ring::rand::SystemRandom;
+    use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
+
+    const URI: &str = "https://as.example.test/api/gnap/tx";
+    const BODY: &[u8] = b"{}";
+
+    struct Signer {
+        pair: EcdsaKeyPair,
+        jwk: GnapJwk,
+    }
+
+    fn signer() -> Signer {
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
+        let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+            .unwrap();
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let point = pair.public_key().as_ref().to_vec();
+        let jwk = GnapJwk {
+            kty: "EC".to_string(),
+            kid: None,
+            crv: Some("P-256".to_string()),
+            x: Some(b64.encode(&point[1..33])),
+            y: Some(b64.encode(&point[33..65])),
+            n: None,
+            e: None,
+        };
+        Signer { pair, jwk }
+    }
+
+    /// The headers of a POST to `URI` with `BODY`, signed by `signer` with `nonce`.
+    fn signed_headers(signer: &Signer, nonce: &str, token: Option<&str>) -> Vec<(String, String)> {
+        let digest = super::super::gnap_httpsig::content_digest_header("sha-256", BODY).unwrap();
+        let created = chrono::Utc::now().timestamp();
+        let auth = token.map(|t| format!("GNAP {t}"));
+        let (covered, auth_line) = match &auth {
+            Some(a) => (
+                "\"@method\" \"@target-uri\" \"content-digest\" \"authorization\"",
+                format!(
+                    "\"authorization\": {a}
+"
+                ),
+            ),
+            None => (
+                "\"@method\" \"@target-uri\" \"content-digest\"",
+                String::new(),
+            ),
+        };
+        let params = format!("({covered});created={created};nonce=\"{nonce}\";tag=\"gnap\"");
+        let base = format!(
+            "\"@method\": POST
+\"@target-uri\": {URI}
+\"content-digest\": {digest}
+{auth_line}\"@signature-params\": {params}"
+        );
+        let sig = signer
+            .pair
+            .sign(&SystemRandom::new(), base.as_bytes())
+            .unwrap();
+        let mut headers = vec![("Content-Digest".to_string(), digest)];
+        if let Some(a) = auth {
+            headers.push(("Authorization".to_string(), a));
+        }
+        headers.extend([
+            ("Signature-Input".to_string(), format!("sig1={params}")),
+            (
+                "Signature".to_string(),
+                format!(
+                    "sig1=:{}:",
+                    base64::engine::general_purpose::STANDARD.encode(sig.as_ref())
+                ),
+            ),
+        ]);
+        headers
+    }
+
+    fn service() -> GnapService {
+        GnapService::new(GnapConfig {
+            enabled: true,
+            transaction_endpoint: "/api/gnap/tx".to_string(),
+            interaction_base_url: Some("https://as.example.test".to_string()),
+            token_lifetime_secs: 3600,
+            transaction_lifetime_secs: 600,
+        })
+        .with_poll_wait_secs(0)
+        .with_access_policy(Arc::new(AllowAllPolicy))
+    }
+
+    fn request(key: &Signer) -> GnapTransactionRequest {
+        GnapTransactionRequest::builder()
+            .client_key(key.jwk.clone(), "httpsig")
+            .access_type("read")
+            .build()
+    }
+
+    async fn issue(
+        svc: &GnapService,
+        key: &Signer,
+        headers: &[(String, String)],
+    ) -> Result<serde_json::Value> {
+        let borrowed: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        let proof = GnapProof {
+            http_method: "POST",
+            http_uri: URI,
+            dpop_proof: None,
+            expected_nonce: None,
+            client_certificate_der: None,
+            http_headers: &borrowed,
+            http_body: BODY,
+        };
+        let dpop = DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap());
+        svc.handle_transaction_with_proof(&dpop, &proof, request(key))
+            .await
+    }
+
+    fn proof_of<'a>(headers: &'a [(&'a str, &'a str)]) -> GnapProof<'a> {
+        GnapProof {
+            http_method: "POST",
+            http_uri: URI,
+            dpop_proof: None,
+            expected_nonce: None,
+            client_certificate_der: None,
+            http_headers: headers,
+            http_body: BODY,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_httpsig_bound_token_is_rotated_and_revoked_only_by_its_key() {
+        let svc = service();
+        let key = signer();
+        let other = signer();
+        let dpop = DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap());
+        let issued = issue(&svc, &key, &signed_headers(&key, "i-1", None))
+            .await
+            .unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let pairs = |h: &[(String, String)]| -> Vec<(String, String)> { h.to_vec() };
+        let go = |h: Vec<(String, String)>, rotate: bool| {
+            let (svc, dpop, token) = (&svc, &dpop, token.clone());
+            async move {
+                let borrowed: Vec<(&str, &str)> =
+                    h.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+                let proof = proof_of(&borrowed);
+                if rotate {
+                    svc.rotate_token_with_proof(dpop, &proof, &token)
+                        .await
+                        .map(|_| ())
+                } else {
+                    svc.revoke_token_with_proof(dpop, &proof, &token).await
+                }
+            }
+        };
+        // Refutations: another key, and an unsigned request, cannot manage the token.
+        assert!(
+            go(pairs(&signed_headers(&other, "m-1", Some(&token))), false)
+                .await
+                .is_err()
+        );
+        assert!(go(vec![], false).await.is_err());
+        // Positive control: the bound key can, once per signed request.
+        let good = signed_headers(&key, "m-2", Some(&token));
+        go(pairs(&good), false)
+            .await
+            .unwrap_or_else(|e| panic!("the bound key must revoke its token: {e}"));
+        assert!(svc.introspect_token(&token).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_httpsig_key_is_proved_by_a_signed_request_and_a_replay_is_refused() {
+        let svc = service();
+        let key = signer();
+        let other = signer();
+        let headers = signed_headers(&key, "n-1", None);
+
+        // Refutations: no headers, and a signature by another key, are refused.
+        assert!(
+            issue(&svc, &key, &[]).await.is_err(),
+            "no signature must fail"
+        );
+        let forged = signed_headers(&other, "n-2", None);
+        assert!(
+            issue(&svc, &key, &forged).await.is_err(),
+            "another key must fail"
+        );
+
+        // Positive control, built the same way: the named key's signature is accepted, once.
+        let ok = issue(&svc, &key, &headers)
+            .await
+            .unwrap_or_else(|e| panic!("a signature by the named key must be accepted: {e}"));
+        assert!(ok["access_token"]["value"].is_string());
+        assert!(
+            issue(&svc, &key, &headers).await.is_err(),
+            "the same signed request must not be accepted twice"
+        );
     }
 }
