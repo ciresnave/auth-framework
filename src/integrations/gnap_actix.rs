@@ -198,7 +198,10 @@ mod tests {
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let doc: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(doc["key_proofs_supported"], serde_json::json!(["dpop"]));
+        assert_eq!(
+            doc["key_proofs_supported"],
+            serde_json::json!(["dpop", "httpsig", "jwsd", "jws"])
+        );
 
         let req = test::TestRequest::get()
             .uri("/api/gnap/tx/token")
