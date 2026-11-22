@@ -527,6 +527,9 @@ pub struct GnapService {
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
+    /// The short page a person types a `user_code_uri` code into (RFC 9635 section 3.3.4); without
+    /// one that start mode is not offered. See [`GnapService::with_user_code_uri`].
+    user_code_uri: Option<url::Url>,
 }
 
 /// What a poll that came before the `wait` the server announced is refused with (RFC 9635 section
@@ -578,6 +581,7 @@ impl GnapService {
             consents: Arc::new(InMemoryConsentStore::new()),
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
+            user_code_uri: None,
         }
     }
 
@@ -588,6 +592,28 @@ impl GnapService {
     pub fn with_poll_wait_secs(mut self, secs: u64) -> Self {
         self.poll_wait_secs = secs;
         self
+    }
+
+    /// Set the short page where a person types a code (RFC 9635 section 3.3.4). A client that
+    /// starts with `user_code_uri` is then answered `{code, uri}`; the code is the transaction's
+    /// one user code, so [`GnapService::transaction_for_user_code`] finds it. Without this the mode
+    /// is not offered (the response carries only the modes the server supports, section 3.3).
+    /// The URI must be an absolute http(s) URI without a query or fragment, so no code can end up
+    /// in it.
+    pub fn with_user_code_uri(mut self, uri: &str) -> Result<Self> {
+        let parsed = url::Url::parse(uri)
+            .map_err(|e| AuthError::config(format!("GNAP user_code_uri is not a URI: {e}")))?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.cannot_be_a_base()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(AuthError::config(
+                "GNAP user_code_uri must be an absolute http(s) URI without a query or fragment",
+            ));
+        }
+        self.user_code_uri = Some(parsed);
+        Ok(self)
     }
 
     /// Set the policy that decides what access tokens carry. Without one, every request for an
@@ -1422,7 +1448,9 @@ impl GnapService {
             // is a later slice.
             let start_modes = Self::interaction_start_modes(interact)?;
             Self::validate_finish(interact)?;
-            let user_code = if start_modes.contains(&StartMode::UserCode) {
+            let offer_code_uri =
+                start_modes.contains(&StartMode::UserCodeUri) && self.user_code_uri.is_some();
+            let user_code = if start_modes.contains(&StartMode::UserCode) || offer_code_uri {
                 Some(
                     generate_user_code(USER_CODE_LEN)
                         .map_err(|e| AuthError::validation(e.to_string()))?,
@@ -1449,10 +1477,18 @@ impl GnapService {
             }
 
             if let Some(ref code) = user_code {
-                interact_res.insert(
-                    "user_code".to_string(),
-                    serde_json::Value::String(code.clone()),
-                );
+                if start_modes.contains(&StartMode::UserCode) {
+                    interact_res.insert(
+                        "user_code".to_string(),
+                        serde_json::Value::String(code.clone()),
+                    );
+                }
+                if let (true, Some(uri)) = (offer_code_uri, self.user_code_uri.as_ref()) {
+                    interact_res.insert(
+                        "user_code_uri".to_string(),
+                        serde_json::json!({"code": code, "uri": uri.as_str()}),
+                    );
+                }
             }
 
             if let Some(ref finish) = interact.finish {
@@ -5495,6 +5531,100 @@ mod proof_verification_tests {
             .unwrap();
         assert!(r3["interact"].get("user_code").is_none());
         assert!(r3["interact"].get("redirect").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_user_code_uri_start_is_answered_with_the_code_and_the_page_when_configured() {
+        let (dpop, key) = (manager(), client_key());
+        let svc = service()
+            .with_user_code_uri("https://as.test/device")
+            .unwrap();
+        let ask = |start: serde_json::Value| json!({"start": start});
+        let resp = send(
+            &svc,
+            &dpop,
+            &key,
+            "ucu-1",
+            interact_request(&key, ask(json!(["user_code_uri"]))),
+        )
+        .await
+        .unwrap();
+        let obj = &resp["interact"]["user_code_uri"];
+        let code = obj["code"].as_str().expect("a code is offered");
+        assert_eq!(obj["uri"], "https://as.test/device");
+        assert!(
+            resp["interact"].get("user_code").is_none(),
+            "user_code was not asked for"
+        );
+        // the code is the transaction's one code, so a typed code finds it
+        let id = svc.test_first_txn().await.id;
+        assert_eq!(svc.transaction_for_user_code(code, "c").await.unwrap(), id);
+        // both modes asked: both answered with the SAME code
+        let both = send(
+            &svc,
+            &dpop,
+            &key,
+            "ucu-2",
+            interact_request(&key, ask(json!(["user_code", "user_code_uri"]))),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            both["interact"]["user_code"],
+            both["interact"]["user_code_uri"]["code"]
+        );
+        // not asked for: not offered, and no code is kept
+        let none = send(
+            &svc,
+            &dpop,
+            &key,
+            "ucu-3",
+            interact_request(&key, ask(json!(["redirect"]))),
+        )
+        .await
+        .unwrap();
+        assert!(none["interact"].get("user_code_uri").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_user_code_uri_start_without_a_configured_page_is_not_offered() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let resp = send(
+            &svc,
+            &dpop,
+            &key,
+            "ucu-4",
+            interact_request(&key, json!({"start": ["redirect", "user_code_uri"]})),
+        )
+        .await
+        .unwrap();
+        assert!(resp["interact"].get("user_code_uri").is_none());
+        assert!(resp["interact"].get("redirect").is_some());
+        assert!(svc.test_first_txn().await.user_code.is_none());
+    }
+
+    #[test]
+    fn the_user_code_uri_page_must_be_absolute_http_without_query_or_fragment() {
+        for bad in [
+            "/device",
+            "not a uri",
+            "ftp://as.test/d",
+            "mailto:a@b.test",
+            "https://as.test/d?code=1",
+            "https://as.test/d#x",
+        ] {
+            assert!(
+                GnapService::new(GnapConfig::default())
+                    .with_user_code_uri(bad)
+                    .is_err(),
+                "{bad} must be refused"
+            );
+        }
+        assert!(
+            GnapService::new(GnapConfig::default())
+                .with_user_code_uri("http://as.test/device")
+                .is_ok()
+        );
     }
 
     /// A service holding one pending user-code transaction: (service, its code, its id).
