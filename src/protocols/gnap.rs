@@ -589,7 +589,8 @@ impl GnapService {
         }
     }
 
-    /// Replace the clock every expiry, poll-interval and signature-freshness decision reads, so a test can
+    /// Replace the clock the service reads for token expiry, poll interval and `httpsig`/`jws`/`jwsd`
+    /// freshness (DPoP proof freshness and resource-server introspection still read the wall clock), so a test can
     /// move time instead of sleeping. `clock` returns seconds since the epoch. The `httpsig` nonce cache keeps
     /// what it has remembered; only its floor moves back if the new clock is earlier. Production services keep
     /// the system clock.

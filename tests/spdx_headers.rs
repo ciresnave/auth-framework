@@ -47,9 +47,9 @@ fn every_tracked_rust_file_has_the_spdx_header() {
     let missing: Vec<&String> = names
         .iter()
         .filter(|name| {
-            std::fs::read_to_string(root.join(name))
-                .map(|text| !has_header(&text))
-                .unwrap_or(false)
+            let text = std::fs::read_to_string(root.join(name))
+                .unwrap_or_else(|e| panic!("cannot read tracked file {name}: {e}"));
+            !has_header(&text)
         })
         .collect();
     assert!(
