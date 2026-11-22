@@ -232,7 +232,10 @@ mod tests {
             .await
             .unwrap();
         let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(doc["key_proofs_supported"], serde_json::json!(["dpop"]));
+        assert_eq!(
+            doc["key_proofs_supported"],
+            serde_json::json!(["dpop", "httpsig", "jwsd", "jws"])
+        );
 
         let get = HttpRequest::builder()
             .method("GET")
