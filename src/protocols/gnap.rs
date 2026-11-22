@@ -2047,7 +2047,10 @@ impl GnapService {
     /// minutes every attempt by that caller is refused unread, a right code included, until the
     /// window passes. A wrong, malformed, expired or already-decided code all give the same
     /// refusal. A right code clears the caller's count. The counts are kept in this process
-    /// only; a caller key an attacker can vary at will (a spoofable header) defeats the limit.
+    /// only. The caller key must be stable and invariant to the attacker: an attacker who can vary it
+    /// (a spoofable header, a cookie they can drop, an address they can rotate) gets a fresh allowance each
+    /// time and defeats the limit. Key on something the attacker cannot choose, such as an authenticated
+    /// session or the peer address of a connection you terminate.
     pub async fn transaction_for_user_code(&self, typed: &str, caller: &str) -> Result<String> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -408,14 +408,39 @@ fn blocked_v6(ip: Ipv6Addr) -> bool {
     if let Some(v4) = ip.to_ipv4_mapped() {
         return blocked_v4(v4);
     }
-    let first = ip.segments()[0];
+    let seg = ip.segments();
+    let v4_of = |hi: u16, lo: u16| {
+        let [a, b] = hi.to_be_bytes();
+        let [c, d] = lo.to_be_bytes();
+        Ipv4Addr::new(a, b, c, d)
+    };
+    // Forms that carry an IPv4 address a translator or tunnel will connect to: decode it and judge that.
+    // NAT64 64:ff9b::/96 (RFC 6052), 6to4 2002::/16 (embedded in segments 1-2), Teredo 2001::/32 (server in
+    // segments 2-3, client obfuscated by XOR 0xffff in segments 6-7), and the deprecated IPv4-compatible
+    // ::a.b.c.d. The local-use NAT64 prefix 64:ff9b:1::/48 (RFC 8215) is refused outright.
+    if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] || seg[..6] == [0; 6] {
+        return blocked_v4(v4_of(seg[6], seg[7]));
+    }
+    if seg[0] == 0x64 && seg[1] == 0xff9b && seg[2] == 1 {
+        return true;
+    }
+    if seg[0] == 0x2002 && blocked_v4(v4_of(seg[1], seg[2])) {
+        return true;
+    }
+    if seg[0] == 0x2001
+        && seg[1] == 0
+        && (blocked_v4(v4_of(seg[2], seg[3])) || blocked_v4(v4_of(!seg[6], !seg[7])))
+    {
+        return true;
+    }
+    let first = seg[0];
     ip.is_loopback()
         || ip.is_unspecified()
         // fc00::/7 unique local, fe80::/10 link local
         || (first & 0xfe00) == 0xfc00
         || (first & 0xffc0) == 0xfe80
         // 2001:db8::/32 documentation
-        || (first == 0x2001 && ip.segments()[1] == 0x0db8)
+        || (first == 0x2001 && seg[1] == 0x0db8)
 }
 
 /// The SSRF guard for a `push` callback (section 11.34): refuse a URI the AS should not call. It must be
@@ -1004,6 +1029,40 @@ mod tests {
         assert!(!push_address_allowed("10.1.2.3".parse().unwrap()));
         assert!(!push_address_allowed("::1".parse().unwrap()));
         assert!(push_address_allowed("93.184.216.34".parse().unwrap()));
+    }
+
+    #[test]
+    fn an_ipv6_form_that_embeds_a_blocked_ipv4_address_is_refused() {
+        // NAT64 (64:ff9b::/96), 6to4 (2002::/16), Teredo (2001::/32, server and obfuscated client), the
+        // local-use NAT64 prefix and the deprecated IPv4-compatible form each carry an IPv4 address that a
+        // translator or tunnel will connect to.
+        for ip in [
+            "64:ff9b::7f00:1",
+            "64:ff9b::a00:1",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b:1::1",
+            "2002:7f00:1::1",
+            "2002:a00:1::1",
+            "2002:a9fe:a9fe::1",
+            "2001:0:7f00:1:8000:63bf:5db8:d822",
+            "2001:0:5db8:d822:8000:63bf:80ff:fffe",
+            "2001:0:5db8:d822:8000:63bf:f5ff:fef1",
+            "2001:0:5db8:d822:8000:63bf:5601:5601",
+            "::7f00:1",
+            "::a9fe:a9fe",
+        ] {
+            let addr: IpAddr = ip.parse().unwrap();
+            assert!(!push_address_allowed(addr), "{ip}");
+            let uri = Url::parse(&format!("https://[{ip}]/cb")).unwrap();
+            assert!(validate_push_target(&uri).is_err(), "{ip}");
+        }
+        for ip in [
+            "64:ff9b::5db8:d822",
+            "2002:5db8:d822::1",
+            "2001:0:5db8:d822:8000:63bf:a247:27dd",
+        ] {
+            assert!(push_address_allowed(ip.parse().unwrap()), "{ip}");
+        }
     }
 
     #[test]

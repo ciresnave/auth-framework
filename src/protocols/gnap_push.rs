@@ -7,7 +7,9 @@
 //! delivery: [`deliver_push`] resolves the host once, refuses if **any** answer is a blocked address, and then
 //! connects to the one address it checked (the [`PushSender`] is handed that address and must not resolve the
 //! name again). The default sender, [`ReqwestPushSender`], pins the connection to it, follows no redirects
-//! (a 3xx to an internal address would defeat the check) and has a timeout.
+//! (a 3xx to an internal address would defeat the check), uses no proxy (`HTTP_PROXY` and friends are
+//! ignored: a proxy re-resolves the name and voids the pin, so the pin holds only on a path with no proxy)
+//! and has a timeout.
 //!
 //! Resolution and sending are traits so an integrator can use its own resolver or HTTP stack, and so the
 //! tests can prove the order of the steps without a network.
@@ -111,6 +113,8 @@ impl PushSender for ReqwestPushSender {
     async fn post(&self, uri: &Url, pinned: SocketAddr, body: &Value) -> Result<u16, PushError> {
         let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            // A proxy would receive the name and resolve it again, voiding the pin.
+            .no_proxy()
             .timeout(self.timeout);
         if let Some(Host::Domain(name)) = uri.host() {
             // The name stays in the URL for `Host` and TLS; the connection goes to the checked address.
@@ -383,6 +387,38 @@ pub(crate) mod tests {
             head.contains("\"interact_ref\":\"r\"") || head.contains("interact_ref"),
             "{head}"
         );
+    }
+
+    #[tokio::test]
+    async fn the_default_sender_ignores_proxy_variables_and_still_uses_the_pin() {
+        // A proxy would receive the name and resolve it again, voiding the pin. The decoy stands in for one.
+        let (proxy, proxy_seen) =
+            serve_once("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n").await;
+        let (addr, server) =
+            serve_once("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n").await;
+        let target = uri(&format!("http://pinned.invalid:{}/cb", addr.port()));
+        let proxy_url = format!("http://{proxy}");
+        // SAFETY: only this test sets these two variables, and it removes them before it ends.
+        unsafe {
+            std::env::set_var("HTTP_PROXY", &proxy_url);
+            std::env::set_var("http_proxy", &proxy_url);
+        }
+        let out = ReqwestPushSender::with_timeout(Duration::from_secs(3))
+            .post(&target, addr, &serde_json::json!({}))
+            .await;
+        // SAFETY: same two variables, same single test as above.
+        unsafe {
+            std::env::remove_var("HTTP_PROXY");
+            std::env::remove_var("http_proxy");
+        }
+        assert_eq!(
+            out,
+            Ok(204),
+            "the request went to the pinned address, not the proxy"
+        );
+        assert!(server.await.is_ok());
+        assert!(!proxy_seen.is_finished(), "the proxy was never contacted");
+        proxy_seen.abort();
     }
 
     #[tokio::test]
