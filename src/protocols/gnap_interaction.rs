@@ -402,6 +402,9 @@ fn blocked_v4(ip: Ipv4Addr) -> bool {
         // 100.64.0.0/10 shared address space (carrier-grade NAT)
         || (ip.octets()[0] == 100 && (ip.octets()[1] & 0xc0) == 0x40)
         || ip.octets()[0] >= 240
+        // 224.0.0.0/4 multicast, 198.18.0.0/15 benchmarking
+        || ip.is_multicast()
+        || (ip.octets()[0] == 198 && (ip.octets()[1] & 0xfe) == 18)
 }
 
 fn blocked_v6(ip: Ipv6Addr) -> bool {
@@ -436,6 +439,7 @@ fn blocked_v6(ip: Ipv6Addr) -> bool {
     let first = seg[0];
     ip.is_loopback()
         || ip.is_unspecified()
+        || ip.is_multicast()
         // fc00::/7 unique local, fe80::/10 link local
         || (first & 0xfe00) == 0xfc00
         || (first & 0xffc0) == 0xfe80
@@ -1056,6 +1060,18 @@ mod tests {
             let uri = Url::parse(&format!("https://[{ip}]/cb")).unwrap();
             assert!(validate_push_target(&uri).is_err(), "{ip}");
         }
+        // multicast and benchmarking (198.18.0.0/15) are refused too
+        for ip in [
+            "198.18.0.1",
+            "198.19.255.254",
+            "224.0.0.1",
+            "239.255.255.250",
+            "ff02::1",
+        ] {
+            assert!(!push_address_allowed(ip.parse().unwrap()), "{ip}");
+        }
+        assert!(push_address_allowed("198.17.0.1".parse().unwrap()));
+        assert!(push_address_allowed("198.20.0.1".parse().unwrap()));
         for ip in [
             "64:ff9b::5db8:d822",
             "2002:5db8:d822::1",

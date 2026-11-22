@@ -132,7 +132,8 @@ impl PushSender for ReqwestPushSender {
 }
 
 /// Deliver the `push` callback (section 4.2.2) to `uri`: check the URI, resolve the host, refuse if any
-/// answer is a blocked address, then send to the first checked address. `Ok` means the client answered 2xx.
+/// answer is a blocked address, then send to the checked addresses in order until one can be reached. `Ok`
+/// means the client answered 2xx.
 pub async fn deliver_push(
     uri: &Url,
     hash: &str,
@@ -153,23 +154,30 @@ pub async fn deliver_push(
             .map_err(|_| PushError::ResolutionFailed)?,
         None => return Err(PushError::TargetNotAllowed),
     };
-    let Some(first) = addresses.first().copied() else {
+    if addresses.is_empty() {
         return Err(PushError::NoAddress);
-    };
+    }
     // One blocked answer among several is enough to refuse: a client that controls its DNS can list a
     // public address first and an internal one second, and a resolver or connector is free to pick either.
     if !addresses.iter().copied().all(push_address_allowed) {
         return Err(PushError::AddressNotAllowed);
     }
     let body = callback_push_body(hash, interact_ref);
-    let status = sender
-        .post(uri, SocketAddr::new(first, port), &body)
-        .await?;
-    if (200..300).contains(&status) {
-        Ok(())
-    } else {
-        Err(PushError::Rejected(status))
+    // Every address was checked above, so trying the next one after a failed send widens nothing. Only a
+    // failure to send moves on; any HTTP answer (even a refusal) is the client's and ends the attempt.
+    let mut last = PushError::SendFailed;
+    for address in addresses {
+        match sender
+            .post(uri, SocketAddr::new(address, port), &body)
+            .await
+        {
+            Ok(status) if (200..300).contains(&status) => return Ok(()),
+            Ok(status) => return Err(PushError::Rejected(status)),
+            Err(e @ PushError::SendFailed) => last = e,
+            Err(e) => return Err(e),
+        }
     }
+    Err(last)
 }
 
 #[cfg(test)]
@@ -316,6 +324,47 @@ pub(crate) mod tests {
             assert!(r.asked().is_empty(), "{u}: not resolved");
             assert!(s.calls.lock().unwrap().is_empty());
         }
+    }
+
+    /// Fails to send to `bad`, answers 204 elsewhere.
+    struct FailsOn(SocketAddr, Mutex<Vec<SocketAddr>>);
+
+    #[async_trait]
+    impl PushSender for FailsOn {
+        async fn post(&self, _: &Url, pinned: SocketAddr, _: &Value) -> Result<u16, PushError> {
+            self.1.lock().unwrap().push(pinned);
+            if pinned == self.0 {
+                Err(PushError::SendFailed)
+            } else {
+                Ok(204)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_send_moves_on_to_the_next_checked_address() {
+        let r = FakeResolver::answering(&["93.184.216.34", "93.184.216.35"]);
+        let s = FailsOn("93.184.216.34:443".parse().unwrap(), Mutex::new(Vec::new()));
+        deliver_push(&uri("https://client.example/cb"), "H", "REF", &r, &s)
+            .await
+            .unwrap();
+        assert_eq!(s.1.lock().unwrap().len(), 2);
+        // every address failing is a send failure; a blocked sibling still refuses before any send
+        let s = FailsOn("93.184.216.34:443".parse().unwrap(), Mutex::new(Vec::new()));
+        let r = FakeResolver::answering(&["93.184.216.34"]);
+        let e = deliver_push(&uri("https://client.example/cb"), "H", "REF", &r, &s)
+            .await
+            .unwrap_err();
+        assert_eq!(e, PushError::SendFailed);
+        let r = FakeResolver::answering(&["93.184.216.34", "10.0.0.1"]);
+        let s = FailsOn("93.184.216.34:443".parse().unwrap(), Mutex::new(Vec::new()));
+        assert_eq!(
+            deliver_push(&uri("https://client.example/cb"), "H", "REF", &r, &s)
+                .await
+                .unwrap_err(),
+            PushError::AddressNotAllowed
+        );
+        assert!(s.1.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

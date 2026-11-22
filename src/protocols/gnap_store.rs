@@ -191,7 +191,9 @@ pub trait GnapTransactionStore: Send + Sync {
                     .as_deref()
                     .is_some_and(|issued| user_codes_equal(user_code, issued))
             {
-                found = Some(txn);
+                // The first match wins, so a (negligible) code collision gives one defined answer; the scan
+                // still reads every transaction.
+                found.get_or_insert(txn);
             }
         }
         Ok(found)

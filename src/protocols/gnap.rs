@@ -2000,12 +2000,33 @@ impl GnapService {
     /// The target is checked again here, after the host name is resolved, and the connection goes to the
     /// address that was checked ([`deliver_push`], section 11.34): a name that resolves to a loopback,
     /// private or metadata address is refused and nothing is sent. A transaction that is not approved, has
-    /// no `push` finish, or has no reference yet is refused.
+    /// no `push` finish, or has no reference yet is refused, as is one past its lifetime (continuation
+    /// would refuse its reference anyway).
+    ///
+    /// **Deviation from RFC 9635 section 4.2:** the RFC says `finish` is also enacted when the resource
+    /// owner denies access, so the client can learn of it and modify its request. This method pushes only
+    /// an approved transaction; a client that asked for `push` and was denied is not told and finds out at
+    /// its next poll. Pushing a denial needs a denial body the RFC does not define for `push`.
     pub async fn push_interaction(
         &self,
         transaction_id: &str,
         resolver: &dyn PushResolver,
         sender: &dyn PushSender,
+    ) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.push_interaction_at(transaction_id, resolver, sender, now)
+            .await
+    }
+
+    async fn push_interaction_at(
+        &self,
+        transaction_id: &str,
+        resolver: &dyn PushResolver,
+        sender: &dyn PushSender,
+        now: u64,
     ) -> Result<()> {
         let txn = self
             .transactions
@@ -2014,6 +2035,9 @@ impl GnapService {
             .ok_or_else(|| AuthError::validation("Transaction not found"))?;
         if !matches!(txn.state, GnapTransactionState::Approved) {
             return Err(AuthError::validation("the transaction is not approved"));
+        }
+        if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
+            return Err(AuthError::validation("the transaction has expired"));
         }
         let finish = txn
             .request
@@ -5451,6 +5475,29 @@ mod proof_verification_tests {
             .to_string();
         assert!(e.contains("not approved"), "{e}");
         assert!(s.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_expired_approved_transaction_is_not_pushed() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, _) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        let (r, s) = (
+            FakeResolver::answering(&["93.184.216.34"]),
+            FakeSender::default(),
+        );
+        let created = svc.test_first_txn().await.created_at;
+        let life = svc.config.transaction_lifetime_secs;
+        let e = svc
+            .push_interaction_at(&id, &r, &s, created + life + 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("expired"), "{e}");
+        assert!(s.calls.lock().unwrap().is_empty());
+        svc.push_interaction_at(&id, &r, &s, created + life)
+            .await
+            .unwrap();
+        assert_eq!(s.calls.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
