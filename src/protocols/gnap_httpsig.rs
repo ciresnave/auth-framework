@@ -616,6 +616,11 @@ impl NonceCache {
         self.floor
     }
 
+    /// Move the floor back to `at` if it is later; remembered nonces are kept.
+    pub fn lower_floor_to(&mut self, at: u64) {
+        self.floor = self.floor.min(at);
+    }
+
     /// Record `nonce` in `scope` at `now`. Refused when it was already recorded within `window_secs`, or when
     /// the cache is full of nonces still inside their window.
     pub fn check_and_insert(

@@ -590,13 +590,14 @@ impl GnapService {
     }
 
     /// Replace the clock every expiry, poll-interval and signature-freshness decision reads, so a test can
-    /// move time instead of sleeping. `clock` returns seconds since the epoch. The `httpsig` nonce cache is
-    /// restarted at the new clock's current time. Production services keep the system clock.
+    /// move time instead of sleeping. `clock` returns seconds since the epoch. The `httpsig` nonce cache keeps
+    /// what it has remembered; only its floor moves back if the new clock is earlier. Production services keep
+    /// the system clock.
     #[must_use]
     pub fn with_clock(mut self, clock: impl Fn() -> u64 + Send + Sync + 'static) -> Self {
-        self.httpsig_nonces = Arc::new(std::sync::Mutex::new(
-            super::gnap_httpsig::NonceCache::new(clock()),
-        ));
+        if let Ok(mut cache) = self.httpsig_nonces.lock() {
+            cache.lower_floor_to(clock());
+        }
         self.clock = Arc::new(clock);
         self
     }
@@ -6083,6 +6084,25 @@ mod httpsig_proof_tests {
         assert!(svc.introspect_token(&token).await.unwrap().is_some());
         time.fetch_add(1, Ordering::SeqCst);
         assert!(svc.introspect_token(&token).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_replay_is_still_refused_after_the_clock_is_replaced() {
+        let t = 1_800_000_000u64;
+        let svc = service().with_clock(move || t);
+        let key = signer();
+        let good = attached_jws(&key, b"{}", t as i64);
+        issue_attached(&svc, &key, good.as_bytes())
+            .await
+            .unwrap_or_else(|e| panic!("the first presentation must be accepted: {e}"));
+        // Control: the same service refuses the replay.
+        assert!(issue_attached(&svc, &key, good.as_bytes()).await.is_err());
+        // Replacing the clock with an earlier one must not make the cache forget.
+        let svc = svc.with_clock(move || t - 100);
+        assert!(
+            issue_attached(&svc, &key, good.as_bytes()).await.is_err(),
+            "the replay cache must survive with_clock"
+        );
     }
 
     /// A compact (attached) JWS (RFC 9635 section 7.3.4) over `payload`, signed by `signer`.
