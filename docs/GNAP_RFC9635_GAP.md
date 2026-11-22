@@ -36,7 +36,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 3.1 `continue` (`uri`, `wait`, `access_token`) | **partial** | `uri` is `{transaction_endpoint}/continue` (999-1000, 1150-1153), `wait` is the constant 5 (1156), a rotated continuation token (done, tested) | `uri` is the configured path, the RFC wants an absolute URI; `wait` is not enforced (`too_fast` is never returned) |
+| 3.1 `continue` (`uri`, `wait`, `access_token`) | **partial** | `uri` is `{transaction_endpoint}/continue` (999-1000, 1150-1153), `wait` is `with_poll_wait_secs` (default 5, 0 = off) and is enforced, a rotated continuation token (done, tested) | `uri` is the configured path, the RFC wants an absolute URI |
 | 3.2.1 access token `value`, `expires_in`, `access` | **done / partial** | `value`, `expires_in` (832), `access` = what the policy granted (the token is no longer the request echoed) | `access` may differ from the request, which the RFC allows; strings (8.1) are not represented |
 | 3.2.1 `label`, `flags` | **missing** | none | a key-less token carries no `bearer` flag |
 | 3.2.1 `manage` | **wrong type** | a string `{endpoint}/token` (838-839, 1326-1327), the same for every token | RFC: an object `{uri, access_token}`, uri per token, with its own key-bound management token |
@@ -61,9 +61,9 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
 | 5.1 after interaction (POST `interact_ref`) | **done** | `continue_transaction_with_proof` (1037) | the HTTP shape is the integrator's |
-| 5.2 polling | **partial** | a pending transaction answers with a new `continue` (1150-1163) | no `too_fast`, no `too_many_attempts` |
-| 5.3 modify (PATCH) | **missing** | | |
-| 5.4 revoke a grant (DELETE) | **missing** | `deny_transaction` (1270) is the AS side only | the client cannot cancel; tokens of a cancelled grant are not revoked |
+| 5.2 polling | **partial** | a pending transaction answers with a new `continue`; a poll before `wait` has elapsed is refused with `TOO_FAST`, the token is kept and the clock restarts (`last_poll_at`) | no `too_many_attempts` |
+| 5.3 modify (PATCH) | **done (service method)** | `modify_transaction_with_proof`: pending only, no `client`/`interact` | the HTTP route (surface lane) |
+| 5.4 revoke a grant (DELETE) | **partial** | `delete_transaction_with_proof` lets the client cancel; `deny_transaction` is the AS side | the HTTP route (surface lane); tokens of a cancelled grant are not revoked |
 
 ### 6 Token management
 

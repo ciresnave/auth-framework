@@ -337,7 +337,9 @@ pub struct ServiceProviderConfig {
     pub patch: Supported,
     pub bulk: BulkSupported,
     pub filter: FilterSupported,
-    pub change_password: Supported,
+    #[serde(rename = "changePassword")]
+    // sec012: public - the RFC 7643 section 5 capability flag `{"supported": bool}`: whether this server offers password change.
+    pub change_password_flag: Supported,
     pub sort: Supported,
     pub etag: Supported,
     pub authentication_schemes: Vec<AuthenticationScheme>,
@@ -1136,5 +1138,26 @@ mod tests {
         assert_eq!(list.resources.len(), 2);
         assert_eq!(list.resources[0].user_name, "alice");
         assert_eq!(list.resources[1].user_name, "bob");
+    }
+
+    /// The Rust field was renamed (SEC-012, #463); the RFC 7643 wire name must not move.
+    #[test]
+    fn service_provider_config_keeps_the_change_password_wire_name() {
+        let on = Supported { supported: true };
+        let v = serde_json::json!({
+            "schemas": [],
+            "patch": {"supported": true},
+            "bulk": {"supported": false, "maxOperations": 0, "maxPayloadSize": 0},
+            "filter": {"supported": false, "maxResults": 0},
+            "changePassword": {"supported": true},
+            "sort": {"supported": false},
+            "etag": {"supported": false},
+            "authenticationSchemes": []
+        });
+        let cfg: ServiceProviderConfig = serde_json::from_value(v).expect("RFC 7643 shape parses");
+        assert_eq!(cfg.change_password_flag.supported, on.supported);
+        let out = serde_json::to_value(&cfg).unwrap();
+        assert!(out.get("changePassword").is_some());
+        assert!(out.get("changePasswordFlag").is_none());
     }
 }

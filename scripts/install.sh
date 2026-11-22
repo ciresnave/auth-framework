@@ -14,7 +14,9 @@ NC='\033[0m' # No Color
 
 # Configuration
 REPO="ciresnave/auth-framework"
-BINARY_NAME="authframework"
+# The release publishes auth-framework-<os>-<arch>[-musl].tar.gz (server) and auth-framework-admin-<os>-<arch>[-musl].tar.gz,
+# each holding one binary of the same name as the archive; there is no version in the asset name.
+BINARY_NAME="auth-framework"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 TEMP_DIR=$(mktemp -d)
 
@@ -53,7 +55,7 @@ detect_platform() {
             OS="linux"
             ;;
         darwin*)
-            OS="apple-darwin"
+            OS="macos"
             ;;
         *)
             print_error "Unsupported operating system: $OS"
@@ -74,15 +76,10 @@ detect_platform() {
             ;;
     esac
     
-    if [ "$OS" = "linux" ]; then
-        # Prefer musl for better portability on Linux
-        if ldd --version 2>&1 | grep -q musl; then
-            TARGET="${ARCH}-unknown-${OS}-musl"
-        else
-            TARGET="${ARCH}-unknown-${OS}-gnu"
-        fi
-    else
-        TARGET="${ARCH}-${OS}"
+    # TARGET is the platform part of the release asset name: <os>-<arch>, plus -musl on a musl Linux.
+    TARGET="${OS}-${ARCH}"
+    if [ "$OS" = "linux" ] && ldd --version 2>&1 | grep -q musl; then
+        TARGET="${TARGET}-musl"
     fi
     
     echo "$TARGET"
@@ -100,26 +97,54 @@ get_latest_version() {
     echo "$VERSION"
 }
 
+fetch_asset() {
+    # fetch_asset <asset stem>: download <stem>.tar.gz from the release, check it against <stem>.tar.gz.sha256,
+    # and extract the binary <stem> into the current directory. Returns non-zero if the download fails.
+    local STEM=$1
+    local ARCHIVE_NAME="${STEM}.tar.gz"
+    local BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+
+    if ! curl -sSLf -o "$ARCHIVE_NAME" "${BASE_URL}/${ARCHIVE_NAME}"; then
+        return 1
+    fi
+    if curl -sSLf -o "${ARCHIVE_NAME}.sha256" "${BASE_URL}/${ARCHIVE_NAME}.sha256"; then
+        local EXPECTED ACTUAL
+        EXPECTED=$(awk '{print $1}' "${ARCHIVE_NAME}.sha256")
+        if command -v sha256sum >/dev/null 2>&1; then
+            ACTUAL=$(sha256sum "$ARCHIVE_NAME" | awk '{print $1}')
+        else
+            ACTUAL=$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')
+        fi
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+            print_error "Checksum mismatch for ${ARCHIVE_NAME}"
+            exit 1
+        fi
+    else
+        print_warning "No checksum published for ${ARCHIVE_NAME}; not verified"
+    fi
+    tar xzf "$ARCHIVE_NAME"
+}
+
 download_and_install() {
-    local VERSION=$1
+    VERSION=$1
     local TARGET=$2
-    local ARCHIVE_NAME="${BINARY_NAME}-${VERSION}-${TARGET}.tar.gz"
-    local DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE_NAME}"
-    
+    local SERVER_STEM="${BINARY_NAME}-${TARGET}"
+    local ADMIN_STEM="${BINARY_NAME}-admin-${TARGET}"
+
     print_info "Downloading AuthFramework ${VERSION} for ${TARGET}..."
-    
+
     cd "$TEMP_DIR"
-    
-    if ! curl -sSL -o "$ARCHIVE_NAME" "$DOWNLOAD_URL"; then
-        print_error "Failed to download from $DOWNLOAD_URL"
+
+    if ! fetch_asset "$SERVER_STEM"; then
+        print_error "Failed to download ${SERVER_STEM}.tar.gz from the ${VERSION} release"
         exit 1
     fi
-    
-    print_info "Extracting archive..."
-    tar xzf "$ARCHIVE_NAME"
-    
+    if ! fetch_asset "$ADMIN_STEM"; then
+        print_warning "No admin binary published for ${TARGET}; installing the server only"
+    fi
+
     print_info "Installing binaries to ${INSTALL_DIR}..."
-    
+
     # Check if we need sudo
     if [ -w "$INSTALL_DIR" ]; then
         SUDO=""
@@ -127,21 +152,23 @@ download_and_install() {
         SUDO="sudo"
         print_warning "Installing to ${INSTALL_DIR} requires elevated privileges"
     fi
-    
-    # Install binaries
-    for binary in authframework-server authframework-cli; do
-        if [ -f "$binary" ]; then
-            $SUDO install -m 755 "$binary" "$INSTALL_DIR/"
-            print_success "Installed $binary"
-        fi
-    done
-    
+
+    # Each archive holds one binary named like the archive; install it under its command name
+    if [ -f "$SERVER_STEM" ]; then
+        $SUDO install -m 755 "$SERVER_STEM" "$INSTALL_DIR/${BINARY_NAME}"
+        print_success "Installed ${BINARY_NAME}"
+    fi
+    if [ -f "$ADMIN_STEM" ]; then
+        $SUDO install -m 755 "$ADMIN_STEM" "$INSTALL_DIR/${BINARY_NAME}-admin"
+        print_success "Installed ${BINARY_NAME}-admin"
+    fi
+
     # Verify installation
-    if command -v authframework-server >/dev/null 2>&1; then
+    if [ -x "$INSTALL_DIR/${BINARY_NAME}" ]; then
         print_success "AuthFramework installed successfully!"
-        print_info "Version: $(authframework-server --version 2>/dev/null || echo 'unknown')"
+        print_info "Version: $("$INSTALL_DIR/${BINARY_NAME}" --version 2>/dev/null || echo 'unknown')"
     else
-        print_error "Installation failed - binary not found in PATH"
+        print_error "Installation failed - ${BINARY_NAME} not found in ${INSTALL_DIR}"
         exit 1
     fi
 }
@@ -230,7 +257,7 @@ After=network.target
 Type=simple
 User=${USER}
 WorkingDirectory=${HOME}
-ExecStart=${INSTALL_DIR}/authframework-server --config ${HOME}/.config/authframework/config.toml
+ExecStart=${INSTALL_DIR}/auth-framework --config ${HOME}/.config/authframework/config.toml
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -261,10 +288,10 @@ print_usage_instructions() {
     echo "     \$ openssl rand -base64 32"
     echo ""
     echo "  3. Start the server:"
-    echo "     \$ authframework-server"
+    echo "     \$ auth-framework"
     echo ""
     echo "  4. Or use the CLI:"
-    echo "     \$ authframework-cli --help"
+    echo "     \$ auth-framework-admin --help"
     echo ""
     echo -e "${BLUE}Systemd Service:${NC}"
     if [ -d "/etc/systemd/system" ]; then

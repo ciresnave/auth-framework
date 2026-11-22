@@ -285,6 +285,8 @@ pub struct CredentialOffer {
 pub struct CredentialOfferGrants {
     /// Authorization code grant.
     #[serde(default, rename = "authorization_code")]
+    // sec012: public - the authorization_code grant descriptor of a credential offer (issuer_state, authorization_server), not an
+    // authorization code; the secret pre-authorized code is PreAuthorizedCodeGrant, whose Debug redacts it.
     pub authorization_code: Option<AuthorizationCodeGrant>,
     /// Pre-authorized code grant.
     #[serde(

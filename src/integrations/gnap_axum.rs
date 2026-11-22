@@ -297,7 +297,7 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(get).await.unwrap();
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert_eq!(resp.headers().get("allow").unwrap(), "POST");
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST, PATCH, DELETE");
         let post = HttpRequest::builder()
             .method("POST")
             .uri("/api/gnap/tx/continue/abc")

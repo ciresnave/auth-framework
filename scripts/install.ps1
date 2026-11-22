@@ -5,7 +5,9 @@ $ErrorActionPreference = 'Stop'
 
 # Configuration
 $REPO = 'ciresnave/auth-framework'
-$BINARY_NAME = 'authframework'
+# The release publishes auth-framework-windows-x86_64.zip (server) and auth-framework-admin-windows-x86_64.zip, each
+# holding <archive name>.exe; there is no version in the asset name and no ARM64 build.
+$BINARY_NAME = 'auth-framework'
 $INSTALL_DIR = "${env:ProgramFiles}\AuthFramework"
 $CONFIG_DIR = "${env:USERPROFILE}\.config\authframework"
 $TEMP_DIR = "${env:TEMP}\authframework-install"
@@ -74,7 +76,10 @@ function Get-Architecture {
     
     switch ($arch) {
         'AMD64' { return 'x86_64' }
-        'ARM64' { return 'aarch64' }
+        'ARM64' {
+            Write-Error 'No Windows ARM64 build is published (only windows-x86_64)'
+            exit 1
+        }
         default {
             Write-Error "Unsupported architecture: $arch"
             exit 1
@@ -88,34 +93,45 @@ function Download-And-Install {
         [string]$Arch
     )
     
-    $TARGET = "${Arch}-pc-windows-msvc"
-    $ARCHIVE_NAME = "${BINARY_NAME}-${Version}-${TARGET}.zip"
-    $DOWNLOAD_URL = "https://github.com/${REPO}/releases/download/${Version}/${ARCHIVE_NAME}"
+    $TARGET = "windows-${Arch}"
+    $baseUrl = "https://github.com/${REPO}/releases/download/${Version}"
     
     Write-Info "Downloading AuthFramework ${Version} for ${TARGET}..."
     
     try {
-        $archivePath = Join-Path $TEMP_DIR $ARCHIVE_NAME
-        Invoke-WebRequest -Uri $DOWNLOAD_URL -OutFile $archivePath -UseBasicParsing
-        
-        Write-Info 'Extracting archive...'
-        Expand-Archive -Path $archivePath -DestinationPath $TEMP_DIR -Force
-        
-        Write-Info "Installing binaries to ${INSTALL_DIR}..."
+        # Each archive holds one <stem>.exe; install it under its command name
+        $stems = @{
+            "${BINARY_NAME}-${TARGET}"       = "${BINARY_NAME}.exe"
+            "${BINARY_NAME}-admin-${TARGET}" = "${BINARY_NAME}-admin.exe"
+        }
         
         # Create install directory
         if (-not (Test-Path $INSTALL_DIR)) {
             New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null
         }
         
-        # Copy binaries
-        $binaries = @('authframework-server.exe', 'authframework-cli.exe')
-        foreach ($binary in $binaries) {
-            $sourcePath = Join-Path $TEMP_DIR $binary
-            if (Test-Path $sourcePath) {
-                Copy-Item -Path $sourcePath -Destination $INSTALL_DIR -Force
-                Write-Success "Installed $binary"
+        foreach ($stem in $stems.Keys) {
+            $archivePath = Join-Path $TEMP_DIR "${stem}.zip"
+            try {
+                Invoke-WebRequest -Uri "${baseUrl}/${stem}.zip" -OutFile $archivePath -UseBasicParsing
             }
+            catch {
+                if ($stem -like "${BINARY_NAME}-admin-*") {
+                    Write-Warning "No admin binary published for ${TARGET}; installing the server only"
+                    continue
+                }
+                throw
+            }
+            
+            Write-Info "Extracting ${stem}.zip..."
+            Expand-Archive -Path $archivePath -DestinationPath $TEMP_DIR -Force
+            
+            $sourcePath = Join-Path $TEMP_DIR "${stem}.exe"
+            if (-not (Test-Path $sourcePath)) {
+                throw "${stem}.zip does not contain ${stem}.exe"
+            }
+            Copy-Item -Path $sourcePath -Destination (Join-Path $INSTALL_DIR $stems[$stem]) -Force
+            Write-Success "Installed $($stems[$stem])"
         }
         
         # Add to PATH if not already present
@@ -218,7 +234,7 @@ function Install-WindowsService {
     $serviceName = 'AuthFramework'
     $displayName = 'AuthFramework Authentication Server'
     $description = 'AuthFramework - High-performance authentication and authorization server'
-    $binaryPath = Join-Path $INSTALL_DIR 'authframework-server.exe'
+    $binaryPath = Join-Path $INSTALL_DIR 'auth-framework.exe'
     $configPath = Join-Path $CONFIG_DIR 'config.toml'
     
     # Stop service if it exists
@@ -256,7 +272,7 @@ function Create-FirewallRule {
     Write-Info 'Creating Windows Firewall rule...'
     
     $ruleName = 'AuthFramework Server'
-    $binaryPath = Join-Path $INSTALL_DIR 'authframework-server.exe'
+    $binaryPath = Join-Path $INSTALL_DIR 'auth-framework.exe'
     
     # Remove existing rule if present
     $existingRule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
@@ -294,10 +310,10 @@ function Show-UsageInstructions {
     Write-Host '     PS> [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))'
     Write-Host ''
     Write-Host '  3. Start the server:'
-    Write-Host '     PS> authframework-server'
+    Write-Host '     PS> auth-framework'
     Write-Host ''
     Write-Host '  4. Or use the CLI:'
-    Write-Host '     PS> authframework-cli --help'
+    Write-Host '     PS> auth-framework-admin --help'
     Write-Host ''
     Write-Host 'Windows Service:' -ForegroundColor Cyan
     Write-Host '  PS> Start-Service -Name AuthFramework'
@@ -311,7 +327,7 @@ function Show-UsageInstructions {
     Write-Host ''
     Write-Host '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' -ForegroundColor Green
     Write-Host ''
-    Write-Warning "Note: Restart your terminal to use the 'authframework-*' commands"
+    Write-Warning "Note: Restart your terminal to use the 'auth-framework*' commands"
 }
 
 # Main installation flow

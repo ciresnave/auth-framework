@@ -1033,6 +1033,7 @@ warnings
 
 [allow]
 src/admin/mod.rs:HealthStatus:<tuple> | health warning text
+src/admin/mod.rs:SettingsSource:<tuple> | the path of the configuration file the admin binary read: a location, not a credential
 src/analytics/compliance.rs:ComplianceRuleType:<tuple> | the name of a custom variant: a label, not a credential
 src/analytics/dashboard.rs:DataSource:query | analytics query text; it carries no credentials
 src/analytics/mod.rs:AnalyticsError:<tuple> | error message text: diagnostic, not a credential

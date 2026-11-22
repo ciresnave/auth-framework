@@ -14,7 +14,9 @@
 //!   polls or, after the resource owner approved, presents the `interact_ref` in the body. The
 //!   continuation token is in `Authorization: GNAP <token>` and rotates on every success.
 //!
-//! PATCH and DELETE on a grant, polling back-off and the `wait` handling are not here yet.
+//!   `PATCH` on the same URI modifies a pending request (section 5.3) and `DELETE` cancels it
+//!   (section 5.4). A poll that comes before the announced `wait` is 429 `too_fast` (section 3.6)
+//!   and keeps the continuation token usable.
 //!
 //! A proof is bound to the authorization server's own URL, the one this handler is given, and
 //! never to the `Host` the request arrived with. Only the `dpop` proof method verifies today (see
@@ -99,7 +101,12 @@ impl GnapAsHttp {
         if let Some(id) = self.continue_id(path) {
             return match method.as_str() {
                 "POST" => self.continue_grant(req, id).await,
-                _ => GnapHttpResponse::empty(405, vec![("Allow".into(), "POST".into())]),
+                "PATCH" => self.modify_grant(req, id).await,
+                "DELETE" => self.cancel_grant(req, id).await,
+                _ => GnapHttpResponse::empty(
+                    405,
+                    vec![("Allow".into(), "POST, PATCH, DELETE".into())],
+                ),
             };
         }
         GnapHttpResponse::empty(404, Vec::new())
@@ -180,6 +187,45 @@ impl GnapAsHttp {
         }
     }
 
+    async fn modify_grant(&self, req: &GnapHttpRequest, id: &str) -> GnapHttpResponse {
+        let Some(token) = gnap_token(req) else {
+            return unauthorized();
+        };
+        let modification = match read_json::<GnapTransactionRequest>(req) {
+            Ok(m) => m,
+            Err(refused) => return refused,
+        };
+        let url = format!("{}/continue/{id}", self.grant_url);
+        let proof = proof_for(req, &url);
+        match self
+            .service
+            .modify_transaction_with_proof(&self.dpop, &proof, id, token, &modification)
+            .await
+        {
+            Ok(answer) => GnapHttpResponse::json(200, &answer, true),
+            Err(e) => refuse(&e),
+        }
+    }
+
+    async fn cancel_grant(&self, req: &GnapHttpRequest, id: &str) -> GnapHttpResponse {
+        let Some(token) = gnap_token(req) else {
+            return unauthorized();
+        };
+        let url = format!("{}/continue/{id}", self.grant_url);
+        let proof = proof_for(req, &url);
+        match self
+            .service
+            .delete_transaction_with_proof(&self.dpop, &proof, id, token)
+            .await
+        {
+            // RFC 9635 section 5.4: 204 with no body.
+            Ok(()) => {
+                GnapHttpResponse::empty(204, vec![("Cache-Control".into(), "no-store".into())])
+            }
+            Err(e) => refuse(&e),
+        }
+    }
+
     async fn rotate(&self, req: &GnapHttpRequest) -> GnapHttpResponse {
         let Some(token) = gnap_token(req) else {
             return unauthorized();
@@ -217,9 +263,10 @@ impl GnapAsHttp {
 
 /// The request's own proof material, bound to the server's `url` and not to the request target.
 fn proof_for<'a>(req: &'a GnapHttpRequest, url: &'a str) -> GnapProof<'a> {
-    // `GnapProof` borrows the method; the three methods routed here are static strings.
+    // `GnapProof` borrows the method; the methods routed here are static strings.
     let http_method = match req.method.to_ascii_uppercase().as_str() {
         "DELETE" => "DELETE",
+        "PATCH" => "PATCH",
         _ => "POST",
     };
     GnapProof {
@@ -273,7 +320,10 @@ fn refuse(e: &AuthError) -> GnapHttpResponse {
         return GnapHttpResponse::empty(500, vec![("Cache-Control".into(), "no-store".into())]);
     };
     let m = message.to_ascii_lowercase();
-    if m.contains("denied by the resource owner") {
+    if m.contains("too_fast") {
+        // RFC 9635 section 3.6; the continuation token is still good, so the client may retry.
+        error(429, "too_fast", "poll again after the announced wait")
+    } else if m.contains("denied by the resource owner") {
         error(403, "user_denied", "the resource owner denied the request")
     } else if m.contains("invalid continuation") {
         // Every refused continuation reads the same: a client cannot tell an unknown transaction
@@ -373,6 +423,13 @@ pub(crate) mod tests {
     }
 
     fn parts_with(policy: Arc<dyn GnapAccessPolicy>) -> (GnapAsHttp, Arc<GnapService>) {
+        parts_waiting(policy, 0)
+    }
+
+    fn parts_waiting(
+        policy: Arc<dyn GnapAccessPolicy>,
+        poll_wait_secs: u64,
+    ) -> (GnapAsHttp, Arc<GnapService>) {
         let service = Arc::new(
             GnapService::new(GnapConfig {
                 enabled: true,
@@ -381,6 +438,7 @@ pub(crate) mod tests {
                 token_lifetime_secs: 3600,
                 transaction_lifetime_secs: 600,
             })
+            .with_poll_wait_secs(poll_wait_secs)
             .with_access_policy(policy),
         );
         let manager =
@@ -933,11 +991,142 @@ pub(crate) mod tests {
         assert_eq!(code_of(&r), "invalid_continuation");
     }
 
+    fn cont_as(
+        method: &str,
+        k: &Key,
+        id: &str,
+        token: &str,
+        jti: &str,
+        body: &str,
+    ) -> GnapHttpRequest {
+        let url = format!("{GRANT}/continue/{id}");
+        let proof = dpop(k, k, method, &url, jti);
+        req(
+            method,
+            &format!("/api/gnap/tx/continue/{id}"),
+            vec![("Authorization", format!("GNAP {token}")), ("DPoP", proof)],
+            body.as_bytes().to_vec(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_proved_patch_modifies_the_pending_request_and_rotates_the_token() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-pa0").await;
+        let body = json!({"access_token": {"access": [{"type": "write"}]}}).to_string();
+        let r = h
+            .handle(&cont_as("PATCH", &k, &id, &t0, "c-pa1", &body))
+            .await;
+        assert_eq!(r.status, 200);
+        assert_eq!(r.header("Cache-Control"), Some("no-store"));
+        let out = json_of(&r);
+        let t1 = out["continue"]["access_token"]["value"].as_str().unwrap();
+        assert_ne!(t1, t0);
+        // The old token is spent, the new one works.
+        let old = h.handle(&cont(&k, &id, &t0, "c-pa2", "")).await;
+        assert_eq!(code_of(&old), "invalid_continuation");
+        assert_eq!(h.handle(&cont(&k, &id, t1, "c-pa3", "")).await.status, 200);
+    }
+
+    #[tokio::test]
+    async fn a_patch_that_carries_a_client_or_an_interaction_is_400_and_the_token_survives() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-pb0").await;
+        let jwk = serde_json::to_value(&k.jwk).unwrap();
+        let with_client = json!({"client": {"key": {"proof": "dpop", "jwk": jwk}}}).to_string();
+        let r = h
+            .handle(&cont_as("PATCH", &k, &id, &t0, "c-pb1", &with_client))
+            .await;
+        assert_eq!(r.status, 400);
+        let with_interact = json!({"interact": {"start": ["redirect"]}}).to_string();
+        let r = h
+            .handle(&cont_as("PATCH", &k, &id, &t0, "c-pb2", &with_interact))
+            .await;
+        assert_eq!(r.status, 400);
+        assert_eq!(h.handle(&cont(&k, &id, &t0, "c-pb3", "")).await.status, 200);
+    }
+
+    #[tokio::test]
+    async fn a_patch_with_no_proof_a_bad_body_or_no_header_is_refused() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-pc0").await;
+        let uri = format!("/api/gnap/tx/continue/{id}");
+        let no_proof = req(
+            "PATCH",
+            &uri,
+            vec![("Authorization", format!("GNAP {t0}"))],
+            b"{}".to_vec(),
+        );
+        assert_eq!(h.handle(&no_proof).await.status, 401);
+        let no_header = req("PATCH", &uri, vec![], b"{}".to_vec());
+        assert_eq!(h.handle(&no_header).await.status, 401);
+        let not_json = cont_as("PATCH", &k, &id, &t0, "c-pc1", "not json");
+        assert_eq!(h.handle(&not_json).await.status, 400);
+        assert_eq!(h.handle(&cont(&k, &id, &t0, "c-pc2", "")).await.status, 200);
+    }
+
+    #[tokio::test]
+    async fn a_proved_delete_cancels_the_grant_and_it_cannot_continue() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-d0").await;
+        let r = h.handle(&cont_as("DELETE", &k, &id, &t0, "c-d1", "")).await;
+        assert_eq!(r.status, 204);
+        assert!(r.body.is_empty());
+        assert_eq!(r.header("Cache-Control"), Some("no-store"));
+        let after = h.handle(&cont(&k, &id, &t0, "c-d2", "")).await;
+        assert_eq!(after.status, 401);
+        assert_eq!(code_of(&after), "invalid_continuation");
+        // A second cancel is refused the same way.
+        let twice = h.handle(&cont_as("DELETE", &k, &id, &t0, "c-d3", "")).await;
+        assert_eq!(twice.status, 401);
+    }
+
+    #[tokio::test]
+    async fn a_delete_without_a_proof_or_signed_by_another_key_leaves_the_grant() {
+        let (h, k) = (handler(), key());
+        let (id, t0) = interactive(&h, &k, "c-dn0").await;
+        let uri = format!("/api/gnap/tx/continue/{id}");
+        let no_proof = req(
+            "DELETE",
+            &uri,
+            vec![("Authorization", format!("GNAP {t0}"))],
+            Vec::new(),
+        );
+        assert_eq!(h.handle(&no_proof).await.status, 401);
+        let other = key();
+        let wrong = cont_as("DELETE", &other, &id, &t0, "c-dn1", "");
+        assert_eq!(h.handle(&wrong).await.status, 401);
+        // A POST proof does not authorize a DELETE.
+        let proof = dpop(&k, &k, "POST", &format!("{GRANT}/continue/{id}"), "c-dn2");
+        let swapped = req(
+            "DELETE",
+            &uri,
+            vec![("Authorization", format!("GNAP {t0}")), ("DPoP", proof)],
+            Vec::new(),
+        );
+        assert_eq!(h.handle(&swapped).await.status, 401);
+        assert_eq!(h.handle(&cont(&k, &id, &t0, "c-dn3", "")).await.status, 200);
+    }
+
+    #[tokio::test]
+    async fn a_poll_before_the_wait_is_429_too_fast_and_the_token_survives() {
+        let (h, _) = parts_waiting(Arc::new(AllowAll), 3600);
+        let k = key();
+        let (id, t0) = interactive(&h, &k, "c-w0").await;
+        let early = h.handle(&cont(&k, &id, &t0, "c-w1", "")).await;
+        assert_eq!(early.status, 429);
+        assert_eq!(code_of(&early), "too_fast");
+        assert_eq!(early.header("Cache-Control"), Some("no-store"));
+        // The refusal kept the token usable: a cancel with it still works.
+        let cancel = h.handle(&cont_as("DELETE", &k, &id, &t0, "c-w2", "")).await;
+        assert_eq!(cancel.status, 204);
+    }
+
     #[tokio::test]
     async fn the_continue_route_refuses_other_methods_with_allow() {
         let (h, k) = (handler(), key());
         let (id, t0) = interactive(&h, &k, "c-m0").await;
-        for m in ["GET", "PUT", "DELETE", "PATCH", "OPTIONS"] {
+        for m in ["GET", "PUT", "OPTIONS"] {
             let r = h
                 .handle(&req(
                     m,
@@ -947,7 +1136,7 @@ pub(crate) mod tests {
                 ))
                 .await;
             assert_eq!(r.status, 405, "{m}");
-            assert_eq!(r.header("Allow"), Some("POST"));
+            assert_eq!(r.header("Allow"), Some("POST, PATCH, DELETE"));
         }
         // None of those touched the transaction.
         assert_eq!(
