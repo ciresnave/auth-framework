@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests for password change, token refresh, and account lockout flows.
 
 #[cfg(all(test, feature = "api-server"))]

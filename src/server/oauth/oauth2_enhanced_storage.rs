@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced OAuth2 token and code storage with proper validation
 
 use crate::client::ClientType;

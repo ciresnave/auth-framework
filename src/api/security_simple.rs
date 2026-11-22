@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simple Security Management API Endpoints
 //!
 //! This module provides basic endpoints for managing security features:

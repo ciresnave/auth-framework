@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! PASETO (Platform-Agnostic Security Tokens) v4 implementation.
 //!
 //! Provides local (symmetric, encrypted) PASETO v4 token operations

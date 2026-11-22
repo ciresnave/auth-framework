@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive Edge Case and Security Tests for AuthFramework
 //!
 //! This test suite covers all edge cases, error conditions, and security scenarios

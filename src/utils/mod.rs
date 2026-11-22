@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Utility modules for the AuthFramework.
 
 pub mod breach_check;

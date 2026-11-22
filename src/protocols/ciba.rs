@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Client-Initiated Backchannel Authentication (CIBA).
 //!
 //! Implements the CIBA flow where a *consumption device* (e.g. a POS terminal

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! IndieAuth protocol support (OAuth 2.0–based identity layer for the IndieWeb).
 //!
 //! Provides authorization endpoint discovery, PKCE-secured authorization code

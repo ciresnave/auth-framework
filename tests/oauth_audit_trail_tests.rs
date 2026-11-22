@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The OAuth2 introspection and revocation endpoints leave an audit-trail record (issue #91),
 //! queryable through `AuthFramework::audit().query_events`: who asked, what came of it, and
 //! whose token it was; never the token or a secret.

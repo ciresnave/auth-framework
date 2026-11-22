@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! API Response Types
 //!
 //! Common response types for the REST API

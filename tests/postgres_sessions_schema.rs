@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! One `sessions` schema on PostgreSQL, whichever path created it (issue #147): the library's
 //! `PostgresStorage::migrate()` and the CLI's `MigrationManager` (`auth-framework migrate`) must
 //! leave the same table, in either order, and a database a previous release created with the old

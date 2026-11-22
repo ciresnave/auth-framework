@@ -32,6 +32,10 @@ pub struct GnapIssuedToken {
     /// The proof method of that key (`dpop`, ...): how a request about this token is proved.
     #[serde(default)]
     pub key_proof: Option<String>,
+    /// The public JWK of that key, kept for the proof methods that verify against the key itself
+    /// (`httpsig`); a request about this token is checked against it, not only its thumbprint.
+    #[serde(default)]
+    pub key_jwk: Option<serde_json::Value>,
     /// The transaction that produced this token
     pub transaction_id: String,
 }
@@ -44,6 +48,7 @@ impl std::fmt::Debug for GnapIssuedToken {
         d.field("expires_at", &self.expires_at);
         d.field("key_thumbprint", &self.key_thumbprint);
         d.field("key_proof", &self.key_proof);
+        d.field("key_jwk", &self.key_jwk);
         d.field("transaction_id", &self.transaction_id);
         d.finish()
     }
@@ -259,6 +264,7 @@ mod tests {
             expires_at,
             key_thumbprint: None,
             key_proof: None,
+            key_jwk: None,
             transaction_id: transaction_id.to_string(),
         }
     }

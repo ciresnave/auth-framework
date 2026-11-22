@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Breached password detection using the Have I Been Pwned (HIBP) k-anonymity API.
 //!
 //! This module checks passwords against known data breaches without sending the

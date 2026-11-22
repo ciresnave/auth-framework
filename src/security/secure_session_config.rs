@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced Session Security Configuration
 //!
 //! This module provides configurable session security policies to prevent

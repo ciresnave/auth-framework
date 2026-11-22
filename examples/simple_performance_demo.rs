@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simple Performance Demo
 //!
 //! This example demonstrates the key optimizations working together.

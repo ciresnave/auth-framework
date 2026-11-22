@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Initiating User Registration via OpenID Connect
 //!
 //! This module implements the "Initiating User Registration via OpenID Connect 1.0"

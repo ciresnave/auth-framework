@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SCIM 2.0 (RFC 7643 / RFC 7644) — System for Cross-domain Identity Management
 //!
 //! Provides types and a client for provisioning and managing user/group

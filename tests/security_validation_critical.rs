@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Critical security validation test to ensure JWT signature bypass vulnerability is fixed
 
 use auth_framework::{

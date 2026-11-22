@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A client's secret is stored only as a hash (issue #90): dynamic registration writes
 //! `client_secret_hash` and no plaintext, a hashed client authenticates with its secret and
 //! no other, and a record that still holds a plain `client_secret` keeps working and is

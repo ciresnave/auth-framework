@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Copying a `SqliteStorage` database into `PersistantStorage`.
 #![cfg(all(feature = "persistant-storage", feature = "sqlite-storage"))]
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **A README claim must be true of the artifact a reader installs, not just of the tree.**
 //!
 //! Measured at `9bf3d893` (0.6.0-rc50), before this test existed:

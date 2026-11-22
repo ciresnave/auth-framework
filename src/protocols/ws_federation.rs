@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WS-Federation Passive Requestor Profile
 //!
 //! Implements the WS-Federation 1.2 passive requestor profile for browser-based

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! YAML support (serde-saphyr): configuration files in YAML load and save, and a malformed file
 //! is reported as an error, not accepted.
 

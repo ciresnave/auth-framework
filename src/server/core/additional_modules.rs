@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Additional server capability modules
 //!
 //! Note: WebAuthn/FIDO2 support is provided via the `PasskeyAuthMethod`

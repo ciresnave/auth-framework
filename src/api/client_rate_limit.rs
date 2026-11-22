@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Rate limiting of an OAuth2 client by its identity (issue #92).
 //!
 //! The router-wide limiter works on the caller's address, so a client that rotates addresses is

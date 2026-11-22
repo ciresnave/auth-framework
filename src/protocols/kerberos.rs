@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Kerberos / SPNEGO Authentication Protocol Support
 //!
 //! Implements Kerberos 5 (RFC 4120) ticket validation and SPNEGO (RFC 4178)

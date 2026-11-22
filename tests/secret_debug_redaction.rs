@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `{:?}` of a config or credential value must not print its secret.
 //!
 //! Each case builds the value with a marker as the secret, formats it with `{:?}`, and checks three

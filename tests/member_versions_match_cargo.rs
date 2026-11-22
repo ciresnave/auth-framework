@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **One version number per project:** the member crate and the SDKs carry the root crate's version.
 //!
 //! They sat at 0.6.0-rc64 and 0.6.0-rc108 while the crate moved on, because no release bump touched them.
@@ -26,7 +27,7 @@ fn value_of(text: &str, key: &str) -> String {
 #[test]
 fn member_crate_and_sdks_carry_the_cargo_version() {
     let cargo = env!("CARGO_PKG_VERSION");
-    // PEP 440 spells the pre-release `0.6.0rc328`.
+    // PEP 440 spells the pre-release `0.6.0rc329`.
     let pep440 = cargo.replace("-rc", "rc");
 
     assert_eq!(

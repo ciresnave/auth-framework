@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! How an OAuth2 client's secret is kept in its `oauth2_client:{client_id}` record.
 //!
 //! A confidential client's record holds only a hash of its secret, in `client_secret_hash`

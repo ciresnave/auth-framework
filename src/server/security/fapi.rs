@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! FAPI 2.0 (Financial-grade API) Security Profile Implementation
 //!
 //! This module implements the Financial-grade API (FAPI) 2.0 Security Profile,

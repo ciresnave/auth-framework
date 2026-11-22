@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RFC 7591 - OAuth 2.0 Dynamic Client Registration Protocol
 //!
 //! This module implements the OAuth 2.0 Dynamic Client Registration Protocol

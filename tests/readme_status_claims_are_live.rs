@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **A README badge must not hardcode a verdict it cannot lose.**
 //!
 //! Measured at `881c696`, before this test existed:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Common test helpers and macros for better error handling
 
 /// Macro to replace unwrap() with expect() that provides context

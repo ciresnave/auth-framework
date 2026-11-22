@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TOTP secrets can be encrypted at rest under a key the caller supplies.
 //!
 //! `TotpManager` stores each user's base32 secret as a KV row. Wrapped in `EncryptedStorage`

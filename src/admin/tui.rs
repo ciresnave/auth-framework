@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Terminal User Interface for Auth Framework Administration
 
 #[cfg(feature = "tui")]

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Performance and Observability Integration Example
 //!
 //! This example demonstrates the comprehensive improvements made to AuthFramework

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Provider Implementation (OIDC 1.0)
 //!
 //! This module implements a complete OpenID Connect Provider based on:

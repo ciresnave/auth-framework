@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simple Integration Validation Tests
 //!
 //! Tests that the three integrated features work correctly:

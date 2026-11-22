@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Authorization context builders for enhanced RBAC
 //!
 //! This module provides utilities to build context objects for conditional

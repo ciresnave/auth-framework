@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced Authorization Module with role-system v1.0 integration
 //!
 //! This module provides enterprise-grade role-based access control (RBAC) using the

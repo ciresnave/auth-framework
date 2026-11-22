@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Stepped Up Authentication Implementation
 //!
 //! This module implements stepped-up authentication flows that allow applications

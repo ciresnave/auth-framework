@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RBAC Analytics Dashboard
 //!
 //! This module provides dashboard components for visualizing

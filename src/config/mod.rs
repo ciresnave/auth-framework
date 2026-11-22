@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Configuration types for the authentication framework.
 
 pub mod app_config;

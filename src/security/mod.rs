@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Security primitives and hardened implementations.
 //!
 //! This module contains:

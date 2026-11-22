@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive session management with security hardening.
 //!
 //! This module provides secure session management with features like

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Google Zanzibar–inspired Relationship-Based Access Control (ReBAC).
 //!
 //! Implements a tuple-based authorization model where access decisions are derived

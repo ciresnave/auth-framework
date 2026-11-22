@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The axum integration's login route authenticates against the user store.
 
 #[cfg(all(test, feature = "axum-integration"))]

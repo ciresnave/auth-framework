@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! User Management API Endpoints
 //!
 //! Handles user profile, password changes, and related user operations

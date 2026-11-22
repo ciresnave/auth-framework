@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RBAC Metrics Collection and Processing
 //!
 //! This module provides metrics collection, aggregation, and analysis

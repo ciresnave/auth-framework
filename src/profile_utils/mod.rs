@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Utilities for token-to-profile conversion and user profile management.
 
 use crate::errors::{AuthError, OAuthProviderError, Result};

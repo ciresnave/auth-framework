@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use auth_framework::prelude::*;
 use auth_framework::storage::MemoryStorage;
 use std::sync::Arc;

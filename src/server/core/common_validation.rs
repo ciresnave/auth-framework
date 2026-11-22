@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Common Validation Utilities
 //!
 //! This module provides shared validation functions to eliminate

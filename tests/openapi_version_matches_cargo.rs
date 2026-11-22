@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **A version the API documents about itself must be the version it is.**
 //!
 //! Measured at `54bfa1c2` (0.6.0-rc52): `generate_openapi_spec()` served

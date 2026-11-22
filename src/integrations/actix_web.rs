@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Actix-web integration for auth-framework.
 //!
 //! This module provides middleware and extractors for seamless

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RBAC roles and assignments (`AuthorizationStorage`) on `PersistantStorage`, run against the
 //! in-memory store as the reference, plus what only the PersistAnt layout can get wrong: ids that
 //! look like other ids' prefixes, and an assignment replaced in place.

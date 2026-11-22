@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simple OAuth2 Compilation Test
 //!
 //! Validates that OAuth2 module compiles correctly with all dependencies

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `rotate_api_key` replaces a key with a new one: the new key is returned once, the old one stops
 //! validating, and a rotation never leaves the caller with two working keys on a returned result.
 //!

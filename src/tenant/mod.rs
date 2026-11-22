@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Multi-tenant support for AuthFramework
 //!
 //! This module provides native multi-tenant capabilities, allowing multiple

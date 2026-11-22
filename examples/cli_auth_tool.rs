@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Command Line Authentication Tool
 //!
 //! This example demonstrates how to use auth_framework in a CLI application

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Multi-Factor Authentication (MFA) implementation.
 //!
 //! This module provides comprehensive MFA support including TOTP, SMS, email,

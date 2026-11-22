@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! XML-DSig verification for SAML, against keys the caller has configured.
 //!
 //! The rules, each of which closes a way to forge a login:

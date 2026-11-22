@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RBAC API endpoints using role-system v1.0
 //!
 //! This module provides comprehensive REST API endpoints for role and permission

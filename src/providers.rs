@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth provider configurations and implementations.
 impl Default for ProviderProfile {
     fn default() -> Self {

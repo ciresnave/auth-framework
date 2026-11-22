@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Axum Web Server with AuthFramework Integration
 //!
 //! Demonstrates the first-class Axum integration included in the default

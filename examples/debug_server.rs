@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Debug REST API Server
 //! Simple test to identify startup issues
 

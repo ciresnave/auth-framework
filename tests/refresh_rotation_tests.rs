@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Refresh tokens are single-use: redeeming one issues the next, and presenting one that
 //! was already redeemed is refused and ends the whole chain.
 

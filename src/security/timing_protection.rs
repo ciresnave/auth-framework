@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Timing attack protection utilities
 //!
 //! This module provides utilities to prevent timing side-channel attacks,

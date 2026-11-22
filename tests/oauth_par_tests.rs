@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth 2.0 Pushed Authorization Requests (PAR) Tests - RFC 9126
 //!
 //! Comprehensive tests for the PAR endpoint

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Critical security vulnerability detection
 //!
 //! These tests look for the marks of the flaws earlier audits missed: a hardcoded user id,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RBAC Analytics Reports
 //!
 //! This module provides comprehensive reporting capabilities

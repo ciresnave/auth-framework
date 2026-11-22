@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Tests for the threat intelligence feed manager.
 //!
 //! These tests exercise configuration, IP checking, and feed status

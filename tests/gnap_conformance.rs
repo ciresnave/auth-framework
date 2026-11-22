@@ -279,6 +279,8 @@ async fn gnap_vectors() {
                         dpop_proof: header.as_deref(),
                         expected_nonce: None,
                         client_certificate_der: None,
+                        http_headers: &[],
+                        http_body: &[],
                     };
                     let result = service
                         .handle_transaction_with_proof(&dpop, &proof, request)
@@ -306,6 +308,8 @@ async fn gnap_vectors() {
                         dpop_proof: header.as_deref(),
                         expected_nonce: None,
                         client_certificate_der: None,
+                        http_headers: &[],
+                        http_body: &[],
                     };
                     let result = service
                         .continue_transaction_with_proof(
@@ -347,6 +351,8 @@ async fn gnap_vectors() {
                         dpop_proof: header.as_deref(),
                         expected_nonce: None,
                         client_certificate_der: None,
+                        http_headers: &[],
+                        http_body: &[],
                     };
                     let result = service.rotate_token_with_proof(&dpop, &proof, &token).await;
                     finish_step(id, step, &mut vars, result);
@@ -368,6 +374,8 @@ async fn gnap_vectors() {
                         dpop_proof: header.as_deref(),
                         expected_nonce: None,
                         client_certificate_der: None,
+                        http_headers: &[],
+                        http_body: &[],
                     };
                     let result = service
                         .revoke_token_with_proof(&dpop, &proof, &token)

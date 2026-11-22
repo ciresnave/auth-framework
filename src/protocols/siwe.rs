@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Sign-In with Ethereum (SIWE / ERC-4361) support.
 //!
 //! Provides message construction, parsing, and validation for the

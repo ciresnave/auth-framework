@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A downloaded archive is attacker-sized input: a few kilobytes of gzip can declare gigabytes of
 //! entry data. Extraction must refuse it by the sizes the archive *declares*, before anything is
 //! written, and a refused archive must not leave its earlier entries behind.

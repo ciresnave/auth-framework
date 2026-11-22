@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Registration claims a username and an email atomically: of simultaneous registrations of the
 //! same username (or email) exactly one succeeds, and concurrent registrations of different users
 //! all appear in the `users:index` list. Both used to be check-then-write.

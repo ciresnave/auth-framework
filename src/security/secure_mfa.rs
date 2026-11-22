@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Secure MFA implementation with cryptographically strong code generation
 // Fixes critical security vulnerabilities in MFA code generation and validation
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Advanced configuration management using the `config` crate.
 //!
 //! This module provides flexible configuration loading from multiple sources:

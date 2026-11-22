@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A client record the registry wrote under the old `oauth_client:` key (secret in plain text) is
 //! moved to `oauth2_client:` with the secret hashed. When removing the old record fails, nothing
 //! may leave the plain secret behind for good: the old record's secret is overwritten at once

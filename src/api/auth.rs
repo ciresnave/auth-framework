@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Authentication API Endpoints
 //!
 //! Handles login, logout, token refresh, and related authentication operations

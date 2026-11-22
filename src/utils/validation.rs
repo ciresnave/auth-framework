@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Validation utilities for the AuthFramework.
 //!
 //! This module provides comprehensive input validation functions for

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive security implementation module for enterprise-grade authentication.
 //!
 //! This module provides advanced security features and compliance implementations

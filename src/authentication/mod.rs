@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Authentication modules
 //!
 //! This module provides various authentication mechanisms including

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Tests for OIDC Enhanced CIBA and Advanced JARM managers.
 
 use auth_framework::server::oidc::oidc_advanced_jarm::{

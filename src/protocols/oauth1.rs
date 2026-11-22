@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth 1.0a protocol support (RFC 5849).
 //!
 //! Provides HMAC-SHA1 signature generation, authorization header construction,

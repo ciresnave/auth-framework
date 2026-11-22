@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 /// PostgreSQL storage implementation for auth-framework.
 /// This module provides a production-ready PostgreSQL backend for storing
 /// authentication tokens, sessions, and audit logs.

@@ -616,6 +616,11 @@ impl NonceCache {
         self.floor
     }
 
+    /// Move the floor back to `at` if it is later; remembered nonces are kept.
+    pub fn lower_floor_to(&mut self, at: u64) {
+        self.floor = self.floor.min(at);
+    }
+
     /// Record `nonce` in `scope` at `now`. Refused when it was already recorded within `window_secs`, or when
     /// the cache is full of nonces still inside their window.
     pub fn check_and_insert(
@@ -739,13 +744,14 @@ pub fn verify_gnap_request(
     if created.abs_diff(context.now) > policy.max_skew_secs {
         return Err(violation("created is too far from the current time"));
     }
-    if let Some(expires) = entry
-        .param("expires")
-        .and_then(sfv::BareItem::as_integer)
-        .map(i64::from)
-        && expires < i64::try_from(context.now).unwrap_or(i64::MAX)
-    {
-        return Err(violation("the signature has expired"));
+    if let Some(raw) = entry.param("expires") {
+        let expires = raw
+            .as_integer()
+            .map(i64::from)
+            .ok_or_else(|| violation("the expires parameter is not an integer"))?;
+        if expires < i64::try_from(context.now).unwrap_or(i64::MAX) {
+            return Err(violation("the signature has expired"));
+        }
     }
     if let Some(kid) = context.jwk.get("kid").and_then(Value::as_str) {
         let keyid = entry
@@ -1095,6 +1101,32 @@ mod tests {
             refused(&signed(&s, body, FULL, &no_tag, None), &s, body, false),
             HttpsigError::PolicyViolation(_)
         ));
+        // expires: a future integer passes (control), a past one and a non-integer are refused
+        let future = NOW + 100;
+        assert!(
+            check(
+                &s,
+                &signed(&s, body, FULL, &params(&format!(";expires={future}")), None),
+                body,
+                false,
+                &mut cache()
+            )
+            .is_ok()
+        );
+        for bad in [
+            format!(";expires={}", NOW - 1),
+            ";expires=\"soon\"".to_string(),
+        ] {
+            assert!(matches!(
+                refused(
+                    &signed(&s, body, FULL, &params(&bad), None),
+                    &s,
+                    body,
+                    false
+                ),
+                HttpsigError::PolicyViolation(_)
+            ));
+        }
         // alg must not be present
         assert!(matches!(
             refused(

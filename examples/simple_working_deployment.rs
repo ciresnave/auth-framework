@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simple Working Deployment Example for Auth Framework
 //!
 //! This example demonstrates basic authentication components

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID for Verifiable Credential Issuance (OpenID4VCI).
 //!
 //! Implements the issuer-side of the OpenID4VCI specification for issuing

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Storage backends for the authentication framework.
 //!
 //! This module provides the [`AuthStorage`] trait and multiple backend

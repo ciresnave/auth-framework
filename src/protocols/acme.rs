@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! ACME (Automatic Certificate Management Environment) protocol — RFC 8555.
 //!
 //! Provides automated X.509 certificate issuance and lifecycle management.

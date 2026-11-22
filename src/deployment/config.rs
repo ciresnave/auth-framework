@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Configuration management for production deployment
 // Comprehensive configuration system with environment-specific settings, validation, and hot-reload
 

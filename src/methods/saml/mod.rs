@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SAML authentication method
 //!
 //! SAML 2.0 login with XML-DSig verification done by [`dsig`] (`bergshamra`):

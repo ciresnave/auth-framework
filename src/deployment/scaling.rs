@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Auto-scaling system for production deployment
 // Dynamic resource scaling based on metrics and load
 

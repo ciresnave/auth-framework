@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests for OAuth 2.0 Advanced Features
 //!
 //! Tests for RFC 7662 (Token Introspection) and RFC 9126 (PAR)

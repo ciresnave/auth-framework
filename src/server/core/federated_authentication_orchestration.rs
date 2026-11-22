@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # Federated Authentication Orchestration
 //!
 //! This module implements a sophisticated federated authentication orchestration system

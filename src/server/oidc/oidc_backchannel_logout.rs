@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Back-Channel Logout Implementation
 //!
 //! This module implements the "OpenID Connect Back-Channel Logout 1.0" specification,

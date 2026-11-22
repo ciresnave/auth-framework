@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive Auth Framework Administration Binary
 //!
 //! This binary provides three interfaces for managing the auth-framework:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! FIDO U2F (Universal 2nd Factor) protocol support.
 //!
 //! Provides U2F registration and authentication challenge/response data

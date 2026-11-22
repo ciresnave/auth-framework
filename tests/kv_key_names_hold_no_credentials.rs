@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Credentials must not be persisted as key *names*.
 //!
 //! `EncryptedStorage` encrypts values only, so a raw credential used as a key

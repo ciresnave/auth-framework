@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Open Policy Agent (OPA) integration for externalized authorization.
 //!
 //! Delegates fine-grained policy evaluation to an OPA server using its

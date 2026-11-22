@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 /// Advanced middleware hooks for request/response interception and error mapping.
 ///
 /// # Example

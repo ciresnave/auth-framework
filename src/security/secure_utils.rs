@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Secure utility functions with constant-time operations
 use crate::errors::{AuthError, Result};
 use base64::Engine;

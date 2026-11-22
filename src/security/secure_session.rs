@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Secure session management with enhanced security measures
 use super::secure_utils::{SecureComparison, SecureRandomGen};
 use crate::errors::{AuthError, Result};

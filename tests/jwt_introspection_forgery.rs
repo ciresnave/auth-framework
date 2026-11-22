@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A JWT introspection response signed with a key that was ever the same in every deployment must
 //! not verify.
 

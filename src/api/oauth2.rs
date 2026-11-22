@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth 2.0 API Endpoints
 //!
 //! Handles OAuth 2.0 authorization code flow (RFC 6749), token exchange,

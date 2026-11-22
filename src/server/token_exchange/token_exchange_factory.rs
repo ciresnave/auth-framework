@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # Token Exchange Factory Examples
 //!
 //! This module provides practical examples and factory methods for creating

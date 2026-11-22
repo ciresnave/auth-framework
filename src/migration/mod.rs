@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Migration utilities for transitioning to role-system v1.0
 //!
 //! This module provides comprehensive migration tools to help users

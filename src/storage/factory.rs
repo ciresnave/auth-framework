@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::config::{StorageConfig, StorageEncryptionConfig};
 use crate::errors::{AuthError, Result};
 use crate::storage::encryption::{EncryptedStorage, StorageEncryption};

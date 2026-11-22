@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Health monitoring system for production deployment
 // Comprehensive health checks, metrics collection, and service monitoring
 

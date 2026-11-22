@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Common HTTP Client Utilities
 //!
 //! This module provides shared HTTP client functionality to eliminate

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! CAEP (Continuous Access Evaluation Protocol) implementation.
 //!
 //! Implements the Shared Signals and Events (SSE) Framework with CAEP event types
