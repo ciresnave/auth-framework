@@ -13,8 +13,8 @@
 //! The `typ` values are the normative ones of RFC 9635 sections 7.3.3 and 7.3.4 (`gnap-binding-jwsd`,
 //! `gnap-binding-jws`). The RFC's own `jwsd` example header spells it `gnap-binding+jwsd`, which disagrees with its
 //! text and with its IANA media type; a message carrying that spelling is refused here. `alg` `none`, the HMAC
-//! algorithms and any private JWK member are refused. Key rotation (RFC 9635 sections 7.3.3.1 and 7.3.4.1) is not
-//! handled here.
+//! algorithms and any private JWK member are refused. [`verify_attached_rotation`] handles key rotation by
+//! attached JWS (section 7.3.4.1); rotation by detached JWS (7.3.3.1) is not handled here yet.
 
 use base64::Engine as _;
 use jsonwebtoken::{Algorithm, DecodingKey};
@@ -29,6 +29,8 @@ const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::URL
 pub const TYP_JWSD: &str = "gnap-binding-jwsd";
 /// `typ` of a `jws` JOSE header (RFC 9635 section 7.3.4).
 pub const TYP_JWS: &str = "gnap-binding-jws";
+/// `typ` of both JOSE headers of a rotation by attached JWS (RFC 9635 section 7.3.4.1).
+pub const TYP_ROTATION_JWS: &str = "gnap-binding-rotation-jws";
 
 /// Why a proof was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,6 +335,91 @@ pub fn verify_attached(
             kid,
         },
         payload,
+    ))
+}
+
+/// A rotation request accepted by [`verify_attached_rotation`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedRotation {
+    /// The proof made with the key the token is bound to now.
+    pub old: VerifiedJws,
+    /// The proof made with the new key.
+    pub new: VerifiedJws,
+    /// The new public key, as the request content carried it.
+    pub new_jwk: Value,
+}
+
+/// Verify a key rotation request made with attached JWS (RFC 9635 sections 6.1.1 and 7.3.4.1) and return the
+/// proofs and the request content.
+///
+/// The body is a compact JWS signed by the NEW key whose payload is a compact JWS signed by the OLD key
+/// (`context.jwk`) whose payload is the request content, a JSON object with the new public JWK as `key`. Both
+/// headers carry [`TYP_ROTATION_JWS`]. The old key's signature therefore covers the new key and the new key's
+/// signature covers the old signature, as section 6.1.1 requires. A new key given by reference, a private or
+/// unusable one, a key equal to the old one, and a missing proof of either key are all refused; the caller
+/// answers every refusal with `invalid_rotation`.
+pub fn verify_attached_rotation(
+    compact_jws: &str,
+    context: &JwsProofContext<'_>,
+) -> Result<(VerifiedRotation, Vec<u8>), JwsProofError> {
+    fn split(jws: &str) -> Result<(&str, &str, &str), JwsProofError> {
+        let mut parts = jws.trim().split('.');
+        match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some(h), Some(p), Some(s), None) => Ok((h, p, s)),
+            _ => Err(malformed("a compact JWS has three dot-separated parts")),
+        }
+    }
+    let (outer_h, outer_p, outer_s) = split(compact_jws)?;
+    let inner_jws = String::from_utf8(
+        B64.decode(outer_p)
+            .map_err(|_| malformed("the outer payload is not base64url"))?,
+    )
+    .map_err(|_| malformed("the outer payload is not a compact JWS"))?;
+    let (inner_h, inner_p, inner_s) = split(&inner_jws)?;
+    // the old key's proof first: it is what makes the new key's value trustworthy
+    let inner_header = b64_json(inner_h, "inner JOSE header")?;
+    let old_created = check_header(&inner_header, TYP_ROTATION_JWS, context)?;
+    let content = B64
+        .decode(inner_p)
+        .map_err(|_| malformed("the inner payload is not base64url"))?;
+    let (old_alg, old_kid) = verify_signature(
+        &inner_header,
+        context.jwk,
+        &format!("{inner_h}.{inner_p}"),
+        inner_s,
+    )?;
+    let request: Value =
+        serde_json::from_slice(&content).map_err(|_| malformed("the request is not JSON"))?;
+    let new_jwk = match request.get("key") {
+        Some(key) if key.is_object() => key.clone(),
+        _ => return Err(malformed("the request needs the new key as a JWK in key")),
+    };
+    if new_jwk == *context.jwk {
+        return Err(mismatch("the new key is the key the token is bound to"));
+    }
+    let outer_header = b64_json(outer_h, "outer JOSE header")?;
+    let new_created = check_header(&outer_header, TYP_ROTATION_JWS, context)?;
+    let (new_alg, new_kid) = verify_signature(
+        &outer_header,
+        &new_jwk,
+        &format!("{outer_h}.{outer_p}"),
+        outer_s,
+    )?;
+    Ok((
+        VerifiedRotation {
+            old: VerifiedJws {
+                algorithm: old_alg,
+                created: old_created,
+                kid: old_kid,
+            },
+            new: VerifiedJws {
+                algorithm: new_alg,
+                created: new_created,
+                kid: new_kid,
+            },
+            new_jwk,
+        },
+        content,
     ))
 }
 
@@ -833,6 +920,73 @@ mod tests {
                 Err(JwsProofError::Mismatch(_))
             ));
         }
+    }
+
+    fn rotation(old: &Signer, new: &Signer, content: &Value) -> String {
+        let inner = sign(
+            old,
+            &header(old, TYP_ROTATION_JWS),
+            &B64.encode(content.to_string()),
+        );
+        sign(new, &header(new, TYP_ROTATION_JWS), &B64.encode(inner))
+    }
+
+    #[test]
+    fn a_rotation_signed_by_both_keys_verifies_and_returns_the_new_key() {
+        let (old, new) = (es256_signer(), ed_signer());
+        let content = json!({"key": new.jwk});
+        let (got, body) =
+            verify_attached_rotation(&rotation(&old, &new, &content), &ctx(&old, b"", None))
+                .unwrap();
+        assert_eq!(got.new_jwk, new.jwk);
+        assert_eq!(got.old.algorithm, algorithm("ES256"));
+        assert_eq!(got.new.algorithm, algorithm("EdDSA"));
+        assert_eq!(body, content.to_string().into_bytes());
+    }
+
+    #[test]
+    fn a_rotation_missing_either_proof_or_misdescribing_the_new_key_is_refused() {
+        let (old, new, other) = (es256_signer(), ed_signer(), es256_signer());
+        let content = json!({"key": new.jwk});
+        let context = ctx(&old, b"", None);
+        // signed by a key other than the old one: the old proof fails
+        assert_eq!(
+            verify_attached_rotation(&rotation(&other, &new, &content), &context).unwrap_err(),
+            JwsProofError::BadSignature
+        );
+        // the outer proof made by a key other than the one named in the request
+        assert!(verify_attached_rotation(&rotation(&old, &other, &content), &context).is_err());
+        // only the old key's proof, no outer wrapper
+        let bare = sign(
+            &old,
+            &header(&old, TYP_ROTATION_JWS),
+            &B64.encode(content.to_string()),
+        );
+        assert!(verify_attached_rotation(&bare, &context).is_err());
+        // a plain attached JWS typ is not a rotation
+        let inner = sign(
+            &old,
+            &header(&old, TYP_JWS),
+            &B64.encode(content.to_string()),
+        );
+        let wrapped = sign(&new, &header(&new, TYP_ROTATION_JWS), &B64.encode(inner));
+        assert!(matches!(
+            verify_attached_rotation(&wrapped, &context),
+            Err(JwsProofError::Mismatch(_))
+        ));
+        // no key, a key by reference, the same key, a private key
+        for bad in [json!({}), json!({"key": "ref-1"}), json!({"key": old.jwk})] {
+            assert!(
+                verify_attached_rotation(&rotation(&old, &new, &bad), &context).is_err(),
+                "{bad}"
+            );
+        }
+        let mut private = new.jwk.clone();
+        private["d"] = json!("AAAA");
+        assert!(
+            verify_attached_rotation(&rotation(&old, &new, &json!({"key": private})), &context)
+                .is_err()
+        );
     }
 
     #[test]
