@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! IP Blacklisting Security Tests
 //!
 //! Comprehensive tests for IP blacklisting functionality:

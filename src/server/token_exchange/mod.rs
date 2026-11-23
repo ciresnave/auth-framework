@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Token Exchange Implementation Module
 //!
 //! This module contains token exchange functionality including:

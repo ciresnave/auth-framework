@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! LDAP authentication method implementation.
 //!
 //! Provides authentication against LDAP directories (Active Directory,

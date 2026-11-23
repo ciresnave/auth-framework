@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RFC 8707 — Resource Indicators for OAuth 2.0
 //!
 //! Adds the `resource` parameter to authorization and token requests so clients

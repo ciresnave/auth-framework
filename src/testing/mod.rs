@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Testing utilities and infrastructure
 //!
 //! This module provides testing utilities, mock implementations, and

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The default configuration must not carry a signing secret that is the same in every deployment.
 
 use auth_framework::config::AppConfig;

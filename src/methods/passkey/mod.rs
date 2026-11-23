@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Pure Rust WebAuthn/Passkey authentication implementation.
 //!
 //! This module provides a complete FIDO2/WebAuthn implementation for passwordless

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive tests for the monitoring module
 //!
 //! Covers MonitoringManager, HealthChecker, Collectors, Exporters, and AlertManager.

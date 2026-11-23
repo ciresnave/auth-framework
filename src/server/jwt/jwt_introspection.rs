@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RFC 9701 - JSON Web Token (JWT) Response for OAuth Token Introspection
 //!
 //! This module implements JWT-formatted responses for OAuth 2.0 token introspection

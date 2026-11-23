@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Unit tests for profile utility functions and token-to-profile conversion
 
 use auth_framework::profile_utils::ExtractProfile;

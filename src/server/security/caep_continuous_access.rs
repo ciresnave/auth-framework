@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # Continuous Access Evaluation Protocol (CAEP)
 //!
 //! This module implements the Continuous Access Evaluation Protocol (CAEP), enabling

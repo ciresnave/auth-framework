@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A client can be granted only the scopes it is registered for, and `/auth/refresh`
 //! accepts only genuine refresh tokens (never an access token that merely mentions
 //! "refresh" in its scope).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! [`AuthStorage`] over a PersistAnt key-value backend (`persistant-storage` feature).
 //!
 //! The key layout follows PersistAnt's `docs/DESIGN-AUTH-STORAGE.md` section 4.3. Every record is

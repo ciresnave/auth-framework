@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Token exchange with a SAML subject token: the assertion is accepted only when it is signed by a
 //! key configured for its issuer. A key the token carries itself is not a source of trust.
 #![cfg(feature = "saml")]

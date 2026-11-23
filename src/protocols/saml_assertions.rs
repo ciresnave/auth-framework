@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SAML 2.0 Assertion Support for WS-Security
 //!
 //! This module provides SAML 2.0 assertion generation and validation for WS-Security scenarios.

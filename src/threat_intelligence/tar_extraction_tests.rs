@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `extract_tar_gz` is the only archive path a downloaded feed reaches. A feed server (or
 //! anything on the wire without TLS) chooses every byte of the archive, so extraction must be
 //! confined to the destination and limited to the entry types a feed needs.

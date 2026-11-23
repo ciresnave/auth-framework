@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Comprehensive administration module for AuthFramework management.
 //!
 //! This module provides multiple administrative interfaces for monitoring,

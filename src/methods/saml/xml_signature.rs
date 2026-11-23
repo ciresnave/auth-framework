@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Compatibility shim for the old signature validator.
 //!
 //! The canonicalizer and validator that lived here rebuilt `SignedInfo` by hand (the text it

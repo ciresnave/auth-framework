@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Users API Integration Tests
 //!
 //! Covers the `PUT /users/profile`, `POST /users/change-password`, and related user endpoints.

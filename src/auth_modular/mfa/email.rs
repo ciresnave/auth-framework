@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Email-based MFA manager with production-grade email provider integration
 
 use crate::errors::{AuthError, Result};

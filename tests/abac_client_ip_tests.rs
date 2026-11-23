@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The client address that authorization policies see is the connection's peer address;
 //! forwarding headers are believed only from configured trusted proxies.
 

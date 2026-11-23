@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Backup codes manager for MFA
 //!
 //! One store holds a user's backup codes: `mfa_backup_codes:{user_id}`, a JSON list of

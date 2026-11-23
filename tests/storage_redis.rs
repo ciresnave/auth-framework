@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests for the Redis storage backend.
 //!
 //! These tests require a running Redis server (CI's test job provides one) and are not

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! JavaScript/TypeScript SDK enhancements for role-system integration
 //!
 //! This module provides enhanced SDK generation for JavaScript/TypeScript clients

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Redis storage backend for auth-framework.
 //!
 //! This module provides a production-ready Redis storage implementation

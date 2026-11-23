@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Working comprehensive API-compatible tests for auth framework
 //! This test suite correctly uses the current API and compiles without errors
 

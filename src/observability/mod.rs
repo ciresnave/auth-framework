@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced observability with metrics and monitoring (simplified version)
 //!
 //! This module provides comprehensive observability features including:

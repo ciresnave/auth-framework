@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Access-control tests for the WebAuthn registration / authentication
 //! ceremonies served by the API router.
 //!

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Metrics collectors for various authentication framework components
 //!
 //! This module provides atomic counters that can be incremented from anywhere in the

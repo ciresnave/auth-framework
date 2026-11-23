@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Helpers for `Debug` impls that must not print secret values.
 //!
 //! A field that holds a secret is shown as `<redacted>`; an optional one keeps its shape

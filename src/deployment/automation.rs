@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Deployment automation for production environments
 // Automated deployment strategies and CI/CD integration
 

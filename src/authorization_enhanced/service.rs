@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Enhanced Authorization Service using role-system v1.0
 //!
 //! This service provides a unified interface for all authorization operations,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `AuthRouterExt::require_auth_with` validates the bearer token; `require_auth` has no
 //! framework to check against and refuses every request.
 #![cfg(feature = "axum-integration")]

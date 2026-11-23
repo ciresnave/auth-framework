@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The SAML assertion consumer endpoint (`/api/v1/saml/acs`): who is logged in is decided by the
 //! assertion the IdP's signature covers, not by whichever assertion comes first in the document.
 #![cfg(all(feature = "saml", feature = "api-server"))]

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `PersistantStorage` (feature `persistant-storage`) against `SqliteStorage`: the same `AuthStorage`
 //! contract, run on both, plus what only the PersistAnt layout can get wrong (index consistency under
 //! `update_token`, user ids that look like other users' prefixes, concurrent writers).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Simple test for WS-Security, SAML, and WS-Trust functionality
 //!
 //! This test validates that our enterprise authentication components work

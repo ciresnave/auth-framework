@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RFC Compliance Test Suite for AuthFramework
 //!
 //! This comprehensive test suite validates that AuthFramework correctly implements

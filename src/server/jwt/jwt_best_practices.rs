@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RFC 8725 - JSON Web Token Best Current Practices
 //!
 //! This module implements security best practices for JSON Web Tokens (JWTs)

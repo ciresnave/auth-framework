@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Permission and role-based access control (RBAC / ABAC).
 //!
 //! Core types for the authorization subsystem:

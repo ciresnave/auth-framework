@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Basic usage example demonstrating core functionality of auth_framework
 //!
 //! This example shows how to:

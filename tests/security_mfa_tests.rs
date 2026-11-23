@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Multi-Factor Authentication (MFA) Security Tests
 //!
 //! Comprehensive test suite for MFA functionality including:

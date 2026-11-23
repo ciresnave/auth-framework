@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Extensions Module
 //!
 //! This module implements various OpenID Connect extensions and profiles

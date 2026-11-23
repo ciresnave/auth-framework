@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Alerting system for security and performance monitoring
 
 use super::{SecurityEvent, SecurityEventSeverity, SecurityEventType};

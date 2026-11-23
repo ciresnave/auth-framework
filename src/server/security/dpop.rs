@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth 2.0 Demonstrating Proof-of-Possession at the Application Layer (DPoP) - RFC 9449
 //!
 //! This module implements DPoP (Demonstrating Proof-of-Possession), which provides:

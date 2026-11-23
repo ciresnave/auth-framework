@@ -32,6 +32,7 @@ use crate::errors::AuthError;
 use crate::protocols::gnap::{GnapProof, GnapService, GnapTransactionRequest};
 use crate::protocols::gnap_http::{GnapHttpRequest, GnapHttpResponse, MAX_BODY_BYTES, path_of};
 use crate::server::security::dpop::DpopManager;
+use base64::Engine as _;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -120,14 +121,14 @@ impl GnapAsHttp {
     }
 
     /// The document `OPTIONS` on the grant endpoint answers (RFC 9635 section 9.2). It lists only
-    /// what this crate does: the `dpop` proof method, the `redirect` start mode and finish
+    /// what this crate does: the `dpop`, `httpsig`, `jwsd` and `jws` proof methods, the `redirect` start mode and finish
     /// method, and no key rotation.
     fn discovery_document(&self) -> Value {
         json!({
             "grant_request_endpoint": self.grant_url,
             "interaction_start_modes_supported": ["redirect"],
             "interaction_finish_methods_supported": ["redirect"],
-            "key_proofs_supported": ["dpop"],
+            "key_proofs_supported": ["dpop", "httpsig", "jwsd", "jws"],
             "key_rotation_supported": false,
         })
     }
@@ -137,7 +138,8 @@ impl GnapAsHttp {
             Ok(r) => r,
             Err(refused) => return refused,
         };
-        let proof = proof_for(req, &self.grant_url);
+        let headers = header_pairs(req);
+        let proof = proof_for(req, &self.grant_url, &headers);
         match self
             .service
             .handle_transaction_with_proof(&self.dpop, &proof, request)
@@ -169,7 +171,8 @@ impl GnapAsHttp {
                 }
             };
         let url = format!("{}/continue/{id}", self.grant_url);
-        let proof = proof_for(req, &url);
+        let headers = header_pairs(req);
+        let proof = proof_for(req, &url, &headers);
         match self
             .service
             .continue_transaction_with_proof(
@@ -196,7 +199,8 @@ impl GnapAsHttp {
             Err(refused) => return refused,
         };
         let url = format!("{}/continue/{id}", self.grant_url);
-        let proof = proof_for(req, &url);
+        let headers = header_pairs(req);
+        let proof = proof_for(req, &url, &headers);
         match self
             .service
             .modify_transaction_with_proof(&self.dpop, &proof, id, token, &modification)
@@ -212,7 +216,8 @@ impl GnapAsHttp {
             return unauthorized();
         };
         let url = format!("{}/continue/{id}", self.grant_url);
-        let proof = proof_for(req, &url);
+        let headers = header_pairs(req);
+        let proof = proof_for(req, &url, &headers);
         match self
             .service
             .delete_transaction_with_proof(&self.dpop, &proof, id, token)
@@ -230,7 +235,8 @@ impl GnapAsHttp {
         let Some(token) = gnap_token(req) else {
             return unauthorized();
         };
-        let proof = proof_for(req, &self.manage_url);
+        let headers = header_pairs(req);
+        let proof = proof_for(req, &self.manage_url, &headers);
         match self
             .service
             .rotate_token_with_proof(&self.dpop, &proof, token)
@@ -246,7 +252,8 @@ impl GnapAsHttp {
         let Some(token) = gnap_token(req) else {
             return unauthorized();
         };
-        let proof = proof_for(req, &self.manage_url);
+        let headers = header_pairs(req);
+        let proof = proof_for(req, &self.manage_url, &headers);
         match self
             .service
             .revoke_token_with_proof(&self.dpop, &proof, token)
@@ -262,7 +269,11 @@ impl GnapAsHttp {
 }
 
 /// The request's own proof material, bound to the server's `url` and not to the request target.
-fn proof_for<'a>(req: &'a GnapHttpRequest, url: &'a str) -> GnapProof<'a> {
+fn proof_for<'a>(
+    req: &'a GnapHttpRequest,
+    url: &'a str,
+    headers: &'a [(&'a str, &'a str)],
+) -> GnapProof<'a> {
     // `GnapProof` borrows the method; the methods routed here are static strings.
     let http_method = match req.method.to_ascii_uppercase().as_str() {
         "DELETE" => "DELETE",
@@ -277,7 +288,18 @@ fn proof_for<'a>(req: &'a GnapHttpRequest, url: &'a str) -> GnapProof<'a> {
         // The TLS peer certificate is the terminator's to give; this layer never sees it, so a
         // client key proved by `mtls` is refused here, and discovery does not list `mtls`.
         client_certificate_der: None,
+        // The `httpsig` proof method signs the request's headers and body.
+        http_headers: headers,
+        http_body: &req.body,
     }
+}
+
+/// The request's headers as borrowed pairs, for [`GnapProof::http_headers`].
+fn header_pairs(req: &GnapHttpRequest) -> Vec<(&str, &str)> {
+    req.headers
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect()
 }
 
 /// The token of an `Authorization: GNAP <token>` header (RFC 9635 section 7.2), if the request has one.
@@ -292,8 +314,23 @@ fn read_json<T: serde::de::DeserializeOwned>(req: &GnapHttpRequest) -> Result<T,
     if req.body.len() > MAX_BODY_BYTES {
         return Err(error(400, "invalid_request", "request body too large"));
     }
-    serde_json::from_slice(&req.body)
-        .map_err(|_| error(400, "invalid_request", "request body is not a GNAP request"))
+    let not_a_request = || error(400, "invalid_request", "request body is not a GNAP request");
+    // A `jws` client sends a compact JWS as the body (`Content-Type: application/jose`, RFC 9635 section
+    // 7.3.4) whose payload is the request. Only the payload is read here; the service verifies the whole JWS
+    // against the key the payload names, and refuses a request whose key does not use the `jws` method.
+    if req.header_value("content-type").is_some_and(|t| {
+        t.trim()
+            .to_ascii_lowercase()
+            .starts_with("application/jose")
+    }) {
+        let compact = std::str::from_utf8(&req.body).map_err(|_| not_a_request())?;
+        let payload = compact.trim().split('.').nth(1).ok_or_else(not_a_request)?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .map_err(|_| not_a_request())?;
+        return serde_json::from_slice(&bytes).map_err(|_| not_a_request());
+    }
+    serde_json::from_slice(&req.body).map_err(|_| not_a_request())
 }
 
 fn error(status: u16, code: &str, description: &str) -> GnapHttpResponse {
@@ -350,7 +387,6 @@ pub(crate) mod tests {
     use crate::protocols::gnap::{GnapAccessPolicy, GnapAccessRequest, GnapConfig, GnapJwk};
     use crate::security::secure_jwt::{SecureJwtConfig, SecureJwtValidator};
     use async_trait::async_trait;
-    use base64::Engine as _;
     use jsonwebtoken::{Algorithm, EncodingKey};
 
     const GRANT: &str = "https://as.example.test/api/gnap/tx";
@@ -533,6 +569,49 @@ pub(crate) mod tests {
         assert_eq!(body["access_token"]["manage"], "/api/gnap/tx/token");
     }
 
+    /// A grant request whose body is a compact JWS of the request, signed by `signer` (RFC 9635 section 7.3.4).
+    fn jws_grant_req(signer: &Key, named: &Key) -> GnapHttpRequest {
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let payload = json!({
+            "client": {"key": {"proof": "jws", "jwk": serde_json::to_value(&named.jwk).unwrap()}},
+            "access_token": {"access": [{"type": "read"}]},
+        });
+        let header = json!({
+            "alg": "ES256", "typ": "gnap-binding-jws", "htm": "POST", "uri": GRANT,
+            "created": chrono::Utc::now().timestamp()
+        });
+        let si = format!(
+            "{}.{}",
+            b64.encode(header.to_string()),
+            b64.encode(payload.to_string())
+        );
+        let sig =
+            jsonwebtoken::crypto::sign(si.as_bytes(), &signer.signing, Algorithm::ES256).unwrap();
+        req(
+            "POST",
+            "/api/gnap/tx",
+            vec![("Content-Type", "application/jose".to_string())],
+            format!("{si}.{sig}").into_bytes(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_jws_grant_request_is_unwrapped_verified_and_not_replayable() {
+        let (h, k, other) = (handler(), key(), key());
+        // Refutation: a JWS by another key, naming `k`, is refused.
+        assert_ne!(h.handle(&jws_grant_req(&other, &k)).await.status, 200);
+        // Positive control, built the same way.
+        let good = jws_grant_req(&k, &k);
+        let r = h.handle(&good).await;
+        assert_eq!(r.status, 200, "{:?}", json_of(&r));
+        assert!(json_of(&r)["access_token"]["value"].is_string());
+        assert_ne!(
+            h.handle(&good).await.status,
+            200,
+            "a replay must be refused"
+        );
+    }
+
     #[tokio::test]
     async fn a_grant_request_with_no_proof_is_refused_401() {
         let (h, k) = (handler(), key());
@@ -645,7 +724,10 @@ pub(crate) mod tests {
         assert_eq!(r.status, 200);
         let doc = json_of(&r);
         assert_eq!(doc["grant_request_endpoint"], GRANT);
-        assert_eq!(doc["key_proofs_supported"], json!(["dpop"]));
+        assert_eq!(
+            doc["key_proofs_supported"],
+            json!(["dpop", "httpsig", "jwsd", "jws"])
+        );
         assert_eq!(
             doc["interaction_start_modes_supported"],
             json!(["redirect"])

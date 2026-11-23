@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Comprehensive tests for AuthToken edge cases
 use auth_framework::tokens::AuthToken;
 use std::time::Duration;

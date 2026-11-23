@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect RP-Initiated Logout orchestration.
 //!
 //! This module implements the request validation and session termination flow for

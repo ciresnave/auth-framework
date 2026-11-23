@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! MFA code guessing is bounded: a challenge allows a few attempts, failures count toward
 //! the account lockout, and a TOTP code is accepted once.
 

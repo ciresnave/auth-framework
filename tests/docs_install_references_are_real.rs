@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Installation references in the documentation must point at something that can be installed.
 //!
 //! Measured before this test existed: `docs/web-frameworks.md` told readers to depend on

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `AuthStorage::swap_kv`: remove a key and store another in ONE atomic step.
 //!
 //! `swap_kv(remove, key, value, ttl)` succeeds only when at least one of the `remove` keys is

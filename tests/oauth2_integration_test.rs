@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth2 Integration Test
 //!
 //! This test demonstrates the complete OAuth2 authorization server flow

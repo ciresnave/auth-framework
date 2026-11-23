@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Pushed Authorization Requests (PAR) Implementation - RFC 9126
 //!
 //! This module implements RFC 9126 - OAuth 2.0 Pushed Authorization Requests

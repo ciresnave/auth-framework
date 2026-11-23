@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! What the `passkey` crates produce, pinned so that a release which changes it fails here.
 //!
 //! The crate drives `passkey`'s client and authenticator to register and to assert, then reads the

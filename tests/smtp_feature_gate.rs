@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SMTP delivery (the `lettre` dependency) is opt-in through the `smtp` feature, so a consumer that
 //! only needs TOTP or tokens does not compile an SMTP stack.
 

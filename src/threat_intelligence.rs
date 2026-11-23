@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Automated Threat Intelligence Feed Management
 //!
 //! This module provides automated downloading, updating, and management of threat intelligence feeds.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Server-side authentication and authorization implementations.
 //!
 //! This module provides comprehensive server-side capabilities including:

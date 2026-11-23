@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Credential types for various authentication methods.
 
 use base64::Engine;

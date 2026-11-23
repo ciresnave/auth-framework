@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! RBAC Compliance Monitoring
 //!
 //! This module provides compliance monitoring and reporting

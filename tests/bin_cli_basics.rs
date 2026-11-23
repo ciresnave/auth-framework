@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Every shipped binary answers `--help`, `--version` and a bad flag the way a command-line tool
 //! should, and none of them starts serving (or hangs) because of an argument it does not know.
 //!

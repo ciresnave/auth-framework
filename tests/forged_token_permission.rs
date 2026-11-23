@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A hand-built `AuthToken` must not authorise through the framework's public permission check.
 use auth_framework::auth::AuthFramework;
 use auth_framework::config::AuthConfig;

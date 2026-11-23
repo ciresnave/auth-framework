@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Standard API Error Codes
 //!
 //! Consistent error codes for API responses

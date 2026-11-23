@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! **A security event is only believed if it was signed by a key the operator configured.**
 //!
 //! `SharedSignalsManager::receive_event` acts on `session_revoked`, `account_disabled` and

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! What an account was issued stops working when the account is deactivated, deleted or has its
 //! password changed: API keys, access and refresh tokens, stored tokens and sessions. A later
 //! credential for a still-live account works.

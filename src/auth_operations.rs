@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Grouped operation facades over [`AuthFramework`].
 //!
 //! Each `*Operations` struct is a lightweight view (holds only a lifetime-bound

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SDK Generation Module
 //!
 //! This module provides SDK generators for multiple programming languages,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Email-verification tokens are a proof of inbox control: they are delivered to the
 //! mailbox through the configured sender and are never present in an HTTP response.
 

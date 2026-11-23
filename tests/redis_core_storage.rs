@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! #148: the exported `storage::RedisStorage` lists keys by cursor `SCAN`, writes a
 //! token in one step, and expires the per-user token set with its longest-lived member.
 //!

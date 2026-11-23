@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The authorization_code grant authenticates the client (RFC 6749 §4.1.3, §3.2.1):
 //! a confidential client must present its registered secret, a code issued to one
 //! client cannot be redeemed by another, and a public client is identified by a

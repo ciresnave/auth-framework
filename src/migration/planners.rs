@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Migration plan generators
 //!
 //! This module provides migration plan generation based on legacy

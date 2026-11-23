@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Macaroons authorization credential support.
 //!
 //! Implements Macaroons — a flexible authorization credential mechanism using

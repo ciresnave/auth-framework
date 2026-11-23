@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! One-shot copy of a [`SqliteStorage`](crate::storage::sqlite::SqliteStorage) database into any
 //! other [`AuthStorage`], for moving to [`PersistantStorage`](crate::storage::persistant::PersistantStorage)
 //! (needs both `sqlite-storage` and `persistant-storage`).

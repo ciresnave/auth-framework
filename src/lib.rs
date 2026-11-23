@@ -1,4 +1,5 @@
 #![deny(clippy::unwrap_used)]
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 /*!
 # Auth Framework

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Complete REST API Server Example
 //!
 //! This example demonstrates how to set up and run the comprehensive REST API server

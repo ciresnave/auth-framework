@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Time the `AuthStorage` operations of `SqliteStorage` and `PersistantStorage` (SQLite file) on one
 //! workload. Run in release mode, with a directory on a local disk:
 //!

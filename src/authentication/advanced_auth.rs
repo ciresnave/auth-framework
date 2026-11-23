@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Delegation, ABAC, Resource Mapping, and Backup Code Management
 //! Core data models and traits for advanced authorization features
 

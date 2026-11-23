@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OAuth 2.0 Client Registry Module
 //!
 //! This module implements a client registry for managing OAuth 2.0 clients

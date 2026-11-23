@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The `AuthFramework` TOTP facade and `TotpManager` used directly must agree on where a secret
 //! lives and how it is encoded: a secret made through one verifies through the other.
 //!

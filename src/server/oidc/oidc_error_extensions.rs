@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! OpenID Connect Core Error Code Extensions
 //!
 //! This module implements additional error codes for OpenID Connect,

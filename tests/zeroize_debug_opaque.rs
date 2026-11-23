@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `Zeroizing<T>` hides its value from `{:?}` only from zeroize 1.9.1 on: 1.9.0 and earlier derive `Debug`
 //! and print `Zeroizing("<the secret>")`. Every `Zeroizing<String>` secret field in this crate (TOTP
 //! secrets, configuration secrets, hashed client secrets, ...) relies on that, so the manifest must not

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TACACS+ (Terminal Access Controller Access-Control System Plus) protocol support.
 //!
 //! Provides TACACS+ packet construction, obfuscation/deobfuscation, and

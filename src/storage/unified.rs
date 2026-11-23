@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! High-performance unified storage implementation using DashMap
 //!
 //! This module provides a unified approach to storage operations that achieves

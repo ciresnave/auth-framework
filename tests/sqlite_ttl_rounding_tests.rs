@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SQLite stores `expires_at` in whole seconds. A TTL with a sub-second part must never make an
 //! entry expire EARLY (it used to be truncated: `duration.as_secs()`), for `store_kv` and
 //! `store_kv_if_absent` alike.

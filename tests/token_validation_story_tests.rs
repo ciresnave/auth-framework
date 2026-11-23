@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! One token-validation story: a deactivated account's tokens stop working everywhere,
 //! `validate_token` honours revocation, and an unreadable revocation list fails closed.
 

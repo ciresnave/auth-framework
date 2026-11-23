@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Legacy system analyzers for migration planning
 //!
 //! This module provides analyzers to detect and analyze various

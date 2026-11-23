@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Architecture enhancements for scalability and maintainability
 //!
 //! This module provides advanced architectural patterns including:

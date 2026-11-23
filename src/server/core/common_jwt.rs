@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Common JWT Operations
 //!
 //! This module provides shared JWT functionality to eliminate

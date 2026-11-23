@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `extract_compressed_feed` picks an extractor from the output path's extension. Formats this
 //! crate does not extract must fail loudly, never write the archive's bytes under a feed name.
 use super::*;

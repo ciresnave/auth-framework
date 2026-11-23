@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `Debug` and `Display` output that reaches a log line or a terminal must not carry a secret.
 //!
 //! Each test builds a value around a marker string and checks the marker is not in what the value

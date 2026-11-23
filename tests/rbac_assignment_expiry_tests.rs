@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A role assignment that asks for an expiry is refused, because the role system keeps none and
 //! the role would be granted for good. Without an expiry the assignment works as before.
 #![cfg(all(feature = "enhanced-rbac", feature = "api-server"))]

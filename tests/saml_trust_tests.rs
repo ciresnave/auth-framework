@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SAML signature verification: the key comes from configuration, every digest is checked, and
 //! only the signed assertion is read.
 //!

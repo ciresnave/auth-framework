@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Production validation refuses a signing secret that is a known placeholder.
 
 use auth_framework::{AuthConfig, config::AppConfig};

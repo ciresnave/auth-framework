@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `ValidatedToken` is proof that the framework validated a token, so a permission check on it
 //! cannot be reached with a hand-built `AuthToken`.
 use auth_framework::auth::AuthFramework;

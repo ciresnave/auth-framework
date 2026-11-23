@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Maintenance utilities: snapshots, data export, and health checks.
 //!
 //! Provides tools for operational maintenance including:

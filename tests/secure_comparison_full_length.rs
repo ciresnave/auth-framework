@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The comparison helpers decide whether a presented secret equals the stored one, so they must
 //! look at every byte they are given, however long the inputs are. A helper that only examines a
 //! prefix reports two different long values as equal.

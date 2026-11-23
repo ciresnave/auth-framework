@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Security Verification Tests: Rate Limiting
 //!
 //! Comprehensive end-to-end tests for rate limiting across all components:

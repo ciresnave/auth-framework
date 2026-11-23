@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SPIFFE (Secure Production Identity Framework for Everyone) implementation.
 //!
 //! Provides SPIFFE ID parsing/validation and SVID (SPIFFE Verifiable Identity Document)

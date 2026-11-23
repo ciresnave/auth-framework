@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Security presets for the Auth Framework
 //!
 //! This module provides pre-configured security levels that automatically

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # Rich Authorization Requests (RAR) - RFC 9396
 //!
 //! This module implements the Rich Authorization Requests (RAR) specification,
