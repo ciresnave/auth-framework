@@ -69,7 +69,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 6.1 rotate | **partial** | `rotate_token_with_proof` (client-key proof, `POST <grant endpoint>/token` in `gnap_as_http.rs`); `rotate_token(value)` is the unproved internal call | no separate management token (the token is its own manage credential), no `invalid_rotation`; 6.1.1 key rotation missing (discovery says `key_rotation_supported: false`) |
+| 6.1 rotate | **partial** | `rotate_token_with_proof` (client-key proof, `POST <grant endpoint>/token` in `gnap_as_http.rs`); `rotate_token(value)` is the unproved internal call | no separate management token (the token is its own manage credential); 6.1.1 key rotation is done for tokens bound under `jws` and `jwsd` (`rotate_token_key_with_proof`, `gnap_jws::verify_attached_rotation` and `verify_detached_rotation`, both keys prove, answers `invalid_rotation` or `key_rotation_not_supported`, discovery says `key_rotation_supported: true`); `dpop`, `httpsig` and `mtls` tokens cannot rotate their key (`key_rotation_not_supported`), and `httpsig`'s `gnap-rotate` form (7.3.1.1) is not built |
 | 6.2 revoke | **done (service + HTTP)** | `revoke_token_with_proof`; `DELETE` on the token endpoint (`gnap_as_http.rs`) | `revoke_token(value)` stays as the unproved internal call |
 
 ### 7 Securing requests
@@ -95,7 +95,7 @@ Nothing claims a method it does not verify: an unlisted or unverifiable method i
 
 ### 9 Discovery
 
-**Partly done.** `OPTIONS` on the grant endpoint answers the 9.2 document (`GnapAsHttp`, `src/protocols/gnap_as_http.rs`), listing only what is verified today (`dpop`, `httpsig`, `jwsd` and `jws` proofs, `redirect` start and finish, no key rotation). **Missing:** the RS-first method (9.1).
+**Partly done.** `OPTIONS` on the grant endpoint answers the 9.2 document (`GnapAsHttp`, `src/protocols/gnap_as_http.rs`), listing only what is verified today (`dpop`, `httpsig`, `jwsd` and `jws` proofs, `redirect` start and finish, key rotation for `jws` and `jwsd` tokens). **Missing:** the RS-first method (9.1).
 
 ### 10 and 11
 
