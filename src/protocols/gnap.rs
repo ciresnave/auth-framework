@@ -402,6 +402,10 @@ pub struct GnapTransaction {
     /// the next poll must come `wait` seconds after this, or after `created_at` for the first.
     #[serde(default)]
     pub last_poll_at: u64,
+    /// How many continuation requests presented a wrong interaction hash or reference. At the service's cap
+    /// the transaction is invalidated (`too_many_attempts`, RFC 9635 section 3.6); never reset.
+    #[serde(default)]
+    pub bad_attempts: u32,
 }
 
 impl std::fmt::Debug for GnapTransaction {
@@ -536,6 +540,7 @@ pub struct GnapService {
     /// The short page a person types a `user_code_uri` code into (RFC 9635 section 3.3.4); without
     /// one that start mode is not offered. See [`GnapService::with_user_code_uri`].
     user_code_uri: Option<url::Url>,
+    max_bad_attempts: u32,
     /// Nonces of `httpsig` signatures already accepted, so a captured request cannot be replayed.
     httpsig_nonces: Arc<std::sync::Mutex<super::gnap_httpsig::NonceCache>>,
     /// Seconds since the epoch; the system clock unless [`GnapService::with_clock`] replaced it.
@@ -555,6 +560,9 @@ fn system_now() -> u64 {
 pub const TOO_FAST: &str =
     "too_fast: Client polled too fast: wait before the next continuation request";
 
+/// How many wrong interaction hashes or references one transaction tolerates before it is invalidated.
+const DEFAULT_MAX_BAD_ATTEMPTS: u32 = 5;
+
 /// The default `wait` between polls, in seconds.
 const DEFAULT_POLL_WAIT_SECS: u64 = 5;
 
@@ -573,6 +581,11 @@ const USER_CODE_LOCKED: &str = "Too many wrong user codes; try again later";
 /// unknown transaction from an expired one, a wrong token or a wrong interaction hash.
 ///
 /// It starts with the RFC 9635 section 3.6 code, so the AS layer reads the typed error (`GnapError::from_service_message`).
+/// What the request that reaches the attempt cap is refused with (RFC 9635 section 3.6
+/// `too_many_attempts`); the transaction is gone.
+pub const TOO_MANY_ATTEMPTS: &str =
+    "too_many_attempts: Too many wrong interaction references: start a new transaction";
+
 const INVALID_CONTINUATION: &str = "invalid_continuation: Invalid continuation request";
 
 /// How far a JWS proof's `created` may differ from now, in seconds; its signature is remembered for twice that.
@@ -605,6 +618,7 @@ impl GnapService {
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
             user_code_uri: None,
+            max_bad_attempts: DEFAULT_MAX_BAD_ATTEMPTS,
             httpsig_nonces: Arc::new(std::sync::Mutex::new(super::gnap_httpsig::NonceCache::new(
                 system_now(),
             ))),
@@ -655,6 +669,36 @@ impl GnapService {
         }
         self.user_code_uri = Some(parsed);
         Ok(self)
+    }
+
+    /// Set how many continuation requests with a wrong interaction hash or reference one transaction
+    /// tolerates (default 5). The request that reaches the cap deletes the transaction and is refused
+    /// with `too_many_attempts`; the count is per transaction and never resets. `0` turns the cap off.
+    /// Only a holder of the continuation token reaches the count, so a third party cannot burn a
+    /// transaction.
+    pub fn with_max_bad_attempts(mut self, attempts: u32) -> Self {
+        self.max_bad_attempts = attempts;
+        self
+    }
+
+    /// Count a wrong interaction hash or reference against the transaction and answer the refusal.
+    async fn bad_interaction(&self, mut txn: GnapTransaction) -> AuthError {
+        txn.bad_attempts = txn.bad_attempts.saturating_add(1);
+        let spent = self.max_bad_attempts > 0 && txn.bad_attempts >= self.max_bad_attempts;
+        let id = txn.id.clone();
+        let outcome = if spent {
+            self.transactions.remove(&id).await.map(|_| ())
+        } else {
+            self.transactions
+                .replace_if_unchanged(txn)
+                .await
+                .map(|_| ())
+        };
+        match outcome {
+            Ok(()) if spent => AuthError::validation(TOO_MANY_ATTEMPTS),
+            Ok(()) => AuthError::validation(INVALID_CONTINUATION),
+            Err(e) => e,
+        }
     }
 
     /// Set the policy that decides what access tokens carry. Without one, every request for an
@@ -1792,6 +1836,7 @@ impl GnapService {
                 user_code,
                 revision: 0,
                 last_poll_at: 0,
+                bad_attempts: 0,
             };
             self.transactions.insert(txn).await?;
         } else {
@@ -1961,7 +2006,7 @@ impl GnapService {
                 hash.as_bytes(),
                 expected.as_bytes(),
             )) {
-                return Err(AuthError::validation(INVALID_CONTINUATION));
+                return Err(self.bad_interaction(txn).await);
             }
         }
 
@@ -1974,7 +2019,7 @@ impl GnapService {
                     issued.as_bytes(),
                     given.as_bytes(),
                 )) {
-                    return Err(AuthError::validation(INVALID_CONTINUATION));
+                    return Err(self.bad_interaction(txn).await);
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
@@ -3639,6 +3684,87 @@ mod tests {
         assert!(
             service
                 .continue_transaction(&txn_id, &cont, Some(&iref), Some(&hash))
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_fifth_wrong_interaction_reference_invalidates_the_transaction() {
+        let service = test_service();
+        let (txn_id, cont, hash, iref) = interact_transaction(&service).await;
+        let wrong = |n: u32| format!("wrong-{n}");
+        // A third party without the continuation token reaches no count.
+        for _ in 0..10 {
+            let e = service
+                .continue_transaction(&txn_id, "not-the-token", Some(&iref), Some("x"))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.ends_with(INVALID_CONTINUATION), "{}", e);
+        }
+        // Four wrong hashes from the holder are plain refusals, and the right one still works after them
+        // (control: the count alone does not spoil the transaction).
+        for n in 0..4 {
+            let e = service
+                .continue_transaction(&txn_id, &cont, Some(&iref), Some(&wrong(n)))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.ends_with(INVALID_CONTINUATION), "attempt {n}");
+        }
+        assert_eq!(service.test_txn(&txn_id).await.bad_attempts, 4);
+        // The fifth is refused with the registered code, and the transaction is gone even for the right hash.
+        let fifth = service
+            .continue_transaction(&txn_id, &cont, Some(&iref), Some(&wrong(4)))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(fifth.ends_with(TOO_MANY_ATTEMPTS), "{}", fifth);
+        let after = service
+            .continue_transaction(&txn_id, &cont, Some(&iref), Some(&hash))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(after.ends_with(INVALID_CONTINUATION), "{}", after);
+    }
+
+    #[tokio::test]
+    async fn the_attempt_cap_is_configurable_and_zero_turns_it_off() {
+        let service = test_service().with_max_bad_attempts(2);
+        let (txn_id, cont, _hash, iref) = interact_transaction(&service).await;
+        let bad =
+            |s: &'static str| service.continue_transaction(&txn_id, &cont, Some(&iref), Some(s));
+        assert!(
+            bad("a")
+                .await
+                .unwrap_err()
+                .to_string()
+                .ends_with(INVALID_CONTINUATION),
+            "{}",
+            bad("a").await.unwrap_err().to_string()
+        );
+        assert!(
+            bad("b")
+                .await
+                .unwrap_err()
+                .to_string()
+                .ends_with(TOO_MANY_ATTEMPTS),
+            "{}",
+            bad("b").await.unwrap_err().to_string()
+        );
+
+        let open = test_service().with_max_bad_attempts(0);
+        let (txn_id, cont, hash, iref) = interact_transaction(&open).await;
+        for _ in 0..50 {
+            assert!(
+                open.continue_transaction(&txn_id, &cont, Some(&iref), Some("nope"))
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            open.continue_transaction(&txn_id, &cont, Some(&iref), Some(&hash))
                 .await
                 .is_ok()
         );

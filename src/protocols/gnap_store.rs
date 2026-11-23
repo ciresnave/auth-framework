@@ -345,6 +345,7 @@ mod tests {
             user_code: None,
             revision: 0,
             last_poll_at: 0,
+            bad_attempts: 0,
         }
     }
 
