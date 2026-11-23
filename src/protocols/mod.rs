@@ -11,6 +11,7 @@ pub mod gnap_http;
 pub mod gnap_httpsig;
 pub mod gnap_interaction;
 pub mod gnap_jws;
+pub mod gnap_push;
 pub mod gnap_rs;
 pub mod gnap_store;
 pub mod gnap_wire;

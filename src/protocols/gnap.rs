@@ -19,8 +19,10 @@
 use crate::errors::{AuthError, Result};
 use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
 use crate::protocols::gnap_interaction::{
-    FinishMethod, FinishRequest, StartMode, generate_user_code, parse_start, validate_push_target,
+    FinishMethod, FinishRequest, StartMode, generate_user_code, normalize_user_code, parse_start,
+    validate_push_target,
 };
+use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
     GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
     InMemoryTransactionStore,
@@ -525,9 +527,15 @@ pub struct GnapService {
     issued_tokens: Arc<dyn GnapTokenStore>,
     /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
     consents: Arc<dyn GnapConsentStore>,
+    /// Wrong user codes typed per caller: (count, when the window began). See
+    /// [`GnapService::transaction_for_user_code`].
+    code_failures: std::sync::Mutex<std::collections::HashMap<String, (u32, u64)>>,
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
+    /// The short page a person types a `user_code_uri` code into (RFC 9635 section 3.3.4); without
+    /// one that start mode is not offered. See [`GnapService::with_user_code_uri`].
+    user_code_uri: Option<url::Url>,
     /// Nonces of `httpsig` signatures already accepted, so a captured request cannot be replayed.
     httpsig_nonces: Arc<std::sync::Mutex<super::gnap_httpsig::NonceCache>>,
     /// Seconds since the epoch; the system clock unless [`GnapService::with_clock`] replaced it.
@@ -549,6 +557,17 @@ pub const TOO_FAST: &str =
 
 /// The default `wait` between polls, in seconds.
 const DEFAULT_POLL_WAIT_SECS: u64 = 5;
+
+/// Wrong user codes one caller may type within [`USER_CODE_LOCKOUT_SECS`] before every further
+/// attempt is refused unread (RFC 9635 section 3.3.3: the AS limits guesses).
+const USER_CODE_MAX_FAILURES: u32 = 5;
+/// How long a caller that typed [`USER_CODE_MAX_FAILURES`] wrong codes is refused.
+const USER_CODE_LOCKOUT_SECS: u64 = 300;
+/// The one message for a user code that matches no open transaction, so a caller cannot tell
+/// a wrong code from an expired or already-decided one.
+const USER_CODE_REFUSED: &str = "Invalid user code";
+/// Refusal of a caller that has typed too many wrong codes.
+const USER_CODE_LOCKED: &str = "Too many wrong user codes; try again later";
 
 /// The one message every refused `continue_transaction` call returns, so a caller cannot tell an
 /// unknown transaction from an expired one, a wrong token or a wrong interaction hash.
@@ -581,7 +600,9 @@ impl GnapService {
             transactions: Arc::new(InMemoryTransactionStore::new()),
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
             consents: Arc::new(InMemoryConsentStore::new()),
+            code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
+            user_code_uri: None,
             httpsig_nonces: Arc::new(std::sync::Mutex::new(super::gnap_httpsig::NonceCache::new(
                 system_now(),
             ))),
@@ -610,6 +631,28 @@ impl GnapService {
     pub fn with_poll_wait_secs(mut self, secs: u64) -> Self {
         self.poll_wait_secs = secs;
         self
+    }
+
+    /// Set the short page where a person types a code (RFC 9635 section 3.3.4). A client that
+    /// starts with `user_code_uri` is then answered `{code, uri}`; the code is the transaction's
+    /// one user code, so [`GnapService::transaction_for_user_code`] finds it. Without this the mode
+    /// is not offered (the response carries only the modes the server supports, section 3.3).
+    /// The URI must be an absolute http(s) URI without a query or fragment, so no code can end up
+    /// in it.
+    pub fn with_user_code_uri(mut self, uri: &str) -> Result<Self> {
+        let parsed = url::Url::parse(uri)
+            .map_err(|e| AuthError::config(format!("GNAP user_code_uri is not a URI: {e}")))?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.cannot_be_a_base()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(AuthError::config(
+                "GNAP user_code_uri must be an absolute http(s) URI without a query or fragment",
+            ));
+        }
+        self.user_code_uri = Some(parsed);
+        Ok(self)
     }
 
     /// Set the policy that decides what access tokens carry. Without one, every request for an
@@ -1647,7 +1690,9 @@ impl GnapService {
             // is a later slice.
             let start_modes = Self::interaction_start_modes(interact)?;
             Self::validate_finish(interact)?;
-            let user_code = if start_modes.contains(&StartMode::UserCode) {
+            let offer_code_uri =
+                start_modes.contains(&StartMode::UserCodeUri) && self.user_code_uri.is_some();
+            let user_code = if start_modes.contains(&StartMode::UserCode) || offer_code_uri {
                 Some(
                     generate_user_code(USER_CODE_LEN)
                         .map_err(|e| AuthError::validation(e.to_string()))?,
@@ -1674,10 +1719,18 @@ impl GnapService {
             }
 
             if let Some(ref code) = user_code {
-                interact_res.insert(
-                    "user_code".to_string(),
-                    serde_json::Value::String(code.clone()),
-                );
+                if start_modes.contains(&StartMode::UserCode) {
+                    interact_res.insert(
+                        "user_code".to_string(),
+                        serde_json::Value::String(code.clone()),
+                    );
+                }
+                if let (true, Some(uri)) = (offer_code_uri, self.user_code_uri.as_ref()) {
+                    interact_res.insert(
+                        "user_code_uri".to_string(),
+                        serde_json::json!({"code": code, "uri": uri.as_str()}),
+                    );
+                }
             }
 
             if let Some(ref finish) = interact.finish {
@@ -2180,6 +2233,149 @@ impl GnapService {
             }
         })
         .await
+    }
+
+    /// Deliver the `push` callback of an approved transaction (RFC 9635 section 4.2.2): the one-time
+    /// `interact_ref` and its hash, to the client's `finish.uri`.
+    ///
+    /// The target is checked again here, after the host name is resolved, and the connection goes to the
+    /// address that was checked ([`deliver_push`], section 11.34): a name that resolves to a loopback,
+    /// private or metadata address is refused and nothing is sent. A transaction that is not approved, has
+    /// no `push` finish, or has no reference yet is refused, as is one past its lifetime (continuation
+    /// would refuse its reference anyway).
+    ///
+    /// **Deviation from RFC 9635 section 4.2:** the RFC says `finish` is also enacted when the resource
+    /// owner denies access, so the client can learn of it and modify its request. This method pushes only
+    /// an approved transaction; a client that asked for `push` and was denied is not told and finds out at
+    /// its next poll. Pushing a denial needs a denial body the RFC does not define for `push`.
+    pub async fn push_interaction(
+        &self,
+        transaction_id: &str,
+        resolver: &dyn PushResolver,
+        sender: &dyn PushSender,
+    ) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.push_interaction_at(transaction_id, resolver, sender, now)
+            .await
+    }
+
+    async fn push_interaction_at(
+        &self,
+        transaction_id: &str,
+        resolver: &dyn PushResolver,
+        sender: &dyn PushSender,
+        now: u64,
+    ) -> Result<()> {
+        let txn = self
+            .transactions
+            .get(transaction_id)
+            .await?
+            .ok_or_else(|| AuthError::validation("Transaction not found"))?;
+        if !matches!(txn.state, GnapTransactionState::Approved) {
+            return Err(AuthError::validation("the transaction is not approved"));
+        }
+        if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
+            return Err(AuthError::validation("the transaction has expired"));
+        }
+        let finish = txn
+            .request
+            .interact
+            .as_ref()
+            .and_then(|i| i.finish.as_ref())
+            .filter(|f| f.method == "push")
+            .ok_or_else(|| AuthError::validation("the transaction has no push finish method"))?;
+        let interact_ref = txn
+            .interact_ref
+            .as_deref()
+            .ok_or_else(|| AuthError::validation("the transaction has no interaction reference"))?;
+        let uri = url::Url::parse(&finish.uri)
+            .map_err(|_| AuthError::validation("the push finish uri is not a valid URI"))?;
+        let hash = Self::compute_interact_hash(
+            &finish.nonce,
+            txn.interact_nonce.as_deref().unwrap_or(""),
+            interact_ref,
+            &self.config.transaction_endpoint,
+        );
+        deliver_push(&uri, &hash, interact_ref, resolver, sender)
+            .await
+            .map_err(|e| AuthError::validation(e.to_string()))
+    }
+
+    /// Find the pending transaction a person's typed `user_code` belongs to (RFC 9635 sections
+    /// 3.3.3 and 4.1) and return its id, for the page that then shows the consent and calls
+    /// [`Self::approve_transaction`] or [`Self::deny_transaction`].
+    ///
+    /// `caller` names who is typing (an address, a session): after five wrong codes within five
+    /// minutes every attempt by that caller is refused unread, a right code included, until the
+    /// window passes. A wrong, malformed, expired or already-decided code all give the same
+    /// refusal. A right code clears the caller's count. The counts are kept in this process
+    /// only. The caller key must be stable and invariant to the attacker: an attacker who can vary it
+    /// (a spoofable header, a cookie they can drop, an address they can rotate) gets a fresh allowance each
+    /// time and defeats the limit. Key on something the attacker cannot choose, such as an authenticated
+    /// session or the peer address of a connection you terminate.
+    pub async fn transaction_for_user_code(&self, typed: &str, caller: &str) -> Result<String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.transaction_for_user_code_at(typed, caller, now).await
+    }
+
+    async fn transaction_for_user_code_at(
+        &self,
+        typed: &str,
+        caller: &str,
+        now: u64,
+    ) -> Result<String> {
+        if self.user_code_locked(caller, now) {
+            return Err(AuthError::validation(USER_CODE_LOCKED));
+        }
+        let found = match normalize_user_code(typed) {
+            Ok(code) => self.transactions.find_by_user_code(&code).await?,
+            Err(_) => None,
+        };
+        let usable = found.filter(|t| {
+            matches!(t.state, GnapTransactionState::Pending)
+                && now.saturating_sub(t.created_at) <= self.config.transaction_lifetime_secs
+        });
+        match usable {
+            Some(txn) => {
+                self.code_failures_lock().remove(caller);
+                Ok(txn.id)
+            }
+            None => {
+                self.note_user_code_failure(caller, now);
+                Err(AuthError::validation(USER_CODE_REFUSED))
+            }
+        }
+    }
+
+    fn code_failures_lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, (u32, u64)>> {
+        self.code_failures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn user_code_locked(&self, caller: &str, now: u64) -> bool {
+        self.code_failures_lock()
+            .get(caller)
+            .is_some_and(|&(count, since)| {
+                count >= USER_CODE_MAX_FAILURES
+                    && now.saturating_sub(since) < USER_CODE_LOCKOUT_SECS
+            })
+    }
+
+    fn note_user_code_failure(&self, caller: &str, now: u64) {
+        let mut failures = self.code_failures_lock();
+        // Windows that have passed are dropped here, so the map holds only recent callers.
+        failures.retain(|_, &mut (_, since)| now.saturating_sub(since) < USER_CODE_LOCKOUT_SECS);
+        let entry = failures.entry(caller.to_string()).or_insert((0, now));
+        entry.0 = entry.0.saturating_add(1);
     }
 
     /// Deny a pending transaction
@@ -5408,6 +5604,139 @@ mod proof_verification_tests {
         assert!(svc.test_txn_ids().await.is_empty());
     }
 
+    // ---- push delivery (G4 slice 2) ----
+
+    use crate::protocols::gnap_push::tests::{FakeResolver, FakeSender};
+
+    async fn approved_push_txn(
+        svc: &GnapService,
+        dpop: &DpopManager,
+        key: &ClientKey,
+        method: &str,
+    ) -> (String, GnapInteractionCompletion) {
+        let interact = json!({
+            "start": ["redirect"],
+            "finish": {"method": method, "uri": "https://client.test/cb", "nonce": "client-nonce"},
+        });
+        send(svc, dpop, key, "push-txn", interact_request(key, interact))
+            .await
+            .expect("opened");
+        let id = svc.test_first_txn().await.id;
+        let done = svc.approve_transaction(&id, Some("sub-1")).await.unwrap();
+        (id, done)
+    }
+
+    #[tokio::test]
+    async fn an_approved_push_transaction_delivers_its_reference_and_hash() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, done) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        let (r, s) = (
+            FakeResolver::answering(&["93.184.216.34"]),
+            FakeSender::default(),
+        );
+        svc.push_interaction(&id, &r, &s).await.unwrap();
+        let calls = s.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "https://client.test/cb");
+        assert_eq!(
+            calls[0].2["interact_ref"],
+            done.interact_ref.clone().unwrap()
+        );
+        assert_eq!(calls[0].2["hash"], done.hash.clone().unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_push_whose_name_now_resolves_to_a_private_address_is_refused_at_delivery() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, _) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        // the name passed the open-time check; at delivery it resolves to an internal address
+        for answers in [vec!["10.0.0.5"], vec!["93.184.216.34", "169.254.169.254"]] {
+            let (r, s) = (FakeResolver::answering(&answers), FakeSender::default());
+            let e = svc
+                .push_interaction(&id, &r, &s)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("AddressNotAllowed"), "{e}");
+            assert!(
+                s.calls.lock().unwrap().is_empty(),
+                "nothing was sent to {answers:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn only_an_approved_transaction_with_a_push_finish_is_pushed() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (r, s) = (
+            FakeResolver::answering(&["93.184.216.34"]),
+            FakeSender::default(),
+        );
+        // a redirect-finish transaction
+        let (id, _) = approved_push_txn(&svc, &dpop, &key, "redirect").await;
+        assert!(svc.push_interaction(&id, &r, &s).await.is_err());
+        // a push-finish transaction that was never approved
+        let svc2 = service();
+        let interact = json!({
+            "start": ["redirect"],
+            "finish": {"method": "push", "uri": "https://client.test/cb", "nonce": "n"},
+        });
+        send(
+            &svc2,
+            &dpop,
+            &key,
+            "pending",
+            interact_request(&key, interact),
+        )
+        .await
+        .unwrap();
+        let id2 = svc2.test_first_txn().await.id;
+        assert!(svc2.push_interaction(&id2, &r, &s).await.is_err());
+        assert!(svc2.push_interaction("no-such-id", &r, &s).await.is_err());
+        assert!(s.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_transaction_denied_after_approval_is_not_pushed() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, _) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        svc.deny_transaction(&id).await.unwrap();
+        let (r, s) = (
+            FakeResolver::answering(&["93.184.216.34"]),
+            FakeSender::default(),
+        );
+        let e = svc
+            .push_interaction(&id, &r, &s)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("not approved"), "{e}");
+        assert!(s.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_expired_approved_transaction_is_not_pushed() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, _) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        let (r, s) = (
+            FakeResolver::answering(&["93.184.216.34"]),
+            FakeSender::default(),
+        );
+        let created = svc.test_first_txn().await.created_at;
+        let life = svc.config.transaction_lifetime_secs;
+        let e = svc
+            .push_interaction_at(&id, &r, &s, created + life + 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("expired"), "{e}");
+        assert!(s.calls.lock().unwrap().is_empty());
+        svc.push_interaction_at(&id, &r, &s, created + life)
+            .await
+            .unwrap();
+        assert_eq!(s.calls.lock().unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn a_hash_method_the_server_does_not_honour_is_refused_not_ignored() {
         let (svc, dpop, key) = (service(), manager(), client_key());
@@ -5489,6 +5818,252 @@ mod proof_verification_tests {
             .unwrap();
         assert!(r3["interact"].get("user_code").is_none());
         assert!(r3["interact"].get("redirect").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_user_code_uri_start_is_answered_with_the_code_and_the_page_when_configured() {
+        let (dpop, key) = (manager(), client_key());
+        let svc = service()
+            .with_user_code_uri("https://as.test/device")
+            .unwrap();
+        let ask = |start: serde_json::Value| json!({"start": start});
+        let resp = send(
+            &svc,
+            &dpop,
+            &key,
+            "ucu-1",
+            interact_request(&key, ask(json!(["user_code_uri"]))),
+        )
+        .await
+        .unwrap();
+        let obj = &resp["interact"]["user_code_uri"];
+        let code = obj["code"].as_str().expect("a code is offered");
+        assert_eq!(obj["uri"], "https://as.test/device");
+        assert!(
+            resp["interact"].get("user_code").is_none(),
+            "user_code was not asked for"
+        );
+        // the code is the transaction's one code, so a typed code finds it
+        let id = svc.test_first_txn().await.id;
+        assert_eq!(svc.transaction_for_user_code(code, "c").await.unwrap(), id);
+        // both modes asked: both answered with the SAME code
+        let both = send(
+            &svc,
+            &dpop,
+            &key,
+            "ucu-2",
+            interact_request(&key, ask(json!(["user_code", "user_code_uri"]))),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            both["interact"]["user_code"],
+            both["interact"]["user_code_uri"]["code"]
+        );
+        // not asked for: not offered, and no code is kept
+        let none = send(
+            &svc,
+            &dpop,
+            &key,
+            "ucu-3",
+            interact_request(&key, ask(json!(["redirect"]))),
+        )
+        .await
+        .unwrap();
+        assert!(none["interact"].get("user_code_uri").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_user_code_uri_start_without_a_configured_page_is_not_offered() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let resp = send(
+            &svc,
+            &dpop,
+            &key,
+            "ucu-4",
+            interact_request(&key, json!({"start": ["redirect", "user_code_uri"]})),
+        )
+        .await
+        .unwrap();
+        assert!(resp["interact"].get("user_code_uri").is_none());
+        assert!(resp["interact"].get("redirect").is_some());
+        assert!(svc.test_first_txn().await.user_code.is_none());
+    }
+
+    #[test]
+    fn the_user_code_uri_page_must_be_absolute_http_without_query_or_fragment() {
+        for bad in [
+            "/device",
+            "not a uri",
+            "ftp://as.test/d",
+            "mailto:a@b.test",
+            "https://as.test/d?code=1",
+            "https://as.test/d#x",
+        ] {
+            assert!(
+                GnapService::new(GnapConfig::default())
+                    .with_user_code_uri(bad)
+                    .is_err(),
+                "{bad} must be refused"
+            );
+        }
+        assert!(
+            GnapService::new(GnapConfig::default())
+                .with_user_code_uri("http://as.test/device")
+                .is_ok()
+        );
+    }
+
+    /// A service holding one pending user-code transaction: (service, its code, its id).
+    async fn with_code() -> (GnapService, String, String) {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let interact = json!({"start": ["user_code"], "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "n"}});
+        let resp = send(
+            &svc,
+            &dpop,
+            &key,
+            "uc-find",
+            interact_request(&key, interact),
+        )
+        .await
+        .unwrap();
+        let code = resp["interact"]["user_code"].as_str().unwrap().to_string();
+        let id = svc.test_first_txn().await.id;
+        (svc, code, id)
+    }
+
+    fn wrong(code: &str) -> String {
+        // a well-formed code that is not this one
+        let first = if code.starts_with('A') { 'B' } else { 'A' };
+        format!("{first}{}", &code[1..])
+    }
+
+    #[tokio::test]
+    async fn a_typed_code_finds_its_transaction_however_it_is_written() {
+        let (svc, code, id) = with_code().await;
+        let lower = code.to_lowercase();
+        let hyphen = format!("{}-{}", &code[..4], &code[4..]);
+        for typed in [code.clone(), lower, hyphen] {
+            let got = svc.transaction_for_user_code_at(&typed, "c", 1_000).await;
+            assert_eq!(got.unwrap(), id, "typed as {typed}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wrong_malformed_expired_or_decided_code_gets_one_refusal() {
+        let (svc, code, id) = with_code().await;
+        let now = svc.test_first_txn().await.created_at;
+        let refused = |r: Result<String>| r.expect_err("refused").to_string();
+        let baseline = refused(
+            svc.transaction_for_user_code_at(&wrong(&code), "a", now)
+                .await,
+        );
+        assert!(baseline.contains(USER_CODE_REFUSED), "{baseline}");
+        assert_eq!(
+            baseline,
+            refused(svc.transaction_for_user_code_at("!!", "b", now).await),
+            "malformed"
+        );
+        // past the transaction lifetime the right code is refused, with the same words
+        let late = now + svc.config.transaction_lifetime_secs + 1;
+        assert_eq!(
+            baseline,
+            refused(svc.transaction_for_user_code_at(&code, "c", late).await),
+            "expired"
+        );
+        // at the last second it still works
+        let edge = now + svc.config.transaction_lifetime_secs;
+        assert_eq!(
+            svc.transaction_for_user_code_at(&code, "d", edge)
+                .await
+                .unwrap(),
+            id
+        );
+        svc.approve_transaction(&id, Some("alice")).await.unwrap();
+        assert_eq!(
+            baseline,
+            refused(svc.transaction_for_user_code_at(&code, "e", now).await),
+            "approved"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_denied_transactions_code_is_refused() {
+        let (svc, code, id) = with_code().await;
+        svc.deny_transaction(&id).await.unwrap();
+        assert!(
+            svc.transaction_for_user_code_at(&code, "a", 1_000)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn five_wrong_codes_lock_the_caller_out_even_for_the_right_one() {
+        let (svc, code, id) = with_code().await;
+        let t = svc.test_first_txn().await.created_at;
+        for _ in 0..USER_CODE_MAX_FAILURES {
+            assert!(
+                svc.transaction_for_user_code_at(&wrong(&code), "mallory", t)
+                    .await
+                    .is_err()
+            );
+        }
+        let locked = svc
+            .transaction_for_user_code_at(&code, "mallory", t + 1)
+            .await
+            .expect_err("locked")
+            .to_string();
+        assert!(locked.contains(USER_CODE_LOCKED), "{locked}");
+        // someone else is not affected
+        assert_eq!(
+            svc.transaction_for_user_code_at(&code, "alice", t + 1)
+                .await
+                .unwrap(),
+            id
+        );
+        // the lockout ends when the window has passed
+        let after = t + USER_CODE_LOCKOUT_SECS;
+        assert_eq!(
+            svc.transaction_for_user_code_at(&code, "mallory", after)
+                .await
+                .unwrap(),
+            id
+        );
+    }
+
+    #[tokio::test]
+    async fn a_right_code_clears_the_count_and_four_wrong_ones_do_not_lock() {
+        let (svc, code, id) = with_code().await;
+        let t = svc.test_first_txn().await.created_at;
+        for round in 0..3 {
+            for _ in 0..USER_CODE_MAX_FAILURES - 1 {
+                let _ = svc
+                    .transaction_for_user_code_at(&wrong(&code), "bob", t)
+                    .await;
+            }
+            assert_eq!(
+                svc.transaction_for_user_code_at(&code, "bob", t)
+                    .await
+                    .unwrap(),
+                id,
+                "round {round}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn counts_of_callers_whose_window_has_passed_are_dropped() {
+        let (svc, code, _) = with_code().await;
+        let t = svc.test_first_txn().await.created_at;
+        let _ = svc
+            .transaction_for_user_code_at(&wrong(&code), "old", t)
+            .await;
+        let _ = svc
+            .transaction_for_user_code_at(&wrong(&code), "new", t + USER_CODE_LOCKOUT_SECS)
+            .await;
+        let kept: Vec<String> = svc.code_failures_lock().keys().cloned().collect();
+        assert_eq!(kept, vec!["new".to_string()]);
     }
 }
 

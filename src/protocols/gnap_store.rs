@@ -12,6 +12,7 @@
 //! way that grants anything: every error is returned to the caller and the request is refused.
 
 use super::gnap::{GnapAccessRequest, GnapTransaction};
+use super::gnap_interaction::user_codes_equal;
 use crate::errors::{AuthError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -181,6 +182,27 @@ pub trait GnapTransactionStore: Send + Sync {
 
     /// The ids of the stored transactions, for an operator listing what is outstanding.
     async fn ids(&self) -> Result<Vec<String>>;
+
+    /// The stored transaction that was issued this normalised `user_code`, if any (RFC 9635
+    /// section 3.3.3). The default reads every transaction and compares in constant time, so a
+    /// store need not index codes; a database store may override it with a lookup. Expiry and
+    /// state are the caller's check.
+    async fn find_by_user_code(&self, user_code: &str) -> Result<Option<GnapTransaction>> {
+        let mut found = None;
+        for id in self.ids().await? {
+            if let Some(txn) = self.get(&id).await?
+                && txn
+                    .user_code
+                    .as_deref()
+                    .is_some_and(|issued| user_codes_equal(user_code, issued))
+            {
+                // The first match wins, so a (negligible) code collision gives one defined answer; the scan
+                // still reads every transaction.
+                found.get_or_insert(txn);
+            }
+        }
+        Ok(found)
+    }
 }
 
 /// A [`GnapTransactionStore`] held in memory.
