@@ -553,7 +553,7 @@ fn system_now() -> u64 {
 /// What a poll that came before the `wait` the server announced is refused with (RFC 9635 section
 /// 3.6 `too_fast`). The refusal keeps the continuation token usable.
 pub const TOO_FAST: &str =
-    "Client polled too fast (too_fast): wait before the next continuation request";
+    "too_fast: Client polled too fast: wait before the next continuation request";
 
 /// The default `wait` between polls, in seconds.
 const DEFAULT_POLL_WAIT_SECS: u64 = 5;
@@ -592,7 +592,7 @@ const KEY_REQUIRED: &str = "GNAP client key required";
 /// Refusal to issue an access token when the service has no access policy.
 const POLICY_REQUIRED: &str = "GNAP access denied: no access policy is configured";
 /// Refusal to issue an access token when the policy grants nothing.
-const ACCESS_DENIED: &str = "GNAP access denied by policy";
+const ACCESS_DENIED: &str = "request_denied: GNAP access denied by policy";
 
 impl GnapService {
     pub fn new(config: GnapConfig) -> Self {
@@ -2075,7 +2075,7 @@ impl GnapService {
             GnapTransactionState::Denied => {
                 self.transactions.remove(transaction_id).await?;
                 Err(AuthError::validation(
-                    "Transaction was denied by the resource owner",
+                    "user_denied: Transaction was denied by the resource owner",
                 ))
             }
         }
