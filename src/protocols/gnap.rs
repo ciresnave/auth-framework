@@ -571,7 +571,9 @@ const USER_CODE_LOCKED: &str = "Too many wrong user codes; try again later";
 
 /// The one message every refused `continue_transaction` call returns, so a caller cannot tell an
 /// unknown transaction from an expired one, a wrong token or a wrong interaction hash.
-const INVALID_CONTINUATION: &str = "Invalid continuation request";
+///
+/// It starts with the RFC 9635 section 3.6 code, so the AS layer reads the typed error (`GnapError::from_service_message`).
+const INVALID_CONTINUATION: &str = "invalid_continuation: Invalid continuation request";
 
 /// How far a JWS proof's `created` may differ from now, in seconds; its signature is remembered for twice that.
 const JWS_MAX_SKEW_SECS: u64 = 300;
