@@ -781,6 +781,20 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_key_rotation_of_a_dpop_token_is_400_not_supported_and_the_token_survives() {
+        let (h, k) = (handler(), key());
+        let t = token_for(&h, &k, "m-k0").await;
+        // A rotation request carries content; DPoP defines no two-key form.
+        let mut r = manage("POST", &k, &t, "m-k1");
+        r.body = br#"{"key":{"kty":"EC"}}"#.to_vec();
+        let refused = h.handle(&r).await;
+        assert_eq!(refused.status, 400);
+        assert_eq!(code_of(&refused), "key_rotation_not_supported");
+        // Control: the token is untouched, and a plain proved rotation still works.
+        assert_eq!(h.handle(&manage("POST", &k, &t, "m-k2")).await.status, 200);
+    }
+
+    #[tokio::test]
     async fn a_proved_delete_revokes_the_token() {
         let (h, k) = (handler(), key());
         let t = token_for(&h, &k, "m-d0").await;
