@@ -7382,6 +7382,46 @@ mod httpsig_proof_tests {
     }
 
     #[tokio::test]
+    async fn section_11_21_and_11_22_the_token_is_bound_to_the_presented_key_and_rotation_retires_the_old_one()
+     {
+        let svc = service();
+        let (key, new) = (signer(), signer());
+        let now = chrono::Utc::now().timestamp();
+        let thumbprint = |s: &Signer| GnapService::jwk_thumbprint(&s.jwk).unwrap();
+
+        // 11.21 / 11.31: the token is bound to the key the client presented, not to any key the
+        // AS substitutes.
+        let issued = issue_attached(&svc, &key, attached_jws(&key, b"{}", now).as_bytes())
+            .await
+            .unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let live = svc.introspect_token(&token).await.unwrap().unwrap();
+        assert_eq!(live["key_thumbprint"], thumbprint(&key));
+        assert_ne!(live["key_thumbprint"], thumbprint(&new));
+
+        // 11.22: after a rotation the old token is gone, so the old key cannot rotate it again,
+        // and the replacement is bound to the new key alone.
+        let content = serde_json::json!({ "key": new.jwk }).to_string();
+        let nested = rotation_jws(
+            &new,
+            rotation_jws(&key, content.as_bytes(), &token).as_bytes(),
+            &token,
+        );
+        let rotated = rotate_key(&svc, &nested, &token).await.unwrap();
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+        let bound = svc.introspect_token(&fresh).await.unwrap().unwrap();
+        assert_eq!(bound["key_thumbprint"], thumbprint(&new));
+        assert!(svc.introspect_token(&token).await.unwrap().is_none());
+        assert!(
+            rotate_key(&svc, &nested, &token).await.is_err(),
+            "the retired token must not rotate again"
+        );
+    }
+
+    #[tokio::test]
     async fn a_token_bound_under_another_method_or_none_cannot_rotate_its_key() {
         let svc = service();
         let key = signer();
