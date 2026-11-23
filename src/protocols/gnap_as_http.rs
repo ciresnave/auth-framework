@@ -31,6 +31,7 @@
 use crate::errors::AuthError;
 use crate::protocols::gnap::{GnapProof, GnapService, GnapTransactionRequest};
 use crate::protocols::gnap_http::{GnapHttpRequest, GnapHttpResponse, MAX_BODY_BYTES, path_of};
+use crate::protocols::gnap_wire::{GnapError, GnapErrorCode};
 use crate::server::security::dpop::DpopManager;
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -363,15 +364,24 @@ fn refuse(e: &AuthError) -> GnapHttpResponse {
         return GnapHttpResponse::empty(500, vec![("Cache-Control".into(), "no-store".into())]);
     };
     let m = message.to_ascii_lowercase();
-    if m.starts_with("invalid_rotation") {
-        error(400, "invalid_rotation", "the rotation request is not valid")
-    } else if m.starts_with("key_rotation_not_supported") {
-        error(
-            400,
-            "key_rotation_not_supported",
-            "this token's key cannot be rotated",
-        )
-    } else if m.contains("too_fast") {
+    if let Some(typed) = GnapError::from_service_message(message) {
+        // The service named the RFC 9635 section 3.6 code itself; nothing is guessed from the wording.
+        let mut response = error(
+            typed.http_status(),
+            typed.code.as_str(),
+            typed
+                .description
+                .as_deref()
+                .unwrap_or("the request was refused"),
+        );
+        if typed.code == GnapErrorCode::InvalidClient {
+            response
+                .headers
+                .push(("WWW-Authenticate".into(), "GNAP".into()));
+        }
+        return response;
+    }
+    if m.contains("too_fast") {
         // RFC 9635 section 3.6; the continuation token is still good, so the client may retry.
         error(429, "too_fast", "poll again after the announced wait")
     } else if m.contains("denied by the resource owner") {
