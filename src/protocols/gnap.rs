@@ -3892,6 +3892,92 @@ mod tests {
         );
     }
 
+    /// RFC 9635 section 11.25: the interaction hash covers the client nonce, the AS nonce, the interaction
+    /// reference and the grant endpoint, and a continuation token cannot be used with another grant's reference.
+    #[tokio::test]
+    async fn section_11_25_the_hash_binds_both_nonces_the_reference_and_the_endpoint() {
+        let h = GnapService::compute_interact_hash;
+        let base = h("cn", "sn", "ref", "https://as.test/tx");
+        assert_eq!(base, h("cn", "sn", "ref", "https://as.test/tx"));
+        for changed in [
+            h("cn2", "sn", "ref", "https://as.test/tx"),
+            h("cn", "sn2", "ref", "https://as.test/tx"),
+            h("cn", "sn", "ref2", "https://as.test/tx"),
+            h("cn", "sn", "ref", "https://as.test/tx2"),
+        ] {
+            assert_ne!(changed, base);
+        }
+
+        // CT1 with grant B's reference and hash (the section's CT2 attack): refused, and A's own still works.
+        let service = test_service();
+        for nonce in ["cn-a", "cn-b"] {
+            service
+                .handle_transaction(section_11_request(nonce))
+                .await
+                .unwrap();
+        }
+        let mut grants = Vec::new();
+        for id in service.test_txn_ids().await {
+            let txn = service.test_txn(&id).await;
+            let done = service.approve_transaction(&id, None).await.unwrap();
+            grants.push((
+                id,
+                txn.continue_token,
+                done.interact_ref.unwrap(),
+                done.hash.unwrap(),
+            ));
+        }
+        let (a, b) = (&grants[0], &grants[1]);
+        let crossed = service
+            .continue_transaction(&a.0, &a.1, Some(&b.2), Some(&b.3))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(crossed.ends_with(INVALID_CONTINUATION), "{crossed}");
+        assert!(
+            service
+                .continue_transaction(&a.0, &a.1, Some(&a.2), Some(&a.3))
+                .await
+                .is_ok(),
+            "control: the grant's own token, reference and hash succeed"
+        );
+    }
+
+    /// RFC 9635 section 11.23: a finish method yields a finish nonce and a hash; with none, polling still works.
+    #[tokio::test]
+    async fn section_11_23_finish_gives_a_nonce_and_no_finish_still_polls() {
+        let service = test_service();
+        let with_finish = service
+            .handle_transaction(section_11_request("cn"))
+            .await
+            .unwrap();
+        assert!(
+            with_finish["interact"]["finish"]
+                .as_str()
+                .is_some_and(|n| n.len() >= 32)
+        );
+        let mut polled = section_11_request("cn");
+        polled.interact.as_mut().unwrap().finish = None;
+        let without = service.handle_transaction(polled).await.unwrap();
+        assert!(without["interact"].get("finish").is_none());
+        let id = without["continue"]["uri"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_string();
+        let token = without["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let pending = service
+            .continue_transaction(&id, &token, None, None)
+            .await
+            .unwrap();
+        assert!(pending["continue"]["access_token"]["value"].is_string());
+    }
+
     /// RFC 9635 section 11.27 (denial of service through grant continuation): the AS announces a wait, refuses
     /// a poll that comes sooner, and a client that keeps hammering keeps being refused.
     #[tokio::test]
