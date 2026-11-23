@@ -5,6 +5,12 @@ All notable changes to the AuthFramework project will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-rc94] - 2026-11-23
+
+### Fixed
+
+- `.github/workflows/release.yml`: removed three duplicated `permissions` blocks that made the workflow file invalid (0-job Release failures on this line, #504). No library change.
+
 ## [0.5.0-rc93] - 2026-11-20
 
 ### Security
