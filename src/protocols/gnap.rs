@@ -1437,6 +1437,7 @@ impl GnapService {
     /// Compute the interaction hash per draft §4.2.3.
     ///
     /// hash = SHA-256( client_nonce + "\n" + server_nonce + "\n" + interact_ref + "\n" + tx_endpoint )
+    #[cfg(test)]
     fn compute_interact_hash(
         client_nonce: &str,
         server_nonce: &str,
