@@ -99,7 +99,7 @@ Nothing claims a method it does not verify: an unlisted or unverifiable method i
 
 ### 10 and 11
 
-10 is IANA. 11 (security considerations) has no item-by-item test coverage; slice G10 adds one test per item. Specifically open: 11.18 callback URI manipulation, 11.19 redirection status codes, 11.23-11.25 finish modes and the interaction hash, 11.26-11.28 storage and denial of service on continuation, 11.34 SSRF on `push`.
+10 is IANA. 11 (security considerations) has no item-by-item test coverage; slice G10 adds one test per item. Covered by a test each (`gnap.rs`): 11.27 (`section_11_27_...`, the announced `wait` and `too_fast` on the injected clock) and 11.26/11.28 (`section_11_28_...`, distinct and long random values, no cross-use, expiry, the finish URI kept as given). Specifically open: 11.18 callback URI manipulation, 11.19 redirection status codes, 11.23-11.25 finish modes and the interaction hash, 11.34 SSRF on `push`.
 
 ## 2. RFC 9767 (resource-server connections)
 

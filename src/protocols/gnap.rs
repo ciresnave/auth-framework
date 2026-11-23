@@ -1884,6 +1884,15 @@ impl GnapService {
             serde_json::Value::String(self.continue_uri(&transaction_id)),
         );
 
+        // A pending grant tells the client how long to wait before its first poll (RFC 9635 sections 3.1 and
+        // 11.27), the same `wait` every poll answer carries and the one `too_fast` is judged against.
+        if response.contains_key("interact") && self.poll_wait_secs > 0 {
+            continue_obj.insert(
+                "wait".to_string(),
+                serde_json::Value::Number(self.poll_wait_secs.into()),
+            );
+        }
+
         response.insert(
             "continue".to_string(),
             serde_json::Value::Object(continue_obj),
@@ -3768,6 +3777,162 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    fn section_11_request(client_nonce: &str) -> GnapTransactionRequest {
+        GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: Some(GnapInteractionFinish {
+                    method: "redirect".to_string(),
+                    uri: "https://client.test/cb".to_string(),
+                    nonce: client_nonce.to_string(),
+                    hash_method: None,
+                }),
+            }),
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        }
+    }
+
+    /// RFC 9635 section 11.28 (exhaustion of the random value space) and 11.26 (what the AS stores and emits).
+    #[tokio::test]
+    async fn section_11_28_random_values_are_distinct_long_and_not_interchangeable() {
+        use std::collections::HashSet;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let time = Arc::new(AtomicU64::new(1_800_000_000));
+        let clock = Arc::clone(&time);
+        let service = test_service().with_clock(move || clock.load(Ordering::SeqCst));
+        const N: usize = 100;
+        for i in 0..N {
+            service
+                .handle_transaction(section_11_request(&format!("cn-{i}")))
+                .await
+                .unwrap();
+        }
+        let ids = service.test_txn_ids().await;
+        assert_eq!(ids.len(), N, "every transaction is stored under its own id");
+        let mut txns = Vec::new();
+        for id in &ids {
+            txns.push(service.test_txn(id).await);
+        }
+        let distinct = |values: Vec<String>| values.into_iter().collect::<HashSet<_>>().len();
+        assert_eq!(
+            distinct(txns.iter().map(|t| t.continue_token.clone()).collect()),
+            N
+        );
+        assert_eq!(
+            distinct(
+                txns.iter()
+                    .filter_map(|t| t.interact_nonce.clone())
+                    .collect()
+            ),
+            N
+        );
+        // Long enough to be unguessable: a UUID v4 is 36 characters and 122 random bits.
+        assert!(txns.iter().all(|t| t.continue_token.len() >= 32));
+        assert!(
+            txns.iter()
+                .all(|t| t.interact_nonce.as_deref().is_some_and(|n| n.len() >= 32))
+        );
+        // Section 11.26: the finish URI the AS keeps is the client's own, with nothing added.
+        assert!(txns.iter().all(|t| {
+            t.request
+                .interact
+                .as_ref()
+                .unwrap()
+                .finish
+                .as_ref()
+                .unwrap()
+                .uri
+                == "https://client.test/cb"
+        }));
+
+        // Values of one transaction do not work on another (control: its own works).
+        let (a, b) = (&txns[0], &txns[1]);
+        assert!(
+            service
+                .continue_transaction(&b.id, &a.continue_token, None, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .continue_transaction(&a.id, &a.continue_token, None, None)
+                .await
+                .is_ok()
+        );
+        // An id is not a continuation token either.
+        assert!(
+            service
+                .continue_transaction(&b.id, &b.id, None, None)
+                .await
+                .is_err()
+        );
+
+        // Values are time-boxed: past the transaction lifetime the continuation token no longer works.
+        time.fetch_add(
+            service.config.transaction_lifetime_secs + 1,
+            Ordering::SeqCst,
+        );
+        let rotated = service.test_txn(&b.id).await.continue_token;
+        assert!(
+            service
+                .continue_transaction(&b.id, &rotated, None, None)
+                .await
+                .is_err()
+        );
+    }
+
+    /// RFC 9635 section 11.27 (denial of service through grant continuation): the AS announces a wait, refuses
+    /// a poll that comes sooner, and a client that keeps hammering keeps being refused.
+    #[tokio::test]
+    async fn section_11_27_polling_faster_than_the_wait_is_refused_until_the_client_backs_off() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let t0 = 1_800_000_000u64;
+        let time = Arc::new(AtomicU64::new(t0));
+        let clock = Arc::clone(&time);
+        let service = GnapService::new(test_config())
+            .with_access_policy(Arc::new(AllowAllPolicy))
+            .with_clock(move || clock.load(Ordering::SeqCst));
+        let started = service
+            .handle_transaction(section_11_request("cn"))
+            .await
+            .unwrap();
+        assert_eq!(
+            started["continue"]["wait"], 5,
+            "the response announces the wait"
+        );
+        let (id, mut cont) = {
+            let txn = service.test_first_txn().await;
+            (txn.id, txn.continue_token)
+        };
+        let poll = |cont: String| {
+            let (service, id) = (&service, id.clone());
+            async move { service.continue_transaction(&id, &cont, None, None).await }
+        };
+        // 1 s after the start, then 2 s later: both are inside the wait, and each refused poll restarts it.
+        for step in [1u64, 2] {
+            time.fetch_add(step, Ordering::SeqCst);
+            let e = poll(cont.clone()).await.unwrap_err().to_string();
+            assert!(e.contains("too_fast"), "{e}");
+        }
+        // Backing off for the full wait is accepted (control), and rotates the token.
+        time.fetch_add(5, Ordering::SeqCst);
+        let ok = poll(cont.clone()).await.unwrap();
+        cont = ok["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(service.test_txn(&id).await.continue_token, cont);
     }
 
     #[tokio::test]
