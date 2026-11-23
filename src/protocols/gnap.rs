@@ -2459,23 +2459,108 @@ impl GnapService {
         proof: &GnapProof<'_>,
         old_token_value: &str,
     ) -> Result<serde_json::Value> {
-        self.rotate_token_inner(old_token_value, Some((dpop, proof)))
+        self.rotate_token_inner(old_token_value, Some((dpop, proof)), None)
             .await
+    }
+
+    /// Rotate an issued token and bind the replacement to a new key (RFC 9635 section 6.1.1).
+    ///
+    /// The request is the `jws` or `jwsd` rotation of `gnap_jws`: both keys prove, the old one over the new
+    /// key's value and the new one over the old signature. Only a token bound under `jws` or `jwsd` can
+    /// rotate its key (`key_rotation_not_supported` otherwise, since `dpop`, `httpsig` and `mtls` define no
+    /// two-proof form here); a bearer token cannot (`invalid_rotation`). Any failure leaves the token as it
+    /// was. The message of every refusal starts with the RFC error code.
+    pub async fn rotate_token_key_with_proof(
+        &self,
+        proof: &GnapProof<'_>,
+        old_token_value: &str,
+    ) -> Result<serde_json::Value> {
+        const NOT_SUPPORTED: &str =
+            "key_rotation_not_supported: this token's key cannot be rotated";
+        const INVALID: &str = "invalid_rotation: the rotation request is not valid";
+        let token = self
+            .issued_tokens
+            .get(old_token_value)
+            .await?
+            .ok_or_else(|| AuthError::validation("Token not found or already revoked"))?;
+        let (Some(thumbprint), Some(method)) = (token.key_thumbprint, token.key_proof) else {
+            return Err(AuthError::validation(INVALID));
+        };
+        let Some(old_jwk) = token.key_jwk else {
+            return Err(AuthError::validation(NOT_SUPPORTED));
+        };
+        let now = self.now();
+        let context = super::gnap_jws::JwsProofContext {
+            jwk: &old_jwk,
+            method: proof.http_method,
+            uri: proof.http_uri,
+            body: proof.http_body,
+            access_token: Some(old_token_value),
+            now,
+            max_skew_secs: JWS_MAX_SKEW_SECS,
+        };
+        let invalid = |_| AuthError::validation(INVALID);
+        let (rotation, signed) = match method.as_str() {
+            "jwsd" => {
+                let detached = proof
+                    .http_headers
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case("detached-jws"))
+                    .map(|(_, v)| *v)
+                    .ok_or_else(|| AuthError::validation(INVALID))?;
+                (
+                    super::gnap_jws::verify_detached_rotation(detached, &context)
+                        .map_err(invalid)?,
+                    detached,
+                )
+            }
+            "jws" => {
+                let compact = std::str::from_utf8(proof.http_body)
+                    .map_err(|_| AuthError::validation(INVALID))?;
+                (
+                    super::gnap_jws::verify_attached_rotation(compact, &context)
+                        .map_err(invalid)?
+                        .0,
+                    compact,
+                )
+            }
+            _ => return Err(AuthError::validation(NOT_SUPPORTED)),
+        };
+        let new_jwk: GnapJwk = serde_json::from_value(rotation.new_jwk.clone())
+            .map_err(|_| AuthError::validation(INVALID))?;
+        let new_thumbprint =
+            Self::jwk_thumbprint(&new_jwk).map_err(|_| AuthError::validation(INVALID))?;
+        self.remember_jws(&thumbprint, signed, now)
+            .map_err(|_| AuthError::validation(INVALID))?;
+        self.rotate_token_inner(
+            old_token_value,
+            None,
+            Some((new_thumbprint, rotation.new_jwk)),
+        )
+        .await
     }
 
     /// Unit tests only: rotate without a proof. A bound token is refused unless its method is the test one.
     #[cfg(test)]
     pub async fn rotate_token(&self, old_token_value: &str) -> Result<serde_json::Value> {
-        self.rotate_token_inner(old_token_value, None).await
+        self.rotate_token_inner(old_token_value, None, None).await
     }
 
     async fn rotate_token_inner(
         &self,
         old_token_value: &str,
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+        new_key: Option<(String, serde_json::Value)>,
     ) -> Result<serde_json::Value> {
-        self.require_token_key_proof(old_token_value, "Token not found or already revoked", dpop)
+        // A key rotation has been proved by both keys already; every other rotation needs the token's key.
+        if new_key.is_none() {
+            self.require_token_key_proof(
+                old_token_value,
+                "Token not found or already revoked",
+                dpop,
+            )
             .await?;
+        }
         let old = self
             .issued_tokens
             .remove(old_token_value)
@@ -2489,13 +2574,17 @@ impl GnapService {
         }
 
         let new_value = uuid::Uuid::new_v4().to_string();
+        let (key_thumbprint, key_jwk) = match new_key {
+            Some((thumbprint, jwk)) => (Some(thumbprint), Some(jwk)),
+            None => (old.key_thumbprint.clone(), old.key_jwk.clone()),
+        };
         let new_token = GnapIssuedToken {
             value: new_value.clone(),
             access: old.access.clone(),
             expires_at: now + self.config.token_lifetime_secs,
-            key_thumbprint: old.key_thumbprint.clone(),
+            key_thumbprint,
             key_proof: old.key_proof.clone(),
-            key_jwk: old.key_jwk.clone(),
+            key_jwk,
             transaction_id: old.transaction_id,
         };
 
@@ -6831,6 +6920,103 @@ mod httpsig_proof_tests {
             issue(&svc, &key, &good, "jwsd").await.is_err(),
             "the same detached JWS must not be accepted twice"
         );
+    }
+
+    /// One signed link of a `jws` key rotation (RFC 9635 section 7.3.4.1).
+    fn rotation_jws(signer: &Signer, payload: &[u8], token: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let header = serde_json::json!({
+            "alg": "ES256", "typ": "gnap-binding-rotation-jws", "htm": "POST", "uri": URI,
+            "created": chrono::Utc::now().timestamp(),
+            "ath": b64(&Sha256::digest(token.as_bytes())),
+        });
+        let (h, p) = (b64(header.to_string().as_bytes()), b64(payload));
+        let sig = signer
+            .pair
+            .sign(&SystemRandom::new(), format!("{h}.{p}").as_bytes())
+            .unwrap();
+        format!("{h}.{p}.{}", b64(sig.as_ref()))
+    }
+
+    async fn rotate_key(svc: &GnapService, body: &str, token: &str) -> Result<serde_json::Value> {
+        let auth = format!("GNAP {token}");
+        let headers = [("Authorization", auth.as_str())];
+        let proof = GnapProof {
+            http_method: "POST",
+            http_uri: URI,
+            dpop_proof: None,
+            expected_nonce: None,
+            client_certificate_der: None,
+            http_headers: &headers,
+            http_body: body.as_bytes(),
+        };
+        svc.rotate_token_key_with_proof(&proof, token).await
+    }
+
+    #[tokio::test]
+    async fn a_jws_bound_token_rotates_to_a_new_key_only_with_both_keys_proofs() {
+        let svc = service();
+        let (key, new, other) = (signer(), signer(), signer());
+        let now = chrono::Utc::now().timestamp();
+        let issued = issue_attached(&svc, &key, attached_jws(&key, b"{}", now).as_bytes())
+            .await
+            .unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let content = serde_json::json!({ "key": new.jwk }).to_string();
+        let nest = |old: &Signer, new: &Signer| {
+            rotation_jws(
+                new,
+                rotation_jws(old, content.as_bytes(), &token).as_bytes(),
+                &token,
+            )
+        };
+        let thumbprint = |s: &Signer| GnapService::jwk_thumbprint(&s.jwk).unwrap();
+
+        // Refutations: a wrong old key, a wrong new key and the new key alone each fail with
+        // `invalid_rotation`, and the token still works afterwards.
+        for bad in [
+            nest(&other, &new),
+            nest(&key, &other),
+            rotation_jws(&new, content.as_bytes(), &token),
+        ] {
+            let err = rotate_key(&svc, &bad, &token)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("invalid_rotation"), "{err}");
+        }
+        let live = svc.introspect_token(&token).await.unwrap().unwrap();
+        assert_eq!(live["key_thumbprint"], thumbprint(&key));
+
+        // Positive control, built the same way: both keys prove, the token is replaced and re-bound.
+        let rotated = rotate_key(&svc, &nest(&key, &new), &token)
+            .await
+            .unwrap_or_else(|e| panic!("a rotation proved by both keys must succeed: {e}"));
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+        assert_ne!(fresh, token);
+        assert!(svc.introspect_token(&token).await.unwrap().is_none());
+        let bound = svc.introspect_token(&fresh).await.unwrap().unwrap();
+        assert_eq!(bound["key_thumbprint"], thumbprint(&new));
+    }
+
+    #[tokio::test]
+    async fn a_token_bound_under_another_method_or_none_cannot_rotate_its_key() {
+        let svc = service();
+        let key = signer();
+        let issued = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let err = rotate_key(&svc, "x.y.z", &token)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("key_rotation_not_supported"), "{err}");
+        assert!(svc.introspect_token(&token).await.unwrap().is_some());
     }
 
     #[tokio::test]

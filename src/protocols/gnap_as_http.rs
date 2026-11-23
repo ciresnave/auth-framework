@@ -122,14 +122,14 @@ impl GnapAsHttp {
 
     /// The document `OPTIONS` on the grant endpoint answers (RFC 9635 section 9.2). It lists only
     /// what this crate does: the `dpop`, `httpsig`, `jwsd` and `jws` proof methods, the `redirect` start mode and finish
-    /// method, and no key rotation.
+    /// method, and key rotation for tokens bound under `jws` or `jwsd`.
     fn discovery_document(&self) -> Value {
         json!({
             "grant_request_endpoint": self.grant_url,
             "interaction_start_modes_supported": ["redirect"],
             "interaction_finish_methods_supported": ["redirect"],
             "key_proofs_supported": ["dpop", "httpsig", "jwsd", "jws"],
-            "key_rotation_supported": false,
+            "key_rotation_supported": true,
         })
     }
 
@@ -237,11 +237,17 @@ impl GnapAsHttp {
         };
         let headers = header_pairs(req);
         let proof = proof_for(req, &self.manage_url, &headers);
-        match self
-            .service
-            .rotate_token_with_proof(&self.dpop, &proof, token)
-            .await
-        {
+        // A rotation request with content asks for a new key (RFC 9635 section 6.1.1); with none, a new value.
+        let rotated = if req.body.is_empty() && req.header_value("detached-jws").is_none() {
+            self.service
+                .rotate_token_with_proof(&self.dpop, &proof, token)
+                .await
+        } else {
+            self.service
+                .rotate_token_key_with_proof(&proof, token)
+                .await
+        };
+        match rotated {
             // RFC 9635 section 6.1: the new token comes back as `access_token`.
             Ok(answer) => GnapHttpResponse::json(200, &json!({ "access_token": answer }), true),
             Err(e) => refuse(&e),
@@ -357,7 +363,15 @@ fn refuse(e: &AuthError) -> GnapHttpResponse {
         return GnapHttpResponse::empty(500, vec![("Cache-Control".into(), "no-store".into())]);
     };
     let m = message.to_ascii_lowercase();
-    if m.contains("too_fast") {
+    if m.starts_with("invalid_rotation") {
+        error(400, "invalid_rotation", "the rotation request is not valid")
+    } else if m.starts_with("key_rotation_not_supported") {
+        error(
+            400,
+            "key_rotation_not_supported",
+            "this token's key cannot be rotated",
+        )
+    } else if m.contains("too_fast") {
         // RFC 9635 section 3.6; the continuation token is still good, so the client may retry.
         error(429, "too_fast", "poll again after the announced wait")
     } else if m.contains("denied by the resource owner") {
@@ -736,7 +750,7 @@ pub(crate) mod tests {
             doc["interaction_finish_methods_supported"],
             json!(["redirect"])
         );
-        assert_eq!(doc["key_rotation_supported"], false);
+        assert_eq!(doc["key_rotation_supported"], true);
     }
 
     #[tokio::test]
