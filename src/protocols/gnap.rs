@@ -6300,7 +6300,10 @@ mod proof_verification_tests {
         let (id, done) = approved_push_txn(&svc, &dpop, &key, "redirect").await;
         let url = svc.redirect_callback(&id).await.unwrap();
         let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
-        assert_eq!(url.as_str().split('?').next(), Some("https://client.test/cb"));
+        assert_eq!(
+            url.as_str().split('?').next(),
+            Some("https://client.test/cb")
+        );
         assert_eq!(q["interact_ref"], done.interact_ref.clone().unwrap());
         assert_eq!(q["hash"], done.hash.clone().unwrap());
     }
@@ -6323,7 +6326,9 @@ mod proof_verification_tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("expired"), "{e}");
-        svc2.redirect_callback_at(&id, created + life).await.unwrap();
+        svc2.redirect_callback_at(&id, created + life)
+            .await
+            .unwrap();
         svc2.deny_transaction(&id).await.unwrap();
         let e = svc2.redirect_callback(&id).await.unwrap_err().to_string();
         assert!(e.contains("not approved"), "{e}");
