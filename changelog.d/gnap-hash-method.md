@@ -1,1 +1,0 @@
-GNAP `interact.finish.hash_method` now honours `sha-384` and `sha-512` as well as `sha-256` (RFC 9635 section 4.2.3, G4); any other name is still refused at transaction open with an error naming it. Verified by the gnap unit tests for each method plus the refusal test.
