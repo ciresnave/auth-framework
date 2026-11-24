@@ -2393,6 +2393,62 @@ impl GnapService {
             .map_err(|e| AuthError::validation(e.to_string()))
     }
 
+    /// The URI to send the end user to for the `redirect` callback of an approved transaction (RFC 9635
+    /// section 4.2.1): the client's `finish.uri` with `hash` and `interact_ref` added. Answer the user's
+    /// browser with it as a `303` ([`CALLBACK_REDIRECT_STATUS`], section 11.19), never a `307`.
+    ///
+    /// A transaction that is not approved, has no `redirect` finish, or has no reference yet is refused, as
+    /// is one past its lifetime. Nothing is fetched: the browser makes the request, so there is no SSRF
+    /// surface (contrast [`Self::push_interaction`]). The URI was validated at transaction open.
+    pub async fn redirect_callback(&self, transaction_id: &str) -> Result<url::Url> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.redirect_callback_at(transaction_id, now).await
+    }
+
+    async fn redirect_callback_at(&self, transaction_id: &str, now: u64) -> Result<url::Url> {
+        let txn = self
+            .transactions
+            .get(transaction_id)
+            .await?
+            .ok_or_else(|| AuthError::validation("Transaction not found"))?;
+        if !matches!(txn.state, GnapTransactionState::Approved) {
+            return Err(AuthError::validation("the transaction is not approved"));
+        }
+        if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
+            return Err(AuthError::validation("the transaction has expired"));
+        }
+        let finish = txn
+            .request
+            .interact
+            .as_ref()
+            .and_then(|i| i.finish.as_ref())
+            .filter(|f| f.method == "redirect")
+            .ok_or_else(|| {
+                AuthError::validation("the transaction has no redirect finish method")
+            })?;
+        let interact_ref = txn
+            .interact_ref
+            .as_deref()
+            .ok_or_else(|| AuthError::validation("the transaction has no interaction reference"))?;
+        let uri = url::Url::parse(&finish.uri)
+            .map_err(|_| AuthError::validation("the redirect finish uri is not a valid URI"))?;
+        let hash = Self::compute_interact_hash_with(
+            &finish.nonce,
+            txn.interact_nonce.as_deref().unwrap_or(""),
+            interact_ref,
+            &self.config.transaction_endpoint,
+            Self::hash_method_of(finish.hash_method.as_deref()),
+        );
+        Ok(crate::protocols::gnap_interaction::callback_redirect_url(
+            &uri,
+            &hash,
+            interact_ref,
+        ))
+    }
+
     /// Find the pending transaction a person's typed `user_code` belongs to (RFC 9635 sections
     /// 3.3.3 and 4.1) and return its id, for the page that then shows the consent and calls
     /// [`Self::approve_transaction`] or [`Self::deny_transaction`].
@@ -6236,6 +6292,41 @@ mod proof_verification_tests {
             .await
             .unwrap();
         assert_eq!(s.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_approved_redirect_transaction_yields_the_callback_uri() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, done) = approved_push_txn(&svc, &dpop, &key, "redirect").await;
+        let url = svc.redirect_callback(&id).await.unwrap();
+        let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(url.as_str().split('?').next(), Some("https://client.test/cb"));
+        assert_eq!(q["interact_ref"], done.interact_ref.clone().unwrap());
+        assert_eq!(q["hash"], done.hash.clone().unwrap());
+    }
+
+    #[tokio::test]
+    async fn only_an_approved_unexpired_redirect_transaction_gets_a_callback_uri() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        // a push-finish transaction has no redirect callback
+        let (pid, _) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        assert!(svc.redirect_callback(&pid).await.is_err());
+        assert!(svc.redirect_callback("no-such-id").await.is_err());
+        // a redirect transaction that is denied, or expired
+        let svc2 = service();
+        let (id, _) = approved_push_txn(&svc2, &manager(), &key, "redirect").await;
+        let created = svc2.test_first_txn().await.created_at;
+        let life = svc2.config.transaction_lifetime_secs;
+        let e = svc2
+            .redirect_callback_at(&id, created + life + 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("expired"), "{e}");
+        svc2.redirect_callback_at(&id, created + life).await.unwrap();
+        svc2.deny_transaction(&id).await.unwrap();
+        let e = svc2.redirect_callback(&id).await.unwrap_err().to_string();
+        assert!(e.contains("not approved"), "{e}");
     }
 
     #[tokio::test]
