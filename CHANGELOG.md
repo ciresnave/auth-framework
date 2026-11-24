@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `.github/workflows/release.yml`: removed three duplicated `permissions` blocks that made the workflow file invalid (0-job Release failures on this line, #504). No library change.
 
+### Security
+
+- Dependencies: `cookie` 0.18.1 to 0.18.3 (RUSTSEC-2026-0594) and `url` 2.5.8 to 2.5.9 with `form_urlencoded` 1.2.2 to 1.2.3 (RUSTSEC-2026-0592) in `Cargo.lock` of the 0.5.x line. Lockfile only; no source change.
+
 ## [0.5.0-rc93] - 2026-11-20
 
 ### Security
