@@ -19,8 +19,8 @@
 use crate::errors::{AuthError, Result};
 use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
 use crate::protocols::gnap_interaction::{
-    FinishMethod, FinishRequest, StartMode, generate_user_code, normalize_user_code, parse_start,
-    validate_push_target,
+    FinishMethod, FinishRequest, HashMethod, StartMode, generate_user_code, interaction_hash,
+    normalize_user_code, parse_start, validate_push_target,
 };
 use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
@@ -1437,16 +1437,45 @@ impl GnapService {
     /// Compute the interaction hash per draft §4.2.3.
     ///
     /// hash = SHA-256( client_nonce + "\n" + server_nonce + "\n" + interact_ref + "\n" + tx_endpoint )
+    #[cfg(test)]
     fn compute_interact_hash(
         client_nonce: &str,
         server_nonce: &str,
         interact_ref: &str,
         transaction_endpoint: &str,
     ) -> String {
-        let input =
-            format!("{client_nonce}\n{server_nonce}\n{interact_ref}\n{transaction_endpoint}");
-        let hash = Sha256::digest(input.as_bytes());
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash)
+        Self::compute_interact_hash_with(
+            client_nonce,
+            server_nonce,
+            interact_ref,
+            transaction_endpoint,
+            HashMethod::Sha256,
+        )
+    }
+
+    /// The hash with the method the client named in `finish.hash_method` (RFC 9635 section 4.2.3). An input
+    /// that cannot be hashed (a control character) gives the empty string, which never verifies.
+    fn compute_interact_hash_with(
+        client_nonce: &str,
+        server_nonce: &str,
+        interact_ref: &str,
+        transaction_endpoint: &str,
+        method: HashMethod,
+    ) -> String {
+        interaction_hash(
+            client_nonce,
+            server_nonce,
+            interact_ref,
+            transaction_endpoint,
+            method,
+        )
+        .unwrap_or_default()
+    }
+
+    /// The method a stored `hash_method` names. It was checked when the transaction opened, so the
+    /// fallback to the default is unreachable for a stored transaction.
+    fn hash_method_of(name: Option<&str>) -> HashMethod {
+        HashMethod::from_name(name).unwrap_or_default()
     }
 
     // ── Token Issuance Helper ────────────────────────────────────────────
@@ -1471,10 +1500,10 @@ impl GnapService {
             return Ok(());
         };
         if let Some(name) = finish.hash_method.as_deref()
-            && name != "sha-256"
+            && HashMethod::from_name(Some(name)).is_err()
         {
             return Err(AuthError::validation(format!(
-                "interact.finish.hash_method {name} is not supported: this server computes sha-256 only"
+                "interact.finish.hash_method {name} is not supported: this server computes sha-256, sha-384 and sha-512"
             )));
         }
         let parsed = FinishRequest::parse(&serde_json::json!({
@@ -1911,19 +1940,20 @@ impl GnapService {
             let server_nonce = txn.interact_nonce.as_deref().ok_or_else(|| {
                 AuthError::validation("No interaction nonce for this transaction")
             })?;
-            let client_nonce = txn
+            let finish = txn
                 .request
                 .interact
                 .as_ref()
-                .and_then(|i| i.finish.as_ref())
-                .map(|f| f.nonce.as_str())
-                .unwrap_or("");
+                .and_then(|i| i.finish.as_ref());
+            let client_nonce = finish.map(|f| f.nonce.as_str()).unwrap_or("");
+            let method = Self::hash_method_of(finish.and_then(|f| f.hash_method.as_deref()));
 
-            let expected = Self::compute_interact_hash(
+            let expected = Self::compute_interact_hash_with(
                 client_nonce,
                 server_nonce,
                 iref,
                 &self.config.transaction_endpoint,
+                method,
             );
             if !bool::from(subtle::ConstantTimeEq::ct_eq(
                 hash.as_bytes(),
@@ -2205,12 +2235,13 @@ impl GnapService {
             if let Some(sid) = subject_id {
                 txn.subject_id = Some(sid.to_string());
             }
-            let client_nonce = txn
+            let finish = txn
                 .request
                 .interact
                 .as_ref()
-                .and_then(|i| i.finish.as_ref())
-                .map(|f| f.nonce.clone());
+                .and_then(|i| i.finish.as_ref());
+            let method = Self::hash_method_of(finish.and_then(|f| f.hash_method.as_deref()));
+            let client_nonce = finish.map(|f| f.nonce.clone());
             let Some(client_nonce) = client_nonce else {
                 return GnapInteractionCompletion {
                     interact_ref: None,
@@ -2221,11 +2252,12 @@ impl GnapService {
                 .interact_ref
                 .get_or_insert_with(|| uuid::Uuid::new_v4().simple().to_string())
                 .clone();
-            let hash = Self::compute_interact_hash(
+            let hash = Self::compute_interact_hash_with(
                 &client_nonce,
                 txn.interact_nonce.as_deref().unwrap_or(""),
                 &interact_ref,
                 endpoint,
+                method,
             );
             GnapInteractionCompletion {
                 interact_ref: Some(interact_ref),
@@ -2293,11 +2325,12 @@ impl GnapService {
             .ok_or_else(|| AuthError::validation("the transaction has no interaction reference"))?;
         let uri = url::Url::parse(&finish.uri)
             .map_err(|_| AuthError::validation("the push finish uri is not a valid URI"))?;
-        let hash = Self::compute_interact_hash(
+        let hash = Self::compute_interact_hash_with(
             &finish.nonce,
             txn.interact_nonce.as_deref().unwrap_or(""),
             interact_ref,
             &self.config.transaction_endpoint,
+            Self::hash_method_of(finish.hash_method.as_deref()),
         );
         deliver_push(&uri, &hash, interact_ref, resolver, sender)
             .await
@@ -5738,12 +5771,49 @@ mod proof_verification_tests {
     }
 
     #[tokio::test]
+    async fn the_hash_uses_the_method_the_client_asked_for() {
+        use crate::protocols::gnap_interaction::interaction_hash;
+        for (name, method) in [
+            ("sha-256", HashMethod::Sha256),
+            ("sha-384", HashMethod::Sha384),
+            ("sha-512", HashMethod::Sha512),
+        ] {
+            let (svc, dpop, key) = (service(), manager(), client_key());
+            let interact = json!({
+                "start": ["redirect"],
+                "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "cn", "hash_method": name},
+            });
+            send(&svc, &dpop, &key, "hm", interact_request(&key, interact))
+                .await
+                .unwrap();
+            let txn = svc.test_first_txn().await;
+            let done = svc.approve_transaction(&txn.id, None).await.unwrap();
+            let iref = done.interact_ref.unwrap();
+            let expected = interaction_hash(
+                "cn",
+                txn.interact_nonce.as_deref().unwrap(),
+                &iref,
+                &svc.config.transaction_endpoint,
+                method,
+            )
+            .unwrap();
+            assert_eq!(done.hash.unwrap(), expected, "{name}");
+            // the length tells the algorithm apart: 32, 48, 64 bytes in base64url without padding
+            assert_eq!(
+                expected.len(),
+                match method {
+                    HashMethod::Sha256 => 43,
+                    HashMethod::Sha384 => 64,
+                    HashMethod::Sha512 => 86,
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_hash_method_the_server_does_not_honour_is_refused_not_ignored() {
         let (svc, dpop, key) = (service(), manager(), client_key());
-        for (n, name) in ["sha-384", "sha-512", "sha3-512", "md5"]
-            .into_iter()
-            .enumerate()
-        {
+        for (n, name) in ["sha3-512", "md5", "SHA-256"].into_iter().enumerate() {
             let interact = json!({
                 "start": ["redirect"],
                 "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "n", "hash_method": name},
@@ -5765,8 +5835,10 @@ mod proof_verification_tests {
             );
         }
         assert!(svc.test_txn_ids().await.is_empty(), "nothing was stored");
-        // the two values the server does honour: sha-256 named, and absent (the default)
+        // the values the server does honour: sha-256/384/512 named, and absent (the default)
         for (n, finish) in [
+            json!({"method": "redirect", "uri": "https://client.test/cb", "nonce": "n", "hash_method": "sha-384"}),
+            json!({"method": "redirect", "uri": "https://client.test/cb", "nonce": "n", "hash_method": "sha-512"}),
             json!({"method": "redirect", "uri": "https://client.test/cb", "nonce": "n", "hash_method": "sha-256"}),
             json!({"method": "redirect", "uri": "https://client.test/cb", "nonce": "n"}),
         ]
