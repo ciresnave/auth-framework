@@ -52,7 +52,7 @@ a row is **in** when leaving it open would leave a known defect, an unfinished R
 | E4 | G7 routes | in | PATCH/DELETE/polling routes (after E1), RS-first (9.1); axum and actix | 1-2 surface |
 | E5 | G10 conformance | in | one test per RFC 9635 section 11 item, over E1-E4 | 1 project |
 | E6 | SEC-012 rest (#463) | in, **done in the 11-20 PR** | coderipper#359/#360 are merged and released (0.47.14, 2026-11-19; pm-platform's notice 2026-11-20), so the blocker is gone; the rule at 0.47.14 reports 0 Medium on the day branch (all remaining names waived with a reason). Close #463 after the merge | 0 |
-| E7 | Dependabot #31/#154 | in | minimatch in `sdks/javascript/package-lock.json` | fold into any PR |
+| E7 | Dependabot #31/#154 | done | minimatch in `sdks/javascript/package-lock.json` | fold into any PR |
 | E8 | Ignores | in | no `deny.toml` ignore past its expiry without a named blocking dependency: RUSTSEC-2026-0459 is removed in the 11-20 PR (sqlx 0.9.1 carries transact-rs/sqlx#4502; the ignore was due 2026-12-09, inside the window); the chrono pair (2026-12-17) is blocked by `sqlx` 0.9.1, `role-system` 1.3.0 and `tokio-cron-scheduler` 0.15.1 and is a renewal or removal at the check, not work | fold, 0 |
 | E9 | SPDX headers | in | `chore/spdx-headers` WIP; a published rename should carry licence headers (provenance rule) | 1 project |
 | E10 | Open issues | in | #92 (`decided:fixed`) confirmed and closed; no undecided bug issue. #106 (SAML on Windows) stays a documented limitation | fold, 0 |
