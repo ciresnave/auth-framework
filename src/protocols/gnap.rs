@@ -541,6 +541,9 @@ pub struct GnapService {
     /// one that start mode is not offered. See [`GnapService::with_user_code_uri`].
     user_code_uri: Option<url::Url>,
     max_bad_attempts: u32,
+    /// The application URI an `app` start launches (RFC 9635 section 3.3.2); without one that start mode is
+    /// not offered. See [`GnapService::with_app_uri`].
+    app_uri: Option<url::Url>,
     /// Nonces of `httpsig` signatures already accepted, so a captured request cannot be replayed.
     httpsig_nonces: Arc<std::sync::Mutex<super::gnap_httpsig::NonceCache>>,
     /// Seconds since the epoch; the system clock unless [`GnapService::with_clock`] replaced it.
@@ -619,6 +622,7 @@ impl GnapService {
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
             user_code_uri: None,
             max_bad_attempts: DEFAULT_MAX_BAD_ATTEMPTS,
+            app_uri: None,
             httpsig_nonces: Arc::new(std::sync::Mutex::new(super::gnap_httpsig::NonceCache::new(
                 system_now(),
             ))),
@@ -699,6 +703,28 @@ impl GnapService {
             Ok(()) => AuthError::validation(INVALID_CONTINUATION),
             Err(e) => e,
         }
+    }
+
+    /// Set the application URI an `app` start launches (RFC 9635 sections 2.5.1.2 and 3.3.2): a client that
+    /// starts with `app` is answered this URI with the transaction's id added as the `txn` query parameter,
+    /// which makes it unique to the transaction as the RFC requires. Without this the mode is not offered
+    /// (the response carries only the modes the server supports, section 3.3). The URI must be absolute,
+    /// either http(s) or an application scheme, without credentials, query or fragment.
+    pub fn with_app_uri(mut self, uri: &str) -> Result<Self> {
+        let parsed = url::Url::parse(uri)
+            .map_err(|e| AuthError::config(format!("GNAP app uri is not a URI: {e}")))?;
+        if matches!(parsed.scheme(), "javascript" | "data" | "file" | "blob")
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(AuthError::config(
+                "GNAP app uri must be absolute, without credentials, query or fragment, and not a javascript/data/file/blob scheme",
+            ));
+        }
+        self.app_uri = Some(parsed);
+        Ok(self)
     }
 
     /// Set the policy that decides what access tokens carry. Without one, every request for an
@@ -1790,6 +1816,17 @@ impl GnapService {
                 interact_res.insert(
                     "redirect".to_string(),
                     serde_json::Value::String(interact_url),
+                );
+            }
+
+            if let (true, Some(app)) =
+                (start_modes.contains(&StartMode::App), self.app_uri.as_ref())
+            {
+                let mut app = app.clone();
+                app.query_pairs_mut().append_pair("txn", &transaction_id);
+                interact_res.insert(
+                    "app".to_string(),
+                    serde_json::Value::String(app.to_string()),
                 );
             }
 
@@ -6507,6 +6544,56 @@ mod proof_verification_tests {
         .await
         .unwrap();
         assert!(none["interact"].get("user_code_uri").is_none());
+    }
+
+    #[tokio::test]
+    async fn an_app_start_is_answered_with_a_per_transaction_uri_when_configured() {
+        let (dpop, key) = (manager(), client_key());
+        let svc = service().with_app_uri("com.example.as:/launch").unwrap();
+        let resp = send(
+            &svc,
+            &dpop,
+            &key,
+            "app-1",
+            interact_request(&key, json!({"start": ["app"]})),
+        )
+        .await
+        .unwrap();
+        let id = svc.test_first_txn().await.id;
+        assert_eq!(
+            resp["interact"]["app"],
+            format!("com.example.as:/launch?txn={id}")
+        );
+        assert!(resp["interact"].get("redirect").is_none(), "not asked for");
+        // not configured: not offered
+        let plain = service();
+        let none = send(
+            &plain,
+            &dpop,
+            &key,
+            "app-2",
+            interact_request(&key, json!({"start": ["redirect", "app"]})),
+        )
+        .await
+        .unwrap();
+        assert!(none["interact"].get("app").is_none());
+        assert!(none["interact"].get("redirect").is_some());
+    }
+
+    #[test]
+    fn the_app_uri_must_be_absolute_without_credentials_query_or_fragment() {
+        for bad in [
+            "not a uri",
+            "https://u:p@as.test/app",
+            "https://as.test/app?x=1",
+            "https://as.test/app#f",
+            "javascript:alert(1)",
+            "data:text/html,x",
+        ] {
+            assert!(service().with_app_uri(bad).is_err(), "{bad}");
+        }
+        assert!(service().with_app_uri("https://as.test/app").is_ok());
+        assert!(service().with_app_uri("com.example.as:/launch").is_ok());
     }
 
     #[tokio::test]
