@@ -4198,6 +4198,66 @@ mod tests {
         assert!(pending["continue"]["access_token"]["value"].is_string());
     }
 
+    /// RFC 9635 section 11.24, "Session Management for Interaction Finish Methods": the client must tie the
+    /// callback to the grant it started, "or make the callback URI unique per grant" (section 2.5.2). The
+    /// session binding is the client's duty; the AS side is that two grants sharing one finish URI still get
+    /// callbacks the client can tell apart: each carries its own interaction reference and its own hash, and one
+    /// grant's reference does not finish the other.
+    #[tokio::test]
+    async fn section_11_24_two_grants_on_one_finish_uri_get_callbacks_that_differ() {
+        let service = test_service();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let started = service
+                .handle_transaction(section_11_request("same-client-nonce"))
+                .await
+                .unwrap();
+            let id = started["continue"]["uri"]
+                .as_str()
+                .unwrap()
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .to_string();
+            service.approve_transaction(&id, None).await.unwrap();
+            ids.push(id);
+        }
+        let pair = |url: &url::Url| -> (String, String) {
+            let get = |name: &str| {
+                url.query_pairs()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_default()
+            };
+            (get("interact_ref"), get("hash"))
+        };
+        let a = service.redirect_callback(&ids[0]).await.unwrap();
+        let b = service.redirect_callback(&ids[1]).await.unwrap();
+        let ((ref_a, hash_a), (ref_b, hash_b)) = (pair(&a), pair(&b));
+        assert_eq!(a.path(), b.path(), "both go to the one finish URI");
+        assert!(
+            !ref_a.is_empty() && !hash_a.is_empty(),
+            "control: a callback carries both"
+        );
+        assert_ne!(ref_a, ref_b, "each grant has its own interaction reference");
+        assert_ne!(hash_a, hash_b, "and its own hash");
+        // One grant's reference does not finish the other grant.
+        let token_b = service.test_txn(&ids[1]).await.continue_token;
+        assert!(
+            service
+                .continue_transaction(&ids[1], &token_b, Some(&ref_a), None)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .continue_transaction(&ids[1], &token_b, Some(&ref_b), None)
+                .await
+                .is_ok(),
+            "control: its own reference finishes it"
+        );
+    }
+
     /// RFC 9635 section 11.27 (denial of service through grant continuation): the AS announces a wait, refuses
     /// a poll that comes sooner, and a client that keeps hammering keeps being refused.
     #[tokio::test]
