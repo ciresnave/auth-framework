@@ -971,6 +971,7 @@ filter
 filters
 geo_data
 header
+hints
 jwks
 key_jwk
 labels
@@ -980,6 +981,7 @@ matchers
 metadata
 metric_retentions
 metrics
+new_jwk
 new_value
 old_value
 options
