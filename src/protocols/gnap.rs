@@ -3932,6 +3932,7 @@ mod tests {
                     nonce: client_nonce.to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
