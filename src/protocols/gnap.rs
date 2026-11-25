@@ -3635,6 +3635,52 @@ mod tests {
         assert!(!bad);
     }
 
+    /// RFC 9635 section 11.8, "Generation of Access Tokens": the contents of a token must be "such that only
+    /// the generating AS would be able to create them", for example "a cryptographically random value ... with
+    /// sufficiently high entropy". And 11.9 / 11.10: "key-bound access tokens are the default". Identical
+    /// requests give distinct, long values that carry nothing about the grant, a value one character off is
+    /// not a token, and the token is key-bound unless the client had no key.
+    #[tokio::test]
+    async fn section_11_8_access_tokens_are_random_opaque_and_key_bound_by_default() {
+        let service = test_service();
+        let ec_jwk = test_ec_jwk();
+        let mut values = std::collections::HashSet::new();
+        let mut first = None;
+        for _ in 0..50 {
+            let req = GnapTransactionRequest {
+                client: Some(test_client_info(ec_jwk.clone())),
+                interact: None,
+                access_token_request: Some(
+                    vec![GnapAccessRequest {
+                        access_type: "read".to_string(),
+                        actions: vec![],
+                        locations: vec![],
+                    }]
+                    .into(),
+                ),
+                subject: None,
+            };
+            let resp = service.handle_transaction(req).await.unwrap();
+            let token = &resp["access_token"];
+            let value = token["value"].as_str().unwrap().to_string();
+            assert!(value.len() >= 32, "enough characters for 122 random bits");
+            assert!(
+                !value.contains("read"),
+                "the value says nothing of the access it stands for"
+            );
+            assert_eq!(token["key"], true, "key-bound by default");
+            assert!(values.insert(value.clone()), "no two tokens are equal");
+            first.get_or_insert(value);
+        }
+        // A value one character off is not a token (control: the original is).
+        let real = first.unwrap();
+        assert!(service.introspect_token(&real).await.unwrap().is_some());
+        let mut altered = real.clone();
+        let last = altered.pop().unwrap();
+        altered.push(if last == '0' { '1' } else { '0' });
+        assert!(service.introspect_token(&altered).await.unwrap().is_none());
+    }
+
     // ── Subject Info ─────────────────────────────────────────────────────
 
     #[test]
