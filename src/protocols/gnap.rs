@@ -3805,6 +3805,45 @@ mod tests {
         assert!(released.contains("user-42"), "control: {released}");
     }
 
+    /// RFC 9635 section 11.38, "AS-Provided Token Keys": an AS that returns its own key with a token enables a
+    /// substitution attack, so "returning a key ... should be limited". This service never returns key
+    /// material: `key` in a token response is the flag `true` (bound to the client's own key), on issue and on
+    /// rotation alike, and no response carries a private key parameter.
+    #[tokio::test]
+    async fn section_11_38_a_token_response_never_carries_a_key_of_the_ass_choosing() {
+        let service = test_service();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        };
+        let issued = service.handle_transaction(req).await.unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let rotated = service.rotate_token(&token).await.unwrap();
+        for (label, response) in [("issue", &issued["access_token"]), ("rotation", &rotated)] {
+            assert_eq!(
+                response["key"], true,
+                "{label}: the flag, never a key object or a reference"
+            );
+            let text = response.to_string();
+            assert!(
+                !text.contains("\"d\""),
+                "{label}: no private key parameter: {text}"
+            );
+        }
+    }
+
     // ── Subject Info ─────────────────────────────────────────────────────
 
     #[test]
