@@ -3681,6 +3681,58 @@ mod tests {
         assert!(service.introspect_token(&altered).await.unwrap().is_none());
     }
 
+    /// RFC 9635 section 11.35, "Multiple Key Formats": "All keys presented by value are only allowed to be in a
+    /// single format", else an attacker could slip a second key into one format. A key given as a JWK and
+    /// also as a certificate thumbprint is refused whole and nothing is issued; so is a key with no format.
+    #[tokio::test]
+    async fn section_11_35_a_key_in_two_formats_or_none_is_refused() {
+        let service = test_service();
+        let build = |jwk: Option<GnapJwk>, cert_s256: Option<&str>| {
+            let mut client = test_client_info(test_ec_jwk());
+            let key = client.key.as_mut().unwrap();
+            key.jwk = jwk;
+            key.cert_s256 = cert_s256.map(str::to_string);
+            GnapTransactionRequest {
+                client: Some(client),
+                interact: None,
+                access_token_request: Some(
+                    vec![GnapAccessRequest {
+                        access_type: "read".to_string(),
+                        actions: vec![],
+                        locations: vec![],
+                    }]
+                    .into(),
+                ),
+                subject: None,
+            }
+        };
+        // Control, built the same way: one format is accepted.
+        service
+            .handle_transaction(build(Some(test_ec_jwk()), None))
+            .await
+            .expect("a key in one format is accepted");
+        let issued = service.issued_tokens.count().await.unwrap();
+        for (label, request) in [
+            (
+                "jwk and cert#S256",
+                build(Some(test_ec_jwk()), Some("AAAA")),
+            ),
+            ("no format", build(None, None)),
+        ] {
+            let err = service
+                .handle_transaction(request)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("exactly one"), "{label}: {err}");
+        }
+        assert_eq!(
+            service.issued_tokens.count().await.unwrap(),
+            issued,
+            "nothing issued"
+        );
+    }
+
     // ── Subject Info ─────────────────────────────────────────────────────
 
     #[test]
