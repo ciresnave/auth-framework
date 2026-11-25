@@ -785,9 +785,19 @@ pub(crate) mod tests {
         let body = json_of(&r);
         let new = body["access_token"]["value"].as_str().unwrap().to_string();
         assert_ne!(new, old);
-        // The old value is spent: a second rotation of it finds nothing.
+        // RFC 9635 section 11.33: a retry within the window (the response was lost) gets the same new
+        // token, after proving the key again.
         let again = h.handle(&manage("POST", &k, &old, "m-r2")).await;
-        assert_eq!(again.status, 404);
+        assert_eq!(again.status, 200);
+        assert_eq!(json_of(&again)["access_token"]["value"], new.as_str());
+        // A retry signed by another key is refused, and a token the AS never issued still finds nothing.
+        let other = key();
+        assert_ne!(
+            h.handle(&manage("POST", &other, &old, "m-r3")).await.status,
+            200
+        );
+        let unknown = h.handle(&manage("POST", &k, "never-issued", "m-r4")).await;
+        assert_eq!(unknown.status, 404);
     }
 
     #[tokio::test]

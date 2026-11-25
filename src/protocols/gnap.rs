@@ -539,6 +539,9 @@ pub struct GnapService {
     /// Wrong user codes typed per caller: (count, when the window began). See
     /// [`GnapService::transaction_for_user_code`].
     code_failures: std::sync::Mutex<std::collections::HashMap<String, (u32, u64)>>,
+    /// Rotations answered in the last [`ROTATION_RETRY_SECS`] seconds, keyed by the old token value, so a client
+    /// that lost the response can retry (RFC 9635 section 11.33). Kept in this process only.
+    rotated: std::sync::Mutex<std::collections::HashMap<String, RotatedToken>>,
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
@@ -615,6 +618,21 @@ const POLICY_REQUIRED: &str = "GNAP access denied: no access policy is configure
 /// Refusal to issue an access token when the policy grants nothing.
 const ACCESS_DENIED: &str = "request_denied: GNAP access denied by policy";
 
+/// Seconds after a rotation during which a retry with the old token gets the same new token (RFC 9635
+/// section 11.33: "a few seconds since the first rotation attempt").
+const ROTATION_RETRY_SECS: u64 = 30;
+
+/// What a retried rotation needs: the answer already given, and the retired token's key to prove again.
+#[derive(Clone)]
+struct RotatedToken {
+    new_value: String,
+    response: serde_json::Value,
+    thumbprint: Option<String>,
+    method: Option<String>,
+    jwk: Option<serde_json::Value>,
+    at: u64,
+}
+
 impl GnapService {
     pub fn new(config: GnapConfig) -> Self {
         Self {
@@ -624,6 +642,7 @@ impl GnapService {
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
             consents: Arc::new(InMemoryConsentStore::new()),
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
+            rotated: std::sync::Mutex::new(std::collections::HashMap::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
             user_code_uri: None,
             max_bad_attempts: DEFAULT_MAX_BAD_ATTEMPTS,
@@ -2744,6 +2763,9 @@ impl GnapService {
     ) -> Result<serde_json::Value> {
         // A key rotation has been proved by both keys already; every other rotation needs the token's key.
         if new_key.is_none() {
+            if let Some(again) = self.retried_rotation(old_token_value, dpop).await? {
+                return Ok(again);
+            }
             self.require_token_key_proof(
                 old_token_value,
                 "Token not found or already revoked",
@@ -2764,6 +2786,7 @@ impl GnapService {
         }
 
         let new_value = uuid::Uuid::new_v4().to_string();
+        let key_rotated = new_key.is_some();
         let (key_thumbprint, key_jwk) = match new_key {
             Some((thumbprint, jwk)) => (Some(thumbprint), Some(jwk)),
             None => (old.key_thumbprint.clone(), old.key_jwk.clone()),
@@ -2803,7 +2826,54 @@ impl GnapService {
 
         self.issued_tokens.insert(new_token).await?;
 
-        Ok(serde_json::Value::Object(token_obj))
+        let response = serde_json::Value::Object(token_obj);
+        // A key rotation is not remembered: a retry would need both keys' proofs again.
+        if !key_rotated {
+            let mut map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
+            map.retain(|_, r| now.saturating_sub(r.at) <= ROTATION_RETRY_SECS);
+            map.insert(
+                old_token_value.to_string(),
+                RotatedToken {
+                    new_value,
+                    response: response.clone(),
+                    thumbprint: old.key_thumbprint,
+                    method: old.key_proof,
+                    jwk: old.key_jwk,
+                    at: now,
+                },
+            );
+        }
+        Ok(response)
+    }
+
+    /// The answer to a rotation the client is repeating because it never saw the response (RFC 9635
+    /// section 11.33). The retry proves the retired token's key again; once the new token has been seen
+    /// in use (see `introspect_token`) the record is gone and the retry is refused like any retired token.
+    async fn retried_rotation(
+        &self,
+        old_token_value: &str,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<Option<serde_json::Value>> {
+        let now = self.now();
+        let record = {
+            let mut map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
+            map.retain(|_, r| now.saturating_sub(r.at) <= ROTATION_RETRY_SECS);
+            map.get(old_token_value).cloned()
+        };
+        let Some(record) = record else {
+            return Ok(None);
+        };
+        if self.issued_tokens.get(&record.new_value).await?.is_none() {
+            return Ok(None);
+        }
+        self.verify_token_key_proof(
+            record.thumbprint.as_deref(),
+            record.method.as_deref(),
+            record.jwk.as_ref(),
+            dpop,
+        )
+        .await?;
+        Ok(Some(record.response))
     }
 
     /// Introspect a token — check if it is valid and return its access rights.
@@ -2812,6 +2882,13 @@ impl GnapService {
             Some(t) => t,
             None => return Ok(None),
         };
+
+        // The client has shown it holds the new token, so the old one is no longer needed for a retry
+        // (RFC 9635 section 11.33).
+        self.rotated
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, r| r.new_value != token_value);
 
         let now = self.now();
 
@@ -7762,7 +7839,10 @@ mod httpsig_proof_tests {
         assert!(svc.rotate_token("never-issued").await.is_err());
         // Once the new token is in use, the old one is discarded.
         assert!(svc.introspect_token(&fresh).await.unwrap().is_some());
-        assert!(svc.rotate_token(&token).await.is_err(), "discarded after use");
+        assert!(
+            svc.rotate_token(&token).await.is_err(),
+            "discarded after use"
+        );
     }
 
     #[tokio::test]

@@ -1228,7 +1228,11 @@ mod tests {
         let wire = json!({"assertions": [{"format": "saml2", "value": bomb}]});
         let user: GnapUserRef = serde_json::from_value(wire.clone()).unwrap();
         user.validate().expect("the shape is valid");
-        assert_eq!(serde_json::to_value(&user).unwrap(), wire, "carried byte for byte");
+        assert_eq!(
+            serde_json::to_value(&user).unwrap(),
+            wire,
+            "carried byte for byte"
+        );
         // Control, built the same way: a malformed entry is refused on shape, so the check does run.
         let malformed: GnapUserRef =
             serde_json::from_value(json!({"assertions": [{"format": "saml2"}]})).unwrap();
