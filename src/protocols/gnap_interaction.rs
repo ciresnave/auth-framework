@@ -994,6 +994,38 @@ mod tests {
         assert_eq!(CALLBACK_REDIRECT_STATUS, 303);
     }
 
+    /// RFC 9635 section 11.19: the redirect back to the client is a 303, never a 307 or 308 that would replay
+    /// the end user's request (and anything in its body) to the client.
+    #[test]
+    fn section_11_19_the_callback_redirect_is_a_303() {
+        assert_eq!(CALLBACK_REDIRECT_STATUS, 303);
+        assert!(![307, 308].contains(&CALLBACK_REDIRECT_STATUS));
+    }
+
+    /// RFC 9635 section 11.18: the callback keeps the client's own URI and query, adds exactly `hash` and
+    /// `interact_ref`, and a value that holds `&`, `#` or `=` cannot smuggle a parameter or move the fragment.
+    #[test]
+    fn section_11_18_the_callback_url_adds_only_its_two_parameters() {
+        let finish = Url::parse("https://client.test/cb?state=abc").unwrap();
+        let url = callback_redirect_url(&finish, "h&evil=1#frag", "r=2&x=3");
+        assert_eq!(url.host_str(), Some("client.test"));
+        assert_eq!(url.path(), "/cb");
+        assert_eq!(url.fragment(), None, "no value can open a fragment");
+        let pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("state".to_string(), "abc".to_string()),
+                ("hash".to_string(), "h&evil=1#frag".to_string()),
+                ("interact_ref".to_string(), "r=2&x=3".to_string()),
+            ],
+            "the values round-trip whole and nothing else is added"
+        );
+    }
+
     #[test]
     fn the_push_target_guard_refuses_the_ases_own_network() {
         let blocked = |s: &str| validate_push_target(&Url::parse(s).unwrap()).is_err();

@@ -603,6 +603,32 @@ impl GnapError {
         }
     }
 
+    /// Read the error a service refusal message carries when it starts with a registered code and a colon
+    /// (`invalid_rotation: the rotation request is not valid`). A message that does not, or that starts with an
+    /// unregistered word, is not a typed refusal and yields `None`; callers keep their own mapping for those.
+    pub fn from_service_message(message: &str) -> Option<Self> {
+        let (code, description) = message.split_once(':')?;
+        match GnapErrorCode::from_code(code.trim()) {
+            GnapErrorCode::Other(_) => None,
+            code => Some(Self {
+                code,
+                description: Some(description.trim().to_string()).filter(|d| !d.is_empty()),
+            }),
+        }
+    }
+
+    /// The HTTP status a response with this error carries: 401 for a client the server cannot authenticate and
+    /// for a bad continuation, 403 for a denial, 429 for `too_fast` and `too_many_attempts`, 400 otherwise
+    /// (section 3.6 leaves the status to the AS).
+    pub fn http_status(&self) -> u16 {
+        match self.code {
+            GnapErrorCode::InvalidClient | GnapErrorCode::InvalidContinuation => 401,
+            GnapErrorCode::UserDenied | GnapErrorCode::RequestDenied => 403,
+            GnapErrorCode::TooFast | GnapErrorCode::TooManyAttempts => 429,
+            _ => 400,
+        }
+    }
+
     /// The `error` field of a response, as the object form (section 3.6).
     pub fn to_value(&self) -> Value {
         match &self.description {
@@ -655,6 +681,43 @@ impl std::error::Error for GnapError {}
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_service_message_with_a_registered_code_prefix_is_a_typed_error() {
+        let e = GnapError::from_service_message("invalid_rotation: the key is not new").unwrap();
+        assert_eq!(e.code, GnapErrorCode::InvalidRotation);
+        assert_eq!(e.description.as_deref(), Some("the key is not new"));
+        assert_eq!(e.http_status(), 400);
+        // no description, and the statuses of the codes with their own
+        let bare = GnapError::from_service_message("too_many_attempts:").unwrap();
+        assert_eq!(
+            (bare.code, bare.description),
+            (GnapErrorCode::TooManyAttempts, None)
+        );
+        for (code, status) in [
+            ("invalid_continuation", 401),
+            ("user_denied", 403),
+            ("too_fast", 429),
+        ] {
+            assert_eq!(
+                GnapError::from_service_message(&format!("{code}: x"))
+                    .unwrap()
+                    .http_status(),
+                status
+            );
+        }
+        // not typed: no colon, an unregistered word, a sentence that merely contains a code
+        for untyped in [
+            "Token not found",
+            "oops: bad",
+            "the invalid_rotation: is later",
+        ] {
+            assert!(
+                GnapError::from_service_message(untyped).is_none(),
+                "{untyped}"
+            );
+        }
+    }
 
     // The examples below are the non-normative ones of RFC 9635 (copied from the RFC text).
 

@@ -20,7 +20,7 @@ use crate::errors::{AuthError, Result};
 use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
 use crate::protocols::gnap_interaction::{
     FinishMethod, FinishRequest, HashMethod, StartMode, generate_user_code, interaction_hash,
-    normalize_user_code, parse_start, validate_push_target,
+    normalize_user_code, parse_start, parse_ui_locales, validate_push_target,
 };
 use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
@@ -194,6 +194,10 @@ const USER_CODE_LEN: usize = 8;
 pub struct GnapInteractionRequirements {
     pub start: Vec<String>,
     pub finish: Option<GnapInteractionFinish>,
+    /// `interact.hints` (RFC 9635 section 2.5.3). Only `ui_locales` is read, and its shape is checked at
+    /// transaction open; read it back with [`GnapService::interaction_locales`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hints: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -300,6 +304,7 @@ impl GnapTransactionRequestBuilder {
                 nonce: nonce.into(),
                 hash_method: None,
             }),
+            hints: None,
         });
         self
     }
@@ -402,6 +407,10 @@ pub struct GnapTransaction {
     /// the next poll must come `wait` seconds after this, or after `created_at` for the first.
     #[serde(default)]
     pub last_poll_at: u64,
+    /// How many continuation requests presented a wrong interaction hash or reference. At the service's cap
+    /// the transaction is invalidated (`too_many_attempts`, RFC 9635 section 3.6); never reset.
+    #[serde(default)]
+    pub bad_attempts: u32,
 }
 
 impl std::fmt::Debug for GnapTransaction {
@@ -536,6 +545,10 @@ pub struct GnapService {
     /// The short page a person types a `user_code_uri` code into (RFC 9635 section 3.3.4); without
     /// one that start mode is not offered. See [`GnapService::with_user_code_uri`].
     user_code_uri: Option<url::Url>,
+    max_bad_attempts: u32,
+    /// The application URI an `app` start launches (RFC 9635 section 3.3.2); without one that start mode is
+    /// not offered. See [`GnapService::with_app_uri`].
+    app_uri: Option<url::Url>,
     /// Nonces of `httpsig` signatures already accepted, so a captured request cannot be replayed.
     httpsig_nonces: Arc<std::sync::Mutex<super::gnap_httpsig::NonceCache>>,
     /// Seconds since the epoch; the system clock unless [`GnapService::with_clock`] replaced it.
@@ -553,7 +566,10 @@ fn system_now() -> u64 {
 /// What a poll that came before the `wait` the server announced is refused with (RFC 9635 section
 /// 3.6 `too_fast`). The refusal keeps the continuation token usable.
 pub const TOO_FAST: &str =
-    "Client polled too fast (too_fast): wait before the next continuation request";
+    "too_fast: Client polled too fast: wait before the next continuation request";
+
+/// How many wrong interaction hashes or references one transaction tolerates before it is invalidated.
+const DEFAULT_MAX_BAD_ATTEMPTS: u32 = 5;
 
 /// The default `wait` between polls, in seconds.
 const DEFAULT_POLL_WAIT_SECS: u64 = 5;
@@ -571,7 +587,14 @@ const USER_CODE_LOCKED: &str = "Too many wrong user codes; try again later";
 
 /// The one message every refused `continue_transaction` call returns, so a caller cannot tell an
 /// unknown transaction from an expired one, a wrong token or a wrong interaction hash.
-const INVALID_CONTINUATION: &str = "Invalid continuation request";
+///
+/// It starts with the RFC 9635 section 3.6 code, so the AS layer reads the typed error (`GnapError::from_service_message`).
+/// What the request that reaches the attempt cap is refused with (RFC 9635 section 3.6
+/// `too_many_attempts`); the transaction is gone.
+pub const TOO_MANY_ATTEMPTS: &str =
+    "too_many_attempts: Too many wrong interaction references: start a new transaction";
+
+const INVALID_CONTINUATION: &str = "invalid_continuation: Invalid continuation request";
 
 /// How far a JWS proof's `created` may differ from now, in seconds; its signature is remembered for twice that.
 const JWS_MAX_SKEW_SECS: u64 = 300;
@@ -590,7 +613,7 @@ const KEY_REQUIRED: &str = "GNAP client key required";
 /// Refusal to issue an access token when the service has no access policy.
 const POLICY_REQUIRED: &str = "GNAP access denied: no access policy is configured";
 /// Refusal to issue an access token when the policy grants nothing.
-const ACCESS_DENIED: &str = "GNAP access denied by policy";
+const ACCESS_DENIED: &str = "request_denied: GNAP access denied by policy";
 
 impl GnapService {
     pub fn new(config: GnapConfig) -> Self {
@@ -603,6 +626,8 @@ impl GnapService {
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
             user_code_uri: None,
+            max_bad_attempts: DEFAULT_MAX_BAD_ATTEMPTS,
+            app_uri: None,
             httpsig_nonces: Arc::new(std::sync::Mutex::new(super::gnap_httpsig::NonceCache::new(
                 system_now(),
             ))),
@@ -652,6 +677,58 @@ impl GnapService {
             ));
         }
         self.user_code_uri = Some(parsed);
+        Ok(self)
+    }
+
+    /// Set how many continuation requests with a wrong interaction hash or reference one transaction
+    /// tolerates (default 5). The request that reaches the cap deletes the transaction and is refused
+    /// with `too_many_attempts`; the count is per transaction and never resets. `0` turns the cap off.
+    /// Only a holder of the continuation token reaches the count, so a third party cannot burn a
+    /// transaction.
+    pub fn with_max_bad_attempts(mut self, attempts: u32) -> Self {
+        self.max_bad_attempts = attempts;
+        self
+    }
+
+    /// Count a wrong interaction hash or reference against the transaction and answer the refusal.
+    async fn bad_interaction(&self, mut txn: GnapTransaction) -> AuthError {
+        txn.bad_attempts = txn.bad_attempts.saturating_add(1);
+        let spent = self.max_bad_attempts > 0 && txn.bad_attempts >= self.max_bad_attempts;
+        let id = txn.id.clone();
+        let outcome = if spent {
+            self.transactions.remove(&id).await.map(|_| ())
+        } else {
+            self.transactions
+                .replace_if_unchanged(txn)
+                .await
+                .map(|_| ())
+        };
+        match outcome {
+            Ok(()) if spent => AuthError::validation(TOO_MANY_ATTEMPTS),
+            Ok(()) => AuthError::validation(INVALID_CONTINUATION),
+            Err(e) => e,
+        }
+    }
+
+    /// Set the application URI an `app` start launches (RFC 9635 sections 2.5.1.2 and 3.3.2): a client that
+    /// starts with `app` is answered this URI with the transaction's id added as the `txn` query parameter,
+    /// which makes it unique to the transaction as the RFC requires. Without this the mode is not offered
+    /// (the response carries only the modes the server supports, section 3.3). The URI must be absolute,
+    /// either http(s) or an application scheme, without credentials, query or fragment.
+    pub fn with_app_uri(mut self, uri: &str) -> Result<Self> {
+        let parsed = url::Url::parse(uri)
+            .map_err(|e| AuthError::config(format!("GNAP app uri is not a URI: {e}")))?;
+        if matches!(parsed.scheme(), "javascript" | "data" | "file" | "blob")
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(AuthError::config(
+                "GNAP app uri must be absolute, without credentials, query or fragment, and not a javascript/data/file/blob scheme",
+            ));
+        }
+        self.app_uri = Some(parsed);
         Ok(self)
     }
 
@@ -1493,6 +1570,19 @@ impl GnapService {
         parse_start(&start).map_err(|e| AuthError::validation(e.to_string()))
     }
 
+    /// Check `interact.hints` (section 2.5.3): the shape of `ui_locales`, refused at transaction open.
+    fn validate_hints(interact: &GnapInteractionRequirements) -> Result<()> {
+        match &interact.hints {
+            Some(hints) if !hints.is_object() => {
+                Err(AuthError::validation("interact.hints must be an object"))
+            }
+            Some(hints) => parse_ui_locales(hints)
+                .map(|_| ())
+                .map_err(|e| AuthError::validation(e.to_string())),
+            None => Ok(()),
+        }
+    }
+
     /// Check the `finish` object (section 2.5.2) and, for `push`, the target the server would call
     /// (section 11.34): refused here, at transaction open.
     fn validate_finish(interact: &GnapInteractionRequirements) -> Result<()> {
@@ -1719,6 +1809,7 @@ impl GnapService {
             // is a later slice.
             let start_modes = Self::interaction_start_modes(interact)?;
             Self::validate_finish(interact)?;
+            Self::validate_hints(interact)?;
             let offer_code_uri =
                 start_modes.contains(&StartMode::UserCodeUri) && self.user_code_uri.is_some();
             let user_code = if start_modes.contains(&StartMode::UserCode) || offer_code_uri {
@@ -1744,6 +1835,17 @@ impl GnapService {
                 interact_res.insert(
                     "redirect".to_string(),
                     serde_json::Value::String(interact_url),
+                );
+            }
+
+            if let (true, Some(app)) =
+                (start_modes.contains(&StartMode::App), self.app_uri.as_ref())
+            {
+                let mut app = app.clone();
+                app.query_pairs_mut().append_pair("txn", &transaction_id);
+                interact_res.insert(
+                    "app".to_string(),
+                    serde_json::Value::String(app.to_string()),
                 );
             }
 
@@ -1790,6 +1892,7 @@ impl GnapService {
                 user_code,
                 revision: 0,
                 last_poll_at: 0,
+                bad_attempts: 0,
             };
             self.transactions.insert(txn).await?;
         } else {
@@ -1836,6 +1939,15 @@ impl GnapService {
             "uri".to_string(),
             serde_json::Value::String(self.continue_uri(&transaction_id)),
         );
+
+        // A pending grant tells the client how long to wait before its first poll (RFC 9635 sections 3.1 and
+        // 11.27), the same `wait` every poll answer carries and the one `too_fast` is judged against.
+        if response.contains_key("interact") && self.poll_wait_secs > 0 {
+            continue_obj.insert(
+                "wait".to_string(),
+                serde_json::Value::Number(self.poll_wait_secs.into()),
+            );
+        }
 
         response.insert(
             "continue".to_string(),
@@ -1959,7 +2071,7 @@ impl GnapService {
                 hash.as_bytes(),
                 expected.as_bytes(),
             )) {
-                return Err(AuthError::validation(INVALID_CONTINUATION));
+                return Err(self.bad_interaction(txn).await);
             }
         }
 
@@ -1972,7 +2084,7 @@ impl GnapService {
                     issued.as_bytes(),
                     given.as_bytes(),
                 )) {
-                    return Err(AuthError::validation(INVALID_CONTINUATION));
+                    return Err(self.bad_interaction(txn).await);
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
@@ -2073,7 +2185,7 @@ impl GnapService {
             GnapTransactionState::Denied => {
                 self.transactions.remove(transaction_id).await?;
                 Err(AuthError::validation(
-                    "Transaction was denied by the resource owner",
+                    "user_denied: Transaction was denied by the resource owner",
                 ))
             }
         }
@@ -2337,6 +2449,84 @@ impl GnapService {
             .map_err(|e| AuthError::validation(e.to_string()))
     }
 
+    /// The URI to send the end user to for the `redirect` callback of an approved transaction (RFC 9635
+    /// section 4.2.1): the client's `finish.uri` with `hash` and `interact_ref` added. Answer the user's
+    /// browser with it as a `303` ([`CALLBACK_REDIRECT_STATUS`], section 11.19), never a `307`.
+    ///
+    /// A transaction that is not approved, has no `redirect` finish, or has no reference yet is refused, as
+    /// is one past its lifetime. Nothing is fetched: the browser makes the request, so there is no SSRF
+    /// surface (contrast [`Self::push_interaction`]). The URI was validated at transaction open.
+    pub async fn redirect_callback(&self, transaction_id: &str) -> Result<url::Url> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.redirect_callback_at(transaction_id, now).await
+    }
+
+    async fn redirect_callback_at(&self, transaction_id: &str, now: u64) -> Result<url::Url> {
+        let txn = self
+            .transactions
+            .get(transaction_id)
+            .await?
+            .ok_or_else(|| AuthError::validation("Transaction not found"))?;
+        if !matches!(txn.state, GnapTransactionState::Approved) {
+            return Err(AuthError::validation("the transaction is not approved"));
+        }
+        if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
+            return Err(AuthError::validation("the transaction has expired"));
+        }
+        let finish = txn
+            .request
+            .interact
+            .as_ref()
+            .and_then(|i| i.finish.as_ref())
+            .filter(|f| f.method == "redirect")
+            .ok_or_else(|| {
+                AuthError::validation("the transaction has no redirect finish method")
+            })?;
+        let interact_ref = txn
+            .interact_ref
+            .as_deref()
+            .ok_or_else(|| AuthError::validation("the transaction has no interaction reference"))?;
+        let uri = url::Url::parse(&finish.uri)
+            .map_err(|_| AuthError::validation("the redirect finish uri is not a valid URI"))?;
+        let hash = Self::compute_interact_hash_with(
+            &finish.nonce,
+            txn.interact_nonce.as_deref().unwrap_or(""),
+            interact_ref,
+            &self.config.transaction_endpoint,
+            Self::hash_method_of(finish.hash_method.as_deref()),
+        );
+        Ok(crate::protocols::gnap_interaction::callback_redirect_url(
+            &uri,
+            &hash,
+            interact_ref,
+        ))
+    }
+
+    /// The languages the client asked the consent page to use (`interact.hints.ui_locales`, RFC 9635
+    /// section 2.5.3.1), in the client's order of preference; empty when it gave none. The AS decides what
+    /// it can serve. Refused for an unknown or expired transaction.
+    pub async fn interaction_locales(&self, transaction_id: &str) -> Result<Vec<String>> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let txn = self
+            .transactions
+            .get(transaction_id)
+            .await?
+            .ok_or_else(|| AuthError::validation("Transaction not found"))?;
+        if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
+            return Err(AuthError::validation("the transaction has expired"));
+        }
+        match txn.request.interact.as_ref().and_then(|i| i.hints.as_ref()) {
+            Some(h) => parse_ui_locales(h).map_err(|e| AuthError::validation(e.to_string())),
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Find the pending transaction a person's typed `user_code` belongs to (RFC 9635 sections
     /// 3.3.3 and 4.1) and return its id, for the page that then shows the consent and calls
     /// [`Self::approve_transaction`] or [`Self::deny_transaction`].
@@ -2459,23 +2649,108 @@ impl GnapService {
         proof: &GnapProof<'_>,
         old_token_value: &str,
     ) -> Result<serde_json::Value> {
-        self.rotate_token_inner(old_token_value, Some((dpop, proof)))
+        self.rotate_token_inner(old_token_value, Some((dpop, proof)), None)
             .await
+    }
+
+    /// Rotate an issued token and bind the replacement to a new key (RFC 9635 section 6.1.1).
+    ///
+    /// The request is the `jws` or `jwsd` rotation of `gnap_jws`: both keys prove, the old one over the new
+    /// key's value and the new one over the old signature. Only a token bound under `jws` or `jwsd` can
+    /// rotate its key (`key_rotation_not_supported` otherwise, since `dpop`, `httpsig` and `mtls` define no
+    /// two-proof form here); a bearer token cannot (`invalid_rotation`). Any failure leaves the token as it
+    /// was. The message of every refusal starts with the RFC error code.
+    pub async fn rotate_token_key_with_proof(
+        &self,
+        proof: &GnapProof<'_>,
+        old_token_value: &str,
+    ) -> Result<serde_json::Value> {
+        const NOT_SUPPORTED: &str =
+            "key_rotation_not_supported: this token's key cannot be rotated";
+        const INVALID: &str = "invalid_rotation: the rotation request is not valid";
+        let token = self
+            .issued_tokens
+            .get(old_token_value)
+            .await?
+            .ok_or_else(|| AuthError::validation("Token not found or already revoked"))?;
+        let (Some(thumbprint), Some(method)) = (token.key_thumbprint, token.key_proof) else {
+            return Err(AuthError::validation(INVALID));
+        };
+        let Some(old_jwk) = token.key_jwk else {
+            return Err(AuthError::validation(NOT_SUPPORTED));
+        };
+        let now = self.now();
+        let context = super::gnap_jws::JwsProofContext {
+            jwk: &old_jwk,
+            method: proof.http_method,
+            uri: proof.http_uri,
+            body: proof.http_body,
+            access_token: Some(old_token_value),
+            now,
+            max_skew_secs: JWS_MAX_SKEW_SECS,
+        };
+        let invalid = |_| AuthError::validation(INVALID);
+        let (rotation, signed) = match method.as_str() {
+            "jwsd" => {
+                let detached = proof
+                    .http_headers
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case("detached-jws"))
+                    .map(|(_, v)| *v)
+                    .ok_or_else(|| AuthError::validation(INVALID))?;
+                (
+                    super::gnap_jws::verify_detached_rotation(detached, &context)
+                        .map_err(invalid)?,
+                    detached,
+                )
+            }
+            "jws" => {
+                let compact = std::str::from_utf8(proof.http_body)
+                    .map_err(|_| AuthError::validation(INVALID))?;
+                (
+                    super::gnap_jws::verify_attached_rotation(compact, &context)
+                        .map_err(invalid)?
+                        .0,
+                    compact,
+                )
+            }
+            _ => return Err(AuthError::validation(NOT_SUPPORTED)),
+        };
+        let new_jwk: GnapJwk = serde_json::from_value(rotation.new_jwk.clone())
+            .map_err(|_| AuthError::validation(INVALID))?;
+        let new_thumbprint =
+            Self::jwk_thumbprint(&new_jwk).map_err(|_| AuthError::validation(INVALID))?;
+        self.remember_jws(&thumbprint, signed, now)
+            .map_err(|_| AuthError::validation(INVALID))?;
+        self.rotate_token_inner(
+            old_token_value,
+            None,
+            Some((new_thumbprint, rotation.new_jwk)),
+        )
+        .await
     }
 
     /// Unit tests only: rotate without a proof. A bound token is refused unless its method is the test one.
     #[cfg(test)]
     pub async fn rotate_token(&self, old_token_value: &str) -> Result<serde_json::Value> {
-        self.rotate_token_inner(old_token_value, None).await
+        self.rotate_token_inner(old_token_value, None, None).await
     }
 
     async fn rotate_token_inner(
         &self,
         old_token_value: &str,
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+        new_key: Option<(String, serde_json::Value)>,
     ) -> Result<serde_json::Value> {
-        self.require_token_key_proof(old_token_value, "Token not found or already revoked", dpop)
+        // A key rotation has been proved by both keys already; every other rotation needs the token's key.
+        if new_key.is_none() {
+            self.require_token_key_proof(
+                old_token_value,
+                "Token not found or already revoked",
+                dpop,
+            )
             .await?;
+        }
         let old = self
             .issued_tokens
             .remove(old_token_value)
@@ -2489,13 +2764,17 @@ impl GnapService {
         }
 
         let new_value = uuid::Uuid::new_v4().to_string();
+        let (key_thumbprint, key_jwk) = match new_key {
+            Some((thumbprint, jwk)) => (Some(thumbprint), Some(jwk)),
+            None => (old.key_thumbprint.clone(), old.key_jwk.clone()),
+        };
         let new_token = GnapIssuedToken {
             value: new_value.clone(),
             access: old.access.clone(),
             expires_at: now + self.config.token_lifetime_secs,
-            key_thumbprint: old.key_thumbprint.clone(),
+            key_thumbprint,
             key_proof: old.key_proof.clone(),
-            key_jwk: old.key_jwk.clone(),
+            key_jwk,
             transaction_id: old.transaction_id,
         };
 
@@ -2992,6 +3271,7 @@ mod tests {
                     nonce: "client-nonce-123".to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3042,6 +3322,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3095,6 +3376,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3126,6 +3408,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3346,6 +3629,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3393,6 +3677,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3437,6 +3722,7 @@ mod tests {
                     nonce: client_nonce.to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3492,6 +3778,7 @@ mod tests {
                     nonce: client_nonce.to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3551,6 +3838,330 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn the_fifth_wrong_interaction_reference_invalidates_the_transaction() {
+        let service = test_service();
+        let (txn_id, cont, hash, iref) = interact_transaction(&service).await;
+        let wrong = |n: u32| format!("wrong-{n}");
+        // A third party without the continuation token reaches no count.
+        for _ in 0..10 {
+            let e = service
+                .continue_transaction(&txn_id, "not-the-token", Some(&iref), Some("x"))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.ends_with(INVALID_CONTINUATION), "{}", e);
+        }
+        // Four wrong hashes from the holder are plain refusals, and the right one still works after them
+        // (control: the count alone does not spoil the transaction).
+        for n in 0..4 {
+            let e = service
+                .continue_transaction(&txn_id, &cont, Some(&iref), Some(&wrong(n)))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.ends_with(INVALID_CONTINUATION), "attempt {n}");
+        }
+        assert_eq!(service.test_txn(&txn_id).await.bad_attempts, 4);
+        // The fifth is refused with the registered code, and the transaction is gone even for the right hash.
+        let fifth = service
+            .continue_transaction(&txn_id, &cont, Some(&iref), Some(&wrong(4)))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(fifth.ends_with(TOO_MANY_ATTEMPTS), "{}", fifth);
+        let after = service
+            .continue_transaction(&txn_id, &cont, Some(&iref), Some(&hash))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(after.ends_with(INVALID_CONTINUATION), "{}", after);
+    }
+
+    #[tokio::test]
+    async fn the_attempt_cap_is_configurable_and_zero_turns_it_off() {
+        let service = test_service().with_max_bad_attempts(2);
+        let (txn_id, cont, _hash, iref) = interact_transaction(&service).await;
+        let bad =
+            |s: &'static str| service.continue_transaction(&txn_id, &cont, Some(&iref), Some(s));
+        assert!(
+            bad("a")
+                .await
+                .unwrap_err()
+                .to_string()
+                .ends_with(INVALID_CONTINUATION),
+            "{}",
+            bad("a").await.unwrap_err().to_string()
+        );
+        assert!(
+            bad("b")
+                .await
+                .unwrap_err()
+                .to_string()
+                .ends_with(TOO_MANY_ATTEMPTS),
+            "{}",
+            bad("b").await.unwrap_err().to_string()
+        );
+
+        let open = test_service().with_max_bad_attempts(0);
+        let (txn_id, cont, hash, iref) = interact_transaction(&open).await;
+        for _ in 0..50 {
+            assert!(
+                open.continue_transaction(&txn_id, &cont, Some(&iref), Some("nope"))
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            open.continue_transaction(&txn_id, &cont, Some(&iref), Some(&hash))
+                .await
+                .is_ok()
+        );
+    }
+
+    fn section_11_request(client_nonce: &str) -> GnapTransactionRequest {
+        GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: Some(GnapInteractionFinish {
+                    method: "redirect".to_string(),
+                    uri: "https://client.test/cb".to_string(),
+                    nonce: client_nonce.to_string(),
+                    hash_method: None,
+                }),
+                hints: None,
+            }),
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        }
+    }
+
+    /// RFC 9635 section 11.28 (exhaustion of the random value space) and 11.26 (what the AS stores and emits).
+    #[tokio::test]
+    async fn section_11_28_random_values_are_distinct_long_and_not_interchangeable() {
+        use std::collections::HashSet;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let time = Arc::new(AtomicU64::new(1_800_000_000));
+        let clock = Arc::clone(&time);
+        let service = test_service().with_clock(move || clock.load(Ordering::SeqCst));
+        const N: usize = 100;
+        for i in 0..N {
+            service
+                .handle_transaction(section_11_request(&format!("cn-{i}")))
+                .await
+                .unwrap();
+        }
+        let ids = service.test_txn_ids().await;
+        assert_eq!(ids.len(), N, "every transaction is stored under its own id");
+        let mut txns = Vec::new();
+        for id in &ids {
+            txns.push(service.test_txn(id).await);
+        }
+        let distinct = |values: Vec<String>| values.into_iter().collect::<HashSet<_>>().len();
+        assert_eq!(
+            distinct(txns.iter().map(|t| t.continue_token.clone()).collect()),
+            N
+        );
+        assert_eq!(
+            distinct(
+                txns.iter()
+                    .filter_map(|t| t.interact_nonce.clone())
+                    .collect()
+            ),
+            N
+        );
+        // Long enough to be unguessable: a UUID v4 is 36 characters and 122 random bits.
+        assert!(txns.iter().all(|t| t.continue_token.len() >= 32));
+        assert!(
+            txns.iter()
+                .all(|t| t.interact_nonce.as_deref().is_some_and(|n| n.len() >= 32))
+        );
+        // Section 11.26: the finish URI the AS keeps is the client's own, with nothing added.
+        assert!(txns.iter().all(|t| {
+            t.request
+                .interact
+                .as_ref()
+                .unwrap()
+                .finish
+                .as_ref()
+                .unwrap()
+                .uri
+                == "https://client.test/cb"
+        }));
+
+        // Values of one transaction do not work on another (control: its own works).
+        let (a, b) = (&txns[0], &txns[1]);
+        assert!(
+            service
+                .continue_transaction(&b.id, &a.continue_token, None, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .continue_transaction(&a.id, &a.continue_token, None, None)
+                .await
+                .is_ok()
+        );
+        // An id is not a continuation token either.
+        assert!(
+            service
+                .continue_transaction(&b.id, &b.id, None, None)
+                .await
+                .is_err()
+        );
+
+        // Values are time-boxed: past the transaction lifetime the continuation token no longer works.
+        time.fetch_add(
+            service.config.transaction_lifetime_secs + 1,
+            Ordering::SeqCst,
+        );
+        let rotated = service.test_txn(&b.id).await.continue_token;
+        assert!(
+            service
+                .continue_transaction(&b.id, &rotated, None, None)
+                .await
+                .is_err()
+        );
+    }
+
+    /// RFC 9635 section 11.25: the interaction hash covers the client nonce, the AS nonce, the interaction
+    /// reference and the grant endpoint, and a continuation token cannot be used with another grant's reference.
+    #[tokio::test]
+    async fn section_11_25_the_hash_binds_both_nonces_the_reference_and_the_endpoint() {
+        let h = GnapService::compute_interact_hash;
+        let base = h("cn", "sn", "ref", "https://as.test/tx");
+        assert_eq!(base, h("cn", "sn", "ref", "https://as.test/tx"));
+        for changed in [
+            h("cn2", "sn", "ref", "https://as.test/tx"),
+            h("cn", "sn2", "ref", "https://as.test/tx"),
+            h("cn", "sn", "ref2", "https://as.test/tx"),
+            h("cn", "sn", "ref", "https://as.test/tx2"),
+        ] {
+            assert_ne!(changed, base);
+        }
+
+        // CT1 with grant B's reference and hash (the section's CT2 attack): refused, and A's own still works.
+        let service = test_service();
+        for nonce in ["cn-a", "cn-b"] {
+            service
+                .handle_transaction(section_11_request(nonce))
+                .await
+                .unwrap();
+        }
+        let mut grants = Vec::new();
+        for id in service.test_txn_ids().await {
+            let txn = service.test_txn(&id).await;
+            let done = service.approve_transaction(&id, None).await.unwrap();
+            grants.push((
+                id,
+                txn.continue_token,
+                done.interact_ref.unwrap(),
+                done.hash.unwrap(),
+            ));
+        }
+        let (a, b) = (&grants[0], &grants[1]);
+        let crossed = service
+            .continue_transaction(&a.0, &a.1, Some(&b.2), Some(&b.3))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(crossed.ends_with(INVALID_CONTINUATION), "{crossed}");
+        assert!(
+            service
+                .continue_transaction(&a.0, &a.1, Some(&a.2), Some(&a.3))
+                .await
+                .is_ok(),
+            "control: the grant's own token, reference and hash succeed"
+        );
+    }
+
+    /// RFC 9635 section 11.23: a finish method yields a finish nonce and a hash; with none, polling still works.
+    #[tokio::test]
+    async fn section_11_23_finish_gives_a_nonce_and_no_finish_still_polls() {
+        let service = test_service();
+        let with_finish = service
+            .handle_transaction(section_11_request("cn"))
+            .await
+            .unwrap();
+        assert!(
+            with_finish["interact"]["finish"]
+                .as_str()
+                .is_some_and(|n| n.len() >= 32)
+        );
+        let mut polled = section_11_request("cn");
+        polled.interact.as_mut().unwrap().finish = None;
+        let without = service.handle_transaction(polled).await.unwrap();
+        assert!(without["interact"].get("finish").is_none());
+        let id = without["continue"]["uri"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_string();
+        let token = without["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let pending = service
+            .continue_transaction(&id, &token, None, None)
+            .await
+            .unwrap();
+        assert!(pending["continue"]["access_token"]["value"].is_string());
+    }
+
+    /// RFC 9635 section 11.27 (denial of service through grant continuation): the AS announces a wait, refuses
+    /// a poll that comes sooner, and a client that keeps hammering keeps being refused.
+    #[tokio::test]
+    async fn section_11_27_polling_faster_than_the_wait_is_refused_until_the_client_backs_off() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let t0 = 1_800_000_000u64;
+        let time = Arc::new(AtomicU64::new(t0));
+        let clock = Arc::clone(&time);
+        let service = GnapService::new(test_config())
+            .with_access_policy(Arc::new(AllowAllPolicy))
+            .with_clock(move || clock.load(Ordering::SeqCst));
+        let started = service
+            .handle_transaction(section_11_request("cn"))
+            .await
+            .unwrap();
+        assert_eq!(
+            started["continue"]["wait"], 5,
+            "the response announces the wait"
+        );
+        let (id, mut cont) = {
+            let txn = service.test_first_txn().await;
+            (txn.id, txn.continue_token)
+        };
+        let poll = |cont: String| {
+            let (service, id) = (&service, id.clone());
+            async move { service.continue_transaction(&id, &cont, None, None).await }
+        };
+        // 1 s after the start, then 2 s later: both are inside the wait, and each refused poll restarts it.
+        for step in [1u64, 2] {
+            time.fetch_add(step, Ordering::SeqCst);
+            let e = poll(cont.clone()).await.unwrap_err().to_string();
+            assert!(e.contains("too_fast"), "{e}");
+        }
+        // Backing off for the full wait is accepted (control), and rotates the token.
+        time.fetch_add(5, Ordering::SeqCst);
+        let ok = poll(cont.clone()).await.unwrap();
+        cont = ok["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(service.test_txn(&id).await.continue_token, cont);
     }
 
     #[tokio::test]
@@ -3734,6 +4345,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(rights.into()),
             subject: None,
@@ -4075,6 +4687,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
@@ -4102,6 +4715,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
@@ -4230,6 +4844,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
@@ -4298,6 +4913,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
@@ -5771,6 +6387,46 @@ mod proof_verification_tests {
     }
 
     #[tokio::test]
+    async fn an_approved_redirect_transaction_yields_the_callback_uri() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        let (id, done) = approved_push_txn(&svc, &dpop, &key, "redirect").await;
+        let url = svc.redirect_callback(&id).await.unwrap();
+        let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(
+            url.as_str().split('?').next(),
+            Some("https://client.test/cb")
+        );
+        assert_eq!(q["interact_ref"], done.interact_ref.clone().unwrap());
+        assert_eq!(q["hash"], done.hash.clone().unwrap());
+    }
+
+    #[tokio::test]
+    async fn only_an_approved_unexpired_redirect_transaction_gets_a_callback_uri() {
+        let (svc, dpop, key) = (service(), manager(), client_key());
+        // a push-finish transaction has no redirect callback
+        let (pid, _) = approved_push_txn(&svc, &dpop, &key, "push").await;
+        assert!(svc.redirect_callback(&pid).await.is_err());
+        assert!(svc.redirect_callback("no-such-id").await.is_err());
+        // a redirect transaction that is denied, or expired
+        let svc2 = service();
+        let (id, _) = approved_push_txn(&svc2, &manager(), &key, "redirect").await;
+        let created = svc2.test_first_txn().await.created_at;
+        let life = svc2.config.transaction_lifetime_secs;
+        let e = svc2
+            .redirect_callback_at(&id, created + life + 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("expired"), "{e}");
+        svc2.redirect_callback_at(&id, created + life)
+            .await
+            .unwrap();
+        svc2.deny_transaction(&id).await.unwrap();
+        let e = svc2.redirect_callback(&id).await.unwrap_err().to_string();
+        assert!(e.contains("not approved"), "{e}");
+    }
+
+    #[tokio::test]
     async fn the_hash_uses_the_method_the_client_asked_for() {
         use crate::protocols::gnap_interaction::interaction_hash;
         for (name, method) in [
@@ -5943,6 +6599,109 @@ mod proof_verification_tests {
         .await
         .unwrap();
         assert!(none["interact"].get("user_code_uri").is_none());
+    }
+
+    #[tokio::test]
+    async fn an_app_start_is_answered_with_a_per_transaction_uri_when_configured() {
+        let (dpop, key) = (manager(), client_key());
+        let svc = service().with_app_uri("com.example.as:/launch").unwrap();
+        let resp = send(
+            &svc,
+            &dpop,
+            &key,
+            "app-1",
+            interact_request(&key, json!({"start": ["app"]})),
+        )
+        .await
+        .unwrap();
+        let id = svc.test_first_txn().await.id;
+        assert_eq!(
+            resp["interact"]["app"],
+            format!("com.example.as:/launch?txn={id}")
+        );
+        assert!(resp["interact"].get("redirect").is_none(), "not asked for");
+        // not configured: not offered
+        let plain = service();
+        let none = send(
+            &plain,
+            &dpop,
+            &key,
+            "app-2",
+            interact_request(&key, json!({"start": ["redirect", "app"]})),
+        )
+        .await
+        .unwrap();
+        assert!(none["interact"].get("app").is_none());
+        assert!(none["interact"].get("redirect").is_some());
+    }
+
+    #[tokio::test]
+    async fn ui_locales_hints_are_checked_at_open_and_readable_for_the_consent_page() {
+        let (dpop, key) = (manager(), client_key());
+        let svc = service();
+        for (n, bad) in [
+            json!({"start": ["redirect"], "hints": {"ui_locales": "en"}}),
+            json!({"start": ["redirect"], "hints": {"ui_locales": ["en_US"]}}),
+            json!({"start": ["redirect"], "hints": ["en"]}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let r = send(
+                &svc,
+                &dpop,
+                &key,
+                &format!("hint-bad-{n}"),
+                interact_request(&key, bad.clone()),
+            )
+            .await;
+            assert!(r.is_err(), "{bad}");
+        }
+        // Positive control, built the same way: a well-formed hint opens and reads back in order.
+        send(
+            &svc,
+            &dpop,
+            &key,
+            "hint-ok",
+            interact_request(
+                &key,
+                json!({"start": ["redirect"], "hints": {"ui_locales": ["fr-CA", "en"]}}),
+            ),
+        )
+        .await
+        .unwrap();
+        let id = svc.test_first_txn().await.id;
+        assert_eq!(svc.interaction_locales(&id).await.unwrap(), ["fr-CA", "en"]);
+        assert!(svc.interaction_locales("no-such").await.is_err());
+        // no hints: empty, not an error
+        let plain = service();
+        send(
+            &plain,
+            &dpop,
+            &key,
+            "hint-none",
+            interact_request(&key, json!({"start": ["redirect"]})),
+        )
+        .await
+        .unwrap();
+        let pid = plain.test_first_txn().await.id;
+        assert!(plain.interaction_locales(&pid).await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_app_uri_must_be_absolute_without_credentials_query_or_fragment() {
+        for bad in [
+            "not a uri",
+            "https://u:p@as.test/app",
+            "https://as.test/app?x=1",
+            "https://as.test/app#f",
+            "javascript:alert(1)",
+            "data:text/html,x",
+        ] {
+            assert!(service().with_app_uri(bad).is_err(), "{bad}");
+        }
+        assert!(service().with_app_uri("https://as.test/app").is_ok());
+        assert!(service().with_app_uri("com.example.as:/launch").is_ok());
     }
 
     #[tokio::test]
@@ -6206,6 +6965,7 @@ mod hardening_tests {
                     nonce: "client-nonce".to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(rights(kinds).into()),
             subject: None,
@@ -6380,6 +7140,7 @@ mod hardening_tests {
             req.interact = Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             });
         }
         svc.handle_transaction(req).await.unwrap();
@@ -6831,6 +7592,143 @@ mod httpsig_proof_tests {
             issue(&svc, &key, &good, "jwsd").await.is_err(),
             "the same detached JWS must not be accepted twice"
         );
+    }
+
+    /// One signed link of a `jws` key rotation (RFC 9635 section 7.3.4.1).
+    fn rotation_jws(signer: &Signer, payload: &[u8], token: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let header = serde_json::json!({
+            "alg": "ES256", "typ": "gnap-binding-rotation-jws", "htm": "POST", "uri": URI,
+            "created": chrono::Utc::now().timestamp(),
+            "ath": b64(&Sha256::digest(token.as_bytes())),
+        });
+        let (h, p) = (b64(header.to_string().as_bytes()), b64(payload));
+        let sig = signer
+            .pair
+            .sign(&SystemRandom::new(), format!("{h}.{p}").as_bytes())
+            .unwrap();
+        format!("{h}.{p}.{}", b64(sig.as_ref()))
+    }
+
+    async fn rotate_key(svc: &GnapService, body: &str, token: &str) -> Result<serde_json::Value> {
+        let auth = format!("GNAP {token}");
+        let headers = [("Authorization", auth.as_str())];
+        let proof = GnapProof {
+            http_method: "POST",
+            http_uri: URI,
+            dpop_proof: None,
+            expected_nonce: None,
+            client_certificate_der: None,
+            http_headers: &headers,
+            http_body: body.as_bytes(),
+        };
+        svc.rotate_token_key_with_proof(&proof, token).await
+    }
+
+    #[tokio::test]
+    async fn a_jws_bound_token_rotates_to_a_new_key_only_with_both_keys_proofs() {
+        let svc = service();
+        let (key, new, other) = (signer(), signer(), signer());
+        let now = chrono::Utc::now().timestamp();
+        let issued = issue_attached(&svc, &key, attached_jws(&key, b"{}", now).as_bytes())
+            .await
+            .unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let content = serde_json::json!({ "key": new.jwk }).to_string();
+        let nest = |old: &Signer, new: &Signer| {
+            rotation_jws(
+                new,
+                rotation_jws(old, content.as_bytes(), &token).as_bytes(),
+                &token,
+            )
+        };
+        let thumbprint = |s: &Signer| GnapService::jwk_thumbprint(&s.jwk).unwrap();
+
+        // Refutations: a wrong old key, a wrong new key and the new key alone each fail with
+        // `invalid_rotation`, and the token still works afterwards.
+        for bad in [
+            nest(&other, &new),
+            nest(&key, &other),
+            rotation_jws(&new, content.as_bytes(), &token),
+        ] {
+            let err = rotate_key(&svc, &bad, &token)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("invalid_rotation"), "{err}");
+        }
+        let live = svc.introspect_token(&token).await.unwrap().unwrap();
+        assert_eq!(live["key_thumbprint"], thumbprint(&key));
+
+        // Positive control, built the same way: both keys prove, the token is replaced and re-bound.
+        let rotated = rotate_key(&svc, &nest(&key, &new), &token)
+            .await
+            .unwrap_or_else(|e| panic!("a rotation proved by both keys must succeed: {e}"));
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+        assert_ne!(fresh, token);
+        assert!(svc.introspect_token(&token).await.unwrap().is_none());
+        let bound = svc.introspect_token(&fresh).await.unwrap().unwrap();
+        assert_eq!(bound["key_thumbprint"], thumbprint(&new));
+    }
+
+    #[tokio::test]
+    async fn section_11_21_and_11_22_the_token_is_bound_to_the_presented_key_and_rotation_retires_the_old_one()
+     {
+        let svc = service();
+        let (key, new) = (signer(), signer());
+        let now = chrono::Utc::now().timestamp();
+        let thumbprint = |s: &Signer| GnapService::jwk_thumbprint(&s.jwk).unwrap();
+
+        // 11.21 / 11.31: the token is bound to the key the client presented, not to any key the
+        // AS substitutes.
+        let issued = issue_attached(&svc, &key, attached_jws(&key, b"{}", now).as_bytes())
+            .await
+            .unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let live = svc.introspect_token(&token).await.unwrap().unwrap();
+        assert_eq!(live["key_thumbprint"], thumbprint(&key));
+        assert_ne!(live["key_thumbprint"], thumbprint(&new));
+
+        // 11.22: after a rotation the old token is gone, so the old key cannot rotate it again,
+        // and the replacement is bound to the new key alone.
+        let content = serde_json::json!({ "key": new.jwk }).to_string();
+        let nested = rotation_jws(
+            &new,
+            rotation_jws(&key, content.as_bytes(), &token).as_bytes(),
+            &token,
+        );
+        let rotated = rotate_key(&svc, &nested, &token).await.unwrap();
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+        let bound = svc.introspect_token(&fresh).await.unwrap().unwrap();
+        assert_eq!(bound["key_thumbprint"], thumbprint(&new));
+        assert!(svc.introspect_token(&token).await.unwrap().is_none());
+        assert!(
+            rotate_key(&svc, &nested, &token).await.is_err(),
+            "the retired token must not rotate again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_token_bound_under_another_method_or_none_cannot_rotate_its_key() {
+        let svc = service();
+        let key = signer();
+        let issued = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let err = rotate_key(&svc, "x.y.z", &token)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("key_rotation_not_supported"), "{err}");
+        assert!(svc.introspect_token(&token).await.unwrap().is_some());
     }
 
     #[tokio::test]

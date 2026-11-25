@@ -31,6 +31,7 @@
 use crate::errors::AuthError;
 use crate::protocols::gnap::{GnapProof, GnapService, GnapTransactionRequest};
 use crate::protocols::gnap_http::{GnapHttpRequest, GnapHttpResponse, MAX_BODY_BYTES, path_of};
+use crate::protocols::gnap_wire::{GnapError, GnapErrorCode};
 use crate::server::security::dpop::DpopManager;
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -122,14 +123,14 @@ impl GnapAsHttp {
 
     /// The document `OPTIONS` on the grant endpoint answers (RFC 9635 section 9.2). It lists only
     /// what this crate does: the `dpop`, `httpsig`, `jwsd` and `jws` proof methods, the `redirect` start mode and finish
-    /// method, and no key rotation.
+    /// method, and key rotation for tokens bound under `jws` or `jwsd`.
     fn discovery_document(&self) -> Value {
         json!({
             "grant_request_endpoint": self.grant_url,
             "interaction_start_modes_supported": ["redirect"],
             "interaction_finish_methods_supported": ["redirect"],
             "key_proofs_supported": ["dpop", "httpsig", "jwsd", "jws"],
-            "key_rotation_supported": false,
+            "key_rotation_supported": true,
         })
     }
 
@@ -237,11 +238,17 @@ impl GnapAsHttp {
         };
         let headers = header_pairs(req);
         let proof = proof_for(req, &self.manage_url, &headers);
-        match self
-            .service
-            .rotate_token_with_proof(&self.dpop, &proof, token)
-            .await
-        {
+        // A rotation request with content asks for a new key (RFC 9635 section 6.1.1); with none, a new value.
+        let rotated = if req.body.is_empty() && req.header_value("detached-jws").is_none() {
+            self.service
+                .rotate_token_with_proof(&self.dpop, &proof, token)
+                .await
+        } else {
+            self.service
+                .rotate_token_key_with_proof(&proof, token)
+                .await
+        };
+        match rotated {
             // RFC 9635 section 6.1: the new token comes back as `access_token`.
             Ok(answer) => GnapHttpResponse::json(200, &json!({ "access_token": answer }), true),
             Err(e) => refuse(&e),
@@ -357,6 +364,23 @@ fn refuse(e: &AuthError) -> GnapHttpResponse {
         return GnapHttpResponse::empty(500, vec![("Cache-Control".into(), "no-store".into())]);
     };
     let m = message.to_ascii_lowercase();
+    if let Some(typed) = GnapError::from_service_message(message) {
+        // The service named the RFC 9635 section 3.6 code itself; nothing is guessed from the wording.
+        let mut response = error(
+            typed.http_status(),
+            typed.code.as_str(),
+            typed
+                .description
+                .as_deref()
+                .unwrap_or("the request was refused"),
+        );
+        if typed.code == GnapErrorCode::InvalidClient {
+            response
+                .headers
+                .push(("WWW-Authenticate".into(), "GNAP".into()));
+        }
+        return response;
+    }
     if m.contains("too_fast") {
         // RFC 9635 section 3.6; the continuation token is still good, so the client may retry.
         error(429, "too_fast", "poll again after the announced wait")
@@ -736,7 +760,7 @@ pub(crate) mod tests {
             doc["interaction_finish_methods_supported"],
             json!(["redirect"])
         );
-        assert_eq!(doc["key_rotation_supported"], false);
+        assert_eq!(doc["key_rotation_supported"], true);
     }
 
     #[tokio::test]
@@ -764,6 +788,20 @@ pub(crate) mod tests {
         // The old value is spent: a second rotation of it finds nothing.
         let again = h.handle(&manage("POST", &k, &old, "m-r2")).await;
         assert_eq!(again.status, 404);
+    }
+
+    #[tokio::test]
+    async fn a_key_rotation_of_a_dpop_token_is_400_not_supported_and_the_token_survives() {
+        let (h, k) = (handler(), key());
+        let t = token_for(&h, &k, "m-k0").await;
+        // A rotation request carries content; DPoP defines no two-key form.
+        let mut r = manage("POST", &k, &t, "m-k1");
+        r.body = br#"{"key":{"kty":"EC"}}"#.to_vec();
+        let refused = h.handle(&r).await;
+        assert_eq!(refused.status, 400);
+        assert_eq!(code_of(&refused), "key_rotation_not_supported");
+        // Control: the token is untouched, and a plain proved rotation still works.
+        assert_eq!(h.handle(&manage("POST", &k, &t, "m-k2")).await.status, 200);
     }
 
     #[tokio::test]
