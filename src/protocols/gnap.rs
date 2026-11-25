@@ -7714,6 +7714,57 @@ mod httpsig_proof_tests {
         );
     }
 
+    /// RFC 9635 section 11.32, "Self-Contained Stateless Access Tokens": revocation and rotation are hard
+    /// when tokens are self-contained, "during which both the old and new access tokens are valid". This
+    /// service keeps its tokens as state, so a revocation and a rotation take effect at once, and every
+    /// token lifetime is bounded by the configured one ("keeping the validity time windows ... short").
+    #[tokio::test]
+    async fn section_11_32_revocation_and_rotation_take_effect_at_once_with_no_overlap() {
+        let svc = service();
+        let key = signer();
+        let first = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = first["access_token"]["value"].as_str().unwrap().to_string();
+        assert_eq!(first["access_token"]["expires_in"], 3600);
+
+        let rotated = svc.rotate_token(&token).await.unwrap();
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+        assert_eq!(rotated["expires_in"], 3600);
+        assert!(svc.introspect_token(&fresh).await.unwrap().is_some());
+        assert!(
+            svc.introspect_token(&token).await.unwrap().is_none(),
+            "the old token must not stay valid beside the new one"
+        );
+
+        svc.revoke_token(&fresh).await.unwrap();
+        assert!(svc.introspect_token(&fresh).await.unwrap().is_none());
+    }
+
+    /// RFC 9635 section 11.33, "Network Problems and Token and Grant Management": "multiple calls to rotate
+    /// the same access token need to result in the same rotated token value, within a reasonable time
+    /// window." A client that lost the response to a rotation retries with the old token and must get the
+    /// same new value, not a refusal. Once the new token is seen in use "the original token can be discarded".
+    #[tokio::test]
+    async fn section_11_33_a_retried_rotation_returns_the_same_new_token() {
+        let svc = service();
+        let key = signer();
+        let first = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = first["access_token"]["value"].as_str().unwrap().to_string();
+
+        let rotated = svc.rotate_token(&token).await.unwrap();
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+        let retried = svc
+            .rotate_token(&token)
+            .await
+            .expect("a retry within the window must succeed");
+        assert_eq!(retried["value"], fresh, "the same rotated value");
+
+        // Control: a token the AS never issued is still refused.
+        assert!(svc.rotate_token("never-issued").await.is_err());
+        // Once the new token is in use, the old one is discarded.
+        assert!(svc.introspect_token(&fresh).await.unwrap().is_some());
+        assert!(svc.rotate_token(&token).await.is_err(), "discarded after use");
+    }
+
     #[tokio::test]
     async fn a_token_bound_under_another_method_or_none_cannot_rotate_its_key() {
         let svc = service();

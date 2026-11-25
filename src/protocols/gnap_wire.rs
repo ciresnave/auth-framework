@@ -1216,4 +1216,22 @@ mod tests {
             GnapUserRef::Reference("XUT2MFM1XBIKJKSDU8QM".into())
         );
     }
+
+    /// RFC 9635 section 11.30, "Processing Assertions": "the receiver of the assertion needs to parse and
+    /// process the assertion ... special care needs to be taken to prevent the assertion values from being
+    /// used as an attack vector." This wire layer never parses an assertion: the value is an opaque JSON
+    /// value, checked for shape only and carried byte for byte, so an XML entity bomb or a hostile token
+    /// reaches no parser here.
+    #[test]
+    fn section_11_30_an_assertion_value_is_carried_opaque_and_never_parsed() {
+        let bomb = "<?xml version=\"1.0\"?><!DOCTYPE l [<!ENTITY a \"aaaaaaaaaa\"><!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;\">]><Assertion>&b;&b;&b;</Assertion>";
+        let wire = json!({"assertions": [{"format": "saml2", "value": bomb}]});
+        let user: GnapUserRef = serde_json::from_value(wire.clone()).unwrap();
+        user.validate().expect("the shape is valid");
+        assert_eq!(serde_json::to_value(&user).unwrap(), wire, "carried byte for byte");
+        // Control, built the same way: a malformed entry is refused on shape, so the check does run.
+        let malformed: GnapUserRef =
+            serde_json::from_value(json!({"assertions": [{"format": "saml2"}]})).unwrap();
+        assert!(malformed.validate().is_err());
+    }
 }
