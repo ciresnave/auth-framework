@@ -20,7 +20,7 @@ use crate::errors::{AuthError, Result};
 use crate::protocols::gnap_consent::{GnapConsent, GnapConsentStore, InMemoryConsentStore};
 use crate::protocols::gnap_interaction::{
     FinishMethod, FinishRequest, HashMethod, StartMode, generate_user_code, interaction_hash,
-    normalize_user_code, parse_start, validate_push_target,
+    normalize_user_code, parse_start, parse_ui_locales, validate_push_target,
 };
 use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
@@ -194,6 +194,10 @@ const USER_CODE_LEN: usize = 8;
 pub struct GnapInteractionRequirements {
     pub start: Vec<String>,
     pub finish: Option<GnapInteractionFinish>,
+    /// `interact.hints` (RFC 9635 section 2.5.3). Only `ui_locales` is read, and its shape is checked at
+    /// transaction open; read it back with [`GnapService::interaction_locales`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hints: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -300,6 +304,7 @@ impl GnapTransactionRequestBuilder {
                 nonce: nonce.into(),
                 hash_method: None,
             }),
+            hints: None,
         });
         self
     }
@@ -1565,6 +1570,19 @@ impl GnapService {
         parse_start(&start).map_err(|e| AuthError::validation(e.to_string()))
     }
 
+    /// Check `interact.hints` (section 2.5.3): the shape of `ui_locales`, refused at transaction open.
+    fn validate_hints(interact: &GnapInteractionRequirements) -> Result<()> {
+        match &interact.hints {
+            Some(hints) if !hints.is_object() => {
+                Err(AuthError::validation("interact.hints must be an object"))
+            }
+            Some(hints) => parse_ui_locales(hints)
+                .map(|_| ())
+                .map_err(|e| AuthError::validation(e.to_string())),
+            None => Ok(()),
+        }
+    }
+
     /// Check the `finish` object (section 2.5.2) and, for `push`, the target the server would call
     /// (section 11.34): refused here, at transaction open.
     fn validate_finish(interact: &GnapInteractionRequirements) -> Result<()> {
@@ -1791,6 +1809,7 @@ impl GnapService {
             // is a later slice.
             let start_modes = Self::interaction_start_modes(interact)?;
             Self::validate_finish(interact)?;
+            Self::validate_hints(interact)?;
             let offer_code_uri =
                 start_modes.contains(&StartMode::UserCodeUri) && self.user_code_uri.is_some();
             let user_code = if start_modes.contains(&StartMode::UserCode) || offer_code_uri {
@@ -2484,6 +2503,28 @@ impl GnapService {
             &hash,
             interact_ref,
         ))
+    }
+
+    /// The languages the client asked the consent page to use (`interact.hints.ui_locales`, RFC 9635
+    /// section 2.5.3.1), in the client's order of preference; empty when it gave none. The AS decides what
+    /// it can serve. Refused for an unknown or expired transaction.
+    pub async fn interaction_locales(&self, transaction_id: &str) -> Result<Vec<String>> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let txn = self
+            .transactions
+            .get(transaction_id)
+            .await?
+            .ok_or_else(|| AuthError::validation("Transaction not found"))?;
+        if now.saturating_sub(txn.created_at) > self.config.transaction_lifetime_secs {
+            return Err(AuthError::validation("the transaction has expired"));
+        }
+        match txn.request.interact.as_ref().and_then(|i| i.hints.as_ref()) {
+            Some(h) => parse_ui_locales(h).map_err(|e| AuthError::validation(e.to_string())),
+            None => Ok(Vec::new()),
+        }
     }
 
     /// Find the pending transaction a person's typed `user_code` belongs to (RFC 9635 sections
@@ -3230,6 +3271,7 @@ mod tests {
                     nonce: "client-nonce-123".to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3280,6 +3322,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3333,6 +3376,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3364,6 +3408,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3584,6 +3629,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3631,6 +3677,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3675,6 +3722,7 @@ mod tests {
                     nonce: client_nonce.to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -3730,6 +3778,7 @@ mod tests {
                     nonce: client_nonce.to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(
                 vec![GnapAccessRequest {
@@ -4295,6 +4344,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(rights.into()),
             subject: None,
@@ -4636,6 +4686,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
@@ -4663,6 +4714,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
@@ -4791,6 +4843,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
@@ -4859,6 +4912,7 @@ mod tests {
             interact: Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
@@ -6580,6 +6634,59 @@ mod proof_verification_tests {
         assert!(none["interact"].get("redirect").is_some());
     }
 
+    #[tokio::test]
+    async fn ui_locales_hints_are_checked_at_open_and_readable_for_the_consent_page() {
+        let (dpop, key) = (manager(), client_key());
+        let svc = service();
+        for (n, bad) in [
+            json!({"start": ["redirect"], "hints": {"ui_locales": "en"}}),
+            json!({"start": ["redirect"], "hints": {"ui_locales": ["en_US"]}}),
+            json!({"start": ["redirect"], "hints": ["en"]}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let r = send(
+                &svc,
+                &dpop,
+                &key,
+                &format!("hint-bad-{n}"),
+                interact_request(&key, bad.clone()),
+            )
+            .await;
+            assert!(r.is_err(), "{bad}");
+        }
+        // Positive control, built the same way: a well-formed hint opens and reads back in order.
+        send(
+            &svc,
+            &dpop,
+            &key,
+            "hint-ok",
+            interact_request(
+                &key,
+                json!({"start": ["redirect"], "hints": {"ui_locales": ["fr-CA", "en"]}}),
+            ),
+        )
+        .await
+        .unwrap();
+        let id = svc.test_first_txn().await.id;
+        assert_eq!(svc.interaction_locales(&id).await.unwrap(), ["fr-CA", "en"]);
+        assert!(svc.interaction_locales("no-such").await.is_err());
+        // no hints: empty, not an error
+        let plain = service();
+        send(
+            &plain,
+            &dpop,
+            &key,
+            "hint-none",
+            interact_request(&key, json!({"start": ["redirect"]})),
+        )
+        .await
+        .unwrap();
+        let pid = plain.test_first_txn().await.id;
+        assert!(plain.interaction_locales(&pid).await.unwrap().is_empty());
+    }
+
     #[test]
     fn the_app_uri_must_be_absolute_without_credentials_query_or_fragment() {
         for bad in [
@@ -6857,6 +6964,7 @@ mod hardening_tests {
                     nonce: "client-nonce".to_string(),
                     hash_method: None,
                 }),
+                hints: None,
             }),
             access_token_request: Some(rights(kinds).into()),
             subject: None,
@@ -7031,6 +7139,7 @@ mod hardening_tests {
             req.interact = Some(GnapInteractionRequirements {
                 start: vec!["redirect".to_string()],
                 finish: None,
+                hints: None,
             });
         }
         svc.handle_transaction(req).await.unwrap();
