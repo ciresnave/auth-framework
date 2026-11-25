@@ -123,7 +123,11 @@ pub fn parse_start(start: &Value) -> Result<Vec<StartMode>, InteractionError> {
                 "user_code_uri" => StartMode::UserCodeUri,
                 _ => StartMode::Other,
             }),
-            Value::Object(_) => Ok(StartMode::Other),
+            // object form (2.5.1): a `mode` string names the mode; an object without one is malformed
+            Value::Object(fields) => match fields.get("mode") {
+                Some(Value::String(_)) => Ok(StartMode::Other),
+                _ => err(InteractionErrorKind::InvalidRequest),
+            },
             _ => err(InteractionErrorKind::InvalidRequest),
         })
         .collect()
@@ -944,6 +948,10 @@ mod tests {
         assert!(parse_start(&json!([])).unwrap().is_empty());
         assert!(parse_start(&json!("redirect")).is_err());
         assert!(parse_start(&json!([1])).is_err());
+        // an object entry must carry a string `mode`
+        assert!(parse_start(&json!([{}])).is_err());
+        assert!(parse_start(&json!([{"mode": 1}])).is_err());
+        assert!(parse_start(&json!([{"uri": "https://x.test"}])).is_err());
     }
 
     #[test]
