@@ -3733,6 +3733,72 @@ mod tests {
         );
     }
 
+    /// RFC 9635 section 11.13, "Processing of Client-Presented User Information": it "should only ever be taken
+    /// by the AS as a hint", since the client "could assert whatever it likes". A client that names a user in
+    /// its request and asks for that user's subject information gets none: the AS releases subject information
+    /// only for a user it has itself seen approve the grant.
+    #[tokio::test]
+    async fn section_11_13_a_user_the_client_names_is_a_hint_and_releases_no_subject() {
+        let service = test_service();
+        let mut wire = serde_json::to_value(GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+            }),
+        })
+        .unwrap();
+        wire["user"] = serde_json::json!({
+            "sub_ids": [{"format": "opaque", "id": "the-victim"}]
+        });
+        let request: GnapTransactionRequest = serde_json::from_value(wire).unwrap();
+        let response = service.handle_transaction(request).await.unwrap();
+        let text = response.to_string();
+        assert!(
+            !text.contains("the-victim"),
+            "the named user is not echoed: {text}"
+        );
+        assert!(
+            response
+                .get("subject")
+                .is_none_or(|s| s.get("sub_ids").is_none()),
+            "no subject identifier is released on the client's say-so: {text}"
+        );
+
+        // Control, built the same way: after the user the AS saw approves, the subject is released.
+        let control = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+                hints: None,
+            }),
+            access_token_request: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+            }),
+        };
+        let started = service.handle_transaction(control).await.unwrap();
+        let cont = started["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id = service.test_first_txn().await.id;
+        service
+            .approve_transaction(&id, Some("user-42"))
+            .await
+            .unwrap();
+        let done = service.continue_transaction(&id, &cont, None, None).await;
+        let released = match done {
+            Ok(v) => v.to_string(),
+            Err(e) => panic!("the approved grant must continue: {e}"),
+        };
+        assert!(released.contains("user-42"), "control: {released}");
+    }
+
     // ── Subject Info ─────────────────────────────────────────────────────
 
     #[test]
