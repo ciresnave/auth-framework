@@ -3786,7 +3786,13 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        let id = service.test_first_txn().await.id;
+        let id = started["continue"]["uri"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_string();
         service
             .approve_transaction(&id, Some("user-42"))
             .await
