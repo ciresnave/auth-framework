@@ -2037,14 +2037,25 @@ impl GnapService {
         Ok(serde_json::Value::Object(response))
     }
 
-    /// The continuation URI of a transaction: `{transaction_endpoint}/continue/{id}`. RFC 9635
-    /// section 5 lets the AS choose it, and naming the transaction lets a request that carries only
-    /// the continuation token and a proof be routed to it.
+    /// The continuation URI of a transaction: `{transaction_endpoint}/continue/{id}`, made absolute on the
+    /// origin of the interaction base URL when there is one (RFC 9635 section 3.1: "MUST be an absolute
+    /// URI"); without one only the path can be given. RFC 9635 section 5 lets the AS choose it, and naming
+    /// the transaction lets a request that carries only the continuation token and a proof be routed to it.
     fn continue_uri(&self, transaction_id: &str) -> String {
-        format!(
+        let path = format!(
             "{}/continue/{}",
             self.config.transaction_endpoint, transaction_id
-        )
+        );
+        let origin = self
+            .config
+            .interaction_base_url
+            .as_deref()
+            .and_then(|base| url::Url::parse(base).ok())
+            .filter(|u| u.has_host());
+        match origin.and_then(|u| u.join(&path).ok()) {
+            Some(absolute) => absolute.to_string(),
+            None => path,
+        }
     }
 
     /// Continue a transaction without proof material. Tests only: in a build every continuation
@@ -3781,6 +3792,48 @@ mod tests {
         ] {
             assert!(request(bad.clone()).is_err(), "{bad} must be refused");
         }
+    }
+
+    /// RFC 9635 section 3.1: the continuation `uri` "MUST be an absolute URI". With an interaction base URL the
+    /// AS builds it on that origin; clients still read the grant id from its last segment. Control: with no
+    /// base URL there is nothing to make it absolute with.
+    #[tokio::test]
+    async fn section_3_1_the_continue_uri_is_absolute() {
+        let interactive = || GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+                hints: None,
+            }),
+            access_token_request: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+            }),
+        };
+        let svc = test_service();
+        let started = svc.handle_transaction(interactive()).await.unwrap();
+        let uri = started["continue"]["uri"].as_str().unwrap();
+        assert!(
+            uri.starts_with("https://auth.example.test/api/gnap/tx/continue/"),
+            "{uri}"
+        );
+
+        let bare = GnapService::new(GnapConfig {
+            interaction_base_url: None,
+            ..test_config()
+        })
+        .with_poll_wait_secs(0)
+        .with_access_policy(Arc::new(AllowAllPolicy));
+        let started = bare.handle_transaction(interactive()).await.unwrap();
+        assert!(
+            started["continue"]["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with("/api/gnap/tx/continue/"),
+            "control: no base URL, no absolute form"
+        );
     }
 
     /// RFC 9635 section 12.4.2, "Correlation by Resource Servers": an AS that puts a stable user identifier in
@@ -6175,7 +6228,10 @@ mod proof_verification_tests {
             .unwrap()
             .to_string();
         let stored_id = svc.test_first_txn().await.id;
-        assert_eq!(uri, format!("/api/gnap/tx/continue/{stored_id}"));
+        assert_eq!(
+            uri,
+            format!("https://as.example.test/api/gnap/tx/continue/{stored_id}")
+        );
 
         // The route's path parameter is the last segment of the issued URI.
         let routed_id = uri.rsplit('/').next().unwrap();
