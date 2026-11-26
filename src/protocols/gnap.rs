@@ -1713,6 +1713,17 @@ impl GnapService {
             .collect())
     }
 
+    /// The `label` of the one token a request asks for (RFC 9635 section 2.1.1), if it gave one.
+    fn requested_label(request: &GnapTransactionRequest) -> Option<&str> {
+        request
+            .access_token_request
+            .as_ref()?
+            .as_slice()
+            .first()?
+            .label
+            .as_deref()
+    }
+
     async fn build_access_token_response(
         &self,
         access_requests: &[GnapAccessRequest],
@@ -1721,6 +1732,7 @@ impl GnapService {
         key_jwk: Option<serde_json::Value>,
         transaction_id: &str,
         consent_owner: Option<Option<&str>>,
+        label: Option<&str>,
     ) -> Result<serde_json::Map<String, serde_json::Value>> {
         // The policy, not the request, decides what the token carries.
         let policy = self
@@ -1781,6 +1793,13 @@ impl GnapService {
 
         let mut token_obj = serde_json::Map::new();
         token_obj.insert("value".to_string(), serde_json::Value::String(access_token));
+        // RFC 9635 section 3.2.1: the client's own name for the token, echoed when it gave one.
+        if let Some(label) = label {
+            token_obj.insert(
+                "label".to_string(),
+                serde_json::Value::String(label.to_string()),
+            );
+        }
         token_obj.insert(
             "expires_in".to_string(),
             serde_json::Value::Number(self.config.token_lifetime_secs.into()),
@@ -1983,6 +2002,7 @@ impl GnapService {
                         Self::key_jwk_value(&request.client),
                         "direct",
                         None,
+                        Self::requested_label(&request),
                     )
                     .await?;
                 response.insert(
@@ -2243,6 +2263,7 @@ impl GnapService {
                             Self::key_jwk_value(&txn.request.client),
                             transaction_id,
                             Some(txn.subject_id.as_deref()),
+                            Self::requested_label(&txn.request),
                         )
                         .await
                     {
@@ -3827,6 +3848,35 @@ mod tests {
         })
         .with_access_policy(Arc::new(AllowAllPolicy));
         assert!(bare.handle_transaction(interactive()).await.is_err());
+    }
+
+    /// RFC 9635 section 3.2.1: `label` is "the value of the `label` the client instance provided in the
+    /// associated token request, if present", so a client with several tokens can tell them apart. A request
+    /// with no label gets none back.
+    #[tokio::test]
+    async fn section_3_2_1_the_issued_token_echoes_the_requested_label() {
+        let service = test_service();
+        let mut req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: None,
+            subject: None,
+        };
+        req.access_token_request = Some(
+            serde_json::from_value(
+                serde_json::json!({"access": [{"type": "read"}], "label": "photos"}),
+            )
+            .unwrap(),
+        );
+        let issued = service.handle_transaction(req.clone()).await.unwrap();
+        assert_eq!(issued["access_token"]["label"], "photos");
+
+        // Control: the same request without a label has no `label` in the token.
+        req.access_token_request = Some(
+            serde_json::from_value(serde_json::json!({"access": [{"type": "read"}]})).unwrap(),
+        );
+        let issued = service.handle_transaction(req).await.unwrap();
+        assert!(issued["access_token"].get("label").is_none());
     }
 
     /// RFC 9635 section 3.2.1: `key` is "the key that the token is bound to, if different from the client
