@@ -2324,7 +2324,13 @@ impl GnapService {
             .load_for_continuation(transaction_id, continue_token, dpop, proof)
             .await?;
         match self.transactions.remove(transaction_id).await? {
-            Some(gone) if gone.revision == txn.revision => Ok(()),
+            Some(gone) if gone.revision == txn.revision => {
+                // RFC 9635 section 5.4: the AS SHOULD revoke the tokens issued under a cancelled grant.
+                self.issued_tokens
+                    .remove_for_transaction(transaction_id)
+                    .await?;
+                Ok(())
+            }
             _ => Err(AuthError::validation(INVALID_CONTINUATION)),
         }
     }
@@ -6406,6 +6412,42 @@ mod proof_verification_tests {
             .await
             .expect("an approved grant can still be cancelled");
         assert!(svc.test_txn_ids().await.is_empty());
+    }
+
+    /// RFC 9635 section 5.4: "The AS SHOULD revoke all associated access tokens". Cancelling a grant takes
+    /// the tokens issued under it with it, and leaves another grant's tokens alone (control).
+    #[tokio::test]
+    async fn delete_revokes_the_tokens_issued_under_the_grant() {
+        let store = Arc::new(InMemoryTokenStore::new());
+        let svc = service().with_token_store(store.clone());
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "dt-0").await;
+        let issued = |value: &str, txn: &str| GnapIssuedToken {
+            value: value.to_string(),
+            access: vec![],
+            expires_at: u64::MAX,
+            key_thumbprint: None,
+            key_proof: None,
+            key_jwk: None,
+            transaction_id: txn.to_string(),
+        };
+        store.insert(issued("mine", &id)).await.unwrap();
+        store
+            .insert(issued("other", "another-grant"))
+            .await
+            .unwrap();
+
+        cancel(&svc, &dpop, &key, &id, &token, "dt-1")
+            .await
+            .unwrap();
+        assert!(
+            store.get("mine").await.unwrap().is_none(),
+            "its token is revoked"
+        );
+        assert!(
+            store.get("other").await.unwrap().is_some(),
+            "another grant's token is untouched"
+        );
     }
 
     #[tokio::test]
