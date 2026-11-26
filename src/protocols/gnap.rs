@@ -190,8 +190,36 @@ pub struct GnapClientDisplay {
 /// How many characters the short code of a `user_code` start has (RFC 9635 section 3.3.3 recommends six to eight).
 const USER_CODE_LEN: usize = 8;
 
+/// Read `interact.start` entries: a string, or an object carrying a string `mode` (RFC 9635 section 2.5.1).
+fn deserialize_start_modes<'de, D>(d: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let entries = Vec::<serde_json::Value>::deserialize(d)?;
+    entries
+        .into_iter()
+        .map(|e| match e {
+            serde_json::Value::String(mode) => Ok(mode),
+            serde_json::Value::Object(o) => match o.get("mode") {
+                Some(serde_json::Value::String(mode)) => Ok(mode.clone()),
+                _ => Err(D::Error::custom(
+                    "interact.start object entries need a string `mode`",
+                )),
+            },
+            _ => Err(D::Error::custom(
+                "interact.start entries are strings or objects",
+            )),
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GnapInteractionRequirements {
+    /// The start modes offered (RFC 9635 section 2.5.1). On the wire an entry is a string or an object with a
+    /// string `mode` (`{"mode":"redirect"}`); both read as the mode name. An object without a string `mode`
+    /// is refused when the request is read.
+    #[serde(deserialize_with = "deserialize_start_modes")]
     pub start: Vec<String>,
     pub finish: Option<GnapInteractionFinish>,
     /// `interact.hints` (RFC 9635 section 2.5.3). Only `ui_locales` is read, and its shape is checked at
@@ -3692,6 +3720,30 @@ mod tests {
         let last = altered.pop().unwrap();
         altered.push(if last == '0' { '1' } else { '0' });
         assert!(service.introspect_token(&altered).await.unwrap().is_none());
+    }
+
+    /// RFC 9635 section 2.5.1: an `interact.start` entry may be the object form `{"mode": "redirect"}`. It must
+    /// read through the wire type, not only through `parse_start`; an object with no string `mode` is refused.
+    #[test]
+    fn section_2_5_1_the_object_form_of_start_reads_on_the_wire() {
+        let request = |start: serde_json::Value| {
+            serde_json::from_value::<GnapTransactionRequest>(serde_json::json!({
+                "interact": { "start": start }
+            }))
+        };
+        let both = request(serde_json::json!([{"mode": "redirect"}, "user_code"])).unwrap();
+        assert_eq!(both.interact.unwrap().start, ["redirect", "user_code"]);
+        assert!(
+            request(serde_json::json!(["redirect"])).is_ok(),
+            "control: the string form"
+        );
+        for bad in [
+            serde_json::json!([{}]),
+            serde_json::json!([{"mode": 7}]),
+            serde_json::json!([7]),
+        ] {
+            assert!(request(bad.clone()).is_err(), "{bad} must be refused");
+        }
     }
 
     /// RFC 9635 section 12.4.2, "Correlation by Resource Servers": an AS that puts a stable user identifier in
