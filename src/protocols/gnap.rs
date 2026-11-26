@@ -573,6 +573,9 @@ pub struct GnapService {
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
+    /// The authorization server's issuer identifier, the `iss` of an `iss_sub` subject identifier (RFC 9635
+    /// section 3.4, RFC 9493). See [`GnapService::with_issuer`].
+    issuer: Option<String>,
     /// The short page a person types a `user_code_uri` code into (RFC 9635 section 3.3.4); without
     /// one that start mode is not offered. See [`GnapService::with_user_code_uri`].
     user_code_uri: Option<url::Url>,
@@ -672,6 +675,7 @@ impl GnapService {
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             rotated: std::sync::Mutex::new(std::collections::HashMap::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
+            issuer: None,
             user_code_uri: None,
             max_bad_attempts: DEFAULT_MAX_BAD_ATTEMPTS,
             app_uri: None,
@@ -694,6 +698,28 @@ impl GnapService {
         }
         self.clock = Arc::new(clock);
         self
+    }
+
+    /// Set the issuer identifier this server uses as the `iss` of an `iss_sub` subject identifier (RFC 9635
+    /// section 3.4, RFC 9493): an absolute `https` URL with no query or fragment. Without one the
+    /// `interaction_base_url` is used, and without that the `iss_sub` format is not offered.
+    pub fn with_issuer(mut self, issuer: &str) -> Result<Self> {
+        let parsed = url::Url::parse(issuer)
+            .map_err(|e| AuthError::config(format!("GNAP issuer is not a URL: {e}")))?;
+        if parsed.scheme() != "https" || parsed.query().is_some() || parsed.fragment().is_some() {
+            return Err(AuthError::config(
+                "GNAP issuer must be an https URL without query or fragment",
+            ));
+        }
+        self.issuer = Some(issuer.to_string());
+        Ok(self)
+    }
+
+    /// The `iss` for `iss_sub`: the configured issuer, else the interaction base URL.
+    fn issuer_identifier(&self) -> Option<&str> {
+        self.issuer
+            .as_deref()
+            .or(self.config.interaction_base_url.as_deref())
     }
 
     /// Set the seconds a client must wait between polls of a pending transaction (default 5). A
@@ -1969,7 +1995,8 @@ impl GnapService {
 
             // If subject info was requested, include it (draft §2.2)
             if let Some(ref subject_req) = request.subject {
-                let subject_resp = Self::build_subject_response(subject_req, None);
+                let subject_resp =
+                    Self::build_subject_response(subject_req, None, self.issuer_identifier());
                 response.insert(
                     "subject".to_string(),
                     serde_json::Value::Object(subject_resp),
@@ -2222,8 +2249,11 @@ impl GnapService {
 
                 // Include subject info if requested and available
                 if let Some(ref subject_req) = txn.request.subject {
-                    let subject_resp =
-                        Self::build_subject_response(subject_req, txn.subject_id.as_deref());
+                    let subject_resp = Self::build_subject_response(
+                        subject_req,
+                        txn.subject_id.as_deref(),
+                        self.issuer_identifier(),
+                    );
                     response.insert(
                         "subject".to_string(),
                         serde_json::Value::Object(subject_resp),
@@ -3004,6 +3034,7 @@ impl GnapService {
     fn build_subject_response(
         request: &GnapSubjectRequest,
         subject_id: Option<&str>,
+        issuer: Option<&str>,
     ) -> serde_json::Map<String, serde_json::Value> {
         let mut resp = serde_json::Map::new();
 
@@ -3028,11 +3059,14 @@ impl GnapService {
                         }
                     }
                     "iss_sub" => {
-                        sub_ids.push(serde_json::json!({
-                            "format": "iss_sub",
-                            "iss": "self",
-                            "sub": sid,
-                        }));
+                        // Without an issuer identifier there is no valid `iss`: not offered.
+                        if let Some(iss) = issuer {
+                            sub_ids.push(serde_json::json!({
+                                "format": "iss_sub",
+                                "iss": iss,
+                                "sub": sid,
+                            }));
+                        }
                     }
                     _ => {} // Unknown format — skip
                 }
@@ -3962,7 +3996,7 @@ mod tests {
             sub_id_formats: vec!["opaque".to_string()],
             assertion_formats: vec![],
         };
-        let resp = GnapService::build_subject_response(&req, Some("user-42"));
+        let resp = GnapService::build_subject_response(&req, Some("user-42"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
         assert_eq!(sub_ids.len(), 1);
         assert_eq!(sub_ids[0]["format"], "opaque");
@@ -3975,7 +4009,7 @@ mod tests {
             sub_id_formats: vec!["email".to_string()],
             assertion_formats: vec![],
         };
-        let resp = GnapService::build_subject_response(&req, Some("user@example.test"));
+        let resp = GnapService::build_subject_response(&req, Some("user@example.test"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
         assert_eq!(sub_ids.len(), 1);
         assert_eq!(sub_ids[0]["format"], "email");
@@ -3988,7 +4022,7 @@ mod tests {
             assertion_formats: vec![],
         };
         // Subject is not an email → defaults to opaque
-        let resp = GnapService::build_subject_response(&req, Some("user-42"));
+        let resp = GnapService::build_subject_response(&req, Some("user-42"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
         assert_eq!(sub_ids[0]["format"], "opaque");
     }
@@ -3999,10 +4033,32 @@ mod tests {
             sub_id_formats: vec!["iss_sub".to_string()],
             assertion_formats: vec![],
         };
-        let resp = GnapService::build_subject_response(&req, Some("user-42"));
+        let resp = GnapService::build_subject_response(
+            &req,
+            Some("user-42"),
+            Some("https://as.example.test"),
+        );
         let sub_ids = resp["sub_ids"].as_array().unwrap();
         assert_eq!(sub_ids[0]["format"], "iss_sub");
         assert_eq!(sub_ids[0]["sub"], "user-42");
+        assert_eq!(
+            sub_ids[0]["iss"], "https://as.example.test",
+            "the AS identifier, not a placeholder (RFC 9635 section 3.4)"
+        );
+        // With no issuer identifier there is no valid `iss`, so the format is not offered; the default is opaque.
+        let none = GnapService::build_subject_response(&req, Some("user-42"), None);
+        assert_eq!(none["sub_ids"][0]["format"], "opaque");
+        assert!(
+            GnapService::new(GnapConfig::default())
+                .with_issuer("http://as.example.test")
+                .is_err(),
+            "an issuer must be https"
+        );
+        assert!(
+            GnapService::new(GnapConfig::default())
+                .with_issuer("https://as.example.test")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -4011,7 +4067,7 @@ mod tests {
             sub_id_formats: vec!["opaque".to_string()],
             assertion_formats: vec![],
         };
-        let resp = GnapService::build_subject_response(&req, None);
+        let resp = GnapService::build_subject_response(&req, None, None);
         assert!(!resp.contains_key("sub_ids"));
     }
 
