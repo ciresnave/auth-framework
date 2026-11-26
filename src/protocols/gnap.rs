@@ -3681,6 +3681,48 @@ mod tests {
         assert!(service.introspect_token(&altered).await.unwrap().is_none());
     }
 
+    /// RFC 9635 section 12.4.2, "Correlation by Resource Servers": an AS that puts a stable user identifier in
+    /// introspection output lets unrelated resource servers correlate users. The introspection answer names
+    /// only the token facts, never a user (the field set is pinned, so adding one is a deliberate change).
+    #[tokio::test]
+    async fn section_12_4_2_introspection_names_no_user() {
+        let service = test_service();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        };
+        let resp = service.handle_transaction(req).await.unwrap();
+        let value = resp["access_token"]["value"].as_str().unwrap().to_string();
+        let info = service.introspect_token(&value).await.unwrap().unwrap();
+        let mut keys: Vec<&str> = info
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "access",
+                "active",
+                "expires_in",
+                "key_bound",
+                "key_thumbprint"
+            ],
+            "only token facts; a new field naming a user must be a deliberate change"
+        );
+    }
+
     /// RFC 9635 section 11.35, "Multiple Key Formats": "All keys presented by value are only allowed to be in a
     /// single format", else an attacker could slip a second key into one format. A key given as a JWK and
     /// also as a certificate thumbprint is refused whole and nothing is issued; so is a key with no format.
