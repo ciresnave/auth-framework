@@ -1345,7 +1345,7 @@
       "rfc": "RFC 9635",
       "section": "11.10",
       "kind": "positive",
-      "description": "A token issued to a request that named a client key is marked as bound to a key.",
+      "description": "A token issued to a request that named a client key carries no key field and no bearer flag, which RFC 9635 3.2.1 reads as bound to the presented key.",
       "config": {
         "enabled": true,
         "transaction_endpoint": "/api/gnap/tx"
@@ -1369,8 +1369,11 @@
             "assert": [
               {
                 "path": "/access_token/key",
-                "op": "equals",
-                "value": true
+                "op": "absent"
+              },
+              {
+                "path": "/access_token/flags",
+                "op": "absent"
               }
             ]
           }

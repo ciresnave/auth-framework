@@ -1792,10 +1792,8 @@ impl GnapService {
             serde_json::Value::String(format!("{}/token", self.config.transaction_endpoint)),
         );
 
-        // If key-bound, indicate the key binding
-        if key_thumbprint.is_some() {
-            token_obj.insert("key".to_string(), serde_json::Value::Bool(true));
-        }
+        // No `key` field: the token is bound to the key the client presented, which RFC 9635 section 3.2.1
+        // says is shown by omitting `key` (it is only for a key different from the presented one).
 
         let access_json: Vec<serde_json::Value> = access_requests
             .iter()
@@ -2895,9 +2893,6 @@ impl GnapService {
             "manage".to_string(),
             serde_json::Value::String(format!("{}/token", self.config.transaction_endpoint)),
         );
-        if new_token.key_thumbprint.is_some() {
-            token_obj.insert("key".to_string(), serde_json::Value::Bool(true));
-        }
         let access_json: Vec<serde_json::Value> = old
             .access
             .iter()
@@ -3420,7 +3415,10 @@ mod tests {
         assert!(token_obj.contains_key("value"));
         assert!(token_obj.contains_key("expires_in"));
         assert!(token_obj.contains_key("manage"));
-        assert_eq!(token_obj.get("key").and_then(|v| v.as_bool()), Some(true));
+        assert!(
+            !token_obj.contains_key("key"),
+            "bound to the presented key: no key field"
+        );
     }
 
     #[tokio::test]
@@ -3757,7 +3755,10 @@ mod tests {
                 !value.contains("read"),
                 "the value says nothing of the access it stands for"
             );
-            assert_eq!(token["key"], true, "key-bound by default");
+            assert!(
+                token.get("key").is_none(),
+                "bound to the presented key by default"
+            );
             assert!(values.insert(value.clone()), "no two tokens are equal");
             first.get_or_insert(value);
         }
@@ -3826,6 +3827,48 @@ mod tests {
         })
         .with_access_policy(Arc::new(AllowAllPolicy));
         assert!(bare.handle_transaction(interactive()).await.is_err());
+    }
+
+    /// RFC 9635 section 3.2.1: `key` is "the key that the token is bound to, if different from the client
+    /// instance's presented key", an object or a string; "if the bearer flag and the key field ... are omitted,
+    /// the token is bound to the key used by the client instance". A boolean is no defined value, so a token
+    /// bound to the presented key (the only binding this AS makes) carries no `key`, on issue and rotation.
+    #[tokio::test]
+    async fn section_3_2_1_a_token_bound_to_the_presented_key_carries_no_key_field() {
+        let service = test_service();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        };
+        let issued = service.handle_transaction(req).await.unwrap();
+        let value = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let rotated = service.rotate_token(&value).await.unwrap();
+        for (label, token) in [("issue", &issued["access_token"]), ("rotation", &rotated)] {
+            assert!(token.get("key").is_none(), "{label}: {token}");
+            assert!(
+                token.get("flags").is_none(),
+                "{label}: not a bearer token, so no bearer flag"
+            );
+        }
+        // Still bound: the stored token carries the presented key's thumbprint.
+        let info = service
+            .introspect_token(rotated["value"].as_str().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(info["key_bound"], true);
     }
 
     /// RFC 9635 section 12.4.2, "Correlation by Resource Servers": an AS that puts a stable user identifier in
@@ -3996,7 +4039,7 @@ mod tests {
 
     /// RFC 9635 section 11.38, "AS-Provided Token Keys": an AS that returns its own key with a token enables a
     /// substitution attack, so "returning a key ... should be limited". This service never returns key
-    /// material: `key` in a token response is the flag `true` (bound to the client's own key), on issue and on
+    /// material: a token response carries no `key` (bound to the client's own key, section 3.2.1), on issue and on
     /// rotation alike, and no response carries a private key parameter.
     #[tokio::test]
     async fn section_11_38_a_token_response_never_carries_a_key_of_the_ass_choosing() {
@@ -4021,9 +4064,9 @@ mod tests {
             .to_string();
         let rotated = service.rotate_token(&token).await.unwrap();
         for (label, response) in [("issue", &issued["access_token"]), ("rotation", &rotated)] {
-            assert_eq!(
-                response["key"], true,
-                "{label}: the flag, never a key object or a reference"
+            assert!(
+                response.get("key").is_none(),
+                "{label}: no key object, string or reference"
             );
             let text = response.to_string();
             assert!(
