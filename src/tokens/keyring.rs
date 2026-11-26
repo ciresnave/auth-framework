@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 /// What one live key signs and verifies with. HMAC keys sign HS256; a `JwsSigning` key signs
-/// ES256 or EdDSA (the `alg` the store reports). A key verifies only its own algorithm, so a
+/// ES256, ES384, RS256 or EdDSA (the `alg` the store reports). A key verifies only its own algorithm, so a
 /// token cannot pick a weaker one for a key id.
 #[derive(Clone)]
 pub(super) enum RingKey {
@@ -60,6 +60,19 @@ impl RingKey {
     }
 }
 
+/// PEM-encode a DER PKCS#8 `PrivateKey` (RFC 7468).
+fn pkcs8_pem(der: &[u8]) -> Zeroizing<String> {
+    use base64::Engine;
+    let b64 = Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(der));
+    let mut out = Zeroizing::new(String::from("-----BEGIN PRIVATE KEY-----\n"));
+    for chunk in b64.as_bytes().chunks(64) {
+        out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+        out.push('\n');
+    }
+    out.push_str("-----END PRIVATE KEY-----\n");
+    out
+}
+
 /// Build the ring entry for an asymmetric key: verify from the public JWK, sign from the
 /// exported PKCS8. `None` for an algorithm the token manager does not use.
 async fn asymmetric_entry(
@@ -69,6 +82,8 @@ async fn asymmetric_entry(
 ) -> Result<Option<RingKey>> {
     let alg = match info.alg.as_str() {
         "ES256" => jsonwebtoken::Algorithm::ES256,
+        "ES384" => jsonwebtoken::Algorithm::ES384,
+        "RS256" => jsonwebtoken::Algorithm::RS256,
         "EdDSA" => jsonwebtoken::Algorithm::EdDSA,
         _ => return Ok(None),
     };
@@ -78,8 +93,14 @@ async fn asymmetric_entry(
     let jwk = public.to_value();
     let member = |n: &str| jwk.get(n).and_then(|v| v.as_str()).map(str::to_string);
     let decoding = match alg {
-        jsonwebtoken::Algorithm::ES256 => match (member("x"), member("y")) {
-            (Some(x), Some(y)) => jsonwebtoken::DecodingKey::from_ec_components(&x, &y),
+        jsonwebtoken::Algorithm::ES256 | jsonwebtoken::Algorithm::ES384 => {
+            match (member("x"), member("y")) {
+                (Some(x), Some(y)) => jsonwebtoken::DecodingKey::from_ec_components(&x, &y),
+                _ => return Ok(None),
+            }
+        }
+        jsonwebtoken::Algorithm::RS256 => match (member("n"), member("e")) {
+            (Some(n), Some(e)) => jsonwebtoken::DecodingKey::from_rsa_components(&n, &e),
             _ => return Ok(None),
         },
         _ => match member("x") {
@@ -92,7 +113,15 @@ async fn asymmetric_entry(
     let encoding = if need_private {
         let der = store.export_private_pkcs8(&info.kid).await?;
         Some(Arc::new(match alg {
-            jsonwebtoken::Algorithm::ES256 => jsonwebtoken::EncodingKey::from_ec_der(&der),
+            jsonwebtoken::Algorithm::ES256 | jsonwebtoken::Algorithm::ES384 => {
+                jsonwebtoken::EncodingKey::from_ec_der(&der)
+            }
+            // The store exports PKCS#8; `from_rsa_der` wants PKCS#1, so go through PEM.
+            jsonwebtoken::Algorithm::RS256 => {
+                let pem = pkcs8_pem(&der);
+                jsonwebtoken::EncodingKey::from_rsa_pem(pem.as_bytes())
+                    .map_err(|e| AuthError::crypto(format!("bad RSA key in the key store: {e}")))?
+            }
             _ => jsonwebtoken::EncodingKey::from_ed_der(&der),
         }))
     } else {
@@ -260,7 +289,7 @@ impl KeyRing {
     }
 
     /// The JWKS of the live asymmetric keys in this snapshot: `Active` and `Retiring`
-    /// ES256/EdDSA keys, sorted by key id, never an HMAC key and never a private member.
+    /// ES256/ES384/RS256/EdDSA keys, sorted by key id, never an HMAC key and never a private member.
     /// A revoked or destroyed key is gone after the next refresh, and a snapshot older than
     /// its staleness bound refuses to publish (it could still advertise a revoked key).
     pub fn public_jwks(&self) -> Result<crate::keys::JwkSet> {
@@ -559,6 +588,8 @@ mod tests {
         for (alg, name) in [
             (crate::keys::SigningAlg::Es256, "ES256"),
             (crate::keys::SigningAlg::EdDsa, "EdDSA"),
+            (crate::keys::SigningAlg::Es384, "ES384"),
+            (crate::keys::SigningAlg::Rs256, "RS256"),
         ] {
             let s = MemoryKeyStore::new();
             s.insert(asym("a1", alg), KeyState::Active).await.unwrap();

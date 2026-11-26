@@ -27,7 +27,7 @@ row says what blocks it. Version numbers are the PM's, so none appear here.
 | KM2 | X25519 generation for JWE agreement keys | a `KeyStore` trait change: `LocalKey` is signing-only (design: `docs/KEY_AGREEMENT_DESIGN.md`) |
 | KM3 | OS keystore, then TPM/PKCS#11/KMS; a non-exportable key signing in place | no store sets `StoreCapabilities::signs_in_place` yet |
 | KM5 (rest) | publishing the revocation (CRL/OCSP input, an event) | not started |
-| KM6 (rest) | ES384/RS256 in the ring | not started; the cache header value is `JwkSet::cache_control(overlap)` (day 11-26 branch); serving it is the host's route |
+| KM6 (rest) | done: ES384/RS256 in the ring (day 11-26 branch) | the cache header value is `JwkSet::cache_control(overlap)` (day 11-26 branch); serving it is the host's route |
 | KM7 (rest) | renewal before expiry; CA key custody through the key store | KM3 |
 | KM8 | audit-logging every command, `--export-private`, `verify`, an `auth-framework keys` binary name | not started |
 | SEC-012 (#463) | 79 structs derive `Debug` over a secret-named field | decided `scheduled`: #491 (merged) redacts 11 types; **done on the day branch**: the renames (`GnapTransactionRequest.access_token_request`, `ServiceProviderConfig.change_password_flag`, wire names kept and tested) and reasoned `// sec012: public - ...` markers on the seven fields the rule names (acme `token`, `access_token_request`, `authorization_code` grant descriptor, `change_password_flag`, `username_token` / `binary_security_token`, `client_credentials` count-only Debug). `coderipper` 0.47.14 `check SEC-012` at the day branch: 0 Medium, 7 Info waived (it reads committed files, so run it after committing). Close #463 when the PR merges |
