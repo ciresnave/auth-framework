@@ -2868,7 +2868,8 @@ impl GnapService {
 
         let response = serde_json::Value::Object(token_obj);
         // A key rotation is not remembered: a retry would need both keys' proofs again.
-        if !key_rotated {
+        // A token with no key has nothing to prove a retry with: it is not remembered either.
+        if !key_rotated && old.key_thumbprint.is_some() {
             let mut map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
             map.retain(|_, r| now.saturating_sub(r.at) <= ROTATION_RETRY_SECS);
             map.insert(
@@ -2903,8 +2904,10 @@ impl GnapService {
         let Some(record) = record else {
             return Ok(None);
         };
-        if self.issued_tokens.get(&record.new_value).await?.is_none() {
-            return Ok(None);
+        // The store does not filter by expiry: a token already past its lifetime is not handed back.
+        match self.issued_tokens.get(&record.new_value).await? {
+            Some(new) if now < new.expires_at => {}
+            _ => return Ok(None),
         }
         self.verify_token_key_proof(
             record.thumbprint.as_deref(),
@@ -8254,6 +8257,87 @@ mod httpsig_proof_tests {
         assert!(
             svc.rotate_token(&token).await.is_err(),
             "discarded after use"
+        );
+    }
+
+    /// A retried rotation never hands back a token that is already dead: with a token lifetime shorter than the
+    /// 30 s retry window the new token can expire inside it, and the retry is then the normal refusal.
+    #[tokio::test]
+    async fn a_retried_rotation_does_not_return_an_expired_token() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let time = Arc::new(AtomicU64::new(1_800_000_000));
+        let clock = Arc::clone(&time);
+        let svc = GnapService::new(GnapConfig {
+            enabled: true,
+            transaction_endpoint: "/api/gnap/tx".to_string(),
+            interaction_base_url: Some("https://as.example.test".to_string()),
+            token_lifetime_secs: 5,
+            transaction_lifetime_secs: 600,
+        })
+        .with_poll_wait_secs(0)
+        .with_access_policy(Arc::new(AllowAllPolicy))
+        .with_clock(move || clock.load(Ordering::SeqCst));
+        let key = signer();
+        let issued = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let rotated = svc.rotate_token(&token).await.unwrap();
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+
+        // Control: inside the new token's lifetime the retry gets the same token.
+        time.fetch_add(2, Ordering::SeqCst);
+        assert_eq!(svc.rotate_token(&token).await.unwrap()["value"], fresh);
+        // Past its lifetime (still inside the 30 s window) the retry is refused.
+        time.fetch_add(8, Ordering::SeqCst);
+        // (Not introspected: seeing the new token in use would drop the retry record.)
+        assert!(
+            svc.issued_tokens.get(&fresh).await.unwrap().is_some(),
+            "stored, but expired"
+        );
+        assert!(
+            svc.rotate_token(&token).await.is_err(),
+            "no expired token is handed back"
+        );
+    }
+
+    /// A token that carries no key has nothing to prove a retry with, so a rotation of it leaves no retry
+    /// record: the retired value is the normal refusal at once (RFC 9635 section 11.33).
+    #[tokio::test]
+    async fn a_keyless_token_leaves_no_retry_record_when_rotated() {
+        let store = Arc::new(InMemoryTokenStore::new());
+        let svc = service().with_token_store(store.clone());
+        store
+            .insert(GnapIssuedToken {
+                value: "keyless".to_string(),
+                access: vec![],
+                expires_at: u64::MAX,
+                key_thumbprint: None,
+                key_proof: None,
+                key_jwk: None,
+                transaction_id: "t".to_string(),
+            })
+            .await
+            .unwrap();
+        let rotated = svc.rotate_token("keyless").await.unwrap();
+        assert!(rotated["value"].is_string());
+        assert!(
+            svc.rotate_token("keyless").await.is_err(),
+            "the retired keyless value is not answered again"
+        );
+
+        // Control: a key-bound token still gets its retry.
+        let key = signer();
+        let issued = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let bound = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let first = svc.rotate_token(&bound).await.unwrap();
+        assert_eq!(
+            svc.rotate_token(&bound).await.unwrap()["value"],
+            first["value"]
         );
     }
 
