@@ -2111,6 +2111,23 @@ impl GnapService {
         Ok(serde_json::Value::Object(response))
     }
 
+    /// The grant URL the client posts to, made absolute on the origin of the interaction base URL when
+    /// there is one: RFC 9635 section 4.2.3 hashes that absolute URL. Without a base URL only the
+    /// configured path can be used.
+    fn grant_url(&self) -> String {
+        let path = &self.config.transaction_endpoint;
+        let origin = self
+            .config
+            .interaction_base_url
+            .as_deref()
+            .and_then(|base| url::Url::parse(base).ok())
+            .filter(|u| u.has_host());
+        match origin.and_then(|u| u.join(path).ok()) {
+            Some(absolute) => absolute.to_string(),
+            None => path.clone(),
+        }
+    }
+
     /// The continuation URI of a transaction: `{transaction_endpoint}/continue/{id}`, made absolute on the
     /// origin of the interaction base URL when there is one (RFC 9635 section 3.1: "MUST be an absolute
     /// URI"); without one only the path can be given. RFC 9635 section 5 lets the AS choose it, and naming
@@ -2229,7 +2246,7 @@ impl GnapService {
                 client_nonce,
                 server_nonce,
                 iref,
-                &self.config.transaction_endpoint,
+                &self.grant_url(),
                 method,
             );
             if !bool::from(subtle::ConstantTimeEq::ct_eq(
@@ -2523,7 +2540,7 @@ impl GnapService {
         transaction_id: &str,
         subject_id: Option<&str>,
     ) -> Result<GnapInteractionCompletion> {
-        let endpoint = &self.config.transaction_endpoint;
+        let endpoint = &self.grant_url();
         self.update_transaction(transaction_id, |txn| {
             txn.state = GnapTransactionState::Approved;
             if let Some(sid) = subject_id {
@@ -2623,7 +2640,7 @@ impl GnapService {
             &finish.nonce,
             txn.interact_nonce.as_deref().unwrap_or(""),
             interact_ref,
-            &self.config.transaction_endpoint,
+            &self.grant_url(),
             Self::hash_method_of(finish.hash_method.as_deref()),
         );
         deliver_push(&uri, &hash, interact_ref, resolver, sender)
@@ -2677,7 +2694,7 @@ impl GnapService {
             &finish.nonce,
             txn.interact_nonce.as_deref().unwrap_or(""),
             interact_ref,
-            &self.config.transaction_endpoint,
+            &self.grant_url(),
             Self::hash_method_of(finish.hash_method.as_deref()),
         );
         Ok(crate::protocols::gnap_interaction::callback_redirect_url(
@@ -4386,6 +4403,45 @@ mod tests {
         assert_eq!(service.transactions.count().await.unwrap(), 0);
     }
 
+    /// RFC 9635 section 4.2.3 hashes the grant URL the client used, an absolute URL: with an
+    /// interaction base URL the hash input is that origin plus the transaction endpoint.
+    #[tokio::test]
+    async fn test_interaction_hash_uses_absolute_grant_url() {
+        let service = test_service();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: Some(GnapInteractionFinish {
+                    method: "redirect".to_string(),
+                    uri: "https://client.test/cb".to_string(),
+                    nonce: "cn-abs".to_string(),
+                    hash_method: None,
+                }),
+                hints: None,
+            }),
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        let txn = service.test_first_txn().await;
+        let done = service.approve_transaction(&txn.id, None).await.unwrap();
+        let expected = GnapService::compute_interact_hash(
+            "cn-abs",
+            txn.interact_nonce.as_deref().unwrap(),
+            done.interact_ref.as_deref().unwrap(),
+            "https://auth.example.test/api/gnap/tx",
+        );
+        assert_eq!(done.hash.as_deref(), Some(expected.as_str()));
+    }
+
     // ── Interaction Hash Verification ────────────────────────────────────
 
     #[tokio::test]
@@ -4427,7 +4483,7 @@ mod tests {
             client_nonce,
             &server_nonce,
             interact_ref,
-            &service.config.transaction_endpoint,
+            &service.grant_url(),
         );
         assert_eq!(done.hash.as_deref(), Some(correct_hash.as_str()));
 
@@ -4485,7 +4541,7 @@ mod tests {
                 client_nonce,
                 txn.interact_nonce.as_deref().unwrap(),
                 &interact_ref,
-                &service.config.transaction_endpoint,
+                &service.grant_url(),
             ),
             "the hash approve returns is the section 4.2.3 hash"
         );
@@ -7292,7 +7348,7 @@ mod proof_verification_tests {
                 "cn",
                 txn.interact_nonce.as_deref().unwrap(),
                 &iref,
-                &svc.config.transaction_endpoint,
+                &svc.grant_url(),
                 method,
             )
             .unwrap();
