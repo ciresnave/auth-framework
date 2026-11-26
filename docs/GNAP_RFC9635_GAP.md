@@ -36,7 +36,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 3.1 `continue` (`uri`, `wait`, `access_token`) | **done** | `uri` is `{transaction_endpoint}/continue` (999-1000, 1150-1153), `wait` is `with_poll_wait_secs` (default 5, 0 = off) and is enforced, a rotated continuation token (done, tested) | `uri` is absolute (on the origin of `interaction_base_url`, `section_3_1_the_continue_uri_is_absolute`); a service with no base URL can only give the path |
+| 3.1 `continue` (`uri`, `wait`, `access_token`) | **done** | `uri` is `{transaction_endpoint}/continue` (999-1000, 1150-1153), `wait` is `with_poll_wait_secs` (default 5, 0 = off) and is enforced, a rotated continuation token (done, tested) | `uri` is absolute (on the origin of `interaction_base_url`, `section_3_1_the_continue_uri_is_absolute`); an interactive flow needs the base URL, so a pending grant always has one |
 | 3.2.1 access token `value`, `expires_in`, `access` | **done / partial** | `value`, `expires_in` (832), `access` = what the policy granted (the token is no longer the request echoed) | `access` may differ from the request, which the RFC allows; strings (8.1) are not represented |
 | 3.2.1 `label`, `flags` | **missing** | none | a key-less token carries no `bearer` flag |
 | 3.2.1 `manage` | **wrong type** | a string `{endpoint}/token` (838-839, 1326-1327), the same for every token | RFC: an object `{uri, access_token}`, uri per token, with its own key-bound management token |

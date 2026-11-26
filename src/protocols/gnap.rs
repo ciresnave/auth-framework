@@ -3795,8 +3795,7 @@ mod tests {
     }
 
     /// RFC 9635 section 3.1: the continuation `uri` "MUST be an absolute URI". With an interaction base URL the
-    /// AS builds it on that origin; clients still read the grant id from its last segment. Control: with no
-    /// base URL there is nothing to make it absolute with.
+    /// AS builds it on that origin; clients still read the grant id from its last segment.
     #[tokio::test]
     async fn section_3_1_the_continue_uri_is_absolute() {
         let interactive = || GnapTransactionRequest {
@@ -3820,20 +3819,13 @@ mod tests {
             "{uri}"
         );
 
+        // Control: no base URL, no interactive flow at all, so a pending grant always has an origin to build on.
         let bare = GnapService::new(GnapConfig {
             interaction_base_url: None,
             ..test_config()
         })
-        .with_poll_wait_secs(0)
         .with_access_policy(Arc::new(AllowAllPolicy));
-        let started = bare.handle_transaction(interactive()).await.unwrap();
-        assert!(
-            started["continue"]["uri"]
-                .as_str()
-                .unwrap()
-                .starts_with("/api/gnap/tx/continue/"),
-            "control: no base URL, no absolute form"
-        );
+        assert!(bare.handle_transaction(interactive()).await.is_err());
     }
 
     /// RFC 9635 section 12.4.2, "Correlation by Resource Servers": an AS that puts a stable user identifier in
