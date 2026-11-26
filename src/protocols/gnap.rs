@@ -539,6 +539,9 @@ pub struct GnapService {
     /// Wrong user codes typed per caller: (count, when the window began). See
     /// [`GnapService::transaction_for_user_code`].
     code_failures: std::sync::Mutex<std::collections::HashMap<String, (u32, u64)>>,
+    /// Rotations answered in the last [`ROTATION_RETRY_SECS`] seconds, keyed by the old token value, so a client
+    /// that lost the response can retry (RFC 9635 section 11.33). Kept in this process only.
+    rotated: std::sync::Mutex<std::collections::HashMap<String, RotatedToken>>,
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
@@ -615,6 +618,21 @@ const POLICY_REQUIRED: &str = "GNAP access denied: no access policy is configure
 /// Refusal to issue an access token when the policy grants nothing.
 const ACCESS_DENIED: &str = "request_denied: GNAP access denied by policy";
 
+/// Seconds after a rotation during which a retry with the old token gets the same new token (RFC 9635
+/// section 11.33: "a few seconds since the first rotation attempt").
+const ROTATION_RETRY_SECS: u64 = 30;
+
+/// What a retried rotation needs: the answer already given, and the retired token's key to prove again.
+#[derive(Clone)]
+struct RotatedToken {
+    new_value: String,
+    response: serde_json::Value,
+    thumbprint: Option<String>,
+    method: Option<String>,
+    jwk: Option<serde_json::Value>,
+    at: u64,
+}
+
 impl GnapService {
     pub fn new(config: GnapConfig) -> Self {
         Self {
@@ -624,6 +642,7 @@ impl GnapService {
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
             consents: Arc::new(InMemoryConsentStore::new()),
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
+            rotated: std::sync::Mutex::new(std::collections::HashMap::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
             user_code_uri: None,
             max_bad_attempts: DEFAULT_MAX_BAD_ATTEMPTS,
@@ -1874,6 +1893,12 @@ impl GnapService {
                 let _ = &finish.nonce; // client_nonce is used later for hash
             }
 
+            // RFC 9635 section 3.3: the interaction lives as long as the transaction does.
+            interact_res.insert(
+                "expires_in".to_string(),
+                serde_json::json!(self.config.transaction_lifetime_secs),
+            );
+
             response.insert(
                 "interact".to_string(),
                 serde_json::Value::Object(interact_res),
@@ -2744,6 +2769,9 @@ impl GnapService {
     ) -> Result<serde_json::Value> {
         // A key rotation has been proved by both keys already; every other rotation needs the token's key.
         if new_key.is_none() {
+            if let Some(again) = self.retried_rotation(old_token_value, dpop).await? {
+                return Ok(again);
+            }
             self.require_token_key_proof(
                 old_token_value,
                 "Token not found or already revoked",
@@ -2764,6 +2792,7 @@ impl GnapService {
         }
 
         let new_value = uuid::Uuid::new_v4().to_string();
+        let key_rotated = new_key.is_some();
         let (key_thumbprint, key_jwk) = match new_key {
             Some((thumbprint, jwk)) => (Some(thumbprint), Some(jwk)),
             None => (old.key_thumbprint.clone(), old.key_jwk.clone()),
@@ -2803,7 +2832,54 @@ impl GnapService {
 
         self.issued_tokens.insert(new_token).await?;
 
-        Ok(serde_json::Value::Object(token_obj))
+        let response = serde_json::Value::Object(token_obj);
+        // A key rotation is not remembered: a retry would need both keys' proofs again.
+        if !key_rotated {
+            let mut map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
+            map.retain(|_, r| now.saturating_sub(r.at) <= ROTATION_RETRY_SECS);
+            map.insert(
+                old_token_value.to_string(),
+                RotatedToken {
+                    new_value,
+                    response: response.clone(),
+                    thumbprint: old.key_thumbprint,
+                    method: old.key_proof,
+                    jwk: old.key_jwk,
+                    at: now,
+                },
+            );
+        }
+        Ok(response)
+    }
+
+    /// The answer to a rotation the client is repeating because it never saw the response (RFC 9635
+    /// section 11.33). The retry proves the retired token's key again; once the new token has been seen
+    /// in use (see `introspect_token`) the record is gone and the retry is refused like any retired token.
+    async fn retried_rotation(
+        &self,
+        old_token_value: &str,
+        dpop: Option<(&DpopManager, &GnapProof<'_>)>,
+    ) -> Result<Option<serde_json::Value>> {
+        let now = self.now();
+        let record = {
+            let mut map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
+            map.retain(|_, r| now.saturating_sub(r.at) <= ROTATION_RETRY_SECS);
+            map.get(old_token_value).cloned()
+        };
+        let Some(record) = record else {
+            return Ok(None);
+        };
+        if self.issued_tokens.get(&record.new_value).await?.is_none() {
+            return Ok(None);
+        }
+        self.verify_token_key_proof(
+            record.thumbprint.as_deref(),
+            record.method.as_deref(),
+            record.jwk.as_ref(),
+            dpop,
+        )
+        .await?;
+        Ok(Some(record.response))
     }
 
     /// Introspect a token — check if it is valid and return its access rights.
@@ -2812,6 +2888,13 @@ impl GnapService {
             Some(t) => t,
             None => return Ok(None),
         };
+
+        // The client has shown it holds the new token, so the old one is no longer needed for a retry
+        // (RFC 9635 section 11.33).
+        self.rotated
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, r| r.new_value != token_value);
 
         let now = self.now();
 
@@ -3291,6 +3374,7 @@ mod tests {
         let interact = obj["interact"].as_object().unwrap();
         assert!(interact.contains_key("redirect"));
         assert!(interact.contains_key("finish"));
+        assert_eq!(interact["expires_in"], serde_json::json!(600));
     }
 
     #[tokio::test]
@@ -3556,6 +3640,257 @@ mod tests {
             .await
             .unwrap();
         assert!(!bad);
+    }
+
+    /// RFC 9635 section 11.8, "Generation of Access Tokens": the contents of a token must be "such that only
+    /// the generating AS would be able to create them", for example "a cryptographically random value ... with
+    /// sufficiently high entropy". And 11.9 / 11.10: "key-bound access tokens are the default". Identical
+    /// requests give distinct, long values that carry nothing about the grant, a value one character off is
+    /// not a token, and the token is key-bound unless the client had no key.
+    #[tokio::test]
+    async fn section_11_8_access_tokens_are_random_opaque_and_key_bound_by_default() {
+        let service = test_service();
+        let ec_jwk = test_ec_jwk();
+        let mut values = std::collections::HashSet::new();
+        let mut first = None;
+        for _ in 0..50 {
+            let req = GnapTransactionRequest {
+                client: Some(test_client_info(ec_jwk.clone())),
+                interact: None,
+                access_token_request: Some(
+                    vec![GnapAccessRequest {
+                        access_type: "read".to_string(),
+                        actions: vec![],
+                        locations: vec![],
+                    }]
+                    .into(),
+                ),
+                subject: None,
+            };
+            let resp = service.handle_transaction(req).await.unwrap();
+            let token = &resp["access_token"];
+            let value = token["value"].as_str().unwrap().to_string();
+            assert!(value.len() >= 32, "enough characters for 122 random bits");
+            assert!(
+                !value.contains("read"),
+                "the value says nothing of the access it stands for"
+            );
+            assert_eq!(token["key"], true, "key-bound by default");
+            assert!(values.insert(value.clone()), "no two tokens are equal");
+            first.get_or_insert(value);
+        }
+        // A value one character off is not a token (control: the original is).
+        let real = first.unwrap();
+        assert!(service.introspect_token(&real).await.unwrap().is_some());
+        let mut altered = real.clone();
+        let last = altered.pop().unwrap();
+        altered.push(if last == '0' { '1' } else { '0' });
+        assert!(service.introspect_token(&altered).await.unwrap().is_none());
+    }
+
+    /// RFC 9635 section 12.4.2, "Correlation by Resource Servers": an AS that puts a stable user identifier in
+    /// introspection output lets unrelated resource servers correlate users. The introspection answer names
+    /// only the token facts, never a user (the field set is pinned, so adding one is a deliberate change).
+    #[tokio::test]
+    async fn section_12_4_2_introspection_names_no_user() {
+        let service = test_service();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        };
+        let resp = service.handle_transaction(req).await.unwrap();
+        let value = resp["access_token"]["value"].as_str().unwrap().to_string();
+        let info = service.introspect_token(&value).await.unwrap().unwrap();
+        let mut keys: Vec<&str> = info
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "access",
+                "active",
+                "expires_in",
+                "key_bound",
+                "key_thumbprint"
+            ],
+            "only token facts; a new field naming a user must be a deliberate change"
+        );
+    }
+
+    /// RFC 9635 section 11.35, "Multiple Key Formats": "All keys presented by value are only allowed to be in a
+    /// single format", else an attacker could slip a second key into one format. A key given as a JWK and
+    /// also as a certificate thumbprint is refused whole and nothing is issued; so is a key with no format.
+    #[tokio::test]
+    async fn section_11_35_a_key_in_two_formats_or_none_is_refused() {
+        let service = test_service();
+        let build = |jwk: Option<GnapJwk>, cert_s256: Option<&str>| {
+            let mut client = test_client_info(test_ec_jwk());
+            let key = client.key.as_mut().unwrap();
+            key.jwk = jwk;
+            key.cert_s256 = cert_s256.map(str::to_string);
+            GnapTransactionRequest {
+                client: Some(client),
+                interact: None,
+                access_token_request: Some(
+                    vec![GnapAccessRequest {
+                        access_type: "read".to_string(),
+                        actions: vec![],
+                        locations: vec![],
+                    }]
+                    .into(),
+                ),
+                subject: None,
+            }
+        };
+        // Control, built the same way: one format is accepted.
+        service
+            .handle_transaction(build(Some(test_ec_jwk()), None))
+            .await
+            .expect("a key in one format is accepted");
+        let issued = service.issued_tokens.count().await.unwrap();
+        for (label, request) in [
+            (
+                "jwk and cert#S256",
+                build(Some(test_ec_jwk()), Some("AAAA")),
+            ),
+            ("no format", build(None, None)),
+        ] {
+            let err = service
+                .handle_transaction(request)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("exactly one"), "{label}: {err}");
+        }
+        assert_eq!(
+            service.issued_tokens.count().await.unwrap(),
+            issued,
+            "nothing issued"
+        );
+    }
+
+    /// RFC 9635 section 11.13, "Processing of Client-Presented User Information": it "should only ever be taken
+    /// by the AS as a hint", since the client "could assert whatever it likes". A client that names a user in
+    /// its request and asks for that user's subject information gets none: the AS releases subject information
+    /// only for a user it has itself seen approve the grant.
+    #[tokio::test]
+    async fn section_11_13_a_user_the_client_names_is_a_hint_and_releases_no_subject() {
+        let service = test_service();
+        let mut wire = serde_json::to_value(GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+            }),
+        })
+        .unwrap();
+        wire["user"] = serde_json::json!({
+            "sub_ids": [{"format": "opaque", "id": "the-victim"}]
+        });
+        let request: GnapTransactionRequest = serde_json::from_value(wire).unwrap();
+        let response = service.handle_transaction(request).await.unwrap();
+        let text = response.to_string();
+        assert!(
+            !text.contains("the-victim"),
+            "the named user is not echoed: {text}"
+        );
+        assert!(
+            response
+                .get("subject")
+                .is_none_or(|s| s.get("sub_ids").is_none()),
+            "no subject identifier is released on the client's say-so: {text}"
+        );
+
+        // Control, built the same way: after the user the AS saw approves, the subject is released.
+        let control = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+                hints: None,
+            }),
+            access_token_request: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+            }),
+        };
+        let started = service.handle_transaction(control).await.unwrap();
+        let cont = started["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id = started["continue"]["uri"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_string();
+        service
+            .approve_transaction(&id, Some("user-42"))
+            .await
+            .unwrap();
+        let done = service.continue_transaction(&id, &cont, None, None).await;
+        let released = match done {
+            Ok(v) => v.to_string(),
+            Err(e) => panic!("the approved grant must continue: {e}"),
+        };
+        assert!(released.contains("user-42"), "control: {released}");
+    }
+
+    /// RFC 9635 section 11.38, "AS-Provided Token Keys": an AS that returns its own key with a token enables a
+    /// substitution attack, so "returning a key ... should be limited". This service never returns key
+    /// material: `key` in a token response is the flag `true` (bound to the client's own key), on issue and on
+    /// rotation alike, and no response carries a private key parameter.
+    #[tokio::test]
+    async fn section_11_38_a_token_response_never_carries_a_key_of_the_ass_choosing() {
+        let service = test_service();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        };
+        let issued = service.handle_transaction(req).await.unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let rotated = service.rotate_token(&token).await.unwrap();
+        for (label, response) in [("issue", &issued["access_token"]), ("rotation", &rotated)] {
+            assert_eq!(
+                response["key"], true,
+                "{label}: the flag, never a key object or a reference"
+            );
+            let text = response.to_string();
+            assert!(
+                !text.contains("\"d\""),
+                "{label}: no private key parameter: {text}"
+            );
+        }
     }
 
     // ── Subject Info ─────────────────────────────────────────────────────
@@ -4119,6 +4454,66 @@ mod tests {
             .await
             .unwrap();
         assert!(pending["continue"]["access_token"]["value"].is_string());
+    }
+
+    /// RFC 9635 section 11.24, "Session Management for Interaction Finish Methods": the client must tie the
+    /// callback to the grant it started, "or make the callback URI unique per grant" (section 2.5.2). The
+    /// session binding is the client's duty; the AS side is that two grants sharing one finish URI still get
+    /// callbacks the client can tell apart: each carries its own interaction reference and its own hash, and one
+    /// grant's reference does not finish the other.
+    #[tokio::test]
+    async fn section_11_24_two_grants_on_one_finish_uri_get_callbacks_that_differ() {
+        let service = test_service();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let started = service
+                .handle_transaction(section_11_request("same-client-nonce"))
+                .await
+                .unwrap();
+            let id = started["continue"]["uri"]
+                .as_str()
+                .unwrap()
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .to_string();
+            service.approve_transaction(&id, None).await.unwrap();
+            ids.push(id);
+        }
+        let pair = |url: &url::Url| -> (String, String) {
+            let get = |name: &str| {
+                url.query_pairs()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_default()
+            };
+            (get("interact_ref"), get("hash"))
+        };
+        let a = service.redirect_callback(&ids[0]).await.unwrap();
+        let b = service.redirect_callback(&ids[1]).await.unwrap();
+        let ((ref_a, hash_a), (ref_b, hash_b)) = (pair(&a), pair(&b));
+        assert_eq!(a.path(), b.path(), "both go to the one finish URI");
+        assert!(
+            !ref_a.is_empty() && !hash_a.is_empty(),
+            "control: a callback carries both"
+        );
+        assert_ne!(ref_a, ref_b, "each grant has its own interaction reference");
+        assert_ne!(hash_a, hash_b, "and its own hash");
+        // One grant's reference does not finish the other grant.
+        let token_b = service.test_txn(&ids[1]).await.continue_token;
+        assert!(
+            service
+                .continue_transaction(&ids[1], &token_b, Some(&ref_a), None)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .continue_transaction(&ids[1], &token_b, Some(&ref_b), None)
+                .await
+                .is_ok(),
+            "control: its own reference finishes it"
+        );
     }
 
     /// RFC 9635 section 11.27 (denial of service through grant continuation): the AS announces a wait, refuses
@@ -7711,6 +8106,60 @@ mod httpsig_proof_tests {
         assert!(
             rotate_key(&svc, &nested, &token).await.is_err(),
             "the retired token must not rotate again"
+        );
+    }
+
+    /// RFC 9635 section 11.32, "Self-Contained Stateless Access Tokens": revocation and rotation are hard
+    /// when tokens are self-contained, "during which both the old and new access tokens are valid". This
+    /// service keeps its tokens as state, so a revocation and a rotation take effect at once, and every
+    /// token lifetime is bounded by the configured one ("keeping the validity time windows ... short").
+    #[tokio::test]
+    async fn section_11_32_revocation_and_rotation_take_effect_at_once_with_no_overlap() {
+        let svc = service();
+        let key = signer();
+        let first = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = first["access_token"]["value"].as_str().unwrap().to_string();
+        assert_eq!(first["access_token"]["expires_in"], 3600);
+
+        let rotated = svc.rotate_token(&token).await.unwrap();
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+        assert_eq!(rotated["expires_in"], 3600);
+        assert!(svc.introspect_token(&fresh).await.unwrap().is_some());
+        assert!(
+            svc.introspect_token(&token).await.unwrap().is_none(),
+            "the old token must not stay valid beside the new one"
+        );
+
+        svc.revoke_token(&fresh).await.unwrap();
+        assert!(svc.introspect_token(&fresh).await.unwrap().is_none());
+    }
+
+    /// RFC 9635 section 11.33, "Network Problems and Token and Grant Management": "multiple calls to rotate
+    /// the same access token need to result in the same rotated token value, within a reasonable time
+    /// window." A client that lost the response to a rotation retries with the old token and must get the
+    /// same new value, not a refusal. Once the new token is seen in use "the original token can be discarded".
+    #[tokio::test]
+    async fn section_11_33_a_retried_rotation_returns_the_same_new_token() {
+        let svc = service();
+        let key = signer();
+        let first = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = first["access_token"]["value"].as_str().unwrap().to_string();
+
+        let rotated = svc.rotate_token(&token).await.unwrap();
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+        let retried = svc
+            .rotate_token(&token)
+            .await
+            .expect("a retry within the window must succeed");
+        assert_eq!(retried["value"], fresh, "the same rotated value");
+
+        // Control: a token the AS never issued is still refused.
+        assert!(svc.rotate_token("never-issued").await.is_err());
+        // Once the new token is in use, the old one is discarded.
+        assert!(svc.introspect_token(&fresh).await.unwrap().is_some());
+        assert!(
+            svc.rotate_token(&token).await.is_err(),
+            "discarded after use"
         );
     }
 

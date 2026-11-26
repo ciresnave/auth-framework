@@ -1598,7 +1598,7 @@
       "rfc": "RFC 9635",
       "section": "6.1",
       "kind": "negative",
-      "description": "A token value that has already been rotated cannot be rotated again.",
+      "description": "A token value that has already been rotated cannot be rotated again once the new token has been seen in use (a retry before that is answered with the same new token, RFC 9635 section 11.33).",
       "config": {
         "enabled": true,
         "transaction_endpoint": "/api/gnap/tx"
@@ -1656,6 +1656,13 @@
             "at2": {
               "pointer": "/value"
             }
+          }
+        },
+        {
+          "do": "introspect",
+          "token": "$at2",
+          "expect": {
+            "outcome": "response"
           }
         },
         {
