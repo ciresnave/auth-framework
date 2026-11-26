@@ -24,7 +24,7 @@ use crate::protocols::gnap_interaction::{
 };
 use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
-    GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
+    GnapInstanceStore, GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
     InMemoryTransactionStore,
 };
 use crate::protocols::gnap_wire::{
@@ -562,6 +562,9 @@ pub struct GnapService {
     transactions: Arc<dyn GnapTransactionStore>,
     /// Issued access tokens (keyed by token value)
     issued_tokens: Arc<dyn GnapTokenStore>,
+    /// Client instances, when the server issues `instance_id`s (RFC 9635 section 3.5); see
+    /// [`GnapService::with_instance_store`].
+    instances: Option<Arc<dyn GnapInstanceStore>>,
     /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
     consents: Arc<dyn GnapConsentStore>,
     /// Wrong user codes typed per caller: (count, when the window began). See
@@ -671,6 +674,7 @@ impl GnapService {
             policy: None,
             transactions: Arc::new(InMemoryTransactionStore::new()),
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
+            instances: None,
             consents: Arc::new(InMemoryConsentStore::new()),
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             rotated: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -684,6 +688,41 @@ impl GnapService {
             ))),
             clock: Arc::new(system_now),
         }
+    }
+
+    /// Issue an `instance_id` to every client whose key proof verifies (RFC 9635 section 3.5), and accept that id
+    /// as the `client` of a later request (section 2.3.1; see [`GnapService::resolve_client_reference`]). Without
+    /// a store no id is issued and a `client` string is refused.
+    #[must_use]
+    pub fn with_instance_store(mut self, store: Arc<dyn GnapInstanceStore>) -> Self {
+        self.instances = Some(store);
+        self
+    }
+
+    /// Replace a `client` that is an `instance_id` string (RFC 9635 section 2.3.1) in a request body with the
+    /// client the id was issued for, so the request is read, and its proof checked, against the stored key. A
+    /// body whose `client` is an object (or absent) is returned unchanged. An id this server did not issue, or a
+    /// server that issues none, is refused.
+    pub async fn resolve_client_reference(
+        &self,
+        mut request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let Some(id) = request
+            .get("client")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+        else {
+            return Ok(request);
+        };
+        let known = match &self.instances {
+            Some(store) => store.get(&id).await?,
+            None => None,
+        };
+        let client =
+            known.ok_or_else(|| AuthError::validation("invalid_client: unknown instance_id"))?;
+        request["client"] = serde_json::to_value(client)
+            .map_err(|e| AuthError::validation(format!("invalid_client: {e}")))?;
+        Ok(request)
     }
 
     /// Replace the clock the service reads for token expiry, poll interval and `httpsig`/`jws`/`jwsd`
@@ -1886,6 +1925,15 @@ impl GnapService {
         let now = self.now();
 
         let mut response = serde_json::Map::new();
+
+        // RFC 9635 section 3.5: a client whose key proof verified is given an id to use as its `client` next
+        // time. Registered only after the proof, so an unproved caller cannot fill the store.
+        if let (Some(store), Some(thumbprint), Some(client)) =
+            (&self.instances, &key_thumbprint, &request.client)
+        {
+            let id = store.register(thumbprint, client).await?;
+            response.insert("instance_id".to_string(), serde_json::Value::String(id));
+        }
 
         // Generate a server nonce for interaction hash verification
         let interact_nonce = if request.interact.is_some() {
