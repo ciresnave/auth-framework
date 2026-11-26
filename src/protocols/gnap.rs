@@ -1724,6 +1724,10 @@ impl GnapService {
             .as_deref()
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the token inputs are one decision; a parameter struct is a follow-up"
+    )]
     async fn build_access_token_response(
         &self,
         access_requests: &[GnapAccessRequest],
