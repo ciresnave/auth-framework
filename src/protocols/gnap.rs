@@ -1893,6 +1893,12 @@ impl GnapService {
                 let _ = &finish.nonce; // client_nonce is used later for hash
             }
 
+            // RFC 9635 section 3.3: the interaction lives as long as the transaction does.
+            interact_res.insert(
+                "expires_in".to_string(),
+                serde_json::json!(self.config.transaction_lifetime_secs),
+            );
+
             response.insert(
                 "interact".to_string(),
                 serde_json::Value::Object(interact_res),
@@ -3368,6 +3374,7 @@ mod tests {
         let interact = obj["interact"].as_object().unwrap();
         assert!(interact.contains_key("redirect"));
         assert!(interact.contains_key("finish"));
+        assert_eq!(interact["expires_in"], serde_json::json!(600));
     }
 
     #[tokio::test]
