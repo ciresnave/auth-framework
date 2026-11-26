@@ -26,7 +26,7 @@ row says what blocks it. Version numbers are the PM's, so none appear here.
 | G1-G4, G6, G7, G10 | full RFC types, `httpsig` (G2 needs a crates.io check first; a new dependency is an ASK), interaction, policy and storage, HTTP routes | order of work, not an outside party |
 | KM2 | X25519 generation for JWE agreement keys | a `KeyStore` trait change: `LocalKey` is signing-only (design: `docs/KEY_AGREEMENT_DESIGN.md`) |
 | KM3 | OS keystore, then TPM/PKCS#11/KMS; a non-exportable key signing in place | no store sets `StoreCapabilities::signs_in_place` yet |
-| KM5 (rest) | publishing the revocation (CRL/OCSP input, an event) | not started |
+| KM5 (rest) | done: `revocation_list` (the input); a CRL/OCSP responder or event is the host's (day 11-26 branch) |
 | KM6 (rest) | done: ES384/RS256 in the ring (day 11-26 branch) | the cache header value is `JwkSet::cache_control(overlap)` (day 11-26 branch); serving it is the host's route |
 | KM7 (rest) | renewal before expiry; CA key custody through the key store | KM3 |
 | KM8 | audit-logging every command, `--export-private`, `verify`, an `auth-framework keys` binary name | not started |
