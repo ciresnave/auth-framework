@@ -631,6 +631,11 @@ const USER_CODE_LOCKED: &str = "Too many wrong user codes; try again later";
 pub const TOO_MANY_ATTEMPTS: &str =
     "too_many_attempts: Too many wrong interaction references: start a new transaction";
 
+/// What the poll that reaches the attempt cap by polling inside the `wait` is refused with (RFC 9635
+/// sections 5.2 and 3.6 `too_many_attempts`); the transaction is gone.
+pub const TOO_MANY_POLLS: &str =
+    "too_many_attempts: Polled too fast too many times: start a new transaction";
+
 const INVALID_CONTINUATION: &str = "invalid_continuation: Invalid continuation request";
 
 /// How far a JWS proof's `created` may differ from now, in seconds; its signature is remembered for twice that.
@@ -2270,6 +2275,13 @@ impl GnapService {
                 };
                 if self.poll_wait_secs > 0 && now.saturating_sub(since) < self.poll_wait_secs {
                     txn.last_poll_at = now;
+                    // A client that keeps ignoring the wait spends the same attempt cap as one that
+                    // sends wrong interaction references: at the cap the grant is invalidated.
+                    txn.bad_attempts = txn.bad_attempts.saturating_add(1);
+                    if self.max_bad_attempts > 0 && txn.bad_attempts >= self.max_bad_attempts {
+                        self.transactions.remove(transaction_id).await?;
+                        return Err(AuthError::validation(TOO_MANY_POLLS));
+                    }
                     if !self.transactions.replace_if_unchanged(txn).await? {
                         return Err(AuthError::validation(INVALID_CONTINUATION));
                     }
@@ -4890,6 +4902,70 @@ mod tests {
             .unwrap()
             .to_string();
         assert_eq!(service.test_txn(&id).await.continue_token, cont);
+    }
+
+    /// RFC 9635 sections 5.2 and 3.6: a client that keeps polling inside the wait is not refused forever with
+    /// `too_fast`: at the attempt cap the grant is invalidated with `too_many_attempts`, and the token is gone.
+    #[tokio::test]
+    async fn polling_too_fast_past_the_cap_invalidates_the_grant() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let time = Arc::new(AtomicU64::new(1_800_000_000));
+        let clock = Arc::clone(&time);
+        let service = GnapService::new(test_config())
+            .with_access_policy(Arc::new(AllowAllPolicy))
+            .with_max_bad_attempts(3)
+            .with_clock(move || clock.load(Ordering::SeqCst));
+        service
+            .handle_transaction(section_11_request("cap"))
+            .await
+            .unwrap();
+        let txn = service.test_first_txn().await;
+        let (id, cont) = (txn.id, txn.continue_token);
+        for _ in 0..2 {
+            time.fetch_add(1, Ordering::SeqCst);
+            let e = service
+                .continue_transaction(&id, &cont, None, None)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("too_fast"), "{e}");
+        }
+        time.fetch_add(1, Ordering::SeqCst);
+        let e = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("too_many_attempts"), "{e}");
+        // The grant is gone: even a well-spaced poll with the right token finds nothing.
+        time.fetch_add(60, Ordering::SeqCst);
+        assert!(
+            service
+                .continue_transaction(&id, &cont, None, None)
+                .await
+                .is_err()
+        );
+        // Control: with no cap (0) the same behaviour stays `too_fast` however often it repeats.
+        let open = GnapService::new(test_config())
+            .with_access_policy(Arc::new(AllowAllPolicy))
+            .with_max_bad_attempts(0)
+            .with_clock({
+                let clock = Arc::clone(&time);
+                move || clock.load(Ordering::SeqCst)
+            });
+        open.handle_transaction(section_11_request("cap0"))
+            .await
+            .unwrap();
+        let txn = open.test_first_txn().await;
+        for _ in 0..10 {
+            time.fetch_add(1, Ordering::SeqCst);
+            let e = open
+                .continue_transaction(&txn.id, &txn.continue_token, None, None)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("too_fast"), "{e}");
+        }
     }
 
     #[tokio::test]

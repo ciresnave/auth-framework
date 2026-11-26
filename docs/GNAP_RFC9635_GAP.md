@@ -61,7 +61,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
 | 5.1 after interaction (POST `interact_ref`) | **done** | `continue_transaction_with_proof` (1037) | the HTTP shape is the integrator's |
-| 5.2 polling | **partial** | a pending transaction answers with a new `continue`; a poll before `wait` has elapsed is refused with `TOO_FAST`, the token is kept and the clock restarts (`last_poll_at`) | `too_many_attempts` is answered for wrong interaction references (cap per transaction), not for polling |
+| 5.2 polling | **partial** | a pending transaction answers with a new `continue`; a poll before `wait` has elapsed is refused with `TOO_FAST`, the token is kept and the clock restarts (`last_poll_at`) | `too_many_attempts` is answered for wrong interaction references and for polls inside the wait (one shared cap per transaction, `with_max_bad_attempts`, default 5; at the cap the grant is deleted; `TOO_MANY_POLLS`); the count never resets |
 | 5.3 modify (PATCH) | **done (service method)** | `modify_transaction_with_proof`: pending only, no `client`/`interact` | the HTTP route (surface lane) |
 | 5.4 revoke a grant (DELETE) | **done (service method)** | `delete_transaction_with_proof` lets the client cancel; `deny_transaction` is the AS side | the HTTP route (surface lane); the tokens issued under a cancelled grant are revoked (`delete_revokes_the_tokens_issued_under_the_grant`) |
 
