@@ -156,6 +156,22 @@ impl JwkSet {
     pub fn to_value(&self) -> Value {
         json!({"keys": self.keys.iter().map(PublicJwk::to_value).collect::<Vec<_>>()})
     }
+
+    /// The `Cache-Control` value to serve this set with, for a key overlap of
+    /// `overlap_secs` (the `overlap_secs` given to [`crate::keys::retire_expired`]).
+    ///
+    /// A verifier that cached the set must have refetched, and so seen the new key, before
+    /// the old one is destroyed: `max-age` is half the overlap, capped at one hour, and an
+    /// overlap under two seconds gives `no-cache` (revalidate every time). The same value is
+    /// right for a set after a revoke: no cache outlives half an overlap.
+    pub fn cache_control(overlap_secs: u64) -> String {
+        let max_age = (overlap_secs / 2).min(3600);
+        if max_age == 0 {
+            "no-cache".to_owned()
+        } else {
+            format!("public, max-age={max_age}")
+        }
+    }
 }
 
 /// PEM-encode a DER `SubjectPublicKeyInfo` as `PUBLIC KEY` (RFC 7468).
@@ -175,6 +191,15 @@ mod tests {
     use super::*;
 
     const X: &str = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo";
+
+    #[test]
+    fn cache_control_is_half_the_overlap_capped_at_an_hour() {
+        assert_eq!(JwkSet::cache_control(600), "public, max-age=300");
+        assert_eq!(JwkSet::cache_control(86_400), "public, max-age=3600");
+        assert_eq!(JwkSet::cache_control(3), "public, max-age=1");
+        assert_eq!(JwkSet::cache_control(1), "no-cache");
+        assert_eq!(JwkSet::cache_control(0), "no-cache");
+    }
 
     #[test]
     fn private_members_are_refused() {
