@@ -637,18 +637,17 @@ const INVALID_CONTINUATION: &str = "invalid_continuation: Invalid continuation r
 const JWS_MAX_SKEW_SECS: u64 = 300;
 
 /// Refusal of a client key whose proof method this crate cannot verify.
-const PROOF_NOT_SUPPORTED: &str = "GNAP proof method not supported";
+const PROOF_NOT_SUPPORTED: &str = "invalid_client: GNAP proof method not supported";
 /// Refusal of a client key that came without the proof material to check it.
-const PROOF_REQUIRED: &str = "GNAP client key proof required: use the _with_proof entry point with the request's DPoP header";
+const PROOF_REQUIRED: &str = "invalid_client: GNAP client key proof required";
 /// Refusal of a certificate key that came without the client certificate the TLS layer saw.
-const MTLS_REQUIRED: &str =
-    "GNAP client key proof required: the request's client certificate (mtls) was not presented";
+const MTLS_REQUIRED: &str = "invalid_client: GNAP client key proof required: the request's client certificate (mtls) was not presented";
 /// Refusal of a client key proof that did not verify.
-const PROOF_INVALID: &str = "GNAP client key proof invalid";
+const PROOF_INVALID: &str = "invalid_client: GNAP client key proof invalid";
 /// Refusal of a request that names no client key (RFC 9635 section 2.3).
-const KEY_REQUIRED: &str = "GNAP client key required";
+const KEY_REQUIRED: &str = "invalid_client: GNAP client key required";
 /// Refusal to issue an access token when the service has no access policy.
-const POLICY_REQUIRED: &str = "GNAP access denied: no access policy is configured";
+const POLICY_REQUIRED: &str = "request_denied: GNAP access denied: no access policy is configured";
 /// Refusal to issue an access token when the policy grants nothing.
 const ACCESS_DENIED: &str = "request_denied: GNAP access denied by policy";
 
@@ -1202,7 +1201,7 @@ impl GnapService {
             "httpsig" | "mtls" | "dpop" | "jws" | "jwsd" | "test" => {}
             other => {
                 return Err(AuthError::validation(format!(
-                    "GNAP proof method not supported: {other}"
+                    "invalid_client: GNAP proof method not supported: {other}"
                 )));
             }
         }
@@ -1273,7 +1272,7 @@ impl GnapService {
             "httpsig" | "mtls" | "dpop" | "jws" | "jwsd" | "test" => {}
             other => {
                 return Err(AuthError::validation(format!(
-                    "GNAP proof method not supported: {other}"
+                    "invalid_client: GNAP proof method not supported: {other}"
                 )));
             }
         }
@@ -3222,6 +3221,33 @@ impl GnapAccessPolicy for AllowAllPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RFC 9635 section 3.6: the service names the code of each client-facing refusal itself, so the AS layer
+    /// reads a typed error and does not guess from the wording (G-gap 3.6).
+    #[test]
+    fn section_3_6_key_proof_and_policy_refusals_carry_their_code() {
+        use crate::protocols::gnap_wire::{GnapError, GnapErrorCode};
+        for message in [
+            PROOF_NOT_SUPPORTED,
+            PROOF_REQUIRED,
+            MTLS_REQUIRED,
+            PROOF_INVALID,
+            KEY_REQUIRED,
+        ] {
+            let typed = GnapError::from_service_message(message)
+                .unwrap_or_else(|| panic!("{message} names no code"));
+            assert_eq!(typed.code, GnapErrorCode::InvalidClient, "{message}");
+        }
+        let typed = GnapError::from_service_message(POLICY_REQUIRED).expect("names a code");
+        assert_eq!(typed.code, GnapErrorCode::RequestDenied);
+        // Control: a refusal that was already typed still reads as before.
+        assert_eq!(
+            GnapError::from_service_message(ACCESS_DENIED).unwrap().code,
+            GnapErrorCode::RequestDenied
+        );
+        // The description a client sees names no entry point of this crate.
+        assert!(!PROOF_REQUIRED.contains("_with_proof"));
+    }
 
     fn test_service() -> GnapService {
         GnapService::new(test_config())
