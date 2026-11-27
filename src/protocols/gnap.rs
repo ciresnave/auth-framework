@@ -1806,6 +1806,8 @@ impl GnapService {
             key_proof: key_proof.map(str::to_string),
             key_jwk,
             transaction_id: transaction_id.to_string(),
+            manage_token: Some(uuid::Uuid::new_v4().to_string()),
+            label: label.map(str::to_string),
         };
 
         // An approved interactive transaction leaves a consent record, written before the token
@@ -2979,6 +2981,11 @@ impl GnapService {
             key_proof: old.key_proof.clone(),
             key_jwk,
             transaction_id: old.transaction_id,
+            manage_token: old
+                .manage_token
+                .as_ref()
+                .map(|_| uuid::Uuid::new_v4().to_string()),
+            label: old.label.clone(),
         };
 
         let mut token_obj = serde_json::Map::new();
@@ -2986,6 +2993,12 @@ impl GnapService {
             "value".to_string(),
             serde_json::Value::String(new_value.clone()),
         );
+        if let Some(label) = &new_token.label {
+            token_obj.insert(
+                "label".to_string(),
+                serde_json::Value::String(label.clone()),
+            );
+        }
         token_obj.insert(
             "expires_in".to_string(),
             serde_json::Value::Number(self.config.token_lifetime_secs.into()),
@@ -3977,6 +3990,17 @@ mod tests {
         );
         let issued = service.handle_transaction(req.clone()).await.unwrap();
         assert_eq!(issued["access_token"]["label"], "photos");
+
+        // Rotation echoes the stored label too, and the stored record has a manage secret.
+        let value = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let stored = service.issued_tokens.get(&value).await.unwrap().unwrap();
+        assert!(stored.manage_token.is_some());
+        assert_eq!(stored.label.as_deref(), Some("photos"));
+        let rotated = service.rotate_token(&value).await.unwrap();
+        assert_eq!(rotated["label"], "photos", "rotation_echoes_the_label");
 
         // Control: the same request without a label has no `label` in the token.
         req.access_token_request = Some(
@@ -5384,6 +5408,12 @@ mod tests {
                 return Err(AuthError::validation("store down"));
             }
             self.inner.get(value).await
+        }
+        async fn get_by_manage_token(&self, m: &str) -> Result<Option<GnapIssuedToken>> {
+            if self.fail_read.load(Ordering::SeqCst) {
+                return Err(AuthError::validation("store down"));
+            }
+            self.inner.get_by_manage_token(m).await
         }
         async fn remove(&self, value: &str) -> Result<Option<GnapIssuedToken>> {
             if self.fail_read.load(Ordering::SeqCst) {
@@ -6884,15 +6914,7 @@ mod proof_verification_tests {
         let svc = service().with_token_store(store.clone());
         let (dpop, key) = (manager(), client_key());
         let (id, token) = open_pending(&svc, &dpop, &key, "dt-0").await;
-        let issued = |value: &str, txn: &str| GnapIssuedToken {
-            value: value.to_string(),
-            access: vec![],
-            expires_at: u64::MAX,
-            key_thumbprint: None,
-            key_proof: None,
-            key_jwk: None,
-            transaction_id: txn.to_string(),
-        };
+        let issued = |value: &str, txn: &str| GnapIssuedToken::new(value, vec![], u64::MAX, txn);
         store.insert(issued("mine", &id)).await.unwrap();
         store
             .insert(issued("other", "another-grant"))
@@ -8716,15 +8738,7 @@ mod httpsig_proof_tests {
         let store = Arc::new(InMemoryTokenStore::new());
         let svc = service().with_token_store(store.clone());
         store
-            .insert(GnapIssuedToken {
-                value: "keyless".to_string(),
-                access: vec![],
-                expires_at: u64::MAX,
-                key_thumbprint: None,
-                key_proof: None,
-                key_jwk: None,
-                transaction_id: "t".to_string(),
-            })
+            .insert(GnapIssuedToken::new("keyless", vec![], u64::MAX, "t"))
             .await
             .unwrap();
         let rotated = svc.rotate_token("keyless").await.unwrap();

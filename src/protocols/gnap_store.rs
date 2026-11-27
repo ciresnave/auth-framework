@@ -20,7 +20,26 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 /// A GNAP access token that has been issued and can be managed.
+///
+/// Non-exhaustive: build one with [`GnapIssuedToken::new`] and the `with_*` methods, so a field
+/// added later is not a break.
+///
+/// ```compile_fail
+/// use auth_framework::protocols::gnap_store::GnapIssuedToken;
+/// let _ = GnapIssuedToken {
+///     value: String::new(),
+///     access: vec![],
+///     expires_at: 0,
+///     key_thumbprint: None,
+///     key_proof: None,
+///     key_jwk: None,
+///     transaction_id: String::new(),
+///     manage_token: None,
+///     label: None,
+/// };
+/// ```
 #[derive(Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GnapIssuedToken {
     /// Opaque token value
     pub value: String,
@@ -39,6 +58,61 @@ pub struct GnapIssuedToken {
     pub key_jwk: Option<serde_json::Value>,
     /// The transaction that produced this token
     pub transaction_id: String,
+    /// The secret that addresses this token's management URL (RFC 9635 3.2.1), distinct from
+    /// `value` so the access token is never sent to the management endpoint. `None` for a record
+    /// stored before this field existed: such a token is managed by its value, as before.
+    #[serde(default)]
+    pub manage_token: Option<String>,
+    /// The client's label for this token (RFC 9635 2.1 `label`), echoed back at issue and rotation.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+impl GnapIssuedToken {
+    /// A token with no key binding, management secret or label.
+    pub fn new(
+        value: impl Into<String>,
+        access: Vec<GnapAccessRequest>,
+        expires_at: u64,
+        transaction_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            value: value.into(),
+            access,
+            expires_at,
+            key_thumbprint: None,
+            key_proof: None,
+            key_jwk: None,
+            transaction_id: transaction_id.into(),
+            manage_token: None,
+            label: None,
+        }
+    }
+
+    /// Bind the token to a client key.
+    pub fn with_key(
+        mut self,
+        thumbprint: Option<String>,
+        proof: Option<String>,
+        jwk: Option<serde_json::Value>,
+    ) -> Self {
+        self.key_thumbprint = thumbprint;
+        self.key_proof = proof;
+        self.key_jwk = jwk;
+        self
+    }
+
+    /// Set the management secret.
+    pub fn with_manage_token(mut self, manage_token: Option<String>) -> Self {
+        self.manage_token = manage_token;
+        self
+    }
+
+    /// Set the client's label.
+    pub fn with_label(mut self, label: Option<String>) -> Self {
+        self.label = label;
+        self
+    }
 }
 
 impl std::fmt::Debug for GnapIssuedToken {
@@ -51,6 +125,14 @@ impl std::fmt::Debug for GnapIssuedToken {
         d.field("key_proof", &self.key_proof);
         d.field("key_jwk", &self.key_jwk);
         d.field("transaction_id", &self.transaction_id);
+        d.field(
+            "manage_token",
+            &self
+                .manage_token
+                .as_ref()
+                .map(crate::utils::redact::redacted),
+        );
+        d.field("label", &self.label);
         d.finish()
     }
 }
@@ -66,6 +148,9 @@ pub trait GnapTokenStore: Send + Sync {
 
     /// The token with this value, if stored. Expiry is the caller's check.
     async fn get(&self, value: &str) -> Result<Option<GnapIssuedToken>>;
+
+    /// The token whose `manage_token` is this value, if stored. Expiry is the caller's check.
+    async fn get_by_manage_token(&self, manage_token: &str) -> Result<Option<GnapIssuedToken>>;
 
     /// Take the token out of the store and return it, if it was there.
     async fn remove(&self, value: &str) -> Result<Option<GnapIssuedToken>>;
@@ -113,6 +198,16 @@ impl GnapTokenStore for InMemoryTokenStore {
 
     async fn get(&self, value: &str) -> Result<Option<GnapIssuedToken>> {
         Ok(self.tokens.read().await.get(value).cloned())
+    }
+
+    async fn get_by_manage_token(&self, manage_token: &str) -> Result<Option<GnapIssuedToken>> {
+        Ok(self
+            .tokens
+            .read()
+            .await
+            .values()
+            .find(|t| t.manage_token.as_deref() == Some(manage_token))
+            .cloned())
     }
 
     async fn remove(&self, value: &str) -> Result<Option<GnapIssuedToken>> {
@@ -342,15 +437,36 @@ mod tests {
     use super::*;
 
     fn token(value: &str, transaction_id: &str, expires_at: u64) -> GnapIssuedToken {
-        GnapIssuedToken {
-            value: value.to_string(),
-            access: vec![],
-            expires_at,
-            key_thumbprint: None,
-            key_proof: None,
-            key_jwk: None,
-            transaction_id: transaction_id.to_string(),
-        }
+        GnapIssuedToken::new(value, vec![], expires_at, transaction_id)
+    }
+
+    #[test]
+    fn an_old_record_without_the_new_fields_still_loads() {
+        let old = r#"{"value":"v","access":[],"expires_at":5,"key_thumbprint":null,"transaction_id":"t"}"#;
+        let t: GnapIssuedToken = serde_json::from_str(old).unwrap();
+        assert_eq!((t.manage_token, t.label), (None, None));
+    }
+
+    #[tokio::test]
+    async fn a_token_is_found_by_its_manage_token() {
+        let store = InMemoryTokenStore::new();
+        store
+            .insert(token("a", "x", 100).with_manage_token(Some("m1".into())))
+            .await
+            .unwrap();
+        store.insert(token("b", "x", 100)).await.unwrap();
+        assert_eq!(
+            store
+                .get_by_manage_token("m1")
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
+            "a"
+        );
+        // Controls: an unknown secret finds nothing, and the access-token value is not a manage token.
+        assert!(store.get_by_manage_token("nope").await.unwrap().is_none());
+        assert!(store.get_by_manage_token("a").await.unwrap().is_none());
     }
 
     #[tokio::test]
