@@ -45,6 +45,7 @@ pub struct GnapAsHttp {
     grant_path: String,
     manage_url: String,
     manage_path: String,
+    manage_prefix: String,
     continue_prefix: String,
 }
 
@@ -65,6 +66,7 @@ impl GnapAsHttp {
             dpop,
             grant_path: path_of(&grant_url).to_string(),
             manage_path: path_of(&manage_url).to_string(),
+            manage_prefix: format!("{}/", path_of(&manage_url)),
             continue_prefix: format!("{}/continue/", path_of(&grant_url)),
             grant_url,
             manage_url,
@@ -75,6 +77,12 @@ impl GnapAsHttp {
     /// and actix both use.
     pub fn continue_route(&self) -> String {
         format!("{}{{id}}", self.continue_prefix)
+    }
+
+    /// The per-token management route pattern, `<manage path>/{secret}`, in the `{secret}` syntax axum
+    /// and actix both use.
+    pub fn manage_secret_route(&self) -> String {
+        format!("{}{{secret}}", self.manage_prefix)
     }
 
     /// The grant endpoint path and the token management path, so an adapter can register them.
@@ -95,8 +103,15 @@ impl GnapAsHttp {
         }
         if path == self.manage_path {
             return match method.as_str() {
-                "POST" => self.rotate(req).await,
-                "DELETE" => self.revoke(req).await,
+                "POST" => self.rotate(req, None).await,
+                "DELETE" => self.revoke(req, None).await,
+                _ => GnapHttpResponse::empty(405, vec![("Allow".into(), "POST, DELETE".into())]),
+            };
+        }
+        if let Some(secret) = self.manage_secret(path) {
+            return match method.as_str() {
+                "POST" => self.rotate(req, Some(secret)).await,
+                "DELETE" => self.revoke(req, Some(secret)).await,
                 _ => GnapHttpResponse::empty(405, vec![("Allow".into(), "POST, DELETE".into())]),
             };
         }
@@ -112,6 +127,35 @@ impl GnapAsHttp {
             };
         }
         GnapHttpResponse::empty(404, Vec::new())
+    }
+
+    /// The manage secret of a per-token management path: exactly one non-empty segment after
+    /// `<grant endpoint>/token/`, of a sane length.
+    fn manage_secret<'a>(&self, path: &'a str) -> Option<&'a str> {
+        let m = path.strip_prefix(self.manage_prefix.as_str())?;
+        (!m.is_empty() && m.len() <= 128 && !m.contains('/')).then_some(m)
+    }
+
+    /// Resolve the URL a management request is proved against. With a manage secret, the presented token
+    /// must be the one that secret names; the proof is then bound to that token's own URI.
+    async fn manage_target(
+        &self,
+        secret: Option<&str>,
+        token: &str,
+    ) -> Result<String, GnapHttpResponse> {
+        let Some(secret) = secret else {
+            // A token with a per-token URI is managed there only: its proof is bound to that URI.
+            return match self.service.requires_manage_secret(token).await {
+                Ok(false) => Ok(self.manage_url.clone()),
+                Ok(true) => Err(GnapHttpResponse::empty(404, Vec::new())),
+                Err(e) => Err(refuse(&e)),
+            };
+        };
+        match self.service.manage_secret_names(secret, token).await {
+            Ok(true) => Ok(format!("{}/{secret}", self.manage_url)),
+            Ok(false) => Err(GnapHttpResponse::empty(404, Vec::new())),
+            Err(e) => Err(refuse(&e)),
+        }
     }
 
     /// The transaction id of a continuation path: exactly one non-empty segment after
@@ -240,12 +284,16 @@ impl GnapAsHttp {
         }
     }
 
-    async fn rotate(&self, req: &GnapHttpRequest) -> GnapHttpResponse {
+    async fn rotate(&self, req: &GnapHttpRequest, secret: Option<&str>) -> GnapHttpResponse {
         let Some(token) = gnap_token(req) else {
             return unauthorized();
         };
+        let url = match self.manage_target(secret, token).await {
+            Ok(u) => u,
+            Err(r) => return r,
+        };
         let headers = header_pairs(req);
-        let proof = proof_for(req, &self.manage_url, &headers);
+        let proof = proof_for(req, &url, &headers);
         // A rotation request with content asks for a new key (RFC 9635 section 6.1.1); with none, a new value.
         let rotated = if req.body.is_empty() && req.header_value("detached-jws").is_none() {
             self.service
@@ -263,12 +311,16 @@ impl GnapAsHttp {
         }
     }
 
-    async fn revoke(&self, req: &GnapHttpRequest) -> GnapHttpResponse {
+    async fn revoke(&self, req: &GnapHttpRequest, secret: Option<&str>) -> GnapHttpResponse {
         let Some(token) = gnap_token(req) else {
             return unauthorized();
         };
+        let url = match self.manage_target(secret, token).await {
+            Ok(u) => u,
+            Err(r) => return r,
+        };
         let headers = header_pairs(req);
-        let proof = proof_for(req, &self.manage_url, &headers);
+        let proof = proof_for(req, &url, &headers);
         match self
             .service
             .revoke_token_with_proof(&self.dpop, &proof, token)
@@ -572,10 +624,13 @@ pub(crate) mod tests {
     async fn token_for(h: &GnapAsHttp, k: &Key, jti: &str) -> String {
         let r = h.handle(&grant_req(k, jti)).await;
         assert_eq!(r.status, 200, "setup grant must succeed");
-        json_of(&r)["access_token"]["value"]
+        let value = json_of(&r)["access_token"]["value"]
             .as_str()
             .unwrap()
-            .to_string()
+            .to_string();
+        // A token managed at the shared URI is one stored before per-token URIs existed.
+        h.service.test_strip_manage_secret(&value).await;
+        value
     }
 
     fn manage(h_method: &str, k: &Key, token: &str, jti: &str) -> GnapHttpRequest {
@@ -667,7 +722,12 @@ pub(crate) mod tests {
         assert_eq!(r.header("Cache-Control"), Some("no-store"));
         let body = json_of(&r);
         assert!(body["access_token"]["value"].is_string());
-        assert_eq!(body["access_token"]["manage"], "/api/gnap/tx/token");
+        assert!(
+            body["access_token"]["manage"]
+                .as_str()
+                .unwrap()
+                .starts_with("https://as.example.test/api/gnap/tx/token/")
+        );
     }
 
     /// A grant request whose body is a compact JWS of the request, signed by `signer` (RFC 9635 section 7.3.4).
@@ -848,6 +908,148 @@ pub(crate) mod tests {
             .await;
         assert_eq!(r.status, 200);
         assert!(!String::from_utf8_lossy(&r.body).contains("value"));
+    }
+
+    // ── per-token manage URI (RFC 9635 section 3.2.1 `manage`) ───────────
+
+    /// The `manage` URI of a token obtained through the handler, and the token value.
+    async fn token_and_manage(h: &GnapAsHttp, k: &Key, jti: &str) -> (String, String) {
+        let r = h.handle(&grant_req(k, jti)).await;
+        assert_eq!(r.status, 200, "setup grant must succeed");
+        let t = &json_of(&r)["access_token"];
+        (
+            t["value"].as_str().unwrap().to_string(),
+            t["manage"].as_str().unwrap().to_string(),
+        )
+    }
+
+    fn manage_at(method: &str, k: &Key, token: &str, uri: &str, jti: &str) -> GnapHttpRequest {
+        let path = uri.strip_prefix("https://as.example.test").unwrap_or(uri);
+        let proof = dpop(k, k, method, &format!("https://as.example.test{path}"), jti);
+        req(
+            method,
+            path,
+            vec![("Authorization", format!("GNAP {token}")), ("DPoP", proof)],
+            Vec::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_token_is_issued_its_own_manage_uri_and_rotated_and_revoked_there() {
+        let (h, k) = (handler(), key());
+        let (old, uri) = token_and_manage(&h, &k, "pm1").await;
+        assert!(
+            uri.starts_with("https://as.example.test/api/gnap/tx/token/"),
+            "{uri}"
+        );
+        assert!(
+            !uri.contains(&old),
+            "the manage secret is not the token value"
+        );
+
+        let r = h.handle(&manage_at("POST", &k, &old, &uri, "pm2")).await;
+        assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+        let new = json_of(&r)["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(json_of(&r)["access_token"]["manage"], uri.as_str());
+
+        let r = h.handle(&manage_at("DELETE", &k, &new, &uri, "pm3")).await;
+        assert_eq!(r.status, 204);
+        let again = h.handle(&manage_at("DELETE", &k, &new, &uri, "pm4")).await;
+        assert_ne!(again.status, 204, "a revoked token has no manage URI");
+    }
+
+    #[tokio::test]
+    async fn a_manage_uri_does_not_manage_another_tokens_value() {
+        let (h, k) = (handler(), key());
+        let (_, uri_a) = token_and_manage(&h, &k, "px1").await;
+        let (tok_b, _) = token_and_manage(&h, &k, "px2").await;
+        let r = h
+            .handle(&manage_at("DELETE", &k, &tok_b, &uri_a, "px3"))
+            .await;
+        assert!(r.status == 401 || r.status == 404, "got {}", r.status);
+        // Control: B is still live at its own URI.
+        let (b2, uri_b) = token_and_manage(&h, &k, "px4").await;
+        assert_eq!(
+            h.handle(&manage_at("DELETE", &k, &b2, &uri_b, "px5"))
+                .await
+                .status,
+            204
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_manage_secret_is_404() {
+        let (h, k) = (handler(), key());
+        let (t, _) = token_and_manage(&h, &k, "pu1").await;
+        let r = h
+            .handle(&manage_at(
+                "DELETE",
+                &k,
+                &t,
+                "/api/gnap/tx/token/never-issued",
+                "pu2",
+            ))
+            .await;
+        assert_eq!(r.status, 404);
+        let extra = h
+            .handle(&manage_at(
+                "DELETE",
+                &k,
+                &t,
+                "/api/gnap/tx/token/a/b",
+                "pu3",
+            ))
+            .await;
+        assert_eq!(extra.status, 404);
+    }
+
+    #[tokio::test]
+    async fn a_retried_rotation_at_the_manage_uri_replays_the_answer() {
+        let (h, k) = (handler(), key());
+        let (old, uri) = token_and_manage(&h, &k, "pr1").await;
+        let first = h.handle(&manage_at("POST", &k, &old, &uri, "pr2")).await;
+        assert_eq!(first.status, 200);
+        let retry = h.handle(&manage_at("POST", &k, &old, &uri, "pr3")).await;
+        assert_eq!(
+            retry.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&retry.body)
+        );
+        assert_eq!(json_of(&retry), json_of(&first));
+    }
+
+    #[tokio::test]
+    async fn concurrent_rotations_of_one_token_both_get_the_answer() {
+        let (h, k) = (handler(), key());
+        let (old, uri) = token_and_manage(&h, &k, "pc1").await;
+        let (req_a, req_b) = (
+            manage_at("POST", &k, &old, &uri, "pc2"),
+            manage_at("POST", &k, &old, &uri, "pc3"),
+        );
+        let (a, b) = tokio::join!(h.handle(&req_a), h.handle(&req_b));
+        assert_eq!(a.status, 200, "{}", String::from_utf8_lossy(&a.body));
+        assert_eq!(b.status, 200, "{}", String::from_utf8_lossy(&b.body));
+        assert_eq!(json_of(&a), json_of(&b));
+    }
+
+    #[tokio::test]
+    async fn a_token_with_a_manage_uri_is_refused_at_the_shared_uri() {
+        let (h, k) = (handler(), key());
+        let (old, uri) = token_and_manage(&h, &k, "ps1").await;
+        for (method, jti) in [("POST", "ps2"), ("DELETE", "ps3")] {
+            let r = h.handle(&manage(method, &k, &old, jti)).await;
+            assert_eq!(r.status, 404, "{method} at the shared URI");
+        }
+        // Control: the token is untouched and still managed at its own URI.
+        let r = h.handle(&manage_at("POST", &k, &old, &uri, "ps4")).await;
+        assert_eq!(r.status, 200);
+        // The value it was rotated away from is refused at the shared URI too.
+        let retry = h.handle(&manage("POST", &k, &old, "ps5")).await;
+        assert_eq!(retry.status, 404);
     }
 
     // ── token management ────────────────────────────────────────────────

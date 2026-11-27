@@ -25,7 +25,7 @@ use crate::protocols::gnap_interaction::{
 use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
     GnapInstanceStore, GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
-    InMemoryTransactionStore,
+    InMemoryTransactionStore, is_valid_manage_secret,
 };
 use crate::protocols::gnap_wire::{
     GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests,
@@ -123,6 +123,11 @@ pub struct GnapSubjectRequest {
     /// Requested assertion formats (e.g. "id_token", "saml2")
     #[serde(default)]
     pub assertion_formats: Vec<String>,
+    /// Subject identifiers of the subject the client believes the end user to be (RFC 9635 section 2.2). A
+    /// hint, never an identity (section 11.13): subject information is released only when the user the AS
+    /// itself saw approve matches one of them, otherwise none is released.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub_ids: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,6 +373,7 @@ impl GnapTransactionRequestBuilder {
         self.subject = Some(GnapSubjectRequest {
             sub_id_formats: formats,
             assertion_formats: vec![],
+            sub_ids: vec![],
         });
         self
     }
@@ -573,6 +579,8 @@ pub struct GnapService {
     /// Rotations answered in the last [`ROTATION_RETRY_SECS`] seconds, keyed by the old token value, so a client
     /// that lost the response can retry (RFC 9635 section 11.33). Kept in this process only.
     rotated: std::sync::Mutex<std::collections::HashMap<String, RotatedToken>>,
+    /// Serializes rotations; see `rotate_token_inner`.
+    rotation_lock: tokio::sync::Mutex<()>,
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
@@ -682,6 +690,7 @@ impl GnapService {
             consents: Arc::new(InMemoryConsentStore::new()),
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             rotated: std::sync::Mutex::new(std::collections::HashMap::new()),
+            rotation_lock: tokio::sync::Mutex::new(()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
             issuer: None,
             user_code_uri: None,
@@ -1798,6 +1807,7 @@ impl GnapService {
         let access_token = uuid::Uuid::new_v4().to_string();
         let now = self.now();
 
+        let issued_manage = Some(uuid::Uuid::new_v4().to_string());
         let issued = GnapIssuedToken {
             value: access_token.clone(),
             access: access_requests.to_vec(),
@@ -1806,6 +1816,8 @@ impl GnapService {
             key_proof: key_proof.map(str::to_string),
             key_jwk,
             transaction_id: transaction_id.to_string(),
+            manage_token: issued_manage.clone(),
+            label: label.map(str::to_string),
         };
 
         // An approved interactive transaction leaves a consent record, written before the token
@@ -1855,7 +1867,7 @@ impl GnapService {
         // Include manage URI for token lifecycle operations
         token_obj.insert(
             "manage".to_string(),
-            serde_json::Value::String(format!("{}/token", self.config.transaction_endpoint)),
+            serde_json::Value::String(self.manage_uri(issued_manage.as_deref())),
         );
 
         // No `key` field: the token is bound to the key the client presented, which RFC 9635 section 3.2.1
@@ -2137,16 +2149,7 @@ impl GnapService {
             "{}/continue/{}",
             self.config.transaction_endpoint, transaction_id
         );
-        let origin = self
-            .config
-            .interaction_base_url
-            .as_deref()
-            .and_then(|base| url::Url::parse(base).ok())
-            .filter(|u| u.has_host());
-        match origin.and_then(|u| u.join(&path).ok()) {
-            Some(absolute) => absolute.to_string(),
-            None => path,
-        }
+        self.absolute_on_origin(path)
     }
 
     /// Continue a transaction without proof material. Tests only: in a build every continuation
@@ -2810,6 +2813,87 @@ impl GnapService {
 
     // ── Token Management (draft §6) ─────────────────────────────────────
 
+    /// The management URI issued with a token: `<transaction endpoint>/token/<manage secret>`, or the shared
+    /// `<transaction endpoint>/token` for a token stored before tokens had a manage secret.
+    ///
+    /// Made absolute on the origin of the interaction base URL when there is one (RFC 9635 section 2.3:
+    /// the management URI is an absolute URI), like the continuation URI; without one only the path can be
+    /// given. A secret the route cannot carry falls back to the shared URI.
+    fn manage_uri(&self, manage_token: Option<&str>) -> String {
+        let path = match manage_token.filter(|m| is_valid_manage_secret(m)) {
+            Some(m) => format!("{}/token/{m}", self.config.transaction_endpoint),
+            None => format!("{}/token", self.config.transaction_endpoint),
+        };
+        self.absolute_on_origin(path)
+    }
+
+    /// `path` on the origin of the interaction base URL, when there is one.
+    fn absolute_on_origin(&self, path: String) -> String {
+        let origin = self
+            .config
+            .interaction_base_url
+            .as_deref()
+            .and_then(|base| url::Url::parse(base).ok())
+            .filter(|u| u.has_host());
+        match origin.and_then(|u| u.join(&path).ok()) {
+            Some(absolute) => absolute.to_string(),
+            None => path,
+        }
+    }
+
+    /// Unit tests only: make the stored token `value` one issued before per-token management URIs.
+    #[cfg(test)]
+    pub(crate) async fn test_strip_manage_secret(&self, value: &str) {
+        let mut t = self.issued_tokens.remove(value).await.unwrap().unwrap();
+        t.manage_token = None;
+        self.issued_tokens.insert(t).await.unwrap();
+    }
+
+    /// Whether `presented` belongs to a token that has a per-token management URI, so the shared URI must
+    /// refuse it: the value of such a token, or the value it replaced within the rotation-retry window.
+    pub async fn requires_manage_secret(&self, presented: &str) -> Result<bool> {
+        let has_secret = |t: &GnapIssuedToken| {
+            t.manage_token
+                .as_deref()
+                .is_some_and(is_valid_manage_secret)
+        };
+        if let Some(t) = self.issued_tokens.get(presented).await? {
+            return Ok(has_secret(&t));
+        }
+        let new_value = {
+            let now = self.now();
+            let map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
+            map.get(presented)
+                .filter(|r| now.saturating_sub(r.at) <= ROTATION_RETRY_SECS)
+                .map(|r| r.new_value.clone())
+        };
+        match new_value {
+            Some(v) => Ok(self
+                .issued_tokens
+                .get(&v)
+                .await?
+                .is_some_and(|t| has_secret(&t))),
+            None => Ok(false),
+        }
+    }
+
+    /// Whether `presented` is the token the manage secret `manage_token` names: its current value, or the
+    /// value it replaced within the rotation-retry window (so a lost rotation answer can be asked for again).
+    /// `false` for an unknown or expired secret. This only routes: the token's key proof is still required.
+    pub async fn manage_secret_names(&self, manage_token: &str, presented: &str) -> Result<bool> {
+        let Some(current) = self.issued_tokens.get_by_manage_token(manage_token).await? else {
+            return Ok(false);
+        };
+        if current.value == presented {
+            return Ok(true);
+        }
+        let now = self.now();
+        let map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(map.get(presented).is_some_and(|r| {
+            r.new_value == current.value && now.saturating_sub(r.at) <= ROTATION_RETRY_SECS
+        }))
+    }
+
     /// Revoke an issued access token (draft §6.2 — DELETE on manage URI).
     pub async fn revoke_token_with_proof(
         &self,
@@ -2941,6 +3025,9 @@ impl GnapService {
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
         new_key: Option<(String, serde_json::Value)>,
     ) -> Result<serde_json::Value> {
+        // One rotation at a time, so a duplicate request waits for the first and then finds its recorded
+        // answer instead of failing on a token that is already spent.
+        let _one_rotation = self.rotation_lock.lock().await;
         // A key rotation has been proved by both keys already; every other rotation needs the token's key.
         if new_key.is_none() {
             if let Some(again) = self.retried_rotation(old_token_value, dpop).await? {
@@ -2979,6 +3066,10 @@ impl GnapService {
             key_proof: old.key_proof.clone(),
             key_jwk,
             transaction_id: old.transaction_id,
+            // The management URI names the grant of the token, not its value: a rotation keeps it, so a
+            // client that retries a rotation it never saw answered finds the same URI.
+            manage_token: old.manage_token.clone(),
+            label: old.label.clone(),
         };
 
         let mut token_obj = serde_json::Map::new();
@@ -2986,13 +3077,19 @@ impl GnapService {
             "value".to_string(),
             serde_json::Value::String(new_value.clone()),
         );
+        if let Some(label) = &new_token.label {
+            token_obj.insert(
+                "label".to_string(),
+                serde_json::Value::String(label.clone()),
+            );
+        }
         token_obj.insert(
             "expires_in".to_string(),
             serde_json::Value::Number(self.config.token_lifetime_secs.into()),
         );
         token_obj.insert(
             "manage".to_string(),
-            serde_json::Value::String(format!("{}/token", self.config.transaction_endpoint)),
+            serde_json::Value::String(self.manage_uri(new_token.manage_token.as_deref())),
         );
         let access_json: Vec<serde_json::Value> = old
             .access
@@ -3145,8 +3242,24 @@ impl GnapService {
     ) -> serde_json::Map<String, serde_json::Value> {
         let mut resp = serde_json::Map::new();
 
+        // A client-named subject is a hint (section 11.13): release only to the user it names.
+        let named_ok = request.sub_ids.is_empty()
+            || subject_id.is_some_and(|sid| {
+                request.sub_ids.iter().any(|named| {
+                    let field = |k: &str| named.get(k).and_then(|v| v.as_str());
+                    match field("format") {
+                        Some("opaque") => field("id") == Some(sid),
+                        Some("email") => field("email") == Some(sid),
+                        Some("iss_sub") => {
+                            field("sub") == Some(sid) && issuer.is_some() && field("iss") == issuer
+                        }
+                        _ => false,
+                    }
+                })
+            });
+
         // Return sub_ids in requested formats
-        if let Some(sid) = subject_id {
+        if let Some(sid) = subject_id.filter(|_| named_ok) {
             let mut sub_ids = Vec::new();
             for fmt in &request.sub_id_formats {
                 match fmt.as_str() {
@@ -3595,6 +3708,7 @@ mod tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -3938,6 +4052,7 @@ mod tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         };
         let svc = test_service();
@@ -3977,6 +4092,17 @@ mod tests {
         );
         let issued = service.handle_transaction(req.clone()).await.unwrap();
         assert_eq!(issued["access_token"]["label"], "photos");
+
+        // Rotation echoes the stored label too, and the stored record has a manage secret.
+        let value = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let stored = service.issued_tokens.get(&value).await.unwrap().unwrap();
+        assert!(stored.manage_token.is_some());
+        assert_eq!(stored.label.as_deref(), Some("photos"));
+        let rotated = service.rotate_token(&value).await.unwrap();
+        assert_eq!(rotated["label"], "photos", "rotation_echoes_the_label");
 
         // Control: the same request without a label has no `label` in the token.
         req.access_token_request = Some(
@@ -4136,6 +4262,7 @@ mod tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         })
         .unwrap();
@@ -4168,6 +4295,7 @@ mod tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         };
         let started = service.handle_transaction(control).await.unwrap();
@@ -4236,10 +4364,50 @@ mod tests {
     // ── Subject Info ─────────────────────────────────────────────────────
 
     #[test]
+    fn section_2_2_sub_ids_release_subject_only_to_a_matching_user() {
+        let mut req = GnapSubjectRequest {
+            sub_id_formats: vec!["opaque".to_string()],
+            assertion_formats: vec![],
+            sub_ids: vec![serde_json::json!({"format": "opaque", "id": "user-42"})],
+        };
+        let hit = GnapService::build_subject_response(&req, Some("user-42"), None);
+        assert_eq!(hit["sub_ids"][0]["id"], "user-42");
+        let miss = GnapService::build_subject_response(&req, Some("someone-else"), None);
+        assert!(
+            !miss.contains_key("sub_ids"),
+            "a different user gets none: {miss:?}"
+        );
+        req.sub_ids = vec![
+            serde_json::json!({"format": "email", "email": "a@example.test"}),
+            serde_json::json!({"format": "iss_sub", "iss": "https://as.example.test", "sub": "u1"}),
+        ];
+        assert!(
+            GnapService::build_subject_response(&req, Some("a@example.test"), None)
+                .contains_key("sub_ids")
+        );
+        assert!(
+            GnapService::build_subject_response(&req, Some("u1"), Some("https://as.example.test"))
+                .contains_key("sub_ids")
+        );
+        assert!(
+            !GnapService::build_subject_response(
+                &req,
+                Some("u1"),
+                Some("https://other.example.test")
+            )
+            .contains_key("sub_ids")
+        );
+        assert!(
+            !GnapService::build_subject_response(&req, Some("u1"), None).contains_key("sub_ids")
+        );
+    }
+
+    #[test]
     fn test_build_subject_response_opaque() {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["opaque".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         let resp = GnapService::build_subject_response(&req, Some("user-42"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
@@ -4253,6 +4421,7 @@ mod tests {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["email".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         let resp = GnapService::build_subject_response(&req, Some("user@example.test"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
@@ -4265,6 +4434,7 @@ mod tests {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["email".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         // Subject is not an email → defaults to opaque
         let resp = GnapService::build_subject_response(&req, Some("user-42"), None);
@@ -4277,6 +4447,7 @@ mod tests {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["iss_sub".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         let resp = GnapService::build_subject_response(
             &req,
@@ -4311,6 +4482,7 @@ mod tests {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["opaque".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         let resp = GnapService::build_subject_response(&req, None, None);
         assert!(!resp.contains_key("sub_ids"));
@@ -5384,6 +5556,12 @@ mod tests {
                 return Err(AuthError::validation("store down"));
             }
             self.inner.get(value).await
+        }
+        async fn get_by_manage_token(&self, m: &str) -> Result<Option<GnapIssuedToken>> {
+            if self.fail_read.load(Ordering::SeqCst) {
+                return Err(AuthError::validation("store down"));
+            }
+            self.inner.get_by_manage_token(m).await
         }
         async fn remove(&self, value: &str) -> Result<Option<GnapIssuedToken>> {
             if self.fail_read.load(Ordering::SeqCst) {
@@ -6884,15 +7062,7 @@ mod proof_verification_tests {
         let svc = service().with_token_store(store.clone());
         let (dpop, key) = (manager(), client_key());
         let (id, token) = open_pending(&svc, &dpop, &key, "dt-0").await;
-        let issued = |value: &str, txn: &str| GnapIssuedToken {
-            value: value.to_string(),
-            access: vec![],
-            expires_at: u64::MAX,
-            key_thumbprint: None,
-            key_proof: None,
-            key_jwk: None,
-            transaction_id: txn.to_string(),
-        };
+        let issued = |value: &str, txn: &str| GnapIssuedToken::new(value, vec![], u64::MAX, txn);
         store.insert(issued("mine", &id)).await.unwrap();
         store
             .insert(issued("other", "another-grant"))
@@ -8015,6 +8185,7 @@ mod hardening_tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         };
         let msg = message(svc.handle_transaction(subject_only).await);
@@ -8716,15 +8887,7 @@ mod httpsig_proof_tests {
         let store = Arc::new(InMemoryTokenStore::new());
         let svc = service().with_token_store(store.clone());
         store
-            .insert(GnapIssuedToken {
-                value: "keyless".to_string(),
-                access: vec![],
-                expires_at: u64::MAX,
-                key_thumbprint: None,
-                key_proof: None,
-                key_jwk: None,
-                transaction_id: "t".to_string(),
-            })
+            .insert(GnapIssuedToken::new("keyless", vec![], u64::MAX, "t"))
             .await
             .unwrap();
         let rotated = svc.rotate_token("keyless").await.unwrap();

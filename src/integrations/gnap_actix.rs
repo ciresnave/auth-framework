@@ -45,10 +45,12 @@ pub fn gnap_as_configure(cfg: &mut web::ServiceConfig, http: Arc<GnapAsHttp>) {
         (g.to_string(), m.to_string())
     };
     let http_continue = http.continue_route();
+    let manage_secret = http.manage_secret_route();
     cfg.app_data(web::Data::from(http))
         .app_data(web::PayloadConfig::new(MAX_BODY_BYTES + 1))
         .service(web::resource(grant).route(web::route().to(serve_as)))
         .service(web::resource(manage).route(web::route().to(serve_as)))
+        .service(web::resource(manage_secret).route(web::route().to(serve_as)))
         .service(web::resource(http_continue).route(web::route().to(serve_as)));
 }
 
@@ -226,6 +228,21 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         let body = test::read_body(resp).await;
         assert!(!String::from_utf8_lossy(&body).contains("access_token"));
+    }
+
+    #[actix_web::test]
+    async fn the_as_app_routes_a_per_token_manage_uri() {
+        let http = Arc::new(crate::protocols::gnap_as_http::tests::handler());
+        let app = test::init_service(
+            App::new().configure(move |cfg| gnap_as_configure(cfg, http.clone())),
+        )
+        .await;
+        let req = test::TestRequest::get()
+            .uri("/api/gnap/tx/token/some-secret")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST, DELETE");
     }
 
     #[actix_web::test]

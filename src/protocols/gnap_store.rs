@@ -20,7 +20,26 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 /// A GNAP access token that has been issued and can be managed.
+///
+/// Non-exhaustive: build one with [`GnapIssuedToken::new`] and the `with_*` methods, so a field
+/// added later is not a break.
+///
+/// ```compile_fail
+/// use auth_framework::protocols::gnap_store::GnapIssuedToken;
+/// let _ = GnapIssuedToken {
+///     value: String::new(),
+///     access: vec![],
+///     expires_at: 0,
+///     key_thumbprint: None,
+///     key_proof: None,
+///     key_jwk: None,
+///     transaction_id: String::new(),
+///     manage_token: None,
+///     label: None,
+/// };
+/// ```
 #[derive(Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GnapIssuedToken {
     /// Opaque token value
     pub value: String,
@@ -39,6 +58,74 @@ pub struct GnapIssuedToken {
     pub key_jwk: Option<serde_json::Value>,
     /// The transaction that produced this token
     pub transaction_id: String,
+    /// The secret that addresses this token's management URL (RFC 9635 3.2.1), distinct from
+    /// `value` so the access token is never sent to the management endpoint. `None` for a record
+    /// stored before this field existed: such a token is managed by its value, as before.
+    #[serde(default)]
+    pub manage_token: Option<String>,
+    /// The client's label for this token (RFC 9635 2.1 `label`), echoed back at issue and rotation.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// Whether `secret` can be the last segment of a management URI: 1 to 128 characters of the RFC 3986
+/// unreserved set, so it needs no encoding and the route accepts it.
+pub fn is_valid_manage_secret(secret: &str) -> bool {
+    !secret.is_empty()
+        && secret.len() <= 128
+        && secret
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'))
+}
+
+impl GnapIssuedToken {
+    /// A token with no key binding, management secret or label.
+    pub fn new(
+        value: impl Into<String>,
+        access: Vec<GnapAccessRequest>,
+        expires_at: u64,
+        transaction_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            value: value.into(),
+            access,
+            expires_at,
+            key_thumbprint: None,
+            key_proof: None,
+            key_jwk: None,
+            transaction_id: transaction_id.into(),
+            manage_token: None,
+            label: None,
+        }
+    }
+
+    /// Bind the token to a client key.
+    pub fn with_key(
+        mut self,
+        thumbprint: Option<String>,
+        proof: Option<String>,
+        jwk: Option<serde_json::Value>,
+    ) -> Self {
+        self.key_thumbprint = thumbprint;
+        self.key_proof = proof;
+        self.key_jwk = jwk;
+        self
+    }
+
+    /// Set the management secret.
+    ///
+    /// A secret the management route cannot carry (see [`is_valid_manage_secret`]) is ignored: the token
+    /// is then managed at the shared URI rather than at a per-token URI that would answer 404.
+    pub fn with_manage_token(mut self, manage_token: Option<String>) -> Self {
+        self.manage_token = manage_token.filter(|m| is_valid_manage_secret(m));
+        self
+    }
+
+    /// Set the client's label.
+    pub fn with_label(mut self, label: Option<String>) -> Self {
+        self.label = label;
+        self
+    }
 }
 
 impl std::fmt::Debug for GnapIssuedToken {
@@ -51,6 +138,14 @@ impl std::fmt::Debug for GnapIssuedToken {
         d.field("key_proof", &self.key_proof);
         d.field("key_jwk", &self.key_jwk);
         d.field("transaction_id", &self.transaction_id);
+        d.field(
+            "manage_token",
+            &self
+                .manage_token
+                .as_ref()
+                .map(crate::utils::redact::redacted),
+        );
+        d.field("label", &self.label);
         d.finish()
     }
 }
@@ -66,6 +161,9 @@ pub trait GnapTokenStore: Send + Sync {
 
     /// The token with this value, if stored. Expiry is the caller's check.
     async fn get(&self, value: &str) -> Result<Option<GnapIssuedToken>>;
+
+    /// The token whose `manage_token` is this value, if stored. Expiry is the caller's check.
+    async fn get_by_manage_token(&self, manage_token: &str) -> Result<Option<GnapIssuedToken>>;
 
     /// Take the token out of the store and return it, if it was there.
     async fn remove(&self, value: &str) -> Result<Option<GnapIssuedToken>>;
@@ -87,7 +185,48 @@ pub trait GnapTokenStore: Send + Sync {
 /// A [`GnapTokenStore`] held in memory.
 #[derive(Default)]
 pub struct InMemoryTokenStore {
-    tokens: RwLock<HashMap<String, GnapIssuedToken>>,
+    inner: RwLock<TokenMaps>,
+}
+
+/// The tokens by value, and an index from manage secret to token value, so a management request does
+/// not scan every token while holding the lock.
+#[derive(Default)]
+struct TokenMaps {
+    tokens: HashMap<String, GnapIssuedToken>,
+    by_manage: HashMap<String, String>,
+}
+
+impl TokenMaps {
+    fn insert(&mut self, token: GnapIssuedToken) {
+        self.take(&token.value);
+        if let Some(m) = &token.manage_token {
+            self.by_manage.insert(m.clone(), token.value.clone());
+        }
+        self.tokens.insert(token.value.clone(), token);
+    }
+
+    fn take(&mut self, value: &str) -> Option<GnapIssuedToken> {
+        let t = self.tokens.remove(value)?;
+        if let Some(m) = &t.manage_token
+            && self.by_manage.get(m).map(String::as_str) == Some(value)
+        {
+            self.by_manage.remove(m);
+        }
+        Some(t)
+    }
+
+    fn retain(&mut self, mut keep: impl FnMut(&GnapIssuedToken) -> bool) -> usize {
+        let drop: Vec<String> = self
+            .tokens
+            .values()
+            .filter(|t| !keep(t))
+            .map(|t| t.value.clone())
+            .collect();
+        for v in &drop {
+            self.take(v);
+        }
+        drop.len()
+    }
 }
 
 impl InMemoryTokenStore {
@@ -107,41 +246,49 @@ impl std::fmt::Debug for InMemoryTokenStore {
 #[async_trait]
 impl GnapTokenStore for InMemoryTokenStore {
     async fn insert(&self, token: GnapIssuedToken) -> Result<()> {
-        self.tokens.write().await.insert(token.value.clone(), token);
+        self.inner.write().await.insert(token);
         Ok(())
     }
 
     async fn get(&self, value: &str) -> Result<Option<GnapIssuedToken>> {
-        Ok(self.tokens.read().await.get(value).cloned())
+        Ok(self.inner.read().await.tokens.get(value).cloned())
+    }
+
+    async fn get_by_manage_token(&self, manage_token: &str) -> Result<Option<GnapIssuedToken>> {
+        let maps = self.inner.read().await;
+        Ok(maps
+            .by_manage
+            .get(manage_token)
+            .and_then(|v| maps.tokens.get(v))
+            .cloned())
     }
 
     async fn remove(&self, value: &str) -> Result<Option<GnapIssuedToken>> {
-        Ok(self.tokens.write().await.remove(value))
+        Ok(self.inner.write().await.take(value))
     }
 
     async fn remove_for_transaction(&self, transaction_id: &str) -> Result<usize> {
-        let mut tokens = self.tokens.write().await;
-        let before = tokens.len();
-        tokens.retain(|_, t| t.transaction_id != transaction_id);
-        Ok(before - tokens.len())
+        Ok(self
+            .inner
+            .write()
+            .await
+            .retain(|t| t.transaction_id != transaction_id))
     }
 
     async fn remove_for_key(&self, thumbprint: &str) -> Result<usize> {
-        let mut tokens = self.tokens.write().await;
-        let before = tokens.len();
-        tokens.retain(|_, t| t.key_thumbprint.as_deref() != Some(thumbprint));
-        Ok(before - tokens.len())
+        Ok(self
+            .inner
+            .write()
+            .await
+            .retain(|t| t.key_thumbprint.as_deref() != Some(thumbprint)))
     }
 
     async fn count(&self) -> Result<usize> {
-        Ok(self.tokens.read().await.len())
+        Ok(self.inner.read().await.tokens.len())
     }
 
     async fn purge_expired(&self, now: u64) -> Result<usize> {
-        let mut tokens = self.tokens.write().await;
-        let before = tokens.len();
-        tokens.retain(|_, t| now < t.expires_at);
-        Ok(before - tokens.len())
+        Ok(self.inner.write().await.retain(|t| now < t.expires_at))
     }
 }
 
@@ -342,15 +489,96 @@ mod tests {
     use super::*;
 
     fn token(value: &str, transaction_id: &str, expires_at: u64) -> GnapIssuedToken {
-        GnapIssuedToken {
-            value: value.to_string(),
-            access: vec![],
-            expires_at,
-            key_thumbprint: None,
-            key_proof: None,
-            key_jwk: None,
-            transaction_id: transaction_id.to_string(),
+        GnapIssuedToken::new(value, vec![], expires_at, transaction_id)
+    }
+
+    #[test]
+    fn an_old_record_without_the_new_fields_still_loads() {
+        let old = r#"{"value":"v","access":[],"expires_at":5,"key_thumbprint":null,"transaction_id":"t"}"#;
+        let t: GnapIssuedToken = serde_json::from_str(old).unwrap();
+        assert_eq!((t.manage_token, t.label), (None, None));
+    }
+
+    #[test]
+    fn a_manage_secret_the_route_cannot_carry_is_not_kept() {
+        for bad in ["", "a/b", "a b", "a?b", &"x".repeat(129)] {
+            assert!(!is_valid_manage_secret(bad), "{bad:?}");
+            assert!(
+                token("a", "x", 100)
+                    .with_manage_token(Some(bad.into()))
+                    .manage_token
+                    .is_none()
+            );
         }
+        let ok = "Ab-1._~".to_string() + &"x".repeat(121);
+        assert!(is_valid_manage_secret(&ok));
+        assert_eq!(
+            token("a", "x", 100)
+                .with_manage_token(Some(ok.clone()))
+                .manage_token,
+            Some(ok)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_manage_index_follows_replace_remove_and_purge() {
+        let store = InMemoryTokenStore::new();
+        store
+            .insert(token("a", "x", 100).with_manage_token(Some("m1".into())))
+            .await
+            .unwrap();
+        store
+            .insert(token("b", "y", 200).with_manage_token(Some("m2".into())))
+            .await
+            .unwrap();
+        // Replacing a value under a new secret drops the old secret.
+        store
+            .insert(token("a", "x", 100).with_manage_token(Some("m3".into())))
+            .await
+            .unwrap();
+        assert!(store.get_by_manage_token("m1").await.unwrap().is_none());
+        assert_eq!(
+            store
+                .get_by_manage_token("m3")
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
+            "a"
+        );
+        store.remove("a").await.unwrap();
+        assert!(store.get_by_manage_token("m3").await.unwrap().is_none());
+        // Purge and removal by transaction keep it in step as well.
+        assert_eq!(store.purge_expired(300).await.unwrap(), 1);
+        assert!(store.get_by_manage_token("m2").await.unwrap().is_none());
+        store
+            .insert(token("c", "z", 400).with_manage_token(Some("m4".into())))
+            .await
+            .unwrap();
+        assert_eq!(store.remove_for_transaction("z").await.unwrap(), 1);
+        assert!(store.get_by_manage_token("m4").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_token_is_found_by_its_manage_token() {
+        let store = InMemoryTokenStore::new();
+        store
+            .insert(token("a", "x", 100).with_manage_token(Some("m1".into())))
+            .await
+            .unwrap();
+        store.insert(token("b", "x", 100)).await.unwrap();
+        assert_eq!(
+            store
+                .get_by_manage_token("m1")
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
+            "a"
+        );
+        // Controls: an unknown secret finds nothing, and the access-token value is not a manage token.
+        assert!(store.get_by_manage_token("nope").await.unwrap().is_none());
+        assert!(store.get_by_manage_token("a").await.unwrap().is_none());
     }
 
     #[tokio::test]
