@@ -135,9 +135,17 @@ impl GnapAsHttp {
     }
 
     async fn grant(&self, req: &GnapHttpRequest) -> GnapHttpResponse {
-        let request = match read_json::<GnapTransactionRequest>(req) {
-            Ok(r) => r,
+        let body = match read_json::<Value>(req) {
+            Ok(v) => v,
             Err(refused) => return refused,
+        };
+        // RFC 9635 section 2.3.1: a `client` that is an `instance_id` is read as the client it was issued for.
+        let body = match self.service.resolve_client_reference(body).await {
+            Ok(v) => v,
+            Err(e) => return refuse(&e),
+        };
+        let Ok(request) = serde_json::from_value::<GnapTransactionRequest>(body) else {
+            return error(400, "invalid_request", "request body is not a GNAP request");
         };
         let headers = header_pairs(req);
         let proof = proof_for(req, &self.grant_url, &headers);
@@ -581,6 +589,75 @@ pub(crate) mod tests {
     }
 
     // ── grant ───────────────────────────────────────────────────────────
+
+    /// RFC 9635 sections 2.3.1 and 3.5: with an instance store the grant response carries an `instance_id`,
+    /// stable for a key, and a later request may name the client by that id; the proof is still checked
+    /// against the key the id was issued for.
+    #[tokio::test]
+    async fn an_instance_id_names_the_client_on_a_later_request() {
+        let service = Arc::new(
+            GnapService::new(GnapConfig {
+                enabled: true,
+                transaction_endpoint: "/api/gnap/tx".into(),
+                interaction_base_url: Some("https://as.example.test".into()),
+                token_lifetime_secs: 3600,
+                transaction_lifetime_secs: 600,
+            })
+            .with_poll_wait_secs(0)
+            .with_access_policy(Arc::new(AllowAll))
+            .with_instance_store(Arc::new(
+                crate::protocols::gnap_store::InMemoryInstanceStore::new(),
+            )),
+        );
+        let manager =
+            DpopManager::new(SecureJwtValidator::new(SecureJwtConfig::default()).unwrap());
+        let h = GnapAsHttp::new(service, Arc::new(manager), GRANT);
+        let (k, other) = (key(), key());
+
+        let first = json_of(&h.handle(&grant_req(&k, "i1")).await);
+        let id = first["instance_id"]
+            .as_str()
+            .expect("an instance_id")
+            .to_string();
+        let again = json_of(&h.handle(&grant_req(&k, "i2")).await);
+        assert_eq!(
+            again["instance_id"],
+            id.as_str(),
+            "the same key keeps its id"
+        );
+        let elsewhere = json_of(&h.handle(&grant_req(&other, "i3")).await);
+        assert_ne!(elsewhere["instance_id"], id.as_str());
+
+        let by_id = |signer: &Key, named: &Key, jti: &str, id: &str| {
+            let proof = dpop(signer, named, "POST", GRANT, jti);
+            let body = json!({"client": id, "access_token": {"access": [{"type": "read"}]}});
+            req(
+                "POST",
+                "/api/gnap/tx",
+                vec![("DPoP", proof)],
+                body.to_string().into_bytes(),
+            )
+        };
+        let ok = h.handle(&by_id(&k, &k, "i4", &id)).await;
+        assert_eq!(ok.status, 200, "{}", String::from_utf8_lossy(&ok.body));
+        assert!(json_of(&ok)["access_token"]["value"].is_string());
+
+        // The id is a handle, not a credential: a proof by another key does not satisfy it.
+        let stolen = h.handle(&by_id(&other, &other, "i5", &id)).await;
+        assert_ne!(stolen.status, 200, "another key must not use the id");
+        assert!(json_of(&stolen).get("access_token").is_none());
+
+        // An id this server never issued is `invalid_client`.
+        let unknown = h.handle(&by_id(&k, &k, "i6", "no-such-id")).await;
+        assert_eq!(code_of(&unknown), "invalid_client");
+
+        // Control: a server with no instance store issues no id and refuses a client string.
+        let plain = handler();
+        let r = plain.handle(&grant_req(&k, "i7")).await;
+        assert!(json_of(&r).get("instance_id").is_none());
+        let r = plain.handle(&by_id(&k, &k, "i8", &id)).await;
+        assert_eq!(code_of(&r), "invalid_client");
+    }
 
     #[tokio::test]
     async fn a_proved_grant_request_gets_a_token() {

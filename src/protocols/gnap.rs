@@ -24,7 +24,7 @@ use crate::protocols::gnap_interaction::{
 };
 use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
-    GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
+    GnapInstanceStore, GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
     InMemoryTransactionStore,
 };
 use crate::protocols::gnap_wire::{
@@ -190,8 +190,36 @@ pub struct GnapClientDisplay {
 /// How many characters the short code of a `user_code` start has (RFC 9635 section 3.3.3 recommends six to eight).
 const USER_CODE_LEN: usize = 8;
 
+/// Read `interact.start` entries: a string, or an object carrying a string `mode` (RFC 9635 section 2.5.1).
+fn deserialize_start_modes<'de, D>(d: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let entries = Vec::<serde_json::Value>::deserialize(d)?;
+    entries
+        .into_iter()
+        .map(|e| match e {
+            serde_json::Value::String(mode) => Ok(mode),
+            serde_json::Value::Object(o) => match o.get("mode") {
+                Some(serde_json::Value::String(mode)) => Ok(mode.clone()),
+                _ => Err(D::Error::custom(
+                    "interact.start object entries need a string `mode`",
+                )),
+            },
+            _ => Err(D::Error::custom(
+                "interact.start entries are strings or objects",
+            )),
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GnapInteractionRequirements {
+    /// The start modes offered (RFC 9635 section 2.5.1). On the wire an entry is a string or an object with a
+    /// string `mode` (`{"mode":"redirect"}`); both read as the mode name. An object without a string `mode`
+    /// is refused when the request is read.
+    #[serde(deserialize_with = "deserialize_start_modes")]
     pub start: Vec<String>,
     pub finish: Option<GnapInteractionFinish>,
     /// `interact.hints` (RFC 9635 section 2.5.3). Only `ui_locales` is read, and its shape is checked at
@@ -534,6 +562,9 @@ pub struct GnapService {
     transactions: Arc<dyn GnapTransactionStore>,
     /// Issued access tokens (keyed by token value)
     issued_tokens: Arc<dyn GnapTokenStore>,
+    /// Client instances, when the server issues `instance_id`s (RFC 9635 section 3.5); see
+    /// [`GnapService::with_instance_store`].
+    instances: Option<Arc<dyn GnapInstanceStore>>,
     /// Where the resource owner's approvals are recorded (RFC 9635 section 4).
     consents: Arc<dyn GnapConsentStore>,
     /// Wrong user codes typed per caller: (count, when the window began). See
@@ -545,6 +576,9 @@ pub struct GnapService {
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
+    /// The authorization server's issuer identifier, the `iss` of an `iss_sub` subject identifier (RFC 9635
+    /// section 3.4, RFC 9493). See [`GnapService::with_issuer`].
+    issuer: Option<String>,
     /// The short page a person types a `user_code_uri` code into (RFC 9635 section 3.3.4); without
     /// one that start mode is not offered. See [`GnapService::with_user_code_uri`].
     user_code_uri: Option<url::Url>,
@@ -597,24 +631,28 @@ const USER_CODE_LOCKED: &str = "Too many wrong user codes; try again later";
 pub const TOO_MANY_ATTEMPTS: &str =
     "too_many_attempts: Too many wrong interaction references: start a new transaction";
 
+/// What the poll that reaches the attempt cap by polling inside the `wait` is refused with (RFC 9635
+/// sections 5.2 and 3.6 `too_many_attempts`); the transaction is gone.
+pub const TOO_MANY_POLLS: &str =
+    "too_many_attempts: Polled too fast too many times: start a new transaction";
+
 const INVALID_CONTINUATION: &str = "invalid_continuation: Invalid continuation request";
 
 /// How far a JWS proof's `created` may differ from now, in seconds; its signature is remembered for twice that.
 const JWS_MAX_SKEW_SECS: u64 = 300;
 
 /// Refusal of a client key whose proof method this crate cannot verify.
-const PROOF_NOT_SUPPORTED: &str = "GNAP proof method not supported";
+const PROOF_NOT_SUPPORTED: &str = "invalid_client: GNAP proof method not supported";
 /// Refusal of a client key that came without the proof material to check it.
-const PROOF_REQUIRED: &str = "GNAP client key proof required: use the _with_proof entry point with the request's DPoP header";
+const PROOF_REQUIRED: &str = "invalid_client: GNAP client key proof required";
 /// Refusal of a certificate key that came without the client certificate the TLS layer saw.
-const MTLS_REQUIRED: &str =
-    "GNAP client key proof required: the request's client certificate (mtls) was not presented";
+const MTLS_REQUIRED: &str = "invalid_client: GNAP client key proof required: the request's client certificate (mtls) was not presented";
 /// Refusal of a client key proof that did not verify.
-const PROOF_INVALID: &str = "GNAP client key proof invalid";
+const PROOF_INVALID: &str = "invalid_client: GNAP client key proof invalid";
 /// Refusal of a request that names no client key (RFC 9635 section 2.3).
-const KEY_REQUIRED: &str = "GNAP client key required";
+const KEY_REQUIRED: &str = "invalid_client: GNAP client key required";
 /// Refusal to issue an access token when the service has no access policy.
-const POLICY_REQUIRED: &str = "GNAP access denied: no access policy is configured";
+const POLICY_REQUIRED: &str = "request_denied: GNAP access denied: no access policy is configured";
 /// Refusal to issue an access token when the policy grants nothing.
 const ACCESS_DENIED: &str = "request_denied: GNAP access denied by policy";
 
@@ -640,10 +678,12 @@ impl GnapService {
             policy: None,
             transactions: Arc::new(InMemoryTransactionStore::new()),
             issued_tokens: Arc::new(InMemoryTokenStore::new()),
+            instances: None,
             consents: Arc::new(InMemoryConsentStore::new()),
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             rotated: std::sync::Mutex::new(std::collections::HashMap::new()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
+            issuer: None,
             user_code_uri: None,
             max_bad_attempts: DEFAULT_MAX_BAD_ATTEMPTS,
             app_uri: None,
@@ -652,6 +692,41 @@ impl GnapService {
             ))),
             clock: Arc::new(system_now),
         }
+    }
+
+    /// Issue an `instance_id` to every client whose key proof verifies (RFC 9635 section 3.5), and accept that id
+    /// as the `client` of a later request (section 2.3.1; see [`GnapService::resolve_client_reference`]). Without
+    /// a store no id is issued and a `client` string is refused.
+    #[must_use]
+    pub fn with_instance_store(mut self, store: Arc<dyn GnapInstanceStore>) -> Self {
+        self.instances = Some(store);
+        self
+    }
+
+    /// Replace a `client` that is an `instance_id` string (RFC 9635 section 2.3.1) in a request body with the
+    /// client the id was issued for, so the request is read, and its proof checked, against the stored key. A
+    /// body whose `client` is an object (or absent) is returned unchanged. An id this server did not issue, or a
+    /// server that issues none, is refused.
+    pub async fn resolve_client_reference(
+        &self,
+        mut request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let Some(id) = request
+            .get("client")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+        else {
+            return Ok(request);
+        };
+        let known = match &self.instances {
+            Some(store) => store.get(&id).await?,
+            None => None,
+        };
+        let client =
+            known.ok_or_else(|| AuthError::validation("invalid_client: unknown instance_id"))?;
+        request["client"] = serde_json::to_value(client)
+            .map_err(|e| AuthError::validation(format!("invalid_client: {e}")))?;
+        Ok(request)
     }
 
     /// Replace the clock the service reads for token expiry, poll interval and `httpsig`/`jws`/`jwsd`
@@ -666,6 +741,28 @@ impl GnapService {
         }
         self.clock = Arc::new(clock);
         self
+    }
+
+    /// Set the issuer identifier this server uses as the `iss` of an `iss_sub` subject identifier (RFC 9635
+    /// section 3.4, RFC 9493): an absolute `https` URL with no query or fragment. Without one the
+    /// `interaction_base_url` is used, and without that the `iss_sub` format is not offered.
+    pub fn with_issuer(mut self, issuer: &str) -> Result<Self> {
+        let parsed = url::Url::parse(issuer)
+            .map_err(|e| AuthError::config(format!("GNAP issuer is not a URL: {e}")))?;
+        if parsed.scheme() != "https" || parsed.query().is_some() || parsed.fragment().is_some() {
+            return Err(AuthError::config(
+                "GNAP issuer must be an https URL without query or fragment",
+            ));
+        }
+        self.issuer = Some(issuer.to_string());
+        Ok(self)
+    }
+
+    /// The `iss` for `iss_sub`: the configured issuer, else the interaction base URL.
+    fn issuer_identifier(&self) -> Option<&str> {
+        self.issuer
+            .as_deref()
+            .or(self.config.interaction_base_url.as_deref())
     }
 
     /// Set the seconds a client must wait between polls of a pending transaction (default 5). A
@@ -1109,7 +1206,7 @@ impl GnapService {
             "httpsig" | "mtls" | "dpop" | "jws" | "jwsd" | "test" => {}
             other => {
                 return Err(AuthError::validation(format!(
-                    "GNAP proof method not supported: {other}"
+                    "invalid_client: GNAP proof method not supported: {other}"
                 )));
             }
         }
@@ -1180,7 +1277,7 @@ impl GnapService {
             "httpsig" | "mtls" | "dpop" | "jws" | "jwsd" | "test" => {}
             other => {
                 return Err(AuthError::validation(format!(
-                    "GNAP proof method not supported: {other}"
+                    "invalid_client: GNAP proof method not supported: {other}"
                 )));
             }
         }
@@ -1659,6 +1756,21 @@ impl GnapService {
             .collect())
     }
 
+    /// The `label` of the one token a request asks for (RFC 9635 section 2.1.1), if it gave one.
+    fn requested_label(request: &GnapTransactionRequest) -> Option<&str> {
+        request
+            .access_token_request
+            .as_ref()?
+            .as_slice()
+            .first()?
+            .label
+            .as_deref()
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the token inputs are one decision; a parameter struct is a follow-up"
+    )]
     async fn build_access_token_response(
         &self,
         access_requests: &[GnapAccessRequest],
@@ -1667,6 +1779,7 @@ impl GnapService {
         key_jwk: Option<serde_json::Value>,
         transaction_id: &str,
         consent_owner: Option<Option<&str>>,
+        label: Option<&str>,
     ) -> Result<serde_json::Map<String, serde_json::Value>> {
         // The policy, not the request, decides what the token carries.
         let policy = self
@@ -1727,6 +1840,13 @@ impl GnapService {
 
         let mut token_obj = serde_json::Map::new();
         token_obj.insert("value".to_string(), serde_json::Value::String(access_token));
+        // RFC 9635 section 3.2.1: the client's own name for the token, echoed when it gave one.
+        if let Some(label) = label {
+            token_obj.insert(
+                "label".to_string(),
+                serde_json::Value::String(label.to_string()),
+            );
+        }
         token_obj.insert(
             "expires_in".to_string(),
             serde_json::Value::Number(self.config.token_lifetime_secs.into()),
@@ -1738,10 +1858,8 @@ impl GnapService {
             serde_json::Value::String(format!("{}/token", self.config.transaction_endpoint)),
         );
 
-        // If key-bound, indicate the key binding
-        if key_thumbprint.is_some() {
-            token_obj.insert("key".to_string(), serde_json::Value::Bool(true));
-        }
+        // No `key` field: the token is bound to the key the client presented, which RFC 9635 section 3.2.1
+        // says is shown by omitting `key` (it is only for a key different from the presented one).
 
         let access_json: Vec<serde_json::Value> = access_requests
             .iter()
@@ -1811,6 +1929,15 @@ impl GnapService {
         let now = self.now();
 
         let mut response = serde_json::Map::new();
+
+        // RFC 9635 section 3.5: a client whose key proof verified is given an id to use as its `client` next
+        // time. Registered only after the proof, so an unproved caller cannot fill the store.
+        if let (Some(store), Some(thumbprint), Some(client)) =
+            (&self.instances, &key_thumbprint, &request.client)
+        {
+            let id = store.register(thumbprint, client).await?;
+            response.insert("instance_id".to_string(), serde_json::Value::String(id));
+        }
 
         // Generate a server nonce for interaction hash verification
         let interact_nonce = if request.interact.is_some() {
@@ -1931,6 +2058,7 @@ impl GnapService {
                         Self::key_jwk_value(&request.client),
                         "direct",
                         None,
+                        Self::requested_label(&request),
                     )
                     .await?;
                 response.insert(
@@ -1941,7 +2069,8 @@ impl GnapService {
 
             // If subject info was requested, include it (draft §2.2)
             if let Some(ref subject_req) = request.subject {
-                let subject_resp = Self::build_subject_response(subject_req, None);
+                let subject_resp =
+                    Self::build_subject_response(subject_req, None, self.issuer_identifier());
                 response.insert(
                     "subject".to_string(),
                     serde_json::Value::Object(subject_resp),
@@ -1982,14 +2111,42 @@ impl GnapService {
         Ok(serde_json::Value::Object(response))
     }
 
-    /// The continuation URI of a transaction: `{transaction_endpoint}/continue/{id}`. RFC 9635
-    /// section 5 lets the AS choose it, and naming the transaction lets a request that carries only
-    /// the continuation token and a proof be routed to it.
+    /// The grant URL the client posts to, made absolute on the origin of the interaction base URL when
+    /// there is one: RFC 9635 section 4.2.3 hashes that absolute URL. Without a base URL only the
+    /// configured path can be used.
+    fn grant_url(&self) -> String {
+        let path = &self.config.transaction_endpoint;
+        let origin = self
+            .config
+            .interaction_base_url
+            .as_deref()
+            .and_then(|base| url::Url::parse(base).ok())
+            .filter(|u| u.has_host());
+        match origin.and_then(|u| u.join(path).ok()) {
+            Some(absolute) => absolute.to_string(),
+            None => path.clone(),
+        }
+    }
+
+    /// The continuation URI of a transaction: `{transaction_endpoint}/continue/{id}`, made absolute on the
+    /// origin of the interaction base URL when there is one (RFC 9635 section 3.1: "MUST be an absolute
+    /// URI"); without one only the path can be given. RFC 9635 section 5 lets the AS choose it, and naming
+    /// the transaction lets a request that carries only the continuation token and a proof be routed to it.
     fn continue_uri(&self, transaction_id: &str) -> String {
-        format!(
+        let path = format!(
             "{}/continue/{}",
             self.config.transaction_endpoint, transaction_id
-        )
+        );
+        let origin = self
+            .config
+            .interaction_base_url
+            .as_deref()
+            .and_then(|base| url::Url::parse(base).ok())
+            .filter(|u| u.has_host());
+        match origin.and_then(|u| u.join(&path).ok()) {
+            Some(absolute) => absolute.to_string(),
+            None => path,
+        }
     }
 
     /// Continue a transaction without proof material. Tests only: in a build every continuation
@@ -2089,7 +2246,7 @@ impl GnapService {
                 client_nonce,
                 server_nonce,
                 iref,
-                &self.config.transaction_endpoint,
+                &self.grant_url(),
                 method,
             );
             if !bool::from(subtle::ConstantTimeEq::ct_eq(
@@ -2135,6 +2292,13 @@ impl GnapService {
                 };
                 if self.poll_wait_secs > 0 && now.saturating_sub(since) < self.poll_wait_secs {
                     txn.last_poll_at = now;
+                    // A client that keeps ignoring the wait spends the same attempt cap as one that
+                    // sends wrong interaction references: at the cap the grant is invalidated.
+                    txn.bad_attempts = txn.bad_attempts.saturating_add(1);
+                    if self.max_bad_attempts > 0 && txn.bad_attempts >= self.max_bad_attempts {
+                        self.transactions.remove(transaction_id).await?;
+                        return Err(AuthError::validation(TOO_MANY_POLLS));
+                    }
                     if !self.transactions.replace_if_unchanged(txn).await? {
                         return Err(AuthError::validation(INVALID_CONTINUATION));
                     }
@@ -2179,6 +2343,7 @@ impl GnapService {
                             Self::key_jwk_value(&txn.request.client),
                             transaction_id,
                             Some(txn.subject_id.as_deref()),
+                            Self::requested_label(&txn.request),
                         )
                         .await
                     {
@@ -2194,8 +2359,11 @@ impl GnapService {
 
                 // Include subject info if requested and available
                 if let Some(ref subject_req) = txn.request.subject {
-                    let subject_resp =
-                        Self::build_subject_response(subject_req, txn.subject_id.as_deref());
+                    let subject_resp = Self::build_subject_response(
+                        subject_req,
+                        txn.subject_id.as_deref(),
+                        self.issuer_identifier(),
+                    );
                     response.insert(
                         "subject".to_string(),
                         serde_json::Value::Object(subject_resp),
@@ -2324,7 +2492,13 @@ impl GnapService {
             .load_for_continuation(transaction_id, continue_token, dpop, proof)
             .await?;
         match self.transactions.remove(transaction_id).await? {
-            Some(gone) if gone.revision == txn.revision => Ok(()),
+            Some(gone) if gone.revision == txn.revision => {
+                // RFC 9635 section 5.4: the AS SHOULD revoke the tokens issued under a cancelled grant.
+                self.issued_tokens
+                    .remove_for_transaction(transaction_id)
+                    .await?;
+                Ok(())
+            }
             _ => Err(AuthError::validation(INVALID_CONTINUATION)),
         }
     }
@@ -2366,7 +2540,7 @@ impl GnapService {
         transaction_id: &str,
         subject_id: Option<&str>,
     ) -> Result<GnapInteractionCompletion> {
-        let endpoint = &self.config.transaction_endpoint;
+        let endpoint = &self.grant_url();
         self.update_transaction(transaction_id, |txn| {
             txn.state = GnapTransactionState::Approved;
             if let Some(sid) = subject_id {
@@ -2466,7 +2640,7 @@ impl GnapService {
             &finish.nonce,
             txn.interact_nonce.as_deref().unwrap_or(""),
             interact_ref,
-            &self.config.transaction_endpoint,
+            &self.grant_url(),
             Self::hash_method_of(finish.hash_method.as_deref()),
         );
         deliver_push(&uri, &hash, interact_ref, resolver, sender)
@@ -2520,7 +2694,7 @@ impl GnapService {
             &finish.nonce,
             txn.interact_nonce.as_deref().unwrap_or(""),
             interact_ref,
-            &self.config.transaction_endpoint,
+            &self.grant_url(),
             Self::hash_method_of(finish.hash_method.as_deref()),
         );
         Ok(crate::protocols::gnap_interaction::callback_redirect_url(
@@ -2820,9 +2994,6 @@ impl GnapService {
             "manage".to_string(),
             serde_json::Value::String(format!("{}/token", self.config.transaction_endpoint)),
         );
-        if new_token.key_thumbprint.is_some() {
-            token_obj.insert("key".to_string(), serde_json::Value::Bool(true));
-        }
         let access_json: Vec<serde_json::Value> = old
             .access
             .iter()
@@ -2834,7 +3005,8 @@ impl GnapService {
 
         let response = serde_json::Value::Object(token_obj);
         // A key rotation is not remembered: a retry would need both keys' proofs again.
-        if !key_rotated {
+        // A token with no key has nothing to prove a retry with: it is not remembered either.
+        if !key_rotated && old.key_thumbprint.is_some() {
             let mut map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
             map.retain(|_, r| now.saturating_sub(r.at) <= ROTATION_RETRY_SECS);
             map.insert(
@@ -2869,8 +3041,10 @@ impl GnapService {
         let Some(record) = record else {
             return Ok(None);
         };
-        if self.issued_tokens.get(&record.new_value).await?.is_none() {
-            return Ok(None);
+        // The store does not filter by expiry: a token already past its lifetime is not handed back.
+        match self.issued_tokens.get(&record.new_value).await? {
+            Some(new) if now < new.expires_at => {}
+            _ => return Ok(None),
         }
         self.verify_token_key_proof(
             record.thumbprint.as_deref(),
@@ -2967,6 +3141,7 @@ impl GnapService {
     fn build_subject_response(
         request: &GnapSubjectRequest,
         subject_id: Option<&str>,
+        issuer: Option<&str>,
     ) -> serde_json::Map<String, serde_json::Value> {
         let mut resp = serde_json::Map::new();
 
@@ -2991,11 +3166,14 @@ impl GnapService {
                         }
                     }
                     "iss_sub" => {
-                        sub_ids.push(serde_json::json!({
-                            "format": "iss_sub",
-                            "iss": "self",
-                            "sub": sid,
-                        }));
+                        // Without an issuer identifier there is no valid `iss`: not offered.
+                        if let Some(iss) = issuer {
+                            sub_ids.push(serde_json::json!({
+                                "format": "iss_sub",
+                                "iss": iss,
+                                "sub": sid,
+                            }));
+                        }
                     }
                     _ => {} // Unknown format — skip
                 }
@@ -3072,6 +3250,33 @@ impl GnapAccessPolicy for AllowAllPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RFC 9635 section 3.6: the service names the code of each client-facing refusal itself, so the AS layer
+    /// reads a typed error and does not guess from the wording (G-gap 3.6).
+    #[test]
+    fn section_3_6_key_proof_and_policy_refusals_carry_their_code() {
+        use crate::protocols::gnap_wire::{GnapError, GnapErrorCode};
+        for message in [
+            PROOF_NOT_SUPPORTED,
+            PROOF_REQUIRED,
+            MTLS_REQUIRED,
+            PROOF_INVALID,
+            KEY_REQUIRED,
+        ] {
+            let typed = GnapError::from_service_message(message)
+                .unwrap_or_else(|| panic!("{message} names no code"));
+            assert_eq!(typed.code, GnapErrorCode::InvalidClient, "{message}");
+        }
+        let typed = GnapError::from_service_message(POLICY_REQUIRED).expect("names a code");
+        assert_eq!(typed.code, GnapErrorCode::RequestDenied);
+        // Control: a refusal that was already typed still reads as before.
+        assert_eq!(
+            GnapError::from_service_message(ACCESS_DENIED).unwrap().code,
+            GnapErrorCode::RequestDenied
+        );
+        // The description a client sees names no entry point of this crate.
+        assert!(!PROOF_REQUIRED.contains("_with_proof"));
+    }
 
     fn test_service() -> GnapService {
         GnapService::new(test_config())
@@ -3338,7 +3543,10 @@ mod tests {
         assert!(token_obj.contains_key("value"));
         assert!(token_obj.contains_key("expires_in"));
         assert!(token_obj.contains_key("manage"));
-        assert_eq!(token_obj.get("key").and_then(|v| v.as_bool()), Some(true));
+        assert!(
+            !token_obj.contains_key("key"),
+            "bound to the presented key: no key field"
+        );
     }
 
     #[tokio::test]
@@ -3675,7 +3883,10 @@ mod tests {
                 !value.contains("read"),
                 "the value says nothing of the access it stands for"
             );
-            assert_eq!(token["key"], true, "key-bound by default");
+            assert!(
+                token.get("key").is_none(),
+                "bound to the presented key by default"
+            );
             assert!(values.insert(value.clone()), "no two tokens are equal");
             first.get_or_insert(value);
         }
@@ -3686,6 +3897,135 @@ mod tests {
         let last = altered.pop().unwrap();
         altered.push(if last == '0' { '1' } else { '0' });
         assert!(service.introspect_token(&altered).await.unwrap().is_none());
+    }
+
+    /// RFC 9635 section 2.5.1: an `interact.start` entry may be the object form `{"mode": "redirect"}`. It must
+    /// read through the wire type, not only through `parse_start`; an object with no string `mode` is refused.
+    #[test]
+    fn section_2_5_1_the_object_form_of_start_reads_on_the_wire() {
+        let request = |start: serde_json::Value| {
+            serde_json::from_value::<GnapTransactionRequest>(serde_json::json!({
+                "interact": { "start": start }
+            }))
+        };
+        let both = request(serde_json::json!([{"mode": "redirect"}, "user_code"])).unwrap();
+        assert_eq!(both.interact.unwrap().start, ["redirect", "user_code"]);
+        assert!(
+            request(serde_json::json!(["redirect"])).is_ok(),
+            "control: the string form"
+        );
+        for bad in [
+            serde_json::json!([{}]),
+            serde_json::json!([{"mode": 7}]),
+            serde_json::json!([7]),
+        ] {
+            assert!(request(bad.clone()).is_err(), "{bad} must be refused");
+        }
+    }
+
+    /// RFC 9635 section 3.1: the continuation `uri` "MUST be an absolute URI". With an interaction base URL the
+    /// AS builds it on that origin; clients still read the grant id from its last segment.
+    #[tokio::test]
+    async fn section_3_1_the_continue_uri_is_absolute() {
+        let interactive = || GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+                hints: None,
+            }),
+            access_token_request: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+            }),
+        };
+        let svc = test_service();
+        let started = svc.handle_transaction(interactive()).await.unwrap();
+        let uri = started["continue"]["uri"].as_str().unwrap();
+        assert!(
+            uri.starts_with("https://auth.example.test/api/gnap/tx/continue/"),
+            "{uri}"
+        );
+
+        // Control: no base URL, no interactive flow at all, so a pending grant always has an origin to build on.
+        let bare = GnapService::new(GnapConfig {
+            interaction_base_url: None,
+            ..test_config()
+        })
+        .with_access_policy(Arc::new(AllowAllPolicy));
+        assert!(bare.handle_transaction(interactive()).await.is_err());
+    }
+
+    /// RFC 9635 section 3.2.1: `label` is "the value of the `label` the client instance provided in the
+    /// associated token request, if present", so a client with several tokens can tell them apart. A request
+    /// with no label gets none back.
+    #[tokio::test]
+    async fn section_3_2_1_the_issued_token_echoes_the_requested_label() {
+        let service = test_service();
+        let mut req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: None,
+            subject: None,
+        };
+        req.access_token_request = Some(
+            serde_json::from_value(
+                serde_json::json!({"access": [{"type": "read"}], "label": "photos"}),
+            )
+            .unwrap(),
+        );
+        let issued = service.handle_transaction(req.clone()).await.unwrap();
+        assert_eq!(issued["access_token"]["label"], "photos");
+
+        // Control: the same request without a label has no `label` in the token.
+        req.access_token_request = Some(
+            serde_json::from_value(serde_json::json!({"access": [{"type": "read"}]})).unwrap(),
+        );
+        let issued = service.handle_transaction(req).await.unwrap();
+        assert!(issued["access_token"].get("label").is_none());
+    }
+
+    /// RFC 9635 section 3.2.1: `key` is "the key that the token is bound to, if different from the client
+    /// instance's presented key", an object or a string; "if the bearer flag and the key field ... are omitted,
+    /// the token is bound to the key used by the client instance". A boolean is no defined value, so a token
+    /// bound to the presented key (the only binding this AS makes) carries no `key`, on issue and rotation.
+    #[tokio::test]
+    async fn section_3_2_1_a_token_bound_to_the_presented_key_carries_no_key_field() {
+        let service = test_service();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: None,
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        };
+        let issued = service.handle_transaction(req).await.unwrap();
+        let value = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let rotated = service.rotate_token(&value).await.unwrap();
+        for (label, token) in [("issue", &issued["access_token"]), ("rotation", &rotated)] {
+            assert!(token.get("key").is_none(), "{label}: {token}");
+            assert!(
+                token.get("flags").is_none(),
+                "{label}: not a bearer token, so no bearer flag"
+            );
+        }
+        // Still bound: the stored token carries the presented key's thumbprint.
+        let info = service
+            .introspect_token(rotated["value"].as_str().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(info["key_bound"], true);
     }
 
     /// RFC 9635 section 12.4.2, "Correlation by Resource Servers": an AS that puts a stable user identifier in
@@ -3856,7 +4196,7 @@ mod tests {
 
     /// RFC 9635 section 11.38, "AS-Provided Token Keys": an AS that returns its own key with a token enables a
     /// substitution attack, so "returning a key ... should be limited". This service never returns key
-    /// material: `key` in a token response is the flag `true` (bound to the client's own key), on issue and on
+    /// material: a token response carries no `key` (bound to the client's own key, section 3.2.1), on issue and on
     /// rotation alike, and no response carries a private key parameter.
     #[tokio::test]
     async fn section_11_38_a_token_response_never_carries_a_key_of_the_ass_choosing() {
@@ -3881,9 +4221,9 @@ mod tests {
             .to_string();
         let rotated = service.rotate_token(&token).await.unwrap();
         for (label, response) in [("issue", &issued["access_token"]), ("rotation", &rotated)] {
-            assert_eq!(
-                response["key"], true,
-                "{label}: the flag, never a key object or a reference"
+            assert!(
+                response.get("key").is_none(),
+                "{label}: no key object, string or reference"
             );
             let text = response.to_string();
             assert!(
@@ -3901,7 +4241,7 @@ mod tests {
             sub_id_formats: vec!["opaque".to_string()],
             assertion_formats: vec![],
         };
-        let resp = GnapService::build_subject_response(&req, Some("user-42"));
+        let resp = GnapService::build_subject_response(&req, Some("user-42"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
         assert_eq!(sub_ids.len(), 1);
         assert_eq!(sub_ids[0]["format"], "opaque");
@@ -3914,7 +4254,7 @@ mod tests {
             sub_id_formats: vec!["email".to_string()],
             assertion_formats: vec![],
         };
-        let resp = GnapService::build_subject_response(&req, Some("user@example.test"));
+        let resp = GnapService::build_subject_response(&req, Some("user@example.test"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
         assert_eq!(sub_ids.len(), 1);
         assert_eq!(sub_ids[0]["format"], "email");
@@ -3927,7 +4267,7 @@ mod tests {
             assertion_formats: vec![],
         };
         // Subject is not an email → defaults to opaque
-        let resp = GnapService::build_subject_response(&req, Some("user-42"));
+        let resp = GnapService::build_subject_response(&req, Some("user-42"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
         assert_eq!(sub_ids[0]["format"], "opaque");
     }
@@ -3938,10 +4278,32 @@ mod tests {
             sub_id_formats: vec!["iss_sub".to_string()],
             assertion_formats: vec![],
         };
-        let resp = GnapService::build_subject_response(&req, Some("user-42"));
+        let resp = GnapService::build_subject_response(
+            &req,
+            Some("user-42"),
+            Some("https://as.example.test"),
+        );
         let sub_ids = resp["sub_ids"].as_array().unwrap();
         assert_eq!(sub_ids[0]["format"], "iss_sub");
         assert_eq!(sub_ids[0]["sub"], "user-42");
+        assert_eq!(
+            sub_ids[0]["iss"], "https://as.example.test",
+            "the AS identifier, not a placeholder (RFC 9635 section 3.4)"
+        );
+        // With no issuer identifier there is no valid `iss`, so the format is not offered; the default is opaque.
+        let none = GnapService::build_subject_response(&req, Some("user-42"), None);
+        assert_eq!(none["sub_ids"][0]["format"], "opaque");
+        assert!(
+            GnapService::new(GnapConfig::default())
+                .with_issuer("http://as.example.test")
+                .is_err(),
+            "an issuer must be https"
+        );
+        assert!(
+            GnapService::new(GnapConfig::default())
+                .with_issuer("https://as.example.test")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -3950,7 +4312,7 @@ mod tests {
             sub_id_formats: vec!["opaque".to_string()],
             assertion_formats: vec![],
         };
-        let resp = GnapService::build_subject_response(&req, None);
+        let resp = GnapService::build_subject_response(&req, None, None);
         assert!(!resp.contains_key("sub_ids"));
     }
 
@@ -4041,6 +4403,45 @@ mod tests {
         assert_eq!(service.transactions.count().await.unwrap(), 0);
     }
 
+    /// RFC 9635 section 4.2.3 hashes the grant URL the client used, an absolute URL: with an
+    /// interaction base URL the hash input is that origin plus the transaction endpoint.
+    #[tokio::test]
+    async fn test_interaction_hash_uses_absolute_grant_url() {
+        let service = test_service();
+        let req = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: Some(GnapInteractionFinish {
+                    method: "redirect".to_string(),
+                    uri: "https://client.test/cb".to_string(),
+                    nonce: "cn-abs".to_string(),
+                    hash_method: None,
+                }),
+                hints: None,
+            }),
+            access_token_request: Some(
+                vec![GnapAccessRequest {
+                    access_type: "read".to_string(),
+                    actions: vec![],
+                    locations: vec![],
+                }]
+                .into(),
+            ),
+            subject: None,
+        };
+        service.handle_transaction(req).await.unwrap();
+        let txn = service.test_first_txn().await;
+        let done = service.approve_transaction(&txn.id, None).await.unwrap();
+        let expected = GnapService::compute_interact_hash(
+            "cn-abs",
+            txn.interact_nonce.as_deref().unwrap(),
+            done.interact_ref.as_deref().unwrap(),
+            "https://auth.example.test/api/gnap/tx",
+        );
+        assert_eq!(done.hash.as_deref(), Some(expected.as_str()));
+    }
+
     // ── Interaction Hash Verification ────────────────────────────────────
 
     #[tokio::test]
@@ -4082,7 +4483,7 @@ mod tests {
             client_nonce,
             &server_nonce,
             interact_ref,
-            &service.config.transaction_endpoint,
+            &service.grant_url(),
         );
         assert_eq!(done.hash.as_deref(), Some(correct_hash.as_str()));
 
@@ -4140,7 +4541,7 @@ mod tests {
                 client_nonce,
                 txn.interact_nonce.as_deref().unwrap(),
                 &interact_ref,
-                &service.config.transaction_endpoint,
+                &service.grant_url(),
             ),
             "the hash approve returns is the section 4.2.3 hash"
         );
@@ -4557,6 +4958,70 @@ mod tests {
             .unwrap()
             .to_string();
         assert_eq!(service.test_txn(&id).await.continue_token, cont);
+    }
+
+    /// RFC 9635 sections 5.2 and 3.6: a client that keeps polling inside the wait is not refused forever with
+    /// `too_fast`: at the attempt cap the grant is invalidated with `too_many_attempts`, and the token is gone.
+    #[tokio::test]
+    async fn polling_too_fast_past_the_cap_invalidates_the_grant() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let time = Arc::new(AtomicU64::new(1_800_000_000));
+        let clock = Arc::clone(&time);
+        let service = GnapService::new(test_config())
+            .with_access_policy(Arc::new(AllowAllPolicy))
+            .with_max_bad_attempts(3)
+            .with_clock(move || clock.load(Ordering::SeqCst));
+        service
+            .handle_transaction(section_11_request("cap"))
+            .await
+            .unwrap();
+        let txn = service.test_first_txn().await;
+        let (id, cont) = (txn.id, txn.continue_token);
+        for _ in 0..2 {
+            time.fetch_add(1, Ordering::SeqCst);
+            let e = service
+                .continue_transaction(&id, &cont, None, None)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("too_fast"), "{e}");
+        }
+        time.fetch_add(1, Ordering::SeqCst);
+        let e = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("too_many_attempts"), "{e}");
+        // The grant is gone: even a well-spaced poll with the right token finds nothing.
+        time.fetch_add(60, Ordering::SeqCst);
+        assert!(
+            service
+                .continue_transaction(&id, &cont, None, None)
+                .await
+                .is_err()
+        );
+        // Control: with no cap (0) the same behaviour stays `too_fast` however often it repeats.
+        let open = GnapService::new(test_config())
+            .with_access_policy(Arc::new(AllowAllPolicy))
+            .with_max_bad_attempts(0)
+            .with_clock({
+                let clock = Arc::clone(&time);
+                move || clock.load(Ordering::SeqCst)
+            });
+        open.handle_transaction(section_11_request("cap0"))
+            .await
+            .unwrap();
+        let txn = open.test_first_txn().await;
+        for _ in 0..10 {
+            time.fetch_add(1, Ordering::SeqCst);
+            let e = open
+                .continue_transaction(&txn.id, &txn.continue_token, None, None)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("too_fast"), "{e}");
+        }
     }
 
     #[tokio::test]
@@ -6058,7 +6523,10 @@ mod proof_verification_tests {
             .unwrap()
             .to_string();
         let stored_id = svc.test_first_txn().await.id;
-        assert_eq!(uri, format!("/api/gnap/tx/continue/{stored_id}"));
+        assert_eq!(
+            uri,
+            format!("https://as.example.test/api/gnap/tx/continue/{stored_id}")
+        );
 
         // The route's path parameter is the last segment of the issued URI.
         let routed_id = uri.rsplit('/').next().unwrap();
@@ -6406,6 +6874,42 @@ mod proof_verification_tests {
             .await
             .expect("an approved grant can still be cancelled");
         assert!(svc.test_txn_ids().await.is_empty());
+    }
+
+    /// RFC 9635 section 5.4: "The AS SHOULD revoke all associated access tokens". Cancelling a grant takes
+    /// the tokens issued under it with it, and leaves another grant's tokens alone (control).
+    #[tokio::test]
+    async fn delete_revokes_the_tokens_issued_under_the_grant() {
+        let store = Arc::new(InMemoryTokenStore::new());
+        let svc = service().with_token_store(store.clone());
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "dt-0").await;
+        let issued = |value: &str, txn: &str| GnapIssuedToken {
+            value: value.to_string(),
+            access: vec![],
+            expires_at: u64::MAX,
+            key_thumbprint: None,
+            key_proof: None,
+            key_jwk: None,
+            transaction_id: txn.to_string(),
+        };
+        store.insert(issued("mine", &id)).await.unwrap();
+        store
+            .insert(issued("other", "another-grant"))
+            .await
+            .unwrap();
+
+        cancel(&svc, &dpop, &key, &id, &token, "dt-1")
+            .await
+            .unwrap();
+        assert!(
+            store.get("mine").await.unwrap().is_none(),
+            "its token is revoked"
+        );
+        assert!(
+            store.get("other").await.unwrap().is_some(),
+            "another grant's token is untouched"
+        );
     }
 
     #[tokio::test]
@@ -6844,7 +7348,7 @@ mod proof_verification_tests {
                 "cn",
                 txn.interact_nonce.as_deref().unwrap(),
                 &iref,
-                &svc.config.transaction_endpoint,
+                &svc.grant_url(),
                 method,
             )
             .unwrap();
@@ -8160,6 +8664,87 @@ mod httpsig_proof_tests {
         assert!(
             svc.rotate_token(&token).await.is_err(),
             "discarded after use"
+        );
+    }
+
+    /// A retried rotation never hands back a token that is already dead: with a token lifetime shorter than the
+    /// 30 s retry window the new token can expire inside it, and the retry is then the normal refusal.
+    #[tokio::test]
+    async fn a_retried_rotation_does_not_return_an_expired_token() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let time = Arc::new(AtomicU64::new(1_800_000_000));
+        let clock = Arc::clone(&time);
+        let svc = GnapService::new(GnapConfig {
+            enabled: true,
+            transaction_endpoint: "/api/gnap/tx".to_string(),
+            interaction_base_url: Some("https://as.example.test".to_string()),
+            token_lifetime_secs: 5,
+            transaction_lifetime_secs: 600,
+        })
+        .with_poll_wait_secs(0)
+        .with_access_policy(Arc::new(AllowAllPolicy))
+        .with_clock(move || clock.load(Ordering::SeqCst));
+        let key = signer();
+        let issued = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let token = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let rotated = svc.rotate_token(&token).await.unwrap();
+        let fresh = rotated["value"].as_str().unwrap().to_string();
+
+        // Control: inside the new token's lifetime the retry gets the same token.
+        time.fetch_add(2, Ordering::SeqCst);
+        assert_eq!(svc.rotate_token(&token).await.unwrap()["value"], fresh);
+        // Past its lifetime (still inside the 30 s window) the retry is refused.
+        time.fetch_add(8, Ordering::SeqCst);
+        // (Not introspected: seeing the new token in use would drop the retry record.)
+        assert!(
+            svc.issued_tokens.get(&fresh).await.unwrap().is_some(),
+            "stored, but expired"
+        );
+        assert!(
+            svc.rotate_token(&token).await.is_err(),
+            "no expired token is handed back"
+        );
+    }
+
+    /// A token that carries no key has nothing to prove a retry with, so a rotation of it leaves no retry
+    /// record: the retired value is the normal refusal at once (RFC 9635 section 11.33).
+    #[tokio::test]
+    async fn a_keyless_token_leaves_no_retry_record_when_rotated() {
+        let store = Arc::new(InMemoryTokenStore::new());
+        let svc = service().with_token_store(store.clone());
+        store
+            .insert(GnapIssuedToken {
+                value: "keyless".to_string(),
+                access: vec![],
+                expires_at: u64::MAX,
+                key_thumbprint: None,
+                key_proof: None,
+                key_jwk: None,
+                transaction_id: "t".to_string(),
+            })
+            .await
+            .unwrap();
+        let rotated = svc.rotate_token("keyless").await.unwrap();
+        assert!(rotated["value"].is_string());
+        assert!(
+            svc.rotate_token("keyless").await.is_err(),
+            "the retired keyless value is not answered again"
+        );
+
+        // Control: a key-bound token still gets its retry.
+        let key = signer();
+        let issued = svc.handle_transaction(request(&key, "test")).await.unwrap();
+        let bound = issued["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let first = svc.rotate_token(&bound).await.unwrap();
+        assert_eq!(
+            svc.rotate_token(&bound).await.unwrap()["value"],
+            first["value"]
         );
     }
 

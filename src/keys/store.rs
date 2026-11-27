@@ -101,6 +101,42 @@ pub async fn publish_jwks(store: &dyn KeyStore) -> Result<JwkSet> {
     })
 }
 
+/// A key the store has revoked or destroyed: what a relying party needs to stop trusting it.
+/// No private material, and no time: the store does not record when a key was revoked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RevokedKey {
+    /// Key id.
+    pub kid: Kid,
+    /// Purpose.
+    pub kind: KeyKind,
+    /// JWS algorithm name.
+    pub alg: String,
+    /// RFC 7638 thumbprint of the public half; `None` for a symmetric key.
+    pub thumbprint: Option<String>,
+}
+
+/// The revocation list of a store (KM5): every `Revoked` or `Destroyed` key, ordered by key
+/// id. It is the input for whatever publishes revocation (a CRL for a certificate key, a
+/// feed or an event for a JWS or client key); the crate does not sign or serve it. A key
+/// leaves the JWKS the moment it is revoked, but a verifier that cached the JWKS, or a
+/// grant bound to the key's thumbprint, learns of it only from a list like this one.
+pub async fn revocation_list(store: &dyn KeyStore) -> Result<Vec<RevokedKey>> {
+    store
+        .list()
+        .await?
+        .into_iter()
+        .filter(|i| matches!(i.state, KeyState::Revoked | KeyState::Destroyed))
+        .map(|i| {
+            Ok(RevokedKey {
+                thumbprint: i.public.as_ref().map(PublicJwk::thumbprint).transpose()?,
+                kid: i.kid,
+                kind: i.kind,
+                alg: i.alg,
+            })
+        })
+        .collect()
+}
+
 /// The X25519 shared secret between the key-agreement key `kid` in `store` and `peer_public`
 /// (32 bytes): the call a JWE layer makes to decrypt. Only an `Active` or `Retiring` key agrees
 /// (a retiring key must still open what was encrypted to it before the rotation; a pending,
@@ -650,6 +686,52 @@ mod tests {
 
     fn key(alg: SigningAlg) -> LocalKey {
         LocalKey::generate(KeyKind::JwsSigning, alg, None).unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_revocation_list_names_revoked_and_destroyed_keys_only() {
+        let s = MemoryKeyStore::new();
+        let mut kids = Vec::new();
+        for st in [
+            KeyState::Active,
+            KeyState::Retiring,
+            KeyState::Revoked,
+            KeyState::Destroyed,
+        ] {
+            let k = key(SigningAlg::Es256);
+            kids.push(k.kid().clone());
+            s.insert(k, KeyState::Pending).await.unwrap();
+            if st == KeyState::Destroyed {
+                s.set_state(kids.last().unwrap(), KeyState::Revoked)
+                    .await
+                    .unwrap();
+            } else if st != KeyState::Pending {
+                s.set_state(kids.last().unwrap(), KeyState::Active)
+                    .await
+                    .unwrap();
+                if st != KeyState::Active {
+                    s.set_state(kids.last().unwrap(), st).await.unwrap();
+                }
+            }
+            if st == KeyState::Destroyed {
+                s.set_state(kids.last().unwrap(), KeyState::Destroyed)
+                    .await
+                    .unwrap();
+            }
+        }
+        let list = revocation_list(&s).await.unwrap();
+        let mut want = vec![kids[2].clone(), kids[3].clone()];
+        want.sort();
+        let got: Vec<Kid> = list.iter().map(|r| r.kid.clone()).collect();
+        assert_eq!(got, want);
+        for r in &list {
+            let info = s.info(&r.kid).await.unwrap();
+            assert_eq!(
+                r.thumbprint,
+                Some(info.public.unwrap().thumbprint().unwrap())
+            );
+            assert_eq!(r.alg, "ES256");
+        }
     }
 
     #[tokio::test]

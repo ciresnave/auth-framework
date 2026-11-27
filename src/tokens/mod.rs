@@ -1572,7 +1572,7 @@ impl TokenManager {
 
     /// The JWKS to publish at `/.well-known/jwks.json`, as a JSON object `{"keys":[...]}`.
     ///
-    /// With a key ring this is the ring's live asymmetric keys (ES256 and EdDSA, `Active`
+    /// With a key ring this is the ring's live asymmetric keys (ES256, ES384, RS256 and EdDSA, `Active`
     /// and `Retiring`; see [`KeyRing::public_jwks`]) and fails if the ring is stale. A key
     /// revoked in the store leaves the set only when the ring refreshes, so revoke through
     /// [`KeyRing::revoke`] or [`KeyRing::compromise`] to drop it at once. Without

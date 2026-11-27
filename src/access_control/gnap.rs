@@ -9,7 +9,7 @@
 //! poisoned engine lock denies everything. The return is the allowed subset,
 //! empty meaning deny.
 
-use super::{Authorizer, Freshness, InMemoryEngine};
+use super::{ActingContext, Authorizer, Freshness, InMemoryEngine};
 use crate::protocols::gnap::{GnapAccessPolicy, GnapAccessRequest};
 use async_trait::async_trait;
 use std::sync::{Arc, RwLock};
@@ -35,6 +35,15 @@ impl EngineGnapPolicy {
     /// Use `engine` (shared, so rules can still be edited through the handle).
     pub fn new(engine: Arc<RwLock<InMemoryEngine>>) -> Self {
         Self { engine }
+    }
+
+    /// Who this client key acts as and for whom: what a GNAP token for an agent
+    /// names (the principal acting and the account holder on whose behalf). `None`
+    /// (fail closed) for an unknown or revoked key, an inactive principal, a
+    /// principal whose owner chain does not end at a human, or a poisoned lock.
+    pub fn acting_context(&self, client_key_thumbprint: &str) -> Option<ActingContext> {
+        let engine = self.engine.read().ok()?;
+        engine.principals()?.acting_context(client_key_thumbprint)
     }
 
     fn grant_sync(
@@ -163,6 +172,34 @@ mod tests {
             .unwrap();
         let e = Arc::new(RwLock::new(e));
         (EngineGnapPolicy::new(e.clone()), e)
+    }
+
+    #[test]
+    fn acting_context_names_the_agent_and_its_account_holder() {
+        let (p, e) = setup();
+        {
+            let mut g = e.write().unwrap();
+            let reg = g.principals_mut().unwrap();
+            reg.create("bot", PrincipalKind::Agent, Some("alice"))
+                .unwrap();
+            reg.add_key("bot", "tp-bot").unwrap();
+        }
+        let c = p.acting_context("tp-bot").unwrap();
+        assert_eq!(c.principal, "bot");
+        assert_eq!(c.account_holder, "alice");
+        assert_eq!(
+            p.acting_context("tp-alice").unwrap().account_holder,
+            "alice"
+        );
+        // fail closed: unknown key, suspended agent
+        assert_eq!(p.acting_context("nope"), None);
+        e.write()
+            .unwrap()
+            .principals_mut()
+            .unwrap()
+            .suspend("bot")
+            .unwrap();
+        assert_eq!(p.acting_context("tp-bot"), None);
     }
 
     #[tokio::test]

@@ -1220,7 +1220,7 @@ mod tests {
     /// RFC 9635 section 11.30, "Processing Assertions": "the receiver of the assertion needs to parse and
     /// process the assertion ... special care needs to be taken to prevent the assertion values from being
     /// used as an attack vector." This wire layer never parses an assertion: the value is an opaque JSON
-    /// value, checked for shape only and carried byte for byte, so an XML entity bomb or a hostile token
+    /// value, checked for shape only and carried structurally unchanged (compared as JSON values, so key order and number formatting are not part of the claim), so an XML entity bomb or a hostile token
     /// reaches no parser here.
     #[test]
     fn section_11_30_an_assertion_value_is_carried_opaque_and_never_parsed() {
@@ -1231,7 +1231,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&user).unwrap(),
             wire,
-            "carried byte for byte"
+            "carried structurally unchanged"
         );
         // Control, built the same way: a malformed entry is refused on shape, so the check does run.
         let malformed: GnapUserRef =

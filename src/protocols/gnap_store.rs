@@ -11,7 +11,7 @@
 //! A store failure is never read as "no such token" or "no such transaction" by the service in a
 //! way that grants anything: every error is returned to the caller and the request is refused.
 
-use super::gnap::{GnapAccessRequest, GnapTransaction};
+use super::gnap::{GnapAccessRequest, GnapClientInfo, GnapTransaction};
 use super::gnap_interaction::user_codes_equal;
 use crate::errors::{AuthError, Result};
 use async_trait::async_trait;
@@ -272,6 +272,68 @@ impl GnapTransactionStore for InMemoryTransactionStore {
 
     async fn ids(&self) -> Result<Vec<String>> {
         Ok(self.transactions.read().await.keys().cloned().collect())
+    }
+}
+
+/// Where a GNAP authorization server keeps the client instances it has seen, keyed by the `instance_id` it
+/// issued (RFC 9635 section 3.5). A client that holds an id may send it as its `client` (section 2.3.1) instead
+/// of the key and display it gave the first time; the server proves the request against the key kept here.
+///
+/// An id is a handle, not a credential: it names a key, and a request that presents it is still checked against
+/// that key. `register` is called only for a client whose proof has already verified.
+#[async_trait]
+pub trait GnapInstanceStore: Send + Sync {
+    /// Keep `client` under the id of its key and return that id. A client key seen before keeps its id (its
+    /// display is replaced by the newest one); a new key gets a new unguessable id.
+    async fn register(&self, key_thumbprint: &str, client: &GnapClientInfo) -> Result<String>;
+
+    /// The client kept under `instance_id`, if any.
+    async fn get(&self, instance_id: &str) -> Result<Option<GnapClientInfo>>;
+}
+
+/// The most client instances [`InMemoryInstanceStore`] keeps; a further new key is refused, so a caller with
+/// many keys cannot grow the store without bound.
+pub const MAX_IN_MEMORY_INSTANCES: usize = 100_000;
+
+/// [`GnapInstanceStore`] in this process's memory: lost on restart, not shared between processes.
+#[derive(Default)]
+pub struct InMemoryInstanceStore {
+    /// instance id -> (key thumbprint, client)
+    by_id: RwLock<HashMap<String, (String, GnapClientInfo)>>,
+}
+
+impl InMemoryInstanceStore {
+    /// An empty store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl GnapInstanceStore for InMemoryInstanceStore {
+    async fn register(&self, key_thumbprint: &str, client: &GnapClientInfo) -> Result<String> {
+        let mut by_id = self.by_id.write().await;
+        if let Some((id, entry)) = by_id.iter_mut().find(|(_, (t, _))| t == key_thumbprint) {
+            entry.1 = client.clone();
+            return Ok(id.clone());
+        }
+        if by_id.len() >= MAX_IN_MEMORY_INSTANCES {
+            return Err(AuthError::validation(
+                "too many client instances are registered",
+            ));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        by_id.insert(id.clone(), (key_thumbprint.to_string(), client.clone()));
+        Ok(id)
+    }
+
+    async fn get(&self, instance_id: &str) -> Result<Option<GnapClientInfo>> {
+        Ok(self
+            .by_id
+            .read()
+            .await
+            .get(instance_id)
+            .map(|(_, client)| client.clone()))
     }
 }
 
