@@ -113,6 +113,7 @@ impl EngineGnapPolicy {
                     } else {
                         locs
                     },
+                    ..Default::default()
                 });
             }
         }
@@ -141,6 +142,7 @@ mod tests {
             access_type: t.into(),
             actions: a.iter().map(|s| s.to_string()).collect(),
             locations: l.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         }
     }
 

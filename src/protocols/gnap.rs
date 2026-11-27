@@ -84,7 +84,7 @@ pub struct GnapTransactionRequest {
 }
 
 /// Description of a single access right being requested
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GnapAccessRequest {
     /// Type of access (e.g. "read", "write", or an API-specific identifier)
     #[serde(rename = "type")]
@@ -95,6 +95,15 @@ pub struct GnapAccessRequest {
     /// Locations/URIs where this access applies
     #[serde(default)]
     pub locations: Vec<String>,
+    /// The kinds of data (RFC 9635 section 8.2 `datatypes`); empty when the request gave none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datatypes: Vec<String>,
+    /// A specific resource at the API (section 8.2 `identifier`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    /// Privileges at the resource (section 8.2 `privileges`); empty when the request gave none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub privileges: Vec<String>,
 }
 
 impl From<Vec<GnapAccessRequest>> for GnapAccessTokenRequests {
@@ -109,6 +118,9 @@ impl From<Vec<GnapAccessRequest>> for GnapAccessTokenRequests {
                         access_type: right.access_type,
                         actions: non_empty(right.actions),
                         locations: non_empty(right.locations),
+                        datatypes: non_empty(right.datatypes),
+                        identifier: right.identifier,
+                        privileges: non_empty(right.privileges),
                         ..GnapAccessObject::default()
                     })
                 })
@@ -385,6 +397,7 @@ impl GnapTransactionRequestBuilder {
             access_type: access_type.into(),
             actions: actions.iter().map(|a| a.as_ref().to_string()).collect(),
             locations: locations.iter().map(|l| l.as_ref().to_string()).collect(),
+            ..Default::default()
         });
         self
     }
@@ -1767,8 +1780,8 @@ impl GnapService {
     /// request, an empty access type, or a flag this server does not support is refused (this server supports
     /// no flag, so any is `invalid_flag`), and so is more than one access token in a request, which this
     /// server does not issue. An access right given as a reference string (section 8.1) is carried as a right
-    /// whose type is that string; `datatypes`, `identifier` and `privileges` of an access object are not
-    /// carried by the grant-level right and are dropped before the policy sees it (G6).
+    /// whose type is that string; `datatypes`, `identifier` and `privileges` of an access object are carried
+    /// to the policy (RFC 9635 section 8.2).
     pub fn requested_rights(requests: &GnapAccessTokenRequests) -> Result<Vec<GnapAccessRequest>> {
         validate_access_token_requests_with_flags(requests, &[])
             .map_err(|e| AuthError::validation(e.to_string()))?;
@@ -1785,11 +1798,15 @@ impl GnapService {
                     access_type: reference.clone(),
                     actions: Vec::new(),
                     locations: Vec::new(),
+                    ..GnapAccessRequest::default()
                 },
                 GnapAccess::Object(object) => GnapAccessRequest {
                     access_type: object.access_type.clone(),
                     actions: object.actions.clone().unwrap_or_default(),
                     locations: object.locations.clone().unwrap_or_default(),
+                    datatypes: object.datatypes.clone().unwrap_or_default(),
+                    identifier: object.identifier.clone(),
+                    privileges: object.privileges.clone().unwrap_or_default(),
                 },
             })
             .collect())
@@ -3669,6 +3686,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -3702,6 +3720,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec!["list".to_string()],
                     locations: vec!["https://api.test/resources".to_string()],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -3743,6 +3762,7 @@ mod tests {
                     access_type: "write".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -3798,6 +3818,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -3853,6 +3874,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -3886,6 +3908,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -3913,6 +3936,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -3950,6 +3974,7 @@ mod tests {
                     access_type: "write".to_string(),
                     actions: vec!["create".to_string()],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4005,6 +4030,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4053,6 +4079,7 @@ mod tests {
                         access_type: "read".to_string(),
                         actions: vec![],
                         locations: vec![],
+                        ..Default::default()
                     }]
                     .into(),
                 ),
@@ -4199,6 +4226,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4241,6 +4269,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4289,6 +4318,7 @@ mod tests {
                         access_type: "read".to_string(),
                         actions: vec![],
                         locations: vec![],
+                        ..Default::default()
                     }]
                     .into(),
                 ),
@@ -4469,6 +4499,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4681,6 +4712,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4730,6 +4762,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4775,6 +4808,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4816,6 +4850,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -4873,6 +4908,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -5028,6 +5064,7 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -5468,6 +5505,23 @@ mod tests {
     }
 
     #[test]
+    fn requested_rights_carries_datatypes_identifier_privileges() {
+        let requests: GnapAccessTokenRequests = serde_json::from_value(serde_json::json!({
+            "access": [{"type": "photo-api", "datatypes": ["metadata", "images"],
+                        "identifier": "album-7", "privileges": ["admin"]}]
+        }))
+        .unwrap();
+        let rights = GnapService::requested_rights(&requests).unwrap();
+        assert_eq!(rights[0].datatypes, vec!["metadata", "images"]);
+        assert_eq!(rights[0].identifier.as_deref(), Some("album-7"));
+        assert_eq!(rights[0].privileges, vec!["admin"]);
+        let back: GnapAccessTokenRequests = rights.into();
+        let json = serde_json::to_value(&back).unwrap();
+        assert_eq!(json["access"][0]["identifier"], "album-7");
+        assert_eq!(json["access"][0]["privileges"][0], "admin");
+    }
+
+    #[test]
     fn test_gnap_transaction_request_builder_full() {
         let jwk = test_ec_jwk();
         let req = GnapTransactionRequest::builder()
@@ -5544,6 +5598,7 @@ mod tests {
             access_type: kind.to_string(),
             actions: vec![],
             locations: vec![],
+            ..Default::default()
         }
     }
 
@@ -7114,6 +7169,7 @@ mod proof_verification_tests {
                     access_type: "write-things".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
@@ -8206,6 +8262,7 @@ mod hardening_tests {
                 access_type: (*k).to_string(),
                 actions: vec![],
                 locations: vec![],
+                ..Default::default()
             })
             .collect()
     }

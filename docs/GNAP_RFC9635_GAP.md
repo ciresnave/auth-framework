@@ -20,7 +20,7 @@ Everything is lost on restart and is not shared across instances (compare ROADMA
 
 | RFC | State | What the code does | Gap |
 |---|---|---|---|
-| 2.1 `access_token` object / array of objects | **done (G5 slice 1)** | `GnapTransactionRequest.access_token` is `gnap_wire::GnapAccessTokenRequests`: `{"access_token":{"access":[...]}}` and the array form both parse; access rights as objects or reference strings. `GnapService::requested_rights` applies the section 2.1.1/2.1.2 checks (empty token, empty type, labels in arrays, `invalid_flag` for any flag, since this server supports none) and refuses more than one token per request | Not carried yet: `datatypes`, `identifier`, `privileges` of an access object (the grant-level right has only type, actions, locations; G6) and several tokens per request |
+| 2.1 `access_token` object / array of objects | **done (G5 slice 1)** | `GnapTransactionRequest.access_token` is `gnap_wire::GnapAccessTokenRequests`: `{"access_token":{"access":[...]}}` and the array form both parse; access rights as objects or reference strings. `GnapService::requested_rights` applies the section 2.1.1/2.1.2 checks (empty token, empty type, labels in arrays, `invalid_flag` for any flag, since this server supports none) and refuses more than one token per request | Not carried yet: several tokens per request |
 | 2.1.1 `label`, `flags` (`bearer`, `split`) | **partial (wire only)** | `GnapAccessTokenRequest.label`/`flags` parse and validate in `gnap_wire.rs` (87-90); the service refuses any flag with `invalid_flag` since it supports none | Label is echoed in the issued token (3.2.1), not yet in a rotated one (needs the stored label field of the Breaking `GnapIssuedToken` PR); no flag changes token behaviour |
 | 2.1.2 multiple access tokens | **missing** | one token per grant | |
 | 2.2 `subject` (`sub_id_formats`, `assertion_formats`, `sub_ids`) | **partial** | formats are parsed (82, 85); `sub_ids` is a field of `GnapSubjectRequest`: a hint, and subject information is released only when the user the AS saw approve matches one named (`opaque`, `email`, `iss_sub`), else none | assertions are missing |
@@ -90,7 +90,7 @@ Nothing claims a method it does not verify: an unlisted or unverifiable method i
 
 | RFC | State | Gap |
 |---|---|---|
-| 8 access object | **partial** | `type`, `actions`, `locations` (68-74); `datatypes`, `identifier`, `privileges` missing |
+| 8 access object | **done** | `type`, `actions`, `locations`, `datatypes`, `identifier`, `privileges` are carried from the request to the policy (`GnapAccessRequest`) | the policy decides what is granted; the engine policy narrows only actions and locations |
 | 8.1 references (strings) | **missing** | an `access` entry that is a string cannot be represented |
 
 ### 9 Discovery
