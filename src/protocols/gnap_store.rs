@@ -632,6 +632,7 @@ mod tests {
             created_at,
             interact_nonce: None,
             subject_id: None,
+            subject_updated_at: None,
             interact_ref: None,
             user_code: None,
             revision: 0,

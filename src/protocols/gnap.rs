@@ -454,6 +454,9 @@ pub struct GnapTransaction {
     pub interact_nonce: Option<String>,
     /// Subject identifier assigned after approval
     pub subject_id: Option<String>,
+    /// When the AS last learned or confirmed `subject_id` (epoch seconds): the `updated_at` of subject information (RFC 9635 section 3.4).
+    #[serde(default)]
+    pub subject_updated_at: Option<u64>,
     /// One-time interaction reference issued when a finish-method transaction is approved
     pub interact_ref: Option<String>,
     /// The short code a person types at the AS when the client asked for the `user_code` start
@@ -2085,6 +2088,7 @@ impl GnapService {
                 created_at: now,
                 interact_nonce: interact_nonce.clone(),
                 subject_id: None,
+                subject_updated_at: None,
                 interact_ref: None,
                 user_code,
                 revision: 0,
@@ -2395,11 +2399,12 @@ impl GnapService {
 
                 // Include subject info if requested and available
                 if let Some(subject_req) = txn.request.subject_with_user_hint() {
-                    let subject_resp = Self::build_subject_response(
+                    let mut subject_resp = Self::build_subject_response(
                         &subject_req,
                         txn.subject_id.as_deref(),
                         self.issuer_identifier(),
                     );
+                    Self::stamp_subject_updated_at(&mut subject_resp, txn.subject_updated_at);
                     response.insert(
                         "subject".to_string(),
                         serde_json::Value::Object(subject_resp),
@@ -2577,10 +2582,12 @@ impl GnapService {
         subject_id: Option<&str>,
     ) -> Result<GnapInteractionCompletion> {
         let endpoint = &self.grant_url();
+        let now = self.now();
         self.update_transaction(transaction_id, |txn| {
             txn.state = GnapTransactionState::Approved;
             if let Some(sid) = subject_id {
                 txn.subject_id = Some(sid.to_string());
+                txn.subject_updated_at = Some(now);
             }
             let finish = txn
                 .request
@@ -3337,9 +3344,27 @@ impl GnapService {
         resp
     }
 
-    // ── Cleanup ──────────────────────────────────────────────────────────
+    /// Add `updated_at` (RFC 9635 section 3.4, an ISO 8601 timestamp) to released subject information. Nothing
+    /// released, or no known time, means no `updated_at`.
+    fn stamp_subject_updated_at(
+        subject: &mut serde_json::Map<String, serde_json::Value>,
+        at: Option<u64>,
+    ) {
+        if !subject.contains_key("sub_ids") {
+            return;
+        }
+        let stamp = at
+            .and_then(|secs| i64::try_from(secs).ok())
+            .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0));
+        if let Some(stamp) = stamp {
+            subject.insert(
+                "updated_at".to_string(),
+                serde_json::Value::String(stamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+            );
+        }
+    }
 
-    /// Unit tests only: ids of the stored transactions.
+    // ── Cleanup ─ of the stored transactions.
     #[cfg(test)]
     async fn test_txn_ids(&self) -> Vec<String> {
         self.transactions.ids().await.unwrap()
@@ -4372,6 +4397,61 @@ mod tests {
             Err(e) => panic!("the approved grant must continue: {e}"),
         };
         assert!(released.contains("user-42"), "control: {released}");
+    }
+
+    /// RFC 9635 section 3.4: released subject information carries `updated_at`, an ISO 8601 timestamp of when
+    /// the AS last updated it; here, when the user approved. No subject, no `updated_at`.
+    #[tokio::test]
+    async fn section_3_4_subject_information_carries_updated_at() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let clock = Arc::new(AtomicU64::new(1_700_000_000));
+        let ticking = clock.clone();
+        let service = test_service().with_clock(move || ticking.load(Ordering::SeqCst));
+        let request = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+                hints: None,
+            }),
+            access_token_request: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+                sub_ids: vec![],
+            }),
+            user: None,
+        };
+        let started = service.handle_transaction(request).await.unwrap();
+        let cont = started["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id = started["continue"]["uri"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_string();
+        clock.store(1_700_000_100, Ordering::SeqCst);
+        service
+            .approve_transaction(&id, Some("user-42"))
+            .await
+            .unwrap();
+        clock.store(1_700_000_500, Ordering::SeqCst);
+        let done = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            done["subject"]["updated_at"], "2023-11-14T22:15:00Z",
+            "the time of approval (1_700_000_100), not of the poll: {done}"
+        );
+        // Control: with no subject released there is nothing to date.
+        let mut none = serde_json::Map::new();
+        GnapService::stamp_subject_updated_at(&mut none, Some(1_700_000_100));
+        assert!(!none.contains_key("updated_at"));
     }
 
     /// RFC 9635 section 11.38, "AS-Provided Token Keys": an AS that returns its own key with a token enables a
