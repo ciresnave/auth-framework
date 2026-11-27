@@ -1798,6 +1798,7 @@ impl GnapService {
         let access_token = uuid::Uuid::new_v4().to_string();
         let now = self.now();
 
+        let issued_manage = Some(uuid::Uuid::new_v4().to_string());
         let issued = GnapIssuedToken {
             value: access_token.clone(),
             access: access_requests.to_vec(),
@@ -1806,7 +1807,7 @@ impl GnapService {
             key_proof: key_proof.map(str::to_string),
             key_jwk,
             transaction_id: transaction_id.to_string(),
-            manage_token: Some(uuid::Uuid::new_v4().to_string()),
+            manage_token: issued_manage.clone(),
             label: label.map(str::to_string),
         };
 
@@ -1857,7 +1858,7 @@ impl GnapService {
         // Include manage URI for token lifecycle operations
         token_obj.insert(
             "manage".to_string(),
-            serde_json::Value::String(format!("{}/token", self.config.transaction_endpoint)),
+            serde_json::Value::String(self.manage_uri(issued_manage.as_deref())),
         );
 
         // No `key` field: the token is bound to the key the client presented, which RFC 9635 section 3.2.1
@@ -2812,6 +2813,32 @@ impl GnapService {
 
     // ── Token Management (draft §6) ─────────────────────────────────────
 
+    /// The management URI issued with a token: `<transaction endpoint>/token/<manage secret>`, or the shared
+    /// `<transaction endpoint>/token` for a token stored before tokens had a manage secret.
+    fn manage_uri(&self, manage_token: Option<&str>) -> String {
+        match manage_token {
+            Some(m) => format!("{}/token/{m}", self.config.transaction_endpoint),
+            None => format!("{}/token", self.config.transaction_endpoint),
+        }
+    }
+
+    /// Whether `presented` is the token the manage secret `manage_token` names: its current value, or the
+    /// value it replaced within the rotation-retry window (so a lost rotation answer can be asked for again).
+    /// `false` for an unknown or expired secret. This only routes: the token's key proof is still required.
+    pub async fn manage_secret_names(&self, manage_token: &str, presented: &str) -> Result<bool> {
+        let Some(current) = self.issued_tokens.get_by_manage_token(manage_token).await? else {
+            return Ok(false);
+        };
+        if current.value == presented {
+            return Ok(true);
+        }
+        let now = self.now();
+        let map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(map.get(presented).is_some_and(|r| {
+            r.new_value == current.value && now.saturating_sub(r.at) <= ROTATION_RETRY_SECS
+        }))
+    }
+
     /// Revoke an issued access token (draft §6.2 — DELETE on manage URI).
     pub async fn revoke_token_with_proof(
         &self,
@@ -2981,10 +3008,9 @@ impl GnapService {
             key_proof: old.key_proof.clone(),
             key_jwk,
             transaction_id: old.transaction_id,
-            manage_token: old
-                .manage_token
-                .as_ref()
-                .map(|_| uuid::Uuid::new_v4().to_string()),
+            // The management URI names the grant of the token, not its value: a rotation keeps it, so a
+            // client that retries a rotation it never saw answered finds the same URI.
+            manage_token: old.manage_token.clone(),
             label: old.label.clone(),
         };
 
@@ -3005,7 +3031,7 @@ impl GnapService {
         );
         token_obj.insert(
             "manage".to_string(),
-            serde_json::Value::String(format!("{}/token", self.config.transaction_endpoint)),
+            serde_json::Value::String(self.manage_uri(new_token.manage_token.as_deref())),
         );
         let access_json: Vec<serde_json::Value> = old
             .access
