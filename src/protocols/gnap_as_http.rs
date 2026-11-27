@@ -79,6 +79,12 @@ impl GnapAsHttp {
         format!("{}{{id}}", self.continue_prefix)
     }
 
+    /// The per-token management route pattern, `<manage path>/{secret}`, in the `{secret}` syntax axum
+    /// and actix both use.
+    pub fn manage_secret_route(&self) -> String {
+        format!("{}{{secret}}", self.manage_prefix)
+    }
+
     /// The grant endpoint path and the token management path, so an adapter can register them.
     pub fn paths(&self) -> (&str, &str) {
         (&self.grant_path, &self.manage_path)
@@ -138,7 +144,12 @@ impl GnapAsHttp {
         token: &str,
     ) -> Result<String, GnapHttpResponse> {
         let Some(secret) = secret else {
-            return Ok(self.manage_url.clone());
+            // A token with a per-token URI is managed there only: its proof is bound to that URI.
+            return match self.service.requires_manage_secret(token).await {
+                Ok(false) => Ok(self.manage_url.clone()),
+                Ok(true) => Err(GnapHttpResponse::empty(404, Vec::new())),
+                Err(e) => Err(refuse(&e)),
+            };
         };
         match self.service.manage_secret_names(secret, token).await {
             Ok(true) => Ok(format!("{}/{secret}", self.manage_url)),
@@ -613,10 +624,13 @@ pub(crate) mod tests {
     async fn token_for(h: &GnapAsHttp, k: &Key, jti: &str) -> String {
         let r = h.handle(&grant_req(k, jti)).await;
         assert_eq!(r.status, 200, "setup grant must succeed");
-        json_of(&r)["access_token"]["value"]
+        let value = json_of(&r)["access_token"]["value"]
             .as_str()
             .unwrap()
-            .to_string()
+            .to_string();
+        // A token managed at the shared URI is one stored before per-token URIs existed.
+        h.service.test_strip_manage_secret(&value).await;
+        value
     }
 
     fn manage(h_method: &str, k: &Key, token: &str, jti: &str) -> GnapHttpRequest {
@@ -712,7 +726,7 @@ pub(crate) mod tests {
             body["access_token"]["manage"]
                 .as_str()
                 .unwrap()
-                .starts_with("/api/gnap/tx/token/")
+                .starts_with("https://as.example.test/api/gnap/tx/token/")
         );
     }
 
@@ -910,10 +924,11 @@ pub(crate) mod tests {
     }
 
     fn manage_at(method: &str, k: &Key, token: &str, uri: &str, jti: &str) -> GnapHttpRequest {
-        let proof = dpop(k, k, method, &format!("https://as.example.test{uri}"), jti);
+        let path = uri.strip_prefix("https://as.example.test").unwrap_or(uri);
+        let proof = dpop(k, k, method, &format!("https://as.example.test{path}"), jti);
         req(
             method,
-            uri,
+            path,
             vec![("Authorization", format!("GNAP {token}")), ("DPoP", proof)],
             Vec::new(),
         )
@@ -923,7 +938,10 @@ pub(crate) mod tests {
     async fn a_token_is_issued_its_own_manage_uri_and_rotated_and_revoked_there() {
         let (h, k) = (handler(), key());
         let (old, uri) = token_and_manage(&h, &k, "pm1").await;
-        assert!(uri.starts_with("/api/gnap/tx/token/"), "{uri}");
+        assert!(
+            uri.starts_with("https://as.example.test/api/gnap/tx/token/"),
+            "{uri}"
+        );
         assert!(
             !uri.contains(&old),
             "the manage secret is not the token value"
@@ -1002,6 +1020,36 @@ pub(crate) mod tests {
             String::from_utf8_lossy(&retry.body)
         );
         assert_eq!(json_of(&retry), json_of(&first));
+    }
+
+    #[tokio::test]
+    async fn concurrent_rotations_of_one_token_both_get_the_answer() {
+        let (h, k) = (handler(), key());
+        let (old, uri) = token_and_manage(&h, &k, "pc1").await;
+        let (req_a, req_b) = (
+            manage_at("POST", &k, &old, &uri, "pc2"),
+            manage_at("POST", &k, &old, &uri, "pc3"),
+        );
+        let (a, b) = tokio::join!(h.handle(&req_a), h.handle(&req_b));
+        assert_eq!(a.status, 200, "{}", String::from_utf8_lossy(&a.body));
+        assert_eq!(b.status, 200, "{}", String::from_utf8_lossy(&b.body));
+        assert_eq!(json_of(&a), json_of(&b));
+    }
+
+    #[tokio::test]
+    async fn a_token_with_a_manage_uri_is_refused_at_the_shared_uri() {
+        let (h, k) = (handler(), key());
+        let (old, uri) = token_and_manage(&h, &k, "ps1").await;
+        for (method, jti) in [("POST", "ps2"), ("DELETE", "ps3")] {
+            let r = h.handle(&manage(method, &k, &old, jti)).await;
+            assert_eq!(r.status, 404, "{method} at the shared URI");
+        }
+        // Control: the token is untouched and still managed at its own URI.
+        let r = h.handle(&manage_at("POST", &k, &old, &uri, "ps4")).await;
+        assert_eq!(r.status, 200);
+        // The value it was rotated away from is refused at the shared URI too.
+        let retry = h.handle(&manage("POST", &k, &old, "ps5")).await;
+        assert_eq!(retry.status, 404);
     }
 
     // ── token management ────────────────────────────────────────────────

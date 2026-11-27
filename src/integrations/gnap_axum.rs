@@ -64,6 +64,8 @@ pub fn gnap_as_router(http: Arc<GnapAsHttp>) -> Router {
         (g.to_string(), m.to_string())
     };
     let continue_route = http.continue_route();
+    let manage_secret_route = http.manage_secret_route();
+    let for_secret = http.clone();
     let for_grant = http.clone();
     let for_continue = http.clone();
     let for_manage = http;
@@ -75,6 +77,10 @@ pub fn gnap_as_router(http: Arc<GnapAsHttp>) -> Router {
         .route(
             &manage,
             any(move |req: Request| serve_as(for_manage.clone(), req)),
+        )
+        .route(
+            &manage_secret_route,
+            any(move |req: Request| serve_as(for_secret.clone(), req)),
         )
         .route(
             &continue_route,
@@ -255,6 +261,20 @@ mod tests {
             app.oneshot(other).await.unwrap().status(),
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[tokio::test]
+    async fn the_as_router_routes_a_per_token_manage_uri() {
+        let app = gnap_as_router(Arc::new(crate::protocols::gnap_as_http::tests::handler()));
+        let get = HttpRequest::builder()
+            .method("GET")
+            .uri("/api/gnap/tx/token/some-secret")
+            .body(Body::empty())
+            .unwrap();
+        // Reaching the handler (which refuses the method) and not a routing 404.
+        let resp = app.oneshot(get).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST, DELETE");
     }
 
     #[tokio::test]

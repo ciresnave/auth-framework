@@ -25,7 +25,7 @@ use crate::protocols::gnap_interaction::{
 use crate::protocols::gnap_push::{PushResolver, PushSender, deliver_push};
 use crate::protocols::gnap_store::{
     GnapInstanceStore, GnapIssuedToken, GnapTokenStore, GnapTransactionStore, InMemoryTokenStore,
-    InMemoryTransactionStore,
+    InMemoryTransactionStore, is_valid_manage_secret,
 };
 use crate::protocols::gnap_wire::{
     GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests,
@@ -579,6 +579,8 @@ pub struct GnapService {
     /// Rotations answered in the last [`ROTATION_RETRY_SECS`] seconds, keyed by the old token value, so a client
     /// that lost the response can retry (RFC 9635 section 11.33). Kept in this process only.
     rotated: std::sync::Mutex<std::collections::HashMap<String, RotatedToken>>,
+    /// Serializes rotations; see `rotate_token_inner`.
+    rotation_lock: tokio::sync::Mutex<()>,
     /// Seconds a client must leave between two polls of a pending transaction (RFC 9635 section
     /// 3.1 `wait`); 0 turns the check off.
     poll_wait_secs: u64,
@@ -688,6 +690,7 @@ impl GnapService {
             consents: Arc::new(InMemoryConsentStore::new()),
             code_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             rotated: std::sync::Mutex::new(std::collections::HashMap::new()),
+            rotation_lock: tokio::sync::Mutex::new(()),
             poll_wait_secs: DEFAULT_POLL_WAIT_SECS,
             issuer: None,
             user_code_uri: None,
@@ -2146,16 +2149,7 @@ impl GnapService {
             "{}/continue/{}",
             self.config.transaction_endpoint, transaction_id
         );
-        let origin = self
-            .config
-            .interaction_base_url
-            .as_deref()
-            .and_then(|base| url::Url::parse(base).ok())
-            .filter(|u| u.has_host());
-        match origin.and_then(|u| u.join(&path).ok()) {
-            Some(absolute) => absolute.to_string(),
-            None => path,
-        }
+        self.absolute_on_origin(path)
     }
 
     /// Continue a transaction without proof material. Tests only: in a build every continuation
@@ -2821,10 +2815,65 @@ impl GnapService {
 
     /// The management URI issued with a token: `<transaction endpoint>/token/<manage secret>`, or the shared
     /// `<transaction endpoint>/token` for a token stored before tokens had a manage secret.
+    ///
+    /// Made absolute on the origin of the interaction base URL when there is one (RFC 9635 section 2.3:
+    /// the management URI is an absolute URI), like the continuation URI; without one only the path can be
+    /// given. A secret the route cannot carry falls back to the shared URI.
     fn manage_uri(&self, manage_token: Option<&str>) -> String {
-        match manage_token {
+        let path = match manage_token.filter(|m| is_valid_manage_secret(m)) {
             Some(m) => format!("{}/token/{m}", self.config.transaction_endpoint),
             None => format!("{}/token", self.config.transaction_endpoint),
+        };
+        self.absolute_on_origin(path)
+    }
+
+    /// `path` on the origin of the interaction base URL, when there is one.
+    fn absolute_on_origin(&self, path: String) -> String {
+        let origin = self
+            .config
+            .interaction_base_url
+            .as_deref()
+            .and_then(|base| url::Url::parse(base).ok())
+            .filter(|u| u.has_host());
+        match origin.and_then(|u| u.join(&path).ok()) {
+            Some(absolute) => absolute.to_string(),
+            None => path,
+        }
+    }
+
+    /// Unit tests only: make the stored token `value` one issued before per-token management URIs.
+    #[cfg(test)]
+    pub(crate) async fn test_strip_manage_secret(&self, value: &str) {
+        let mut t = self.issued_tokens.remove(value).await.unwrap().unwrap();
+        t.manage_token = None;
+        self.issued_tokens.insert(t).await.unwrap();
+    }
+
+    /// Whether `presented` belongs to a token that has a per-token management URI, so the shared URI must
+    /// refuse it: the value of such a token, or the value it replaced within the rotation-retry window.
+    pub async fn requires_manage_secret(&self, presented: &str) -> Result<bool> {
+        let has_secret = |t: &GnapIssuedToken| {
+            t.manage_token
+                .as_deref()
+                .is_some_and(is_valid_manage_secret)
+        };
+        if let Some(t) = self.issued_tokens.get(presented).await? {
+            return Ok(has_secret(&t));
+        }
+        let new_value = {
+            let now = self.now();
+            let map = self.rotated.lock().unwrap_or_else(|e| e.into_inner());
+            map.get(presented)
+                .filter(|r| now.saturating_sub(r.at) <= ROTATION_RETRY_SECS)
+                .map(|r| r.new_value.clone())
+        };
+        match new_value {
+            Some(v) => Ok(self
+                .issued_tokens
+                .get(&v)
+                .await?
+                .is_some_and(|t| has_secret(&t))),
+            None => Ok(false),
         }
     }
 
@@ -2976,6 +3025,9 @@ impl GnapService {
         dpop: Option<(&DpopManager, &GnapProof<'_>)>,
         new_key: Option<(String, serde_json::Value)>,
     ) -> Result<serde_json::Value> {
+        // One rotation at a time, so a duplicate request waits for the first and then finds its recorded
+        // answer instead of failing on a token that is already spent.
+        let _one_rotation = self.rotation_lock.lock().await;
         // A key rotation has been proved by both keys already; every other rotation needs the token's key.
         if new_key.is_none() {
             if let Some(again) = self.retried_rotation(old_token_value, dpop).await? {
