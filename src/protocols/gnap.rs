@@ -4321,15 +4321,33 @@ mod tests {
         let hit = GnapService::build_subject_response(&req, Some("user-42"), None);
         assert_eq!(hit["sub_ids"][0]["id"], "user-42");
         let miss = GnapService::build_subject_response(&req, Some("someone-else"), None);
-        assert!(!miss.contains_key("sub_ids"), "a different user gets none: {miss:?}");
+        assert!(
+            !miss.contains_key("sub_ids"),
+            "a different user gets none: {miss:?}"
+        );
         req.sub_ids = vec![
             serde_json::json!({"format": "email", "email": "a@example.test"}),
             serde_json::json!({"format": "iss_sub", "iss": "https://as.example.test", "sub": "u1"}),
         ];
-        assert!(GnapService::build_subject_response(&req, Some("a@example.test"), None).contains_key("sub_ids"));
-        assert!(GnapService::build_subject_response(&req, Some("u1"), Some("https://as.example.test")).contains_key("sub_ids"));
-        assert!(!GnapService::build_subject_response(&req, Some("u1"), Some("https://other.example.test")).contains_key("sub_ids"));
-        assert!(!GnapService::build_subject_response(&req, Some("u1"), None).contains_key("sub_ids"));
+        assert!(
+            GnapService::build_subject_response(&req, Some("a@example.test"), None)
+                .contains_key("sub_ids")
+        );
+        assert!(
+            GnapService::build_subject_response(&req, Some("u1"), Some("https://as.example.test"))
+                .contains_key("sub_ids")
+        );
+        assert!(
+            !GnapService::build_subject_response(
+                &req,
+                Some("u1"),
+                Some("https://other.example.test")
+            )
+            .contains_key("sub_ids")
+        );
+        assert!(
+            !GnapService::build_subject_response(&req, Some("u1"), None).contains_key("sub_ids")
+        );
     }
 
     #[test]

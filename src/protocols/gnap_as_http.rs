@@ -708,7 +708,12 @@ pub(crate) mod tests {
         assert_eq!(r.header("Cache-Control"), Some("no-store"));
         let body = json_of(&r);
         assert!(body["access_token"]["value"].is_string());
-        assert!(body["access_token"]["manage"].as_str().unwrap().starts_with("/api/gnap/tx/token/"));
+        assert!(
+            body["access_token"]["manage"]
+                .as_str()
+                .unwrap()
+                .starts_with("/api/gnap/tx/token/")
+        );
     }
 
     /// A grant request whose body is a compact JWS of the request, signed by `signer` (RFC 9635 section 7.3.4).
@@ -919,11 +924,17 @@ pub(crate) mod tests {
         let (h, k) = (handler(), key());
         let (old, uri) = token_and_manage(&h, &k, "pm1").await;
         assert!(uri.starts_with("/api/gnap/tx/token/"), "{uri}");
-        assert!(!uri.contains(&old), "the manage secret is not the token value");
+        assert!(
+            !uri.contains(&old),
+            "the manage secret is not the token value"
+        );
 
         let r = h.handle(&manage_at("POST", &k, &old, &uri, "pm2")).await;
         assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
-        let new = json_of(&r)["access_token"]["value"].as_str().unwrap().to_string();
+        let new = json_of(&r)["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(json_of(&r)["access_token"]["manage"], uri.as_str());
 
         let r = h.handle(&manage_at("DELETE", &k, &new, &uri, "pm3")).await;
@@ -937,11 +948,18 @@ pub(crate) mod tests {
         let (h, k) = (handler(), key());
         let (_, uri_a) = token_and_manage(&h, &k, "px1").await;
         let (tok_b, _) = token_and_manage(&h, &k, "px2").await;
-        let r = h.handle(&manage_at("DELETE", &k, &tok_b, &uri_a, "px3")).await;
+        let r = h
+            .handle(&manage_at("DELETE", &k, &tok_b, &uri_a, "px3"))
+            .await;
         assert!(r.status == 401 || r.status == 404, "got {}", r.status);
         // Control: B is still live at its own URI.
         let (b2, uri_b) = token_and_manage(&h, &k, "px4").await;
-        assert_eq!(h.handle(&manage_at("DELETE", &k, &b2, &uri_b, "px5")).await.status, 204);
+        assert_eq!(
+            h.handle(&manage_at("DELETE", &k, &b2, &uri_b, "px5"))
+                .await
+                .status,
+            204
+        );
     }
 
     #[tokio::test]
@@ -949,11 +967,23 @@ pub(crate) mod tests {
         let (h, k) = (handler(), key());
         let (t, _) = token_and_manage(&h, &k, "pu1").await;
         let r = h
-            .handle(&manage_at("DELETE", &k, &t, "/api/gnap/tx/token/never-issued", "pu2"))
+            .handle(&manage_at(
+                "DELETE",
+                &k,
+                &t,
+                "/api/gnap/tx/token/never-issued",
+                "pu2",
+            ))
             .await;
         assert_eq!(r.status, 404);
         let extra = h
-            .handle(&manage_at("DELETE", &k, &t, "/api/gnap/tx/token/a/b", "pu3"))
+            .handle(&manage_at(
+                "DELETE",
+                &k,
+                &t,
+                "/api/gnap/tx/token/a/b",
+                "pu3",
+            ))
             .await;
         assert_eq!(extra.status, 404);
     }
@@ -965,7 +995,12 @@ pub(crate) mod tests {
         let first = h.handle(&manage_at("POST", &k, &old, &uri, "pr2")).await;
         assert_eq!(first.status, 200);
         let retry = h.handle(&manage_at("POST", &k, &old, &uri, "pr3")).await;
-        assert_eq!(retry.status, 200, "{}", String::from_utf8_lossy(&retry.body));
+        assert_eq!(
+            retry.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&retry.body)
+        );
         assert_eq!(json_of(&retry), json_of(&first));
     }
 
