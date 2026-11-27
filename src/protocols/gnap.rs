@@ -28,7 +28,7 @@ use crate::protocols::gnap_store::{
     InMemoryTransactionStore, is_valid_manage_secret,
 };
 use crate::protocols::gnap_wire::{
-    GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests,
+    GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests, GnapUserRef,
     validate_access_token_requests_with_flags,
 };
 use crate::server::security::dpop::DpopManager;
@@ -76,6 +76,11 @@ pub struct GnapTransactionRequest {
     pub access_token_request: Option<GnapAccessTokenRequests>,
     /// Subject information request
     pub subject: Option<GnapSubjectRequest>,
+    /// The user, as the client knows them (RFC 9635 section 2.4): identifiers, assertions or a user reference.
+    /// A hint, never an identity (section 11.13): the AS checks its shape and uses the `sub_ids` only to narrow
+    /// who subject information may be released to; it never authenticates the user from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<GnapUserRef>,
 }
 
 /// Description of a single access right being requested
@@ -262,7 +267,21 @@ impl GnapTransactionRequest {
             interact: None,
             access_token: Vec::new(),
             subject: None,
+            user: None,
         }
+    }
+
+    /// The subject request with the user hint folded in: the `sub_ids` the client named under `user` (RFC 9635
+    /// section 2.4) join those named under `subject`, so that subject information is released only to a user
+    /// the AS saw approve who matches one of them. A user reference or assertions name nobody the AS can match.
+    fn subject_with_user_hint(&self) -> Option<GnapSubjectRequest> {
+        let mut subject = self.subject.clone()?;
+        if let Some(GnapUserRef::Object(user)) = &self.user {
+            subject
+                .sub_ids
+                .extend(user.sub_ids.iter().flatten().cloned());
+        }
+        Some(subject)
     }
 }
 
@@ -272,9 +291,16 @@ pub struct GnapTransactionRequestBuilder {
     interact: Option<GnapInteractionRequirements>,
     access_token: Vec<GnapAccessRequest>,
     subject: Option<GnapSubjectRequest>,
+    user: Option<GnapUserRef>,
 }
 
 impl GnapTransactionRequestBuilder {
+    /// Name the user (RFC 9635 section 2.4); a hint only.
+    pub fn user(mut self, user: GnapUserRef) -> Self {
+        self.user = Some(user);
+        self
+    }
+
     /// Set the client info with a key binding.
     pub fn client(mut self, client: GnapClientInfo) -> Self {
         self.client = Some(client);
@@ -395,6 +421,7 @@ impl GnapTransactionRequestBuilder {
                 Some(self.access_token.into())
             },
             subject: self.subject,
+            user: self.user,
         }
     }
 }
@@ -1924,6 +1951,12 @@ impl GnapService {
             ));
         }
 
+        // The user the client names is checked for shape only (RFC 9635 section 2.4); it is a hint (11.13)
+        if let Some(user) = &request.user {
+            user.validate()
+                .map_err(|e| AuthError::validation(format!("invalid_request: user: {e:?}")))?;
+        }
+
         // The access token request is checked before anything is stored or issued (RFC 9635 section 2.1)
         let requested = match &request.access_token_request {
             Some(requests) => Some(Self::requested_rights(requests)?),
@@ -2080,9 +2113,9 @@ impl GnapService {
             }
 
             // If subject info was requested, include it (draft §2.2)
-            if let Some(ref subject_req) = request.subject {
+            if let Some(subject_req) = request.subject_with_user_hint() {
                 let subject_resp =
-                    Self::build_subject_response(subject_req, None, self.issuer_identifier());
+                    Self::build_subject_response(&subject_req, None, self.issuer_identifier());
                 response.insert(
                     "subject".to_string(),
                     serde_json::Value::Object(subject_resp),
@@ -2361,9 +2394,9 @@ impl GnapService {
                 }
 
                 // Include subject info if requested and available
-                if let Some(ref subject_req) = txn.request.subject {
+                if let Some(subject_req) = txn.request.subject_with_user_hint() {
                     let subject_resp = Self::build_subject_response(
-                        subject_req,
+                        &subject_req,
                         txn.subject_id.as_deref(),
                         self.issuer_identifier(),
                     );
@@ -3615,6 +3648,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
     }
@@ -3627,6 +3661,7 @@ mod tests {
             interact: None,
             access_token_request: None,
             subject: None,
+            user: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
     }
@@ -3646,6 +3681,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let obj = resp.as_object().unwrap();
@@ -3686,6 +3722,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let obj = resp.as_object().unwrap();
@@ -3710,6 +3747,7 @@ mod tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let obj = resp.as_object().unwrap();
@@ -3739,6 +3777,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let cont = resp["continue"]["access_token"]["value"].as_str().unwrap();
@@ -3793,6 +3832,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let txn_id = service.test_first_txn().await.id;
@@ -3825,6 +3865,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let txn_id = service.test_first_txn().await.id;
@@ -3851,6 +3892,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let token_value = resp["access_token"]["value"].as_str().unwrap();
@@ -3887,6 +3929,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let old_token = resp["access_token"]["value"].as_str().unwrap().to_string();
@@ -3941,6 +3984,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let token_value = resp["access_token"]["value"].as_str().unwrap();
@@ -3988,6 +4032,7 @@ mod tests {
                     .into(),
                 ),
                 subject: None,
+                user: None,
             };
             let resp = service.handle_transaction(req).await.unwrap();
             let token = &resp["access_token"];
@@ -4054,6 +4099,7 @@ mod tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         };
         let svc = test_service();
         let started = svc.handle_transaction(interactive()).await.unwrap();
@@ -4083,6 +4129,7 @@ mod tests {
             interact: None,
             access_token_request: None,
             subject: None,
+            user: None,
         };
         req.access_token_request = Some(
             serde_json::from_value(
@@ -4131,6 +4178,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let issued = service.handle_transaction(req).await.unwrap();
         let value = issued["access_token"]["value"]
@@ -4172,6 +4220,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let value = resp["access_token"]["value"].as_str().unwrap().to_string();
@@ -4219,6 +4268,7 @@ mod tests {
                     .into(),
                 ),
                 subject: None,
+                user: None,
             }
         };
         // Control, built the same way: one format is accepted.
@@ -4264,6 +4314,7 @@ mod tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         })
         .unwrap();
         wire["user"] = serde_json::json!({
@@ -4297,6 +4348,7 @@ mod tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         };
         let started = service.handle_transaction(control).await.unwrap();
         let cont = started["continue"]["access_token"]["value"]
@@ -4341,6 +4393,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let issued = service.handle_transaction(req).await.unwrap();
         let token = issued["access_token"]["value"]
@@ -4362,6 +4415,49 @@ mod tests {
     }
 
     // ── Subject Info ─────────────────────────────────────────────────────
+
+    /// RFC 9635 section 2.4: the `user` the client names is shape-checked, and its `sub_ids` narrow who subject
+    /// information may go to (a hint, section 11.13): a different approver gets none.
+    #[tokio::test]
+    async fn section_2_4_user_hint_is_checked_and_narrows_subject_release() {
+        let mut req = GnapTransactionRequest::builder()
+            .subject_formats(vec!["opaque".into()])
+            .user(GnapUserRef::Object(
+                crate::protocols::gnap_wire::GnapUserObject {
+                    sub_ids: Some(vec![
+                        serde_json::json!({"format": "opaque", "id": "user-42"}),
+                    ]),
+                    assertions: None,
+                },
+            ))
+            .build();
+        let hint = req.subject_with_user_hint().unwrap();
+        let hit = GnapService::build_subject_response(&hint, Some("user-42"), None);
+        assert_eq!(hit["sub_ids"][0]["id"], "user-42");
+        let miss = GnapService::build_subject_response(&hint, Some("someone-else"), None);
+        assert!(!miss.contains_key("sub_ids"), "{miss:?}");
+        // a reference names nobody the AS can match: no narrowing
+        req.user = Some(GnapUserRef::Reference("ref-1".into()));
+        let hint = req.subject_with_user_hint().unwrap();
+        assert!(hint.sub_ids.is_empty());
+        // the wire form round-trips
+        let wire = serde_json::to_value(&req).unwrap();
+        assert_eq!(wire["user"], "ref-1");
+
+        // a malformed user is refused before anything is stored
+        let service = test_service();
+        let mut bad = GnapTransactionRequest::builder()
+            .client(test_client_info(test_ec_jwk()))
+            .subject_formats(vec!["opaque".into()])
+            .build();
+        bad.user = Some(GnapUserRef::Reference(String::new()));
+        let err = service
+            .handle_transaction(bad)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid_request"), "{err}");
+    }
 
     #[test]
     fn section_2_2_sub_ids_release_subject_only_to_a_matching_user() {
@@ -4509,6 +4605,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let cont1 = resp["continue"]["access_token"]["value"]
@@ -4557,6 +4654,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         assert_eq!(service.transactions.count().await.unwrap(), 1);
@@ -4601,6 +4699,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let txn = service.test_first_txn().await;
@@ -4641,6 +4740,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
 
@@ -4697,6 +4797,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let (id, cont) = {
@@ -4851,6 +4952,7 @@ mod tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         }
     }
 
@@ -5381,6 +5483,7 @@ mod tests {
             }),
             access_token_request: Some(rights.into()),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let (txn_id, cont) = {
@@ -5438,6 +5541,7 @@ mod tests {
             interact: None,
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         assert!(resp["access_token"]["value"].is_string());
@@ -5589,6 +5693,7 @@ mod tests {
             interact: None,
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         resp["access_token"]["value"].as_str().unwrap().to_string()
@@ -5674,6 +5779,7 @@ mod tests {
             interact: None,
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         resp["access_token"]["value"].as_str().unwrap().to_string()
@@ -5729,6 +5835,7 @@ mod tests {
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         assert!(service.consents_for_owner(owner).await.unwrap()[0].is_active());
@@ -5757,6 +5864,7 @@ mod tests {
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let (txn_id, cont) = {
@@ -5886,6 +5994,7 @@ mod tests {
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let id = service
@@ -5955,6 +6064,7 @@ mod tests {
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
         assert_eq!(store.count().await.unwrap(), 0);
@@ -6928,6 +7038,7 @@ mod proof_verification_tests {
                 .into(),
             ),
             subject: None,
+            user: None,
         }
     }
 
@@ -8038,6 +8149,7 @@ mod hardening_tests {
             }),
             access_token_request: Some(rights(kinds).into()),
             subject: None,
+            user: None,
         }
     }
 
@@ -8187,6 +8299,7 @@ mod hardening_tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         };
         let msg = message(svc.handle_transaction(subject_only).await);
         assert!(msg.contains("client key required"), "{msg}");

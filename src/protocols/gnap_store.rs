@@ -626,6 +626,7 @@ mod tests {
                 interact: None,
                 access_token_request: None,
                 subject: None,
+                user: None,
             },
             continue_token: "ct".to_string(),
             created_at,
