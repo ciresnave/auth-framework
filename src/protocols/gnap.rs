@@ -123,6 +123,11 @@ pub struct GnapSubjectRequest {
     /// Requested assertion formats (e.g. "id_token", "saml2")
     #[serde(default)]
     pub assertion_formats: Vec<String>,
+    /// Subject identifiers of the subject the client believes the end user to be (RFC 9635 section 2.2). A
+    /// hint, never an identity (section 11.13): subject information is released only when the user the AS
+    /// itself saw approve matches one of them, otherwise none is released.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub_ids: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,6 +373,7 @@ impl GnapTransactionRequestBuilder {
         self.subject = Some(GnapSubjectRequest {
             sub_id_formats: formats,
             assertion_formats: vec![],
+            sub_ids: vec![],
         });
         self
     }
@@ -3184,8 +3190,24 @@ impl GnapService {
     ) -> serde_json::Map<String, serde_json::Value> {
         let mut resp = serde_json::Map::new();
 
+        // A client-named subject is a hint (section 11.13): release only to the user it names.
+        let named_ok = request.sub_ids.is_empty()
+            || subject_id.is_some_and(|sid| {
+                request.sub_ids.iter().any(|named| {
+                    let field = |k: &str| named.get(k).and_then(|v| v.as_str());
+                    match field("format") {
+                        Some("opaque") => field("id") == Some(sid),
+                        Some("email") => field("email") == Some(sid),
+                        Some("iss_sub") => {
+                            field("sub") == Some(sid) && issuer.is_some() && field("iss") == issuer
+                        }
+                        _ => false,
+                    }
+                })
+            });
+
         // Return sub_ids in requested formats
-        if let Some(sid) = subject_id {
+        if let Some(sid) = subject_id.filter(|_| named_ok) {
             let mut sub_ids = Vec::new();
             for fmt in &request.sub_id_formats {
                 match fmt.as_str() {
@@ -3634,6 +3656,7 @@ mod tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         };
         let resp = service.handle_transaction(req).await.unwrap();
@@ -3977,6 +4000,7 @@ mod tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         };
         let svc = test_service();
@@ -4186,6 +4210,7 @@ mod tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         })
         .unwrap();
@@ -4218,6 +4243,7 @@ mod tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         };
         let started = service.handle_transaction(control).await.unwrap();
@@ -4286,10 +4312,32 @@ mod tests {
     // ── Subject Info ─────────────────────────────────────────────────────
 
     #[test]
+    fn section_2_2_sub_ids_release_subject_only_to_a_matching_user() {
+        let mut req = GnapSubjectRequest {
+            sub_id_formats: vec!["opaque".to_string()],
+            assertion_formats: vec![],
+            sub_ids: vec![serde_json::json!({"format": "opaque", "id": "user-42"})],
+        };
+        let hit = GnapService::build_subject_response(&req, Some("user-42"), None);
+        assert_eq!(hit["sub_ids"][0]["id"], "user-42");
+        let miss = GnapService::build_subject_response(&req, Some("someone-else"), None);
+        assert!(!miss.contains_key("sub_ids"), "a different user gets none: {miss:?}");
+        req.sub_ids = vec![
+            serde_json::json!({"format": "email", "email": "a@example.test"}),
+            serde_json::json!({"format": "iss_sub", "iss": "https://as.example.test", "sub": "u1"}),
+        ];
+        assert!(GnapService::build_subject_response(&req, Some("a@example.test"), None).contains_key("sub_ids"));
+        assert!(GnapService::build_subject_response(&req, Some("u1"), Some("https://as.example.test")).contains_key("sub_ids"));
+        assert!(!GnapService::build_subject_response(&req, Some("u1"), Some("https://other.example.test")).contains_key("sub_ids"));
+        assert!(!GnapService::build_subject_response(&req, Some("u1"), None).contains_key("sub_ids"));
+    }
+
+    #[test]
     fn test_build_subject_response_opaque() {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["opaque".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         let resp = GnapService::build_subject_response(&req, Some("user-42"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
@@ -4303,6 +4351,7 @@ mod tests {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["email".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         let resp = GnapService::build_subject_response(&req, Some("user@example.test"), None);
         let sub_ids = resp["sub_ids"].as_array().unwrap();
@@ -4315,6 +4364,7 @@ mod tests {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["email".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         // Subject is not an email → defaults to opaque
         let resp = GnapService::build_subject_response(&req, Some("user-42"), None);
@@ -4327,6 +4377,7 @@ mod tests {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["iss_sub".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         let resp = GnapService::build_subject_response(
             &req,
@@ -4361,6 +4412,7 @@ mod tests {
         let req = GnapSubjectRequest {
             sub_id_formats: vec!["opaque".to_string()],
             assertion_formats: vec![],
+            sub_ids: vec![],
         };
         let resp = GnapService::build_subject_response(&req, None, None);
         assert!(!resp.contains_key("sub_ids"));
@@ -8063,6 +8115,7 @@ mod hardening_tests {
             subject: Some(GnapSubjectRequest {
                 sub_id_formats: vec!["opaque".to_string()],
                 assertion_formats: vec![],
+                sub_ids: vec![],
             }),
         };
         let msg = message(svc.handle_transaction(subject_only).await);
