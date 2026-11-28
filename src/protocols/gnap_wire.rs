@@ -604,6 +604,19 @@ pub struct GnapError {
     pub description: Option<String>,
 }
 
+/// The service reports errors as [`AuthError`]; a typed one travels as a validation error whose message starts with
+/// the registered code and a colon, which [`GnapError::from_service_message`] reads back (same code, same
+/// description), so the AS layer answers with the code the service chose.
+impl From<GnapError> for crate::errors::AuthError {
+    fn from(error: GnapError) -> Self {
+        let message = match &error.description {
+            Some(description) => format!("{}: {description}", error.code.as_str()),
+            None => error.code.as_str().to_string(),
+        };
+        Self::validation(message)
+    }
+}
+
 impl GnapError {
     /// An error with a description.
     pub fn new(code: GnapErrorCode, description: impl Into<String>) -> Self {

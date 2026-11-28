@@ -28,8 +28,8 @@ use crate::protocols::gnap_store::{
     InMemoryTransactionStore, is_valid_manage_secret,
 };
 use crate::protocols::gnap_wire::{
-    GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests, GnapUserRef,
-    validate_access_token_requests_with_flags,
+    GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests, GnapError,
+    GnapErrorCode, GnapUserRef, validate_access_token_requests_with_flags,
 };
 use crate::server::security::dpop::DpopManager;
 use async_trait::async_trait;
@@ -949,7 +949,12 @@ impl GnapService {
             .consents
             .revoke(consent_id, now)
             .await?
-            .ok_or_else(|| AuthError::validation("Consent not found"))?;
+            .ok_or_else(|| {
+                AuthError::from(GnapError::new(
+                    GnapErrorCode::InvalidRequest,
+                    "Consent not found",
+                ))
+            })?;
         self.issued_tokens
             .remove_for_transaction(&consent.transaction_id)
             .await?;
@@ -1013,7 +1018,12 @@ impl GnapService {
         let thumbprint = info
             .public
             .as_ref()
-            .ok_or_else(|| AuthError::validation("a key with no public half has no GNAP grants"))?
+            .ok_or_else(|| {
+                AuthError::from(GnapError::new(
+                    GnapErrorCode::InvalidRequest,
+                    "a key with no public half has no GNAP grants",
+                ))
+            })?
             .thumbprint()?;
         crate::keys::revoke(store, kid).await?;
         self.revoke_client_key(&thumbprint).await
@@ -1036,15 +1046,17 @@ impl GnapService {
         .filter(|g| **g)
         .count();
         if given != 1 {
-            return Err(AuthError::validation(
+            return Err(AuthError::from(GnapError::new(
+                GnapErrorCode::InvalidRequest,
                 "GNAP client key needs exactly one of jwk, cert and cert#S256",
-            ));
+            )));
         }
         let is_cert = key.jwk.is_none();
         if is_cert != (key.proof == "mtls") && key.proof != "test" {
-            return Err(AuthError::validation(
+            return Err(AuthError::from(GnapError::new(
+                GnapErrorCode::InvalidRequest,
                 "GNAP certificate keys use the mtls proof method, and mtls needs a certificate key",
-            ));
+            )));
         }
         if let Some(jwk) = &key.jwk {
             Self::validate_jwk_fields(jwk)?;
@@ -1054,19 +1066,34 @@ impl GnapService {
             use sha2::Digest;
             let der = base64::engine::general_purpose::STANDARD
                 .decode(cert)
-                .map_err(|_| AuthError::validation("GNAP cert is not base64"))?;
-            x509_parser::parse_x509_certificate(&der)
-                .map_err(|_| AuthError::validation("GNAP cert is not an X.509 certificate"))?;
+                .map_err(|_| {
+                    AuthError::from(GnapError::new(
+                        GnapErrorCode::InvalidRequest,
+                        "GNAP cert is not base64",
+                    ))
+                })?;
+            x509_parser::parse_x509_certificate(&der).map_err(|_| {
+                AuthError::from(GnapError::new(
+                    GnapErrorCode::InvalidRequest,
+                    "GNAP cert is not an X.509 certificate",
+                ))
+            })?;
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(&der))
         } else {
             let given = key.cert_s256.as_deref().unwrap_or_default();
             let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(given)
-                .map_err(|_| AuthError::validation("GNAP cert#S256 is not base64url"))?;
+                .map_err(|_| {
+                    AuthError::from(GnapError::new(
+                        GnapErrorCode::InvalidRequest,
+                        "GNAP cert#S256 is not base64url",
+                    ))
+                })?;
             if raw.len() != 32 {
-                return Err(AuthError::validation(
+                return Err(AuthError::from(GnapError::new(
+                    GnapErrorCode::InvalidRequest,
                     "GNAP cert#S256 is not a SHA-256 thumbprint",
-                ));
+                )));
             }
             // Re-encode so a non-canonical spelling cannot bind a second identifier.
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
@@ -1095,8 +1122,9 @@ impl GnapService {
                 format!(r#"{{"crv":"{crv}","kty":"OKP","x":"{x}"}}"#)
             }
             other => {
-                return Err(AuthError::validation(format!(
-                    "Unsupported JWK key type: {other}"
+                return Err(AuthError::from(GnapError::new(
+                    GnapErrorCode::InvalidRequest,
+                    format!("Unsupported JWK key type: {other}"),
                 )));
             }
         };
@@ -1118,16 +1146,27 @@ impl GnapService {
             "EC" => {
                 let crv = jwk.crv.as_deref().unwrap_or("P-256");
                 if crv != "P-256" {
-                    return Err(AuthError::validation(format!(
-                        "Unsupported EC curve for GNAP: {crv}"
+                    return Err(AuthError::from(GnapError::new(
+                        GnapErrorCode::InvalidRequest,
+                        format!("Unsupported EC curve for GNAP: {crv}"),
                     )));
                 }
                 let x = base64::engine::general_purpose::URL_SAFE_NO_PAD
                     .decode(jwk.x.as_deref().unwrap_or(""))
-                    .map_err(|e| AuthError::validation(format!("Invalid JWK x: {e}")))?;
+                    .map_err(|e| {
+                        AuthError::from(GnapError::new(
+                            GnapErrorCode::InvalidRequest,
+                            format!("Invalid JWK x: {e}"),
+                        ))
+                    })?;
                 let y = base64::engine::general_purpose::URL_SAFE_NO_PAD
                     .decode(jwk.y.as_deref().unwrap_or(""))
-                    .map_err(|e| AuthError::validation(format!("Invalid JWK y: {e}")))?;
+                    .map_err(|e| {
+                        AuthError::from(GnapError::new(
+                            GnapErrorCode::InvalidRequest,
+                            format!("Invalid JWK y: {e}"),
+                        ))
+                    })?;
 
                 // Uncompressed point: 0x04 || x || y
                 let mut pk_bytes = Vec::with_capacity(1 + x.len() + y.len());
@@ -1140,16 +1179,29 @@ impl GnapService {
                     &pk_bytes,
                 );
                 key.verify(message, signature).map_err(|_| {
-                    AuthError::validation("GNAP client key signature verification failed (ES256)")
+                    AuthError::from(GnapError::new(
+                        GnapErrorCode::InvalidClient,
+                        "GNAP client key signature verification failed (ES256)",
+                    ))
                 })
             }
             "RSA" => {
                 let n = base64::engine::general_purpose::URL_SAFE_NO_PAD
                     .decode(jwk.n.as_deref().unwrap_or(""))
-                    .map_err(|e| AuthError::validation(format!("Invalid JWK n: {e}")))?;
+                    .map_err(|e| {
+                        AuthError::from(GnapError::new(
+                            GnapErrorCode::InvalidRequest,
+                            format!("Invalid JWK n: {e}"),
+                        ))
+                    })?;
                 let e = base64::engine::general_purpose::URL_SAFE_NO_PAD
                     .decode(jwk.e.as_deref().unwrap_or(""))
-                    .map_err(|e| AuthError::validation(format!("Invalid JWK e: {e}")))?;
+                    .map_err(|e| {
+                        AuthError::from(GnapError::new(
+                            GnapErrorCode::InvalidRequest,
+                            format!("Invalid JWK e: {e}"),
+                        ))
+                    })?;
 
                 // DER-encode the RSA public key (PKCS#1)
                 let pk_der = Self::encode_rsa_public_key_der(&n, &e);
@@ -1159,11 +1211,15 @@ impl GnapService {
                     &pk_der,
                 );
                 key.verify(message, signature).map_err(|_| {
-                    AuthError::validation("GNAP client key signature verification failed (RS256)")
+                    AuthError::from(GnapError::new(
+                        GnapErrorCode::InvalidClient,
+                        "GNAP client key signature verification failed (RS256)",
+                    ))
                 })
             }
-            other => Err(AuthError::validation(format!(
-                "Unsupported JWK key type for signature: {other}"
+            other => Err(AuthError::from(GnapError::new(
+                GnapErrorCode::InvalidRequest,
+                format!("Unsupported JWK key type for signature: {other}"),
             ))),
         }
     }
@@ -1292,26 +1348,32 @@ impl GnapService {
         match jwk.kty.as_str() {
             "EC" => {
                 if jwk.x.is_none() || jwk.y.is_none() {
-                    return Err(AuthError::validation(
+                    return Err(AuthError::from(GnapError::new(
+                        GnapErrorCode::InvalidRequest,
                         "EC JWK must include x and y coordinates",
-                    ));
+                    )));
                 }
             }
             "RSA" => {
                 if jwk.n.is_none() || jwk.e.is_none() {
-                    return Err(AuthError::validation(
+                    return Err(AuthError::from(GnapError::new(
+                        GnapErrorCode::InvalidRequest,
                         "RSA JWK must include n and e components",
-                    ));
+                    )));
                 }
             }
             "OKP" => {
                 if jwk.x.is_none() {
-                    return Err(AuthError::validation("OKP JWK must include x coordinate"));
+                    return Err(AuthError::from(GnapError::new(
+                        GnapErrorCode::InvalidRequest,
+                        "OKP JWK must include x coordinate",
+                    )));
                 }
             }
             other => {
-                return Err(AuthError::validation(format!(
-                    "Unsupported JWK key type: {other}"
+                return Err(AuthError::from(GnapError::new(
+                    GnapErrorCode::InvalidRequest,
+                    format!("Unsupported JWK key type: {other}"),
                 )));
             }
         }
@@ -4726,6 +4788,75 @@ mod tests {
         assert!(err.contains(INVALID_CONTINUATION), "{err}");
         assert_eq!(service.transactions.count().await.unwrap(), 0);
         assert!(service.finalize_transaction(&id).await.is_err());
+    }
+
+    /// RFC 9635 section 3.6: a refusal the service makes about a client's key material is a typed `GnapError`
+    /// (a registered code), not a bare string the AS layer has to guess a code for.
+    #[test]
+    fn section_3_6_key_material_refusals_are_typed_errors() {
+        use crate::protocols::gnap_wire::{GnapError, GnapErrorCode};
+        let code = |e: AuthError| {
+            GnapError::from_service_message(&e.to_string().replace("Validation error: ", ""))
+                .map(|g| g.code)
+        };
+        // no key format, and two key formats
+        let none = GnapClientKey {
+            proof: "mtls".into(),
+            jwk: None,
+            cert: None,
+            cert_s256: None,
+        };
+        assert_eq!(
+            code(GnapService::key_binding(&none).unwrap_err()),
+            Some(GnapErrorCode::InvalidRequest)
+        );
+        // a certificate that is not base64
+        let bad_cert = GnapClientKey {
+            cert: Some("!!not base64!!".into()),
+            ..none
+        };
+        assert_eq!(
+            code(GnapService::key_binding(&bad_cert).unwrap_err()),
+            Some(GnapErrorCode::InvalidRequest)
+        );
+        // a JWK with no coordinates
+        let mut jwk = test_ec_jwk();
+        jwk.x = None;
+        assert_eq!(
+            code(GnapService::validate_jwk_fields(&jwk).unwrap_err()),
+            Some(GnapErrorCode::InvalidRequest)
+        );
+        // control: a whole JWK passes
+        assert!(GnapService::validate_jwk_fields(&test_ec_jwk()).is_ok());
+    }
+
+    /// Every registered code survives the trip through `AuthError`: what the service raises is what the AS layer
+    /// reads back, with its description.
+    #[test]
+    fn a_gnap_error_survives_the_trip_through_auth_error() {
+        use crate::protocols::gnap_wire::{GnapError, GnapErrorCode};
+        for code in [
+            GnapErrorCode::InvalidRequest,
+            GnapErrorCode::InvalidClient,
+            GnapErrorCode::InvalidInteraction,
+            GnapErrorCode::InvalidFlag,
+            GnapErrorCode::InvalidRotation,
+            GnapErrorCode::KeyRotationNotSupported,
+            GnapErrorCode::InvalidContinuation,
+            GnapErrorCode::UserDenied,
+            GnapErrorCode::RequestDenied,
+            GnapErrorCode::UnknownUser,
+            GnapErrorCode::UnknownInteraction,
+            GnapErrorCode::TooFast,
+            GnapErrorCode::TooManyAttempts,
+        ] {
+            let sent = GnapError::new(code.clone(), "a description");
+            let raised: AuthError = sent.clone().into();
+            let AuthError::Validation { message } = &raised else {
+                panic!("{raised:?}");
+            };
+            assert_eq!(GnapError::from_service_message(message), Some(sent));
+        }
     }
 
     #[test]

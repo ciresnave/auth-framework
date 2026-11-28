@@ -94,7 +94,10 @@ fn config_from(v: &Value) -> GnapConfig {
 /// same way), joined by a newline: SHA-256, URL-safe base64, no padding; `sha3_512_b64url_lines` is the same
 /// with SHA3-512 (the RFC's second example).
 fn subst(vars: &HashMap<String, String>, v: &Value) -> Option<String> {
-    for (key, is_sha3_512) in [("sha256_b64url_lines", false), ("sha3_512_b64url_lines", true)] {
+    for (key, is_sha3_512) in [
+        ("sha256_b64url_lines", false),
+        ("sha3_512_b64url_lines", true),
+    ] {
         let Some(lines) = v[key].as_array() else {
             continue;
         };

@@ -772,7 +772,8 @@ mod tests {
     }
 
     /// RFC 9635 section 4.2.3's own `sha3-512` example, over the same hash base string as the sha-256 one.
-    const SHA3_512_EXPECTED: &str = "pyUkVJSmpqSJMaDYsk5G8WCvgY91l-agUPe1wgn-cc5rUtN69gPI2-S_s-Eswed8iB4PJ_a5Hg6DNi7qGgKwSQ";
+    const SHA3_512_EXPECTED: &str =
+        "pyUkVJSmpqSJMaDYsk5G8WCvgY91l-agUPe1wgn-cc5rUtN69gPI2-S_s-Eswed8iB4PJ_a5Hg6DNi7qGgKwSQ";
 
     #[test]
     fn the_rfc_sha3_512_example_is_reproduced() {
@@ -781,14 +782,29 @@ mod tests {
         let hash = interaction_hash(CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, m).unwrap();
         assert_eq!(hash, SHA3_512_EXPECTED);
         assert!(verify_interaction_hash(
-            CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, m, SHA3_512_EXPECTED
+            CLIENT_NONCE,
+            AS_NONCE,
+            INTERACT_REF,
+            GRANT,
+            m,
+            SHA3_512_EXPECTED
         ));
         // the sha-256 value is not a sha3-512 hash, and the other way round
         assert!(!verify_interaction_hash(
-            CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, m, SHA256_EXPECTED
+            CLIENT_NONCE,
+            AS_NONCE,
+            INTERACT_REF,
+            GRANT,
+            m,
+            SHA256_EXPECTED
         ));
         assert!(!verify_interaction_hash(
-            CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, HashMethod::Sha256, SHA3_512_EXPECTED
+            CLIENT_NONCE,
+            AS_NONCE,
+            INTERACT_REF,
+            GRANT,
+            HashMethod::Sha256,
+            SHA3_512_EXPECTED
         ));
     }
 
@@ -809,7 +825,9 @@ mod tests {
             HashMethod::from_name(Some("sha-512")).unwrap(),
             HashMethod::Sha512
         );
-        for name in ["sha3-224", "sha3-384", "SHA3-512", "SHA-256", "md5", "sha-1", ""] {
+        for name in [
+            "sha3-224", "sha3-384", "SHA3-512", "SHA-256", "md5", "sha-1", "",
+        ] {
             assert_eq!(
                 HashMethod::from_name(Some(name)).unwrap_err().kind,
                 InteractionErrorKind::UnsupportedHashMethod,
