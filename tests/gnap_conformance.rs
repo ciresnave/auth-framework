@@ -91,9 +91,13 @@ fn config_from(v: &Value) -> GnapConfig {
 
 /// A `$name` string is replaced by the value a previous step saved under that name. An object
 /// `{"sha256_b64url_lines": [..]}` is the RFC 9635 section 4.2.3 hash of its lines (each resolved the
-/// same way), joined by a newline: SHA-256, URL-safe base64, no padding.
+/// same way), joined by a newline: SHA-256, URL-safe base64, no padding; `sha3_512_b64url_lines` is the same
+/// with SHA3-512 (the RFC's second example).
 fn subst(vars: &HashMap<String, String>, v: &Value) -> Option<String> {
-    if let Some(lines) = v["sha256_b64url_lines"].as_array() {
+    for (key, is_sha3_512) in [("sha256_b64url_lines", false), ("sha3_512_b64url_lines", true)] {
+        let Some(lines) = v[key].as_array() else {
+            continue;
+        };
         let base = lines
             .iter()
             .map(|l| subst(vars, l).expect("hash line"))
@@ -102,7 +106,11 @@ fn subst(vars: &HashMap<String, String>, v: &Value) -> Option<String> {
                 "
 ",
             );
-        let digest = sha2::Sha256::digest(base.as_bytes());
+        let digest = if is_sha3_512 {
+            sha3::Sha3_512::digest(base.as_bytes()).to_vec()
+        } else {
+            sha2::Sha256::digest(base.as_bytes()).to_vec()
+        };
         return Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest));
     }
     let s = v.as_str()?;

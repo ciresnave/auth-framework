@@ -232,6 +232,9 @@
   # SHA-2 hashing (for OAuth 2.0 PKCE and other server features)
   sha2 = "0.11"
 
+  # SHA-3 (RFC 9635 section 4.2.3 `hash_method` `sha3-256`/`sha3-512`); RustCrypto, MIT OR Apache-2.0
+  sha3 = "0.12"
+
   # Structured Field Values (RFC 8941 / RFC 9651): the parser and serializer RFC 9421 HTTP message signatures
   # are defined on (GNAP `httpsig` proofing, src/protocols/gnap_httpsig.rs). MIT OR Apache-2.0, rust-version 1.95;
   # approved by the PM 2026-11-06 as the one new dependency of G2 (no httpsig crate: it would bring a second crypto stack).

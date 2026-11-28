@@ -7,9 +7,9 @@
 //!   (sections 2.5.1 to 2.5.3) and refuse what the RFC forbids.
 //! * [`InteractionResponse`] builds the `interact` response (section 3.3): `redirect`, `app`, `user_code`,
 //!   `user_code_uri`, `finish` and `expires_in`.
-//! * [`interaction_hash`] and [`verify_interaction_hash`] are section 4.2.3, for `sha-256`, `sha-384` and
-//!   `sha-512`. `sha3-*` and the other registry names are refused (`unsupported hash_method`) rather than
-//!   guessed at.
+//! * [`interaction_hash`] and [`verify_interaction_hash`] are section 4.2.3, for `sha-256`, `sha-384`,
+//!   `sha-512`, `sha3-256` and `sha3-512`. The other registry names are refused (`unsupported hash_method`)
+//!   rather than guessed at.
 //! * [`callback_redirect_url`] and [`callback_push_body`] build the two callbacks of sections 4.2.1 and 4.2.2.
 //! * [`generate_user_code`], [`normalize_user_code`] and [`user_codes_equal`] implement the case-insensitive,
 //!   typeable, unguessable short code of sections 3.3.3 and 3.3.4.
@@ -24,6 +24,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256, Sha384, Sha512};
+use sha3::{Sha3_256, Sha3_512};
 use subtle::ConstantTimeEq;
 use url::{Host, Url};
 
@@ -154,6 +155,10 @@ pub enum HashMethod {
     Sha384,
     /// `sha-512`.
     Sha512,
+    /// `sha3-256`.
+    Sha3_256,
+    /// `sha3-512` (the RFC 9635 section 4.2.3 example).
+    Sha3_512,
 }
 
 impl HashMethod {
@@ -163,6 +168,8 @@ impl HashMethod {
             None | Some("sha-256") => Ok(Self::Sha256),
             Some("sha-384") => Ok(Self::Sha384),
             Some("sha-512") => Ok(Self::Sha512),
+            Some("sha3-256") => Ok(Self::Sha3_256),
+            Some("sha3-512") => Ok(Self::Sha3_512),
             Some(_) => err(InteractionErrorKind::UnsupportedHashMethod),
         }
     }
@@ -172,6 +179,8 @@ impl HashMethod {
             Self::Sha256 => Sha256::digest(input).to_vec(),
             Self::Sha384 => Sha384::digest(input).to_vec(),
             Self::Sha512 => Sha512::digest(input).to_vec(),
+            Self::Sha3_256 => Sha3_256::digest(input).to_vec(),
+            Self::Sha3_512 => Sha3_512::digest(input).to_vec(),
         }
     }
 }
@@ -762,6 +771,37 @@ mod tests {
         ));
     }
 
+    /// RFC 9635 section 4.2.3's own `sha3-512` example, over the same hash base string as the sha-256 one.
+    const SHA3_512_EXPECTED: &str = "pyUkVJSmpqSJMaDYsk5G8WCvgY91l-agUPe1wgn-cc5rUtN69gPI2-S_s-Eswed8iB4PJ_a5Hg6DNi7qGgKwSQ";
+
+    #[test]
+    fn the_rfc_sha3_512_example_is_reproduced() {
+        let m = HashMethod::from_name(Some("sha3-512")).unwrap();
+        assert_eq!(m, HashMethod::Sha3_512);
+        let hash = interaction_hash(CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, m).unwrap();
+        assert_eq!(hash, SHA3_512_EXPECTED);
+        assert!(verify_interaction_hash(
+            CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, m, SHA3_512_EXPECTED
+        ));
+        // the sha-256 value is not a sha3-512 hash, and the other way round
+        assert!(!verify_interaction_hash(
+            CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, m, SHA256_EXPECTED
+        ));
+        assert!(!verify_interaction_hash(
+            CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, HashMethod::Sha256, SHA3_512_EXPECTED
+        ));
+    }
+
+    #[test]
+    fn sha3_256_is_a_32_byte_hash_that_differs_from_sha_256() {
+        let m = HashMethod::from_name(Some("sha3-256")).unwrap();
+        assert_eq!(m, HashMethod::Sha3_256);
+        let h = interaction_hash(CLIENT_NONCE, AS_NONCE, INTERACT_REF, GRANT, m).unwrap();
+        assert_eq!(B64.decode(&h).unwrap().len(), 32);
+        assert_ne!(h, SHA256_EXPECTED);
+        assert_ne!(h, SHA3_512_EXPECTED);
+    }
+
     #[test]
     fn hash_method_defaults_to_sha256_and_refuses_the_unknown() {
         assert_eq!(HashMethod::from_name(None).unwrap(), HashMethod::Sha256);
@@ -769,7 +809,7 @@ mod tests {
             HashMethod::from_name(Some("sha-512")).unwrap(),
             HashMethod::Sha512
         );
-        for name in ["sha3-512", "SHA-256", "md5", "sha-1", ""] {
+        for name in ["sha3-224", "sha3-384", "SHA3-512", "SHA-256", "md5", "sha-1", ""] {
             assert_eq!(
                 HashMethod::from_name(Some(name)).unwrap_err().kind,
                 InteractionErrorKind::UnsupportedHashMethod,
@@ -873,7 +913,7 @@ mod tests {
             BadCallbackUri
         );
         assert_eq!(
-            kind(finish_with(|v| v["hash_method"] = json!("sha3-512"))),
+            kind(finish_with(|v| v["hash_method"] = json!("sha3-224"))),
             UnsupportedHashMethod
         );
         assert_eq!(

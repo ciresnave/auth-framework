@@ -1768,7 +1768,7 @@ impl GnapService {
             && HashMethod::from_name(Some(name)).is_err()
         {
             return Err(AuthError::validation(format!(
-                "interact.finish.hash_method {name} is not supported: this server computes sha-256, sha-384 and sha-512"
+                "interact.finish.hash_method {name} is not supported: this server computes sha-256, sha-384, sha-512, sha3-256 and sha3-512"
             )));
         }
         let parsed = FinishRequest::parse(&serde_json::json!({
@@ -7955,6 +7955,8 @@ mod proof_verification_tests {
             ("sha-256", HashMethod::Sha256),
             ("sha-384", HashMethod::Sha384),
             ("sha-512", HashMethod::Sha512),
+            ("sha3-256", HashMethod::Sha3_256),
+            ("sha3-512", HashMethod::Sha3_512),
         ] {
             let (svc, dpop, key) = (service(), manager(), client_key());
             let interact = json!({
@@ -7983,6 +7985,8 @@ mod proof_verification_tests {
                     HashMethod::Sha256 => 43,
                     HashMethod::Sha384 => 64,
                     HashMethod::Sha512 => 86,
+                    HashMethod::Sha3_256 => 43,
+                    HashMethod::Sha3_512 => 86,
                 }
             );
         }
@@ -7991,7 +7995,7 @@ mod proof_verification_tests {
     #[tokio::test]
     async fn a_hash_method_the_server_does_not_honour_is_refused_not_ignored() {
         let (svc, dpop, key) = (service(), manager(), client_key());
-        for (n, name) in ["sha3-512", "md5", "SHA-256"].into_iter().enumerate() {
+        for (n, name) in ["sha3-224", "md5", "SHA-256"].into_iter().enumerate() {
             let interact = json!({
                 "start": ["redirect"],
                 "finish": {"method": "redirect", "uri": "https://client.test/cb", "nonce": "n", "hash_method": name},

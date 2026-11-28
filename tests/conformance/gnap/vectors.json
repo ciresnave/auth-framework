@@ -1,6 +1,6 @@
 {
   "suite": "gnap-transaction-endpoint",
-  "suite_version": 7,
+  "suite_version": 8,
   "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
   "vectors": [
     {
@@ -1791,6 +1791,33 @@
             ]
           },
           "expect_hash": "x-gguKWTj8rQf7d7i3w3UhzvuJ5bpOlKyAlVpLxBffY"
+        }
+      ]
+    },
+    {
+      "id": "hash-rfc-example-sha3-512",
+      "rfc": "RFC 9635",
+      "section": "4.2.3",
+      "kind": "positive",
+      "description": "The RFC's second example in 4.2.3: the same four lines hashed with sha3-512 (hash_method sha3-512), URL-safe base64 without padding, come out as the RFC states.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "https://as.example.test/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "hash",
+          "compute": {
+            "sha3_512_b64url_lines": [
+              "VJLO6A4CATR0KRO",
+              "MBDOFXG4Y5CVJCX821LH",
+              "4IFWWIKYB2PQ6U56NL1",
+              "https://server.example.com/tx"
+            ]
+          },
+          "expect_hash": "pyUkVJSmpqSJMaDYsk5G8WCvgY91l-agUPe1wgn-cc5rUtN69gPI2-S_s-Eswed8iB4PJ_a5Hg6DNi7qGgKwSQ"
         }
       ]
     },
