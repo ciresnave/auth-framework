@@ -147,12 +147,17 @@ pub struct GnapSubjectRequest {
     pub sub_ids: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GnapClientInfo {
     /// Client key in JWK format for cryptographic binding
     pub key: Option<GnapClientKey>,
     /// Client display information
     pub display: Option<GnapClientDisplay>,
+    /// The class of software the instance runs (RFC 9635 section 2.3 `class_id`): an identifier the client
+    /// developer chose for it. A claim by the client: the AS stores it for its policy and never treats it as
+    /// an identity (section 11.15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_id: Option<String>,
 }
 
 /// Client key with proof method (draft §7.1)
@@ -322,6 +327,7 @@ impl GnapTransactionRequestBuilder {
     /// Set client info from a key and proof method.
     pub fn client_key(mut self, jwk: GnapJwk, proof: impl Into<String>) -> Self {
         self.client = Some(GnapClientInfo {
+            class_id: None,
             key: Some(GnapClientKey {
                 proof: proof.into(),
                 jwk: Some(jwk),
@@ -336,6 +342,7 @@ impl GnapTransactionRequestBuilder {
     /// Set client info from a certificate (base64 DER), proved with `mtls`.
     pub fn client_key_cert(mut self, cert_der_base64: impl Into<String>) -> Self {
         self.client = Some(GnapClientInfo {
+            class_id: None,
             key: Some(GnapClientKey {
                 proof: "mtls".to_string(),
                 jwk: None,
@@ -350,6 +357,7 @@ impl GnapTransactionRequestBuilder {
     /// Set client info from a certificate's SHA-256 thumbprint (base64url), proved with `mtls`.
     pub fn client_key_cert_s256(mut self, thumbprint: impl Into<String>) -> Self {
         self.client = Some(GnapClientInfo {
+            class_id: None,
             key: Some(GnapClientKey {
                 proof: "mtls".to_string(),
                 jwk: None,
@@ -3617,6 +3625,7 @@ mod tests {
 
     fn test_client_info(jwk: GnapJwk) -> GnapClientInfo {
         GnapClientInfo {
+            class_id: None,
             key: Some(GnapClientKey {
                 proof: "test".to_string(),
                 jwk: Some(jwk),
@@ -3720,6 +3729,7 @@ mod tests {
     #[test]
     fn test_validate_client_key_no_key() {
         let client = Some(GnapClientInfo {
+            class_id: None,
             key: None,
             display: None,
         });
@@ -3730,6 +3740,7 @@ mod tests {
     #[test]
     fn test_validate_client_key_invalid_proof_method() {
         let client = Some(GnapClientInfo {
+            class_id: None,
             key: Some(GnapClientKey {
                 proof: "invalid_method".to_string(),
                 jwk: Some(test_ec_jwk()),
@@ -4857,6 +4868,41 @@ mod tests {
             };
             assert_eq!(GnapError::from_service_message(message), Some(sent));
         }
+    }
+
+    /// RFC 9635 section 2.3: the `class_id` a client names is carried to the stored transaction for the policy. It is
+    /// a claim, not an identity (11.15): a request that names a class and no key is still refused.
+    #[tokio::test]
+    async fn section_2_3_class_id_is_carried_and_proves_nothing() {
+        let service = test_service();
+        let mut req = GnapTransactionRequest::builder()
+            .client(test_client_info(test_ec_jwk()))
+            .subject_formats(vec!["opaque".into()])
+            .build();
+        req.client.as_mut().unwrap().class_id = Some("web-app-7".into());
+        req.interact = Some(GnapInteractionRequirements {
+            start: vec!["redirect".to_string()],
+            finish: None,
+            hints: None,
+        });
+        let wire = serde_json::to_value(&req).unwrap();
+        assert_eq!(wire["client"]["class_id"], "web-app-7");
+        let back: GnapTransactionRequest = serde_json::from_value(wire).unwrap();
+        service.handle_transaction(back).await.unwrap();
+        let stored = service.test_first_txn().await;
+        assert_eq!(
+            stored.request.client.unwrap().class_id.as_deref(),
+            Some("web-app-7")
+        );
+        // no key: a class is no substitute
+        let mut keyless = GnapTransactionRequest::builder()
+            .subject_formats(vec!["opaque".into()])
+            .build();
+        keyless.client = Some(GnapClientInfo {
+            class_id: Some("web-app-7".into()),
+            ..GnapClientInfo::default()
+        });
+        assert!(service.handle_transaction(keyless).await.is_err());
     }
 
     #[test]
@@ -7096,6 +7142,7 @@ mod proof_verification_tests {
             "dpop", "test", "httpsig", "jwsd", "jws", "", "DPOP", "none", "bogus",
         ] {
             let client = Some(GnapClientInfo {
+                class_id: None,
                 key: Some(GnapClientKey {
                     proof: method.to_string(),
                     jwk: Some(key.jwk.clone()),
@@ -7141,6 +7188,7 @@ mod proof_verification_tests {
         let key = client_key();
         for method in ["dpop", "httpsig", "jws"] {
             let client = Some(GnapClientInfo {
+                class_id: None,
                 key: Some(GnapClientKey {
                     proof: method.to_string(),
                     jwk: Some(key.jwk.clone()),
@@ -7770,6 +7818,7 @@ mod proof_verification_tests {
         let (_, std, s256) = certificate();
         let key = |proof: &str, jwk: bool, cert: Option<&str>, s: Option<&str>| {
             Some(GnapClientInfo {
+                class_id: None,
                 key: Some(GnapClientKey {
                     proof: proof.to_string(),
                     jwk: jwk.then(|| client_key().jwk),
@@ -7808,6 +7857,7 @@ mod proof_verification_tests {
         padded.push('=');
         let key = |s: &str| {
             Some(GnapClientInfo {
+                class_id: None,
                 key: Some(GnapClientKey {
                     proof: "mtls".to_string(),
                     jwk: None,
@@ -8586,6 +8636,7 @@ mod hardening_tests {
 
     fn keyed() -> Option<GnapClientInfo> {
         Some(GnapClientInfo {
+            class_id: None,
             key: Some(GnapClientKey {
                 proof: "test".to_string(),
                 jwk: Some(jwk()),
@@ -8757,6 +8808,7 @@ mod hardening_tests {
         for client in [
             None,
             Some(GnapClientInfo {
+                class_id: None,
                 key: None,
                 display: None,
             }),
