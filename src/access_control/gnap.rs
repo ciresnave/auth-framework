@@ -113,7 +113,11 @@ impl EngineGnapPolicy {
                     } else {
                         locs
                     },
-                    ..Default::default()
+                    // The engine decides actions and locations only; the narrower kinds of data, resource and
+                    // privileges the client asked for stay on the granted right, never dropped (RFC 9635 8.2).
+                    datatypes: req.datatypes.clone(),
+                    identifier: req.identifier.clone(),
+                    privileges: req.privileges.clone(),
                 });
             }
         }
@@ -144,6 +148,22 @@ mod tests {
             locations: l.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn granted_rights_keep_the_requested_datatypes_identifier_and_privileges() {
+        let asked = GnapAccessRequest {
+            datatypes: vec!["metadata".into()],
+            identifier: Some("doc-1".into()),
+            privileges: vec!["reader".into()],
+            ..req("doc", &["read"], &["doc:1"])
+        };
+        let (policy, _) = setup();
+        let granted = policy.grant_sync("tp-alice", std::slice::from_ref(&asked));
+        assert_eq!(granted.len(), 1);
+        assert_eq!(granted[0].datatypes, asked.datatypes);
+        assert_eq!(granted[0].identifier, asked.identifier);
+        assert_eq!(granted[0].privileges, asked.privileges);
     }
 
     fn key(r: &GnapAccessRequest) -> (String, Vec<String>, Vec<String>) {

@@ -362,7 +362,7 @@ impl fmt::Debug for GnapUserRef {
 }
 
 /// The user by value (RFC 9635 section 2.4).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct GnapUserObject {
     /// Subject identifiers (each an object with a `format`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -370,6 +370,16 @@ pub struct GnapUserObject {
     /// Assertions (each an object with a `format` and a `value`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assertions: Option<Vec<Value>>,
+}
+
+impl fmt::Debug for GnapUserObject {
+    // Identifiers and assertions name a person and may carry credentials: print how many, never what.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GnapUserObject")
+            .field("sub_ids", &self.sub_ids.as_ref().map(|v| v.len()))
+            .field("assertions", &self.assertions.as_ref().map(|v| v.len()))
+            .finish()
+    }
 }
 
 impl GnapUserRef {

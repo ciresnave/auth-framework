@@ -2526,6 +2526,11 @@ impl GnapService {
         if let Some(subject) = &modification.subject {
             txn.request.subject = Some(subject.clone());
         }
+        if let Some(user) = &modification.user {
+            user.validate()
+                .map_err(|e| AuthError::validation(format!("invalid_request: user: {e:?}")))?;
+            txn.request.user = Some(user.clone());
+        }
         let new_continue_token = uuid::Uuid::new_v4().to_string();
         txn.continue_token = new_continue_token.clone();
         if !self.transactions.replace_if_unchanged(txn).await? {
@@ -2599,8 +2604,9 @@ impl GnapService {
         subject_id: Option<&str>,
     ) -> Result<GnapInteractionCompletion> {
         let endpoint = &self.grant_url();
-        let now = self.now();
         self.update_transaction(transaction_id, |txn| {
+            // read per attempt: a retry after a later approval must not stamp an earlier time
+            let now = self.now();
             txn.state = GnapTransactionState::Approved;
             if let Some(sid) = subject_id {
                 txn.subject_id = Some(sid.to_string());
@@ -4568,6 +4574,83 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("invalid_request"), "{err}");
+        assert_eq!(
+            service.transactions.count().await.unwrap(),
+            0,
+            "a refused request stores nothing"
+        );
+    }
+
+    fn hinted_user(id: &str) -> GnapUserRef {
+        GnapUserRef::Object(crate::protocols::gnap_wire::GnapUserObject {
+            sub_ids: Some(vec![serde_json::json!({"format": "opaque", "id": id})]),
+            assertions: None,
+        })
+    }
+
+    /// Open an interactive subject-only grant naming `hint`, approve it as `approver`, and return the
+    /// subject object the continuation releases.
+    async fn subject_released_to(
+        hint: Option<GnapUserRef>,
+        patch_hint: Option<GnapUserRef>,
+        approver: &str,
+    ) -> serde_json::Value {
+        let service = test_service();
+        let mut req = GnapTransactionRequest::builder()
+            .client(test_client_info(test_ec_jwk()))
+            .subject_formats(vec!["opaque".into()])
+            .build();
+        req.interact = Some(GnapInteractionRequirements {
+            start: vec!["redirect".to_string()],
+            finish: None,
+            hints: None,
+        });
+        req.user = hint;
+        let resp = service.handle_transaction(req).await.unwrap();
+        let mut cont = resp["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let txn_id = service.test_first_txn().await.id;
+        if let Some(user) = patch_hint {
+            let mut txn = service.test_txn(&txn_id).await;
+            // the PATCH handler's own edit, through the stored transaction
+            txn.request.user = Some(user);
+            assert!(
+                service
+                    .transactions
+                    .replace_if_unchanged(txn)
+                    .await
+                    .unwrap()
+            );
+            cont = service.test_txn(&txn_id).await.continue_token;
+        }
+        service
+            .approve_transaction(&txn_id, Some(approver))
+            .await
+            .unwrap();
+        let out = service
+            .continue_transaction(&txn_id, &cont, None, None)
+            .await
+            .unwrap();
+        out["subject"].clone()
+    }
+
+    #[tokio::test]
+    async fn section_2_4_handlers_apply_the_user_hint_to_subject_release() {
+        let hit = subject_released_to(Some(hinted_user("user-42")), None, "user-42").await;
+        assert_eq!(hit["sub_ids"][0]["id"], "user-42", "{hit}");
+        let miss = subject_released_to(Some(hinted_user("user-42")), None, "someone-else").await;
+        assert!(miss.get("sub_ids").is_none(), "{miss}");
+    }
+
+    #[test]
+    fn debug_of_a_user_hint_prints_counts_not_identifiers() {
+        let text = format!("{:?}", hinted_user("secret-user-id"));
+        assert!(!text.contains("secret-user-id"), "{text}");
+        let mut req = GnapTransactionRequest::builder().build();
+        req.user = Some(hinted_user("secret-user-id"));
+        assert!(!format!("{req:?}").contains("secret-user-id"));
     }
 
     #[test]
@@ -7197,6 +7280,45 @@ mod proof_verification_tests {
             body,
         )
         .await
+    }
+
+    fn patch_user(id: &str) -> crate::protocols::gnap_wire::GnapUserRef {
+        crate::protocols::gnap_wire::GnapUserRef::Object(
+            crate::protocols::gnap_wire::GnapUserObject {
+                sub_ids: Some(vec![serde_json::json!({"format": "opaque", "id": id})]),
+                assertions: None,
+            },
+        )
+    }
+
+    /// A user hint sent in a PATCH replaces the stored one, and the next release honours it.
+    #[tokio::test]
+    async fn section_5_1_patch_replaces_the_user_hint() {
+        let svc = service();
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "uh-0").await;
+        let body = GnapTransactionRequest {
+            client: None,
+            interact: None,
+            access_token_request: None,
+            subject: None,
+            user: Some(patch_user("user-42")),
+        };
+        patch(&svc, &dpop, &key, &id, &token, "uh-1", &body)
+            .await
+            .expect("a pending grant takes a new user hint");
+        let stored = svc.test_txn(&id).await.request.user;
+        assert_eq!(stored, Some(patch_user("user-42")));
+        let bad = GnapTransactionRequest {
+            user: Some(crate::protocols::gnap_wire::GnapUserRef::Reference(
+                String::new(),
+            )),
+            ..body
+        };
+        let next = svc.test_txn(&id).await.continue_token;
+        let err = refusal(patch(&svc, &dpop, &key, &id, &next, "uh-2", &bad).await);
+        assert!(err.contains("invalid_request"), "{err}");
+        assert_eq!(svc.test_txn(&id).await.request.user, stored);
     }
 
     #[tokio::test]
