@@ -28,7 +28,7 @@ use crate::protocols::gnap_store::{
     InMemoryTransactionStore, is_valid_manage_secret,
 };
 use crate::protocols::gnap_wire::{
-    GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests,
+    GnapAccess, GnapAccessObject, GnapAccessTokenRequest, GnapAccessTokenRequests, GnapUserRef,
     validate_access_token_requests_with_flags,
 };
 use crate::server::security::dpop::DpopManager;
@@ -76,10 +76,15 @@ pub struct GnapTransactionRequest {
     pub access_token_request: Option<GnapAccessTokenRequests>,
     /// Subject information request
     pub subject: Option<GnapSubjectRequest>,
+    /// The user, as the client knows them (RFC 9635 section 2.4): identifiers, assertions or a user reference.
+    /// A hint, never an identity (section 11.13): the AS checks its shape and uses the `sub_ids` only to narrow
+    /// who subject information may be released to; it never authenticates the user from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<GnapUserRef>,
 }
 
 /// Description of a single access right being requested
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GnapAccessRequest {
     /// Type of access (e.g. "read", "write", or an API-specific identifier)
     #[serde(rename = "type")]
@@ -90,6 +95,15 @@ pub struct GnapAccessRequest {
     /// Locations/URIs where this access applies
     #[serde(default)]
     pub locations: Vec<String>,
+    /// The kinds of data (RFC 9635 section 8.2 `datatypes`); empty when the request gave none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datatypes: Vec<String>,
+    /// A specific resource at the API (section 8.2 `identifier`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    /// Privileges at the resource (section 8.2 `privileges`); empty when the request gave none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub privileges: Vec<String>,
 }
 
 impl From<Vec<GnapAccessRequest>> for GnapAccessTokenRequests {
@@ -104,6 +118,9 @@ impl From<Vec<GnapAccessRequest>> for GnapAccessTokenRequests {
                         access_type: right.access_type,
                         actions: non_empty(right.actions),
                         locations: non_empty(right.locations),
+                        datatypes: non_empty(right.datatypes),
+                        identifier: right.identifier,
+                        privileges: non_empty(right.privileges),
                         ..GnapAccessObject::default()
                     })
                 })
@@ -262,7 +279,21 @@ impl GnapTransactionRequest {
             interact: None,
             access_token: Vec::new(),
             subject: None,
+            user: None,
         }
+    }
+
+    /// The subject request with the user hint folded in: the `sub_ids` the client named under `user` (RFC 9635
+    /// section 2.4) join those named under `subject`, so that subject information is released only to a user
+    /// the AS saw approve who matches one of them. A user reference or assertions name nobody the AS can match.
+    fn subject_with_user_hint(&self) -> Option<GnapSubjectRequest> {
+        let mut subject = self.subject.clone()?;
+        if let Some(GnapUserRef::Object(user)) = &self.user {
+            subject
+                .sub_ids
+                .extend(user.sub_ids.iter().flatten().cloned());
+        }
+        Some(subject)
     }
 }
 
@@ -272,9 +303,16 @@ pub struct GnapTransactionRequestBuilder {
     interact: Option<GnapInteractionRequirements>,
     access_token: Vec<GnapAccessRequest>,
     subject: Option<GnapSubjectRequest>,
+    user: Option<GnapUserRef>,
 }
 
 impl GnapTransactionRequestBuilder {
+    /// Name the user (RFC 9635 section 2.4); a hint only.
+    pub fn user(mut self, user: GnapUserRef) -> Self {
+        self.user = Some(user);
+        self
+    }
+
     /// Set the client info with a key binding.
     pub fn client(mut self, client: GnapClientInfo) -> Self {
         self.client = Some(client);
@@ -359,6 +397,7 @@ impl GnapTransactionRequestBuilder {
             access_type: access_type.into(),
             actions: actions.iter().map(|a| a.as_ref().to_string()).collect(),
             locations: locations.iter().map(|l| l.as_ref().to_string()).collect(),
+            ..Default::default()
         });
         self
     }
@@ -395,19 +434,27 @@ impl GnapTransactionRequestBuilder {
                 Some(self.access_token.into())
             },
             subject: self.subject,
+            user: self.user,
         }
     }
 }
 
 /// State of a GNAP transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum GnapTransactionState {
     /// Waiting for user interaction
     Pending,
+    /// The AS is working on the request (RFC 9635 section 1.5's `processing` grant state): the client keeps
+    /// polling as for a pending grant, and the grant is not open to modification.
+    Processing,
     /// User has approved; access token can be issued
     Approved,
     /// Transaction was denied or expired
     Denied,
+    /// The grant has run its course (RFC 9635 section 1.5's `finalized` grant state): a continuation is
+    /// refused and the transaction is removed.
+    Finalized,
 }
 
 /// An open GNAP transaction, as a [`GnapTransactionStore`] keeps it.
@@ -427,6 +474,9 @@ pub struct GnapTransaction {
     pub interact_nonce: Option<String>,
     /// Subject identifier assigned after approval
     pub subject_id: Option<String>,
+    /// When the AS last learned or confirmed `subject_id` (epoch seconds): the `updated_at` of subject information (RFC 9635 section 3.4).
+    #[serde(default)]
+    pub subject_updated_at: Option<u64>,
     /// One-time interaction reference issued when a finish-method transaction is approved
     pub interact_ref: Option<String>,
     /// The short code a person types at the AS when the client asked for the `user_code` start
@@ -1737,8 +1787,8 @@ impl GnapService {
     /// request, an empty access type, or a flag this server does not support is refused (this server supports
     /// no flag, so any is `invalid_flag`), and so is more than one access token in a request, which this
     /// server does not issue. An access right given as a reference string (section 8.1) is carried as a right
-    /// whose type is that string; `datatypes`, `identifier` and `privileges` of an access object are not
-    /// carried by the grant-level right and are dropped before the policy sees it (G6).
+    /// whose type is that string; `datatypes`, `identifier` and `privileges` of an access object are carried
+    /// to the policy (RFC 9635 section 8.2).
     pub fn requested_rights(requests: &GnapAccessTokenRequests) -> Result<Vec<GnapAccessRequest>> {
         validate_access_token_requests_with_flags(requests, &[])
             .map_err(|e| AuthError::validation(e.to_string()))?;
@@ -1755,11 +1805,15 @@ impl GnapService {
                     access_type: reference.clone(),
                     actions: Vec::new(),
                     locations: Vec::new(),
+                    ..GnapAccessRequest::default()
                 },
                 GnapAccess::Object(object) => GnapAccessRequest {
                     access_type: object.access_type.clone(),
                     actions: object.actions.clone().unwrap_or_default(),
                     locations: object.locations.clone().unwrap_or_default(),
+                    datatypes: object.datatypes.clone().unwrap_or_default(),
+                    identifier: object.identifier.clone(),
+                    privileges: object.privileges.clone().unwrap_or_default(),
                 },
             })
             .collect())
@@ -1924,6 +1978,12 @@ impl GnapService {
             ));
         }
 
+        // The user the client names is checked for shape only (RFC 9635 section 2.4); it is a hint (11.13)
+        if let Some(user) = &request.user {
+            user.validate()
+                .map_err(|e| AuthError::validation(format!("invalid_request: user: {e:?}")))?;
+        }
+
         // The access token request is checked before anything is stored or issued (RFC 9635 section 2.1)
         let requested = match &request.access_token_request {
             Some(requests) => Some(Self::requested_rights(requests)?),
@@ -2052,6 +2112,7 @@ impl GnapService {
                 created_at: now,
                 interact_nonce: interact_nonce.clone(),
                 subject_id: None,
+                subject_updated_at: None,
                 interact_ref: None,
                 user_code,
                 revision: 0,
@@ -2080,9 +2141,9 @@ impl GnapService {
             }
 
             // If subject info was requested, include it (draft §2.2)
-            if let Some(ref subject_req) = request.subject {
+            if let Some(subject_req) = request.subject_with_user_hint() {
                 let subject_resp =
-                    Self::build_subject_response(subject_req, None, self.issuer_identifier());
+                    Self::build_subject_response(&subject_req, None, self.issuer_identifier());
                 response.insert(
                     "subject".to_string(),
                     serde_json::Value::Object(subject_resp),
@@ -2285,7 +2346,7 @@ impl GnapService {
             .await?;
 
         match txn.state {
-            GnapTransactionState::Pending => {
+            GnapTransactionState::Pending | GnapTransactionState::Processing => {
                 // Polling too soon (RFC 9635 section 5.2) is refused, the token is kept, and the
                 // refused poll restarts the clock.
                 let since = if txn.last_poll_at == 0 {
@@ -2361,12 +2422,13 @@ impl GnapService {
                 }
 
                 // Include subject info if requested and available
-                if let Some(ref subject_req) = txn.request.subject {
-                    let subject_resp = Self::build_subject_response(
-                        subject_req,
+                if let Some(subject_req) = txn.request.subject_with_user_hint() {
+                    let mut subject_resp = Self::build_subject_response(
+                        &subject_req,
                         txn.subject_id.as_deref(),
                         self.issuer_identifier(),
                     );
+                    Self::stamp_subject_updated_at(&mut subject_resp, txn.subject_updated_at);
                     response.insert(
                         "subject".to_string(),
                         serde_json::Value::Object(subject_resp),
@@ -2383,6 +2445,10 @@ impl GnapService {
                 Err(AuthError::validation(
                     "user_denied: Transaction was denied by the resource owner",
                 ))
+            }
+            GnapTransactionState::Finalized => {
+                self.transactions.remove(transaction_id).await?;
+                Err(AuthError::validation(INVALID_CONTINUATION))
             }
         }
     }
@@ -2471,6 +2537,11 @@ impl GnapService {
         if let Some(subject) = &modification.subject {
             txn.request.subject = Some(subject.clone());
         }
+        if let Some(user) = &modification.user {
+            user.validate()
+                .map_err(|e| AuthError::validation(format!("invalid_request: user: {e:?}")))?;
+            txn.request.user = Some(user.clone());
+        }
         let new_continue_token = uuid::Uuid::new_v4().to_string();
         txn.continue_token = new_continue_token.clone();
         if !self.transactions.replace_if_unchanged(txn).await? {
@@ -2545,9 +2616,12 @@ impl GnapService {
     ) -> Result<GnapInteractionCompletion> {
         let endpoint = &self.grant_url();
         self.update_transaction(transaction_id, |txn| {
+            // read per attempt: a retry after a later approval must not stamp an earlier time
+            let now = self.now();
             txn.state = GnapTransactionState::Approved;
             if let Some(sid) = subject_id {
                 txn.subject_id = Some(sid.to_string());
+                txn.subject_updated_at = Some(now);
             }
             let finish = txn
                 .request
@@ -2801,6 +2875,36 @@ impl GnapService {
         failures.retain(|_, &mut (_, since)| now.saturating_sub(since) < USER_CODE_LOCKOUT_SECS);
         let entry = failures.entry(caller.to_string()).or_insert((0, now));
         entry.0 = entry.0.saturating_add(1);
+    }
+
+    /// Mark a pending transaction as being processed (RFC 9635 section 1.5): it keeps answering polls as
+    /// pending, and can still be approved or denied, but a PATCH is refused.
+    pub async fn begin_processing(&self, transaction_id: &str) -> Result<()> {
+        self.update_transaction(transaction_id, |txn| match txn.state {
+            GnapTransactionState::Pending => {
+                txn.state = GnapTransactionState::Processing;
+                Ok(())
+            }
+            _ => Err(AuthError::validation(
+                "the transaction is not pending, so it cannot start processing",
+            )),
+        })
+        .await?
+    }
+
+    /// Finalize a transaction (RFC 9635 section 1.5): its next continuation is refused and removes it.
+    /// Refused for a transaction that is already approved (its token is still to be issued) or denied.
+    pub async fn finalize_transaction(&self, transaction_id: &str) -> Result<()> {
+        self.update_transaction(transaction_id, |txn| match txn.state {
+            GnapTransactionState::Pending | GnapTransactionState::Processing => {
+                txn.state = GnapTransactionState::Finalized;
+                Ok(())
+            }
+            _ => Err(AuthError::validation(
+                "only a pending or processing transaction can be finalized",
+            )),
+        })
+        .await?
     }
 
     /// Deny a pending transaction
@@ -3304,9 +3408,27 @@ impl GnapService {
         resp
     }
 
-    // ── Cleanup ──────────────────────────────────────────────────────────
+    /// Add `updated_at` (RFC 9635 section 3.4, an ISO 8601 timestamp) to released subject information. Nothing
+    /// released, or no known time, means no `updated_at`.
+    fn stamp_subject_updated_at(
+        subject: &mut serde_json::Map<String, serde_json::Value>,
+        at: Option<u64>,
+    ) {
+        if !subject.contains_key("sub_ids") {
+            return;
+        }
+        let stamp = at
+            .and_then(|secs| i64::try_from(secs).ok())
+            .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0));
+        if let Some(stamp) = stamp {
+            subject.insert(
+                "updated_at".to_string(),
+                serde_json::Value::String(stamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+            );
+        }
+    }
 
-    /// Unit tests only: ids of the stored transactions.
+    // ── Cleanup ─ of the stored transactions.
     #[cfg(test)]
     async fn test_txn_ids(&self) -> Vec<String> {
         self.transactions.ids().await.unwrap()
@@ -3611,10 +3733,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
     }
@@ -3627,6 +3751,7 @@ mod tests {
             interact: None,
             access_token_request: None,
             subject: None,
+            user: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
     }
@@ -3642,10 +3767,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec!["list".to_string()],
                     locations: vec!["https://api.test/resources".to_string()],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let obj = resp.as_object().unwrap();
@@ -3682,10 +3809,12 @@ mod tests {
                     access_type: "write".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let obj = resp.as_object().unwrap();
@@ -3710,6 +3839,7 @@ mod tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let obj = resp.as_object().unwrap();
@@ -3735,10 +3865,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let cont = resp["continue"]["access_token"]["value"].as_str().unwrap();
@@ -3789,10 +3921,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let txn_id = service.test_first_txn().await.id;
@@ -3821,10 +3955,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let txn_id = service.test_first_txn().await.id;
@@ -3847,10 +3983,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let token_value = resp["access_token"]["value"].as_str().unwrap();
@@ -3883,10 +4021,12 @@ mod tests {
                     access_type: "write".to_string(),
                     actions: vec!["create".to_string()],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let old_token = resp["access_token"]["value"].as_str().unwrap().to_string();
@@ -3937,10 +4077,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let token_value = resp["access_token"]["value"].as_str().unwrap();
@@ -3984,10 +4126,12 @@ mod tests {
                         access_type: "read".to_string(),
                         actions: vec![],
                         locations: vec![],
+                        ..Default::default()
                     }]
                     .into(),
                 ),
                 subject: None,
+                user: None,
             };
             let resp = service.handle_transaction(req).await.unwrap();
             let token = &resp["access_token"];
@@ -4054,6 +4198,7 @@ mod tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         };
         let svc = test_service();
         let started = svc.handle_transaction(interactive()).await.unwrap();
@@ -4083,6 +4228,7 @@ mod tests {
             interact: None,
             access_token_request: None,
             subject: None,
+            user: None,
         };
         req.access_token_request = Some(
             serde_json::from_value(
@@ -4127,10 +4273,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let issued = service.handle_transaction(req).await.unwrap();
         let value = issued["access_token"]["value"]
@@ -4168,10 +4316,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let value = resp["access_token"]["value"].as_str().unwrap().to_string();
@@ -4215,10 +4365,12 @@ mod tests {
                         access_type: "read".to_string(),
                         actions: vec![],
                         locations: vec![],
+                        ..Default::default()
                     }]
                     .into(),
                 ),
                 subject: None,
+                user: None,
             }
         };
         // Control, built the same way: one format is accepted.
@@ -4264,6 +4416,7 @@ mod tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         })
         .unwrap();
         wire["user"] = serde_json::json!({
@@ -4297,6 +4450,7 @@ mod tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         };
         let started = service.handle_transaction(control).await.unwrap();
         let cont = started["continue"]["access_token"]["value"]
@@ -4322,6 +4476,61 @@ mod tests {
         assert!(released.contains("user-42"), "control: {released}");
     }
 
+    /// RFC 9635 section 3.4: released subject information carries `updated_at`, an ISO 8601 timestamp of when
+    /// the AS last updated it; here, when the user approved. No subject, no `updated_at`.
+    #[tokio::test]
+    async fn section_3_4_subject_information_carries_updated_at() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let clock = Arc::new(AtomicU64::new(1_700_000_000));
+        let ticking = clock.clone();
+        let service = test_service().with_clock(move || ticking.load(Ordering::SeqCst));
+        let request = GnapTransactionRequest {
+            client: Some(test_client_info(test_ec_jwk())),
+            interact: Some(GnapInteractionRequirements {
+                start: vec!["redirect".to_string()],
+                finish: None,
+                hints: None,
+            }),
+            access_token_request: None,
+            subject: Some(GnapSubjectRequest {
+                sub_id_formats: vec!["opaque".to_string()],
+                assertion_formats: vec![],
+                sub_ids: vec![],
+            }),
+            user: None,
+        };
+        let started = service.handle_transaction(request).await.unwrap();
+        let cont = started["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id = started["continue"]["uri"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_string();
+        clock.store(1_700_000_100, Ordering::SeqCst);
+        service
+            .approve_transaction(&id, Some("user-42"))
+            .await
+            .unwrap();
+        clock.store(1_700_000_500, Ordering::SeqCst);
+        let done = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            done["subject"]["updated_at"], "2023-11-14T22:15:00Z",
+            "the time of approval (1_700_000_100), not of the poll: {done}"
+        );
+        // Control: with no subject released there is nothing to date.
+        let mut none = serde_json::Map::new();
+        GnapService::stamp_subject_updated_at(&mut none, Some(1_700_000_100));
+        assert!(!none.contains_key("updated_at"));
+    }
+
     /// RFC 9635 section 11.38, "AS-Provided Token Keys": an AS that returns its own key with a token enables a
     /// substitution attack, so "returning a key ... should be limited". This service never returns key
     /// material: a token response carries no `key` (bound to the client's own key, section 3.2.1), on issue and on
@@ -4337,10 +4546,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let issued = service.handle_transaction(req).await.unwrap();
         let token = issued["access_token"]["value"]
@@ -4362,6 +4573,169 @@ mod tests {
     }
 
     // ── Subject Info ─────────────────────────────────────────────────────
+
+    /// RFC 9635 section 2.4: the `user` the client names is shape-checked, and its `sub_ids` narrow who subject
+    /// information may go to (a hint, section 11.13): a different approver gets none.
+    #[tokio::test]
+    async fn section_2_4_user_hint_is_checked_and_narrows_subject_release() {
+        let mut req = GnapTransactionRequest::builder()
+            .subject_formats(vec!["opaque".into()])
+            .user(GnapUserRef::Object(
+                crate::protocols::gnap_wire::GnapUserObject {
+                    sub_ids: Some(vec![
+                        serde_json::json!({"format": "opaque", "id": "user-42"}),
+                    ]),
+                    assertions: None,
+                },
+            ))
+            .build();
+        let hint = req.subject_with_user_hint().unwrap();
+        let hit = GnapService::build_subject_response(&hint, Some("user-42"), None);
+        assert_eq!(hit["sub_ids"][0]["id"], "user-42");
+        let miss = GnapService::build_subject_response(&hint, Some("someone-else"), None);
+        assert!(!miss.contains_key("sub_ids"), "{miss:?}");
+        // a reference names nobody the AS can match: no narrowing
+        req.user = Some(GnapUserRef::Reference("ref-1".into()));
+        let hint = req.subject_with_user_hint().unwrap();
+        assert!(hint.sub_ids.is_empty());
+        // the wire form round-trips
+        let wire = serde_json::to_value(&req).unwrap();
+        assert_eq!(wire["user"], "ref-1");
+
+        // a malformed user is refused before anything is stored
+        let service = test_service();
+        let mut bad = GnapTransactionRequest::builder()
+            .client(test_client_info(test_ec_jwk()))
+            .subject_formats(vec!["opaque".into()])
+            .build();
+        bad.user = Some(GnapUserRef::Reference(String::new()));
+        let err = service
+            .handle_transaction(bad)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid_request"), "{err}");
+        assert_eq!(
+            service.transactions.count().await.unwrap(),
+            0,
+            "a refused request stores nothing"
+        );
+    }
+
+    fn hinted_user(id: &str) -> GnapUserRef {
+        GnapUserRef::Object(crate::protocols::gnap_wire::GnapUserObject {
+            sub_ids: Some(vec![serde_json::json!({"format": "opaque", "id": id})]),
+            assertions: None,
+        })
+    }
+
+    /// Open an interactive subject-only grant naming `hint`, approve it as `approver`, and return the
+    /// subject object the continuation releases.
+    async fn subject_released_to(
+        hint: Option<GnapUserRef>,
+        patch_hint: Option<GnapUserRef>,
+        approver: &str,
+    ) -> serde_json::Value {
+        let service = test_service();
+        let mut req = GnapTransactionRequest::builder()
+            .client(test_client_info(test_ec_jwk()))
+            .subject_formats(vec!["opaque".into()])
+            .build();
+        req.interact = Some(GnapInteractionRequirements {
+            start: vec!["redirect".to_string()],
+            finish: None,
+            hints: None,
+        });
+        req.user = hint;
+        let resp = service.handle_transaction(req).await.unwrap();
+        let mut cont = resp["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let txn_id = service.test_first_txn().await.id;
+        if let Some(user) = patch_hint {
+            let mut txn = service.test_txn(&txn_id).await;
+            // the PATCH handler's own edit, through the stored transaction
+            txn.request.user = Some(user);
+            assert!(
+                service
+                    .transactions
+                    .replace_if_unchanged(txn)
+                    .await
+                    .unwrap()
+            );
+            cont = service.test_txn(&txn_id).await.continue_token;
+        }
+        service
+            .approve_transaction(&txn_id, Some(approver))
+            .await
+            .unwrap();
+        let out = service
+            .continue_transaction(&txn_id, &cont, None, None)
+            .await
+            .unwrap();
+        out["subject"].clone()
+    }
+
+    #[tokio::test]
+    async fn section_2_4_handlers_apply_the_user_hint_to_subject_release() {
+        let hit = subject_released_to(Some(hinted_user("user-42")), None, "user-42").await;
+        assert_eq!(hit["sub_ids"][0]["id"], "user-42", "{hit}");
+        let miss = subject_released_to(Some(hinted_user("user-42")), None, "someone-else").await;
+        assert!(miss.get("sub_ids").is_none(), "{miss}");
+    }
+
+    #[tokio::test]
+    async fn section_1_5_processing_polls_like_pending_and_finalized_is_refused() {
+        let service = test_service();
+        let mut req = GnapTransactionRequest::builder()
+            .client(test_client_info(test_ec_jwk()))
+            .subject_formats(vec!["opaque".into()])
+            .build();
+        req.interact = Some(GnapInteractionRequirements {
+            start: vec!["redirect".to_string()],
+            finish: None,
+            hints: None,
+        });
+        let resp = service.handle_transaction(req).await.unwrap();
+        let cont = resp["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id = service.test_first_txn().await.id;
+
+        service.begin_processing(&id).await.unwrap();
+        assert!(matches!(
+            service.test_txn(&id).await.state,
+            GnapTransactionState::Processing
+        ));
+        assert!(service.begin_processing(&id).await.is_err());
+        let polled = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap();
+        assert!(polled.get("continue").is_some(), "{polled}");
+        let cont = service.test_txn(&id).await.continue_token;
+
+        service.finalize_transaction(&id).await.unwrap();
+        let err = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(INVALID_CONTINUATION), "{err}");
+        assert_eq!(service.transactions.count().await.unwrap(), 0);
+        assert!(service.finalize_transaction(&id).await.is_err());
+    }
+
+    #[test]
+    fn debug_of_a_user_hint_prints_counts_not_identifiers() {
+        let text = format!("{:?}", hinted_user("secret-user-id"));
+        assert!(!text.contains("secret-user-id"), "{text}");
+        let mut req = GnapTransactionRequest::builder().build();
+        req.user = Some(hinted_user("secret-user-id"));
+        assert!(!format!("{req:?}").contains("secret-user-id"));
+    }
 
     #[test]
     fn section_2_2_sub_ids_release_subject_only_to_a_matching_user() {
@@ -4505,10 +4879,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         let cont1 = resp["continue"]["access_token"]["value"]
@@ -4553,10 +4929,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         assert_eq!(service.transactions.count().await.unwrap(), 1);
@@ -4597,10 +4975,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let txn = service.test_first_txn().await;
@@ -4637,10 +5017,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
 
@@ -4693,10 +5075,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let (id, cont) = {
@@ -4847,10 +5231,12 @@ mod tests {
                     access_type: "read".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         }
     }
 
@@ -5286,6 +5672,23 @@ mod tests {
     }
 
     #[test]
+    fn requested_rights_carries_datatypes_identifier_privileges() {
+        let requests: GnapAccessTokenRequests = serde_json::from_value(serde_json::json!({
+            "access": [{"type": "photo-api", "datatypes": ["metadata", "images"],
+                        "identifier": "album-7", "privileges": ["admin"]}]
+        }))
+        .unwrap();
+        let rights = GnapService::requested_rights(&requests).unwrap();
+        assert_eq!(rights[0].datatypes, vec!["metadata", "images"]);
+        assert_eq!(rights[0].identifier.as_deref(), Some("album-7"));
+        assert_eq!(rights[0].privileges, vec!["admin"]);
+        let back: GnapAccessTokenRequests = rights.into();
+        let json = serde_json::to_value(&back).unwrap();
+        assert_eq!(json["access"][0]["identifier"], "album-7");
+        assert_eq!(json["access"][0]["privileges"][0], "admin");
+    }
+
+    #[test]
     fn test_gnap_transaction_request_builder_full() {
         let jwk = test_ec_jwk();
         let req = GnapTransactionRequest::builder()
@@ -5362,6 +5765,7 @@ mod tests {
             access_type: kind.to_string(),
             actions: vec![],
             locations: vec![],
+            ..Default::default()
         }
     }
 
@@ -5381,6 +5785,7 @@ mod tests {
             }),
             access_token_request: Some(rights.into()),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let (txn_id, cont) = {
@@ -5438,6 +5843,7 @@ mod tests {
             interact: None,
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         assert!(resp["access_token"]["value"].is_string());
@@ -5589,6 +5995,7 @@ mod tests {
             interact: None,
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         resp["access_token"]["value"].as_str().unwrap().to_string()
@@ -5674,6 +6081,7 @@ mod tests {
             interact: None,
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         let resp = service.handle_transaction(req).await.unwrap();
         resp["access_token"]["value"].as_str().unwrap().to_string()
@@ -5729,6 +6137,7 @@ mod tests {
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         assert!(service.consents_for_owner(owner).await.unwrap()[0].is_active());
@@ -5757,6 +6166,7 @@ mod tests {
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let (txn_id, cont) = {
@@ -5886,6 +6296,7 @@ mod tests {
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         service.handle_transaction(req).await.unwrap();
         let id = service
@@ -5955,6 +6366,7 @@ mod tests {
             }),
             access_token_request: Some(vec![right("read")].into()),
             subject: None,
+            user: None,
         };
         assert!(service.handle_transaction(req).await.is_err());
         assert_eq!(store.count().await.unwrap(), 0);
@@ -6924,10 +7336,12 @@ mod proof_verification_tests {
                     access_type: "write-things".to_string(),
                     actions: vec![],
                     locations: vec![],
+                    ..Default::default()
                 }]
                 .into(),
             ),
             subject: None,
+            user: None,
         }
     }
 
@@ -6950,6 +7364,45 @@ mod proof_verification_tests {
             body,
         )
         .await
+    }
+
+    fn patch_user(id: &str) -> crate::protocols::gnap_wire::GnapUserRef {
+        crate::protocols::gnap_wire::GnapUserRef::Object(
+            crate::protocols::gnap_wire::GnapUserObject {
+                sub_ids: Some(vec![serde_json::json!({"format": "opaque", "id": id})]),
+                assertions: None,
+            },
+        )
+    }
+
+    /// A user hint sent in a PATCH replaces the stored one, and the next release honours it.
+    #[tokio::test]
+    async fn section_5_1_patch_replaces_the_user_hint() {
+        let svc = service();
+        let (dpop, key) = (manager(), client_key());
+        let (id, token) = open_pending(&svc, &dpop, &key, "uh-0").await;
+        let body = GnapTransactionRequest {
+            client: None,
+            interact: None,
+            access_token_request: None,
+            subject: None,
+            user: Some(patch_user("user-42")),
+        };
+        patch(&svc, &dpop, &key, &id, &token, "uh-1", &body)
+            .await
+            .expect("a pending grant takes a new user hint");
+        let stored = svc.test_txn(&id).await.request.user;
+        assert_eq!(stored, Some(patch_user("user-42")));
+        let bad = GnapTransactionRequest {
+            user: Some(crate::protocols::gnap_wire::GnapUserRef::Reference(
+                String::new(),
+            )),
+            ..body
+        };
+        let next = svc.test_txn(&id).await.continue_token;
+        let err = refusal(patch(&svc, &dpop, &key, &id, &next, "uh-2", &bad).await);
+        assert!(err.contains("invalid_request"), "{err}");
+        assert_eq!(svc.test_txn(&id).await.request.user, stored);
     }
 
     #[tokio::test]
@@ -8015,6 +8468,7 @@ mod hardening_tests {
                 access_type: (*k).to_string(),
                 actions: vec![],
                 locations: vec![],
+                ..Default::default()
             })
             .collect()
     }
@@ -8038,6 +8492,7 @@ mod hardening_tests {
             }),
             access_token_request: Some(rights(kinds).into()),
             subject: None,
+            user: None,
         }
     }
 
@@ -8187,6 +8642,7 @@ mod hardening_tests {
                 assertion_formats: vec![],
                 sub_ids: vec![],
             }),
+            user: None,
         };
         let msg = message(svc.handle_transaction(subject_only).await);
         assert!(msg.contains("client key required"), "{msg}");
