@@ -1,6 +1,6 @@
 {
   "suite": "gnap-transaction-endpoint",
-  "suite_version": 6,
+  "suite_version": 7,
   "description": "Language-neutral conformance vectors for a GNAP authorization server's transaction endpoint (RFC 9635). Each vector is one request and a set of assertions on the outcome. A client or server in any language can replay them.",
   "vectors": [
     {
@@ -1977,6 +1977,190 @@
           }
         }
       ]
+    },
+    {
+      "id": "appx-b2-secondary-device",
+      "rfc": "RFC 9635",
+      "section": "B.2",
+      "kind": "positive",
+      "description": "Appendix B.2: a client with no browser asks for redirect and user_code start, no finish. The answer carries both, no finish nonce and a continuation to poll; once the owner approves, a continuation with no interaction reference or hash is answered with the token (no finish method, so nothing to check). The RFC's B.2 example writes user_code as an object with a code member; its normative text (3.3.3) says a string, as 3.3.3's own example shows, and this AS follows the text (the same kind of disagreement as the jwsd typ, section 7.3.3).",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "steps": [
+        {
+          "do": "transaction",
+          "proof": "valid",
+          "request": {
+            "access_token": {
+              "access": [
+                "dolphin-metadata",
+                "some other thing"
+              ]
+            },
+            "interact": {
+              "start": [
+                "redirect",
+                "user_code"
+              ]
+            }
+          },
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/interact/redirect",
+                "op": "is_string"
+              },
+              {
+                "path": "/interact/user_code",
+                "op": "is_string"
+              },
+              {
+                "path": "/interact/finish",
+                "op": "absent"
+              },
+              {
+                "path": "/access_token",
+                "op": "absent"
+              },
+              {
+                "path": "/continue/access_token/value",
+                "op": "is_string"
+              }
+            ]
+          },
+          "save": {
+            "tx": {
+              "pointer": "/interact/redirect",
+              "tail": true
+            },
+            "ct": {
+              "pointer": "/continue/access_token/value"
+            }
+          }
+        },
+        {
+          "do": "approve",
+          "transaction": "$tx",
+          "expect": {
+            "outcome": "response"
+          }
+        },
+        {
+          "do": "continue",
+          "transaction": "$tx",
+          "token": "$ct",
+          "interact_ref": null,
+          "interact_hash": null,
+          "proof": "valid",
+          "expect": {
+            "outcome": "response",
+            "assert": [
+              {
+                "path": "/access_token/value",
+                "op": "is_string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "appx-b5-bearer-flag-refused",
+      "rfc": "RFC 9635",
+      "section": "B.5",
+      "kind": "negative",
+      "description": "Appendix B.5 as written asks for a bearer token. This AS issues only key-bound tokens (11.9, 11.10), so the unsupported flag is refused and nothing is issued; the next vector is the same request without the flag.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "request": {
+        "access_token": {
+          "access": [
+            "read",
+            "write",
+            "dolphin"
+          ],
+          "flags": [
+            "bearer"
+          ]
+        },
+        "interact": {
+          "start": [
+            "redirect"
+          ],
+          "finish": {
+            "method": "redirect",
+            "uri": "https://client.example.net/return?state=123455",
+            "nonce": "LKLTI25DK82FX4T4QFZC"
+          }
+        }
+      },
+      "expect": {
+        "outcome": "error"
+      },
+      "client_key": "dpop",
+      "proof": "valid"
+    },
+    {
+      "id": "appx-b5-scopes-as-access-strings",
+      "rfc": "RFC 9635",
+      "section": "B.5",
+      "kind": "positive",
+      "description": "Appendix B.5 without the bearer flag: OAuth 2.0 scope values carried as access strings, with a finish URI that holds the client's state, are answered with a redirect, a finish nonce and a continuation, and no token before the interaction.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "request": {
+        "access_token": {
+          "access": [
+            "read",
+            "write",
+            "dolphin"
+          ]
+        },
+        "interact": {
+          "start": [
+            "redirect"
+          ],
+          "finish": {
+            "method": "redirect",
+            "uri": "https://client.example.net/return?state=123455",
+            "nonce": "LKLTI25DK82FX4T4QFZC"
+          }
+        }
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          {
+            "path": "/interact/redirect",
+            "op": "is_string"
+          },
+          {
+            "path": "/interact/finish",
+            "op": "is_string"
+          },
+          {
+            "path": "/access_token",
+            "op": "absent"
+          },
+          {
+            "path": "/continue/access_token/value",
+            "op": "is_string"
+          }
+        ]
+      },
+      "client_key": "dpop",
+      "proof": "valid"
     }
   ]
 }
