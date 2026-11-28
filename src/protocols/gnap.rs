@@ -4905,6 +4905,43 @@ mod tests {
         assert!(service.handle_transaction(keyless).await.is_err());
     }
 
+    /// RFC 9635 section 7.1 (decision of 2026-11-28): `cert` and `cert#S256` are key formats for the `mtls` proof
+    /// method only. A certificate key's id is `x5t#S256:` and its SHA-256 digest; no other proof method takes one, and `mtls`
+    /// takes nothing else.
+    #[test]
+    fn section_7_1_certificate_keys_are_for_mtls_only() {
+        use base64::Engine;
+        let digest = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7u8; 32]);
+        let cert_key = |proof: &str| GnapClientKey {
+            proof: proof.into(),
+            jwk: None,
+            cert: None,
+            cert_s256: Some(digest.clone()),
+        };
+        assert_eq!(
+            GnapService::key_binding(&cert_key("mtls")).unwrap(),
+            format!("x5t#S256:{digest}")
+        );
+        for proof in ["httpsig", "jws", "jwsd", "dpop"] {
+            let e = GnapService::key_binding(&cert_key(proof)).unwrap_err();
+            assert!(e.to_string().contains("invalid_request"), "{proof}: {e}");
+        }
+        let jwk_key = GnapClientKey {
+            proof: "mtls".into(),
+            jwk: Some(test_ec_jwk()),
+            cert: None,
+            cert_s256: None,
+        };
+        let e = GnapService::key_binding(&jwk_key).unwrap_err();
+        assert!(e.to_string().contains("invalid_request"), "{e}");
+        // control: the same JWK key under a JWK-based method is fine
+        let ok = GnapClientKey {
+            proof: "httpsig".into(),
+            ..jwk_key
+        };
+        assert!(GnapService::key_binding(&ok).is_ok());
+    }
+
     #[test]
     fn debug_of_a_user_hint_prints_counts_not_identifiers() {
         let text = format!("{:?}", hinted_user("secret-user-id"));
