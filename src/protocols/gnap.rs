@@ -441,13 +441,20 @@ impl GnapTransactionRequestBuilder {
 
 /// State of a GNAP transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum GnapTransactionState {
     /// Waiting for user interaction
     Pending,
+    /// The AS is working on the request (RFC 9635 section 1.5's `processing` grant state): the client keeps
+    /// polling as for a pending grant, and the grant is not open to modification.
+    Processing,
     /// User has approved; access token can be issued
     Approved,
     /// Transaction was denied or expired
     Denied,
+    /// The grant has run its course (RFC 9635 section 1.5's `finalized` grant state): a continuation is
+    /// refused and the transaction is removed.
+    Finalized,
 }
 
 /// An open GNAP transaction, as a [`GnapTransactionStore`] keeps it.
@@ -2339,7 +2346,7 @@ impl GnapService {
             .await?;
 
         match txn.state {
-            GnapTransactionState::Pending => {
+            GnapTransactionState::Pending | GnapTransactionState::Processing => {
                 // Polling too soon (RFC 9635 section 5.2) is refused, the token is kept, and the
                 // refused poll restarts the clock.
                 let since = if txn.last_poll_at == 0 {
@@ -2438,6 +2445,10 @@ impl GnapService {
                 Err(AuthError::validation(
                     "user_denied: Transaction was denied by the resource owner",
                 ))
+            }
+            GnapTransactionState::Finalized => {
+                self.transactions.remove(transaction_id).await?;
+                Err(AuthError::validation(INVALID_CONTINUATION))
             }
         }
     }
@@ -2864,6 +2875,36 @@ impl GnapService {
         failures.retain(|_, &mut (_, since)| now.saturating_sub(since) < USER_CODE_LOCKOUT_SECS);
         let entry = failures.entry(caller.to_string()).or_insert((0, now));
         entry.0 = entry.0.saturating_add(1);
+    }
+
+    /// Mark a pending transaction as being processed (RFC 9635 section 1.5): it keeps answering polls as
+    /// pending, and can still be approved or denied, but a PATCH is refused.
+    pub async fn begin_processing(&self, transaction_id: &str) -> Result<()> {
+        self.update_transaction(transaction_id, |txn| match txn.state {
+            GnapTransactionState::Pending => {
+                txn.state = GnapTransactionState::Processing;
+                Ok(())
+            }
+            _ => Err(AuthError::validation(
+                "the transaction is not pending, so it cannot start processing",
+            )),
+        })
+        .await?
+    }
+
+    /// Finalize a transaction (RFC 9635 section 1.5): its next continuation is refused and removes it.
+    /// Refused for a transaction that is already approved (its token is still to be issued) or denied.
+    pub async fn finalize_transaction(&self, transaction_id: &str) -> Result<()> {
+        self.update_transaction(transaction_id, |txn| match txn.state {
+            GnapTransactionState::Pending | GnapTransactionState::Processing => {
+                txn.state = GnapTransactionState::Finalized;
+                Ok(())
+            }
+            _ => Err(AuthError::validation(
+                "only a pending or processing transaction can be finalized",
+            )),
+        })
+        .await?
     }
 
     /// Deny a pending transaction
@@ -4642,6 +4683,49 @@ mod tests {
         assert_eq!(hit["sub_ids"][0]["id"], "user-42", "{hit}");
         let miss = subject_released_to(Some(hinted_user("user-42")), None, "someone-else").await;
         assert!(miss.get("sub_ids").is_none(), "{miss}");
+    }
+
+    #[tokio::test]
+    async fn section_1_5_processing_polls_like_pending_and_finalized_is_refused() {
+        let service = test_service();
+        let mut req = GnapTransactionRequest::builder()
+            .client(test_client_info(test_ec_jwk()))
+            .subject_formats(vec!["opaque".into()])
+            .build();
+        req.interact = Some(GnapInteractionRequirements {
+            start: vec!["redirect".to_string()],
+            finish: None,
+            hints: None,
+        });
+        let resp = service.handle_transaction(req).await.unwrap();
+        let cont = resp["continue"]["access_token"]["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id = service.test_first_txn().await.id;
+
+        service.begin_processing(&id).await.unwrap();
+        assert!(matches!(
+            service.test_txn(&id).await.state,
+            GnapTransactionState::Processing
+        ));
+        assert!(service.begin_processing(&id).await.is_err());
+        let polled = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap();
+        assert!(polled.get("continue").is_some(), "{polled}");
+        let cont = service.test_txn(&id).await.continue_token;
+
+        service.finalize_transaction(&id).await.unwrap();
+        let err = service
+            .continue_transaction(&id, &cont, None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(INVALID_CONTINUATION), "{err}");
+        assert_eq!(service.transactions.count().await.unwrap(), 0);
+        assert!(service.finalize_transaction(&id).await.is_err());
     }
 
     #[test]
