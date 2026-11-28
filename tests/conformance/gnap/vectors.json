@@ -2161,6 +2161,109 @@
       },
       "client_key": "dpop",
       "proof": "valid"
+    },
+    {
+      "id": "appx-b4-user-hint-without-interaction",
+      "rfc": "RFC 9635",
+      "section": "B.4",
+      "kind": "positive",
+      "description": "Appendix B.4 request: access rights in mixed string and object form (including a member this AS does not know, `currency`) and a `user` naming a person by sub_ids, with no interact. The request is accepted, the user is a hint (2.4, 11.13) so nothing about the user is echoed, and no subject is released. Whether the AS then holds the grant for asynchronous approval, as the RFC's B.4 narrative has it, is the deployer's policy; this AS, given an allow-all policy, issues the token at once, which is what the vector asserts.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "proof": "valid",
+      "request": {
+        "access_token": {
+          "access": [
+            {
+              "type": "photo-api",
+              "actions": [
+                "read",
+                "write",
+                "dolphin"
+              ],
+              "locations": [
+                "https://server.example.net/",
+                "https://resource.local/other"
+              ],
+              "datatypes": [
+                "metadata",
+                "images"
+              ]
+            },
+            "read",
+            "dolphin-metadata",
+            {
+              "type": "financial-transaction",
+              "actions": [
+                "withdraw"
+              ],
+              "identifier": "account-14-32-32-3",
+              "currency": "USD"
+            },
+            "some other thing"
+          ]
+        },
+        "user": {
+          "sub_ids": [
+            {
+              "format": "opaque",
+              "id": "J2G8G8O4AZ"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "outcome": "response",
+        "assert": [
+          {
+            "path": "/user",
+            "op": "absent"
+          },
+          {
+            "path": "/subject",
+            "op": "absent"
+          },
+          {
+            "path": "/access_token/value",
+            "op": "is_string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "appx-b4-malformed-user-refused",
+      "rfc": "RFC 9635",
+      "section": "2.4",
+      "kind": "negative",
+      "description": "Control for the B.4 vector: the same request with a sub_ids entry that has no format is refused as invalid_request, so the previous vector's acceptance means the user field was read and checked, not skipped.",
+      "config": {
+        "enabled": true,
+        "transaction_endpoint": "/api/gnap/tx",
+        "interaction_base_url": "https://auth.example.test"
+      },
+      "client_key": "dpop",
+      "proof": "valid",
+      "request": {
+        "access_token": {
+          "access": [
+            "read"
+          ]
+        },
+        "user": {
+          "sub_ids": [
+            {
+              "id": "J2G8G8O4AZ"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "outcome": "error"
+      }
     }
   ]
 }
