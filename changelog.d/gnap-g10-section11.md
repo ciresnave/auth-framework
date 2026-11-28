@@ -1,0 +1,1 @@
+Test only: `section_11_16_only_the_push_delivery_makes_outbound_http` (`tests/gnap_section11_outbound.rs`) fails if any GNAP module other than `gnap_push.rs` names an HTTP client (RFC 9635 section 11.16: a client's `logo_uri` is never fetched); ROADMAP G10 is Done, with the section 11 items that are advice or have nothing to test named in the gap doc.
