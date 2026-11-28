@@ -113,11 +113,10 @@ impl EngineGnapPolicy {
                     } else {
                         locs
                     },
-                    // The engine decides actions and locations only; the narrower kinds of data, resource and
-                    // privileges the client asked for stay on the granted right, never dropped (RFC 9635 8.2).
-                    datatypes: req.datatypes.clone(),
-                    identifier: req.identifier.clone(),
-                    privileges: req.privileges.clone(),
+                    // The engine decides (action, location) pairs only. The datatypes, identifier and privileges the
+                    // client asked for (RFC 9635 8.2) are not decided by it, so the granted right carries none of
+                    // them: copying a client's word into a token would grant what nothing decided.
+                    ..Default::default()
                 });
             }
         }
@@ -150,20 +149,36 @@ mod tests {
         }
     }
 
+    /// The engine decides (action, location) pairs and nothing else. A datatype, identifier or privilege the
+    /// client asked for is not something it granted, so a granted right never carries one: the right is what
+    /// the engine decided, and no more.
     #[test]
-    fn granted_rights_keep_the_requested_datatypes_identifier_and_privileges() {
+    fn granted_rights_carry_only_what_the_engine_decided() {
         let asked = GnapAccessRequest {
-            datatypes: vec!["metadata".into()],
-            identifier: Some("doc-1".into()),
-            privileges: vec!["reader".into()],
+            datatypes: vec!["d1".into()],
+            identifier: Some("i1".into()),
+            privileges: vec!["p1".into()],
             ..req("doc", &["read"], &["doc:1"])
         };
         let (policy, _) = setup();
         let granted = policy.grant_sync("tp-alice", std::slice::from_ref(&asked));
+        // the decided part is granted ...
         assert_eq!(granted.len(), 1);
-        assert_eq!(granted[0].datatypes, asked.datatypes);
-        assert_eq!(granted[0].identifier, asked.identifier);
-        assert_eq!(granted[0].privileges, asked.privileges);
+        assert!(has(&granted, &req("doc", &["read"], &["doc:1"])));
+        // ... and none of the three undecided fields is copied from the request
+        assert!(granted[0].datatypes.is_empty(), "{:?}", granted[0]);
+        assert_eq!(granted[0].identifier, None);
+        assert!(granted[0].privileges.is_empty(), "{:?}", granted[0]);
+        // control: the same request without the three fields is granted the same right
+        let plain = policy.grant_sync("tp-alice", &[req("doc", &["read"], &["doc:1"])]);
+        assert_eq!(plain.len(), 1);
+        assert!(has(&plain, &req("doc", &["read"], &["doc:1"])));
+        // and an (action, location) the engine did not grant stays refused, fields or not
+        let denied = GnapAccessRequest {
+            privileges: vec!["p1".into()],
+            ..req("doc", &["write"], &["doc:1"])
+        };
+        assert!(policy.grant_sync("tp-alice", &[denied]).is_empty());
     }
 
     fn key(r: &GnapAccessRequest) -> (String, Vec<String>, Vec<String>) {
